@@ -394,7 +394,7 @@ export default function TaleplerPage() {
   } finally {
     await worker.terminate();
   }
-}; 
+  }; 
 
   const readExcelFile = async (file) => {
     try {
