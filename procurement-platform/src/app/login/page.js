@@ -1,60 +1,98 @@
 "use client";
 
-import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "../../lib/supabase";
+import { supabase } from "@/lib/supabase";
 
 export default function LoginPage() {
   const router = useRouter();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-
-  const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(false);
 
   const handleLogin = async (e) => {
     e.preventDefault();
+
+    if (loading) return;
+
     setLoading(true);
     setMessage("");
 
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      });
 
-    if (error) {
-      setMessage("Giriş hatası: " + error.message);
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
+
+      console.log("LOGIN DATA:", data);
+      setMessage("Giriş başarılı");
+      router.push("/dashboard");
+    } catch (err) {
+      console.error("LOGIN CATCH:", err);
+      setMessage("Bağlantı hatası oluştu.");
+    } finally {
       setLoading(false);
-      return;
     }
-
-    if (!data?.user) {
-      setMessage("Kullanıcı bilgisi alınamadı.");
-      setLoading(false);
-      return;
-    }
-
-    setMessage("Giriş başarılı! Dashboard sayfasına yönlendiriliyorsunuz...");
-    router.push("/dashboard");
-    router.refresh();
   };
 
   return (
-    <main className="min-h-screen bg-slate-100 flex items-center justify-center p-6">
-      <div className="w-full max-w-md bg-white shadow-md rounded-2xl p-8">
-        <h1 className="text-3xl font-bold text-slate-800 text-center">
+    <div
+      style={{
+        minHeight: "100vh",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "#f5f5f5",
+        padding: "24px",
+      }}
+    >
+      <div
+        style={{
+          width: "100%",
+          maxWidth: "400px",
+          background: "#ffffff",
+          padding: "32px",
+          borderRadius: "16px",
+          boxShadow: "0 10px 30px rgba(0,0,0,0.08)",
+        }}
+      >
+        <h1
+          style={{
+            fontSize: "28px",
+            fontWeight: "700",
+            marginBottom: "8px",
+            textAlign: "center",
+          }}
+        >
           Giriş Yap
         </h1>
 
-        <p className="mt-3 text-slate-600 text-center">
-          Hesabınıza giriş yaparak platforma devam edin.
+        <p
+          style={{
+            textAlign: "center",
+            color: "#666",
+            marginBottom: "24px",
+          }}
+        >
+          Hesabınıza giriş yapın
         </p>
 
-        <form onSubmit={handleLogin} className="mt-8 space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">
+        <form onSubmit={handleLogin}>
+          <div style={{ marginBottom: "16px" }}>
+            <label
+              style={{
+                display: "block",
+                marginBottom: "8px",
+                fontWeight: "600",
+              }}
+            >
               E-posta
             </label>
             <input
@@ -62,13 +100,26 @@ export default function LoginPage() {
               placeholder="ornek@mail.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full border border-slate-300 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-400"
               required
+              style={{
+                width: "100%",
+                padding: "12px",
+                borderRadius: "10px",
+                border: "1px solid #ccc",
+                outline: "none",
+                fontSize: "16px",
+              }}
             />
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">
+          <div style={{ marginBottom: "20px" }}>
+            <label
+              style={{
+                display: "block",
+                marginBottom: "8px",
+                fontWeight: "600",
+              }}
+            >
               Şifre
             </label>
             <input
@@ -76,31 +127,50 @@ export default function LoginPage() {
               placeholder="Şifrenizi girin"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full border border-slate-300 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-400"
               required
+              style={{
+                width: "100%",
+                padding: "12px",
+                borderRadius: "10px",
+                border: "1px solid #ccc",
+                outline: "none",
+                fontSize: "16px",
+              }}
             />
           </div>
 
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-slate-800 text-white rounded-xl p-3 hover:bg-slate-700 disabled:opacity-60"
+            style={{
+              width: "100%",
+              padding: "12px",
+              border: "none",
+              borderRadius: "10px",
+              background: loading ? "#999" : "#111",
+              color: "#fff",
+              fontSize: "16px",
+              fontWeight: "600",
+              cursor: loading ? "not-allowed" : "pointer",
+            }}
           >
             {loading ? "Giriş yapılıyor..." : "Giriş Yap"}
           </button>
         </form>
 
         {message && (
-          <p className="mt-4 text-center text-sm text-slate-700">{message}</p>
+          <p
+            style={{
+              marginTop: "16px",
+              textAlign: "center",
+              color: message === "Giriş başarılı" ? "green" : "red",
+              fontWeight: "500",
+            }}
+          >
+            {message}
+          </p>
         )}
-
-        <p className="mt-6 text-center text-sm text-slate-600">
-          Hesabınız yok mu?{" "}
-          <Link href="/register" className="font-semibold text-slate-800">
-            Kayıt Ol
-          </Link>
-        </p>
       </div>
-    </main>
+    </div>
   );
 }
