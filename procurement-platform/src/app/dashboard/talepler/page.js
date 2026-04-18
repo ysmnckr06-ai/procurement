@@ -60,81 +60,39 @@ export default function TaleplerPage() {
       .replace(/\s+/g, " ")
       .trim();
   };
-  const handleCreateMergedList = () => {
+
+  const handleCreateMergedList = async () => {
   if (parsedSources.length === 0) {
     setMessage("Önce en az bir kaynak yükleyin.");
     return;
   }
 
-  const mergedMap = new Map();
+  try {
+    setMessage("Kaynaklar Python tarafında birleştiriliyor...");
 
-  parsedSources.forEach((source) => {
-    const rows = source.rows || [];
-
-    rows.forEach((row) => {
-      let urun = "";
-      let miktar = 0;
-      let birim = "";
-
-      if (source.sourceType === "image-selected") {
-        urun = normalizeText(row.urun);
-        miktar = normalizeQuantity(row.miktar);
-        birim = normalizeText(row.birim);
-      } else if (source.sourceType === "pdf") {
-        urun = normalizeText(row.aciklama || row.urun);
-        miktar = normalizeQuantity(row.miktar);
-        birim = normalizeText(row.birim);
-      } else if (source.sourceType === "excel") {
-        const keys = Object.keys(row);
-
-        const productKey =
-          keys.find((k) => k.toLocaleLowerCase("tr-TR").includes("ürün")) ||
-          keys.find((k) => k.toLocaleLowerCase("tr-TR").includes("urun")) ||
-          keys.find((k) => k.toLocaleLowerCase("tr-TR").includes("açıklama")) ||
-          keys.find((k) => k.toLocaleLowerCase("tr-TR").includes("aciklama"));
-
-        const quantityKey =
-          keys.find((k) => k.toLocaleLowerCase("tr-TR").includes("miktar")) ||
-          keys.find((k) => k.toLocaleLowerCase("tr-TR").includes("adet")) ||
-          keys.find((k) => k.toLocaleLowerCase("tr-TR").includes("qty"));
-
-        const unitKey =
-          keys.find((k) => k.toLocaleLowerCase("tr-TR").includes("birim")) ||
-          keys.find((k) => k.toLocaleLowerCase("tr-TR").includes("unit"));
-
-        urun = normalizeText(productKey ? row[productKey] : "");
-        miktar = normalizeQuantity(quantityKey ? row[quantityKey] : "");
-        birim = normalizeText(unitKey ? row[unitKey] : "");
-      }
-
-      if (!urun) return;
-
-      const key = `${urun.toLocaleLowerCase("tr-TR")}__${birim.toLocaleLowerCase("tr-TR")}`;
-
-      if (!mergedMap.has(key)) {
-        mergedMap.set(key, {
-          urun,
-          miktar,
-          birim,
-        });
-      } else {
-        const existing = mergedMap.get(key);
-        existing.miktar += miktar;
-        mergedMap.set(key, existing);
-      }
+    const response = await fetch("http://127.0.0.1:8000/merge-sources", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        parsedSources: parsedSources,
+      }),
     });
-  });
 
-  const result = Array.from(mergedMap.values()).map((item, index) => ({
-    sira: index + 1,
-    urun: item.urun,
-    miktar: item.miktar,
-    birim: item.birim,
-  }));
+    if (!response.ok) {
+      throw new Error("Python birleştirme işleminde hata oluştu.");
+    }
 
-  setNormalizedRows(result);
-  setMessage("Tüm kaynaklar birleştirilerek icmalli liste oluşturuldu.");
-  };
+    const data = await response.json();
+
+    setNormalizedRows(data.rows || []);
+    setMessage(data.message || "İcmalli liste oluşturuldu.");
+  } catch (error) {
+    console.error("Python birleştirme hatası:", error);
+    setMessage("Python ile birleştirme sırasında hata oluştu: " + error.message);
+  }
+};
 
   const normalizeQuantity = (value) => {
     const raw = String(value ?? "")
