@@ -61,14 +61,16 @@ export default function TaleplerPage() {
       .trim();
   };
 
-  const handleCreateMergedList = async () => {
-  if (parsedSources.length === 0) {
-    setMessage("Önce en az bir kaynak yükleyin.");
+const handleCreateMergedList = async () => {
+  const allNormalizedRows = parsedSources.flatMap((source) => source.normalizedRows || []);
+
+  if (allNormalizedRows.length === 0) {
+    setMessage("Önce her kaynak için liste oluşturmalısın.");
     return;
   }
 
   try {
-    setMessage("Kaynaklar Python tarafında birleştiriliyor...");
+    setMessage("Tüm normalize edilmiş kaynaklar Python tarafında birleştiriliyor...");
 
     const response = await fetch("http://127.0.0.1:8000/merge-sources", {
       method: "POST",
@@ -76,7 +78,16 @@ export default function TaleplerPage() {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        parsedSources: parsedSources,
+        parsedSources: [
+          {
+            id: "all-normalized",
+            fileName: "all-normalized",
+            sourceType: "merged",
+            label: "All Normalized",
+            rows: allNormalizedRows,
+            columns: ["urun", "miktar", "birim"],
+          },
+        ],
       }),
     });
 
@@ -395,112 +406,38 @@ export default function TaleplerPage() {
     }
   };
 
-  const readPDFFile = async (file) => {
-    try {
-      const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
+const readPDFFile = async (file) => {
+  try {
+    const formData = new FormData();
+    formData.append("file", file);
 
-      pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-        "pdfjs-dist/legacy/build/pdf.worker.min.mjs",
-        import.meta.url
-      ).toString();
+    const response = await fetch("http://127.0.0.1:8000/parse-pdf", {
+      method: "POST",
+      body: formData,
+    });
 
-      const arrayBuffer = await file.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-
-      const parsedRows = [];
-
-      for (let pageIndex = 1; pageIndex <= pdf.numPages; pageIndex++) {
-        const page = await pdf.getPage(pageIndex);
-        const content = await page.getTextContent();
-
-        const textItems = content.items
-          .filter((item) => item.str && item.str.trim())
-          .map((item) => ({
-            text: normalizeText(item.str),
-            x: item.transform[4],
-            y: item.transform[5],
-          }));
-
-        const rowMap = new Map();
-
-        textItems.forEach((item) => {
-          const yKey = Math.round(item.y / 3) * 3;
-
-          if (!rowMap.has(yKey)) {
-            rowMap.set(yKey, []);
-          }
-
-          rowMap.get(yKey).push(item);
-        });
-
-        const sortedRows = Array.from(rowMap.entries())
-          .sort((a, b) => b[0] - a[0])
-          .map(([, items]) =>
-            items.sort((a, b) => a.x - b.x).map((item) => item.text)
-          );
-
-        sortedRows.forEach((cols) => {
-          if (!cols.length) return;
-
-          const firstCell = normalizeText(cols[0] || "").toLocaleLowerCase("tr-TR");
-          const secondCell = normalizeText(cols[1] || "").toLocaleLowerCase("tr-TR");
-          const thirdCell = normalizeText(cols[2] || "").toLocaleLowerCase("tr-TR");
-          const fourthCell = normalizeText(cols[3] || "").toLocaleLowerCase("tr-TR");
-
-          const isHeaderRow =
-            firstCell.includes("ürün") ||
-            firstCell.includes("urun") ||
-            secondCell.includes("açıklama") ||
-            secondCell.includes("aciklama") ||
-            thirdCell.includes("birim") ||
-            fourthCell.includes("miktar") ||
-            fourthCell.includes("adet");
-
-          if (isHeaderRow) return;
-
-          parsedRows.push({
-            satirNo: parsedRows.length + 1,
-            urun: cols[0] || "",
-            aciklama: cols[1] || "",
-            birim: cols[2] || "",
-            miktar: cols[3] || "",
-            hamMetin: cols.join(" | "),
-          });
-        });
-      }
-
-      const cleanedRows = parsedRows.filter((row) => {
-        return row.urun || row.aciklama || row.birim || row.miktar;
-      });
-
-      const detectedColumns =
-        cleanedRows.length > 0 ? Object.keys(cleanedRows[0]) : [];
-
-      const newSource = {
-        id: `${file.name}-pdf-0`,
-        fileName: file.name,
-        sourceType: "pdf",
-        label: `PDF - ${file.name}`,
-        rows: cleanedRows,
-        columns: detectedColumns,
-      };
-
-      setParsedSources((prev) => [...prev, newSource]);
-
-      if (!selectedSourceId) {
-        setSelectedSourceId(newSource.id);
-      }
-
-      setSelectedProductColumn("");
-      setSelectedQuantityColumn("");
-      setSelectedUnitColumn("");
-      setNormalizedRows([]);
-      setMessage("PDF okundu ✅");
-    } catch (error) {
-      console.error("PDF okuma hatası:", error);
-      setMessage("PDF okuma hatası: " + error.message);
+    if (!response.ok) {
+      throw new Error("PDF backend'de işlenemedi.");
     }
-  };
+
+    const newSource = await response.json();
+
+    setParsedSources((prev) => [...prev, newSource]);
+
+    if (!selectedSourceId) {
+      setSelectedSourceId(newSource.id);
+    }
+
+    setSelectedProductColumn("");
+    setSelectedQuantityColumn("");
+    setSelectedUnitColumn("");
+    setNormalizedRows([]);
+    setMessage("PDF backend ile okundu ✅");
+  } catch (error) {
+    console.error("PDF okuma hatası:", error);
+    setMessage("PDF okuma hatası: " + error.message);
+  }
+};
 
   const handleProcessSelectedAreas = async () => {
     if (!imageRef.current || !imageFile) {
@@ -710,65 +647,63 @@ export default function TaleplerPage() {
     }
   };
 
-  const handleCreatePreviewList = () => {
-    if (!selectedSource) {
-      setMessage("Lütfen bir veri kaynağı seçin.");
-      return;
-    }
+const handleCreatePreviewList = () => {
+  if (!selectedSource) {
+    setMessage("Lütfen bir veri kaynağı seçin.");
+    return;
+  }
 
-    if (
-      !selectedProductColumn ||
-      !selectedQuantityColumn ||
-      !selectedUnitColumn
-    ) {
-      setMessage("Lütfen ürün, miktar ve birim kolonlarını seçin.");
-      return;
-    }
+  if (!selectedProductColumn || !selectedQuantityColumn || !selectedUnitColumn) {
+    setMessage("Lütfen ürün, miktar ve birim kolonlarını seçin.");
+    return;
+  }
 
-    let allRows = [];
+  const mergedMap = new Map();
 
-    parsedSources.forEach(source => {
-    if (!source.rows) return;
+  selectedSource.rows.forEach((row) => {
+    const urun = normalizeText(row[selectedProductColumn]);
+    const birim = normalizeText(row[selectedUnitColumn]);
+    const miktar = normalizeQuantity(row[selectedQuantityColumn]);
 
-    source.rows.forEach(row => {
-    allRows.push(row);
+    if (!urun) return;
+
+    const key = `${urun.toLocaleLowerCase("tr-TR")}__${birim.toLocaleLowerCase("tr-TR")}`;
+
+    if (!mergedMap.has(key)) {
+      mergedMap.set(key, {
+        urun,
+        miktar,
+        birim,
       });
-      });
+    } else {
+      const existing = mergedMap.get(key);
+      existing.miktar += miktar;
+      mergedMap.set(key, existing);
+    }
+  });
 
-    const mergedMap = new Map();
+  const result = Array.from(mergedMap.values()).map((item, index) => ({
+    sira: index + 1,
+    urun: item.urun,
+    miktar: item.miktar,
+    birim: item.birim,
+  }));
 
-      allRows.forEach((row) => {
-      const urun = normalizeText(row[selectedProductColumn]);
-      const birim = normalizeText(row[selectedUnitColumn]);
-      const miktar = normalizeQuantity(row[selectedQuantityColumn]);
+  setNormalizedRows(result);
 
-      if (!urun) return;
+  setParsedSources((prev) =>
+    prev.map((source) =>
+      source.id === selectedSourceId
+        ? {
+            ...source,
+            normalizedRows: result,
+          }
+        : source
+    )
+  );
 
-      const key = `${urun.toLocaleLowerCase("tr-TR")}__${birim.toLocaleLowerCase("tr-TR")}`;
-
-      if (!mergedMap.has(key)) {
-        mergedMap.set(key, {
-          urun,
-          miktar,
-          birim,
-        });
-      } else {
-        const existing = mergedMap.get(key);
-        existing.miktar += miktar;
-        mergedMap.set(key, existing);
-      }
-    });
-
-    const result = Array.from(mergedMap.values()).map((item, index) => ({
-      sira: index + 1,
-      urun: item.urun,
-      miktar: item.miktar,
-      birim: item.birim,
-    }));
-
-    setNormalizedRows(result);
-    setMessage("Talep listesi icmalli olarak oluşturuldu.");
-  };
+  setMessage(`${selectedSource.label} için ön liste oluşturuldu.`);
+};
 
   const handleExportExcel = () => {
     if (normalizedRows.length === 0) {
