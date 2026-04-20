@@ -6,36 +6,35 @@ export default function TekliflerPage() {
   const [files, setFiles] = useState([]);
   const [parsedSources, setParsedSources] = useState([]);
   const [selectedSourceId, setSelectedSourceId] = useState("");
-
-  const [selectedCodeColumn, setSelectedCodeColumn] = useState("");
-  const [selectedDescriptionColumn, setSelectedDescriptionColumn] = useState("");
-  const [selectedRequestedQtyColumn, setSelectedRequestedQtyColumn] = useState("");
-  const [selectedSupplierColumn, setSelectedSupplierColumn] = useState("");
-  const [selectedSupplierQtyColumn, setSelectedSupplierQtyColumn] = useState("");
-  const [selectedCurrencyColumn, setSelectedCurrencyColumn] = useState("");
-  const [selectedUnitPriceColumn, setSelectedUnitPriceColumn] = useState("");
-  const [selectedDiscountColumn, setSelectedDiscountColumn] = useState("");
-  const [selectedTermColumn, setSelectedTermColumn] = useState("");
-  const [selectedLeadTimeColumn, setSelectedLeadTimeColumn] = useState("");
-
+  const [previewRows, setPreviewRows] = useState([]);
   const [normalizedRows, setNormalizedRows] = useState([]);
   const [comparisonRows, setComparisonRows] = useState([]);
   const [recommendedRows, setRecommendedRows] = useState([]);
-
+  const [message, setMessage] = useState("");
+  
+ 
   const [exchangeRates, setExchangeRates] = useState({
     TRY: 1,
     USD: 39.2,
     EUR: 42.8,
   });
-
-  const [message, setMessage] = useState("");
-
+  
   const selectedSource = parsedSources.find(
     (item) => item.id === selectedSourceId
   );
-
   const columns = selectedSource?.columns || [];
-  const previewRows = selectedSource?.rows?.slice(0, 8) || [];
+
+  const handleAnalyze = () => {
+  console.log("Analiz başladı");
+
+  if (!selectedSource?.rows) {
+    setMessage("Analiz için önce dosya yükleyin.");
+    return;
+  }
+
+  setPreviewRows(selectedSource.rows);
+  setMessage("Teklif analizi tamamlandı.");
+  };
 
   const handleFileUpload = (e) => {
     const uploadedFiles = Array.from(e.target.files).slice(0, 15);
@@ -134,58 +133,22 @@ export default function TekliflerPage() {
 
         <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-6">
           <h2 className="text-lg font-semibold text-slate-800">Teklif Analizi</h2>
+<div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+      <p className="text-sm text-slate-600">
+        Yüklenen teklifler otomatik analiz edilecektir.
+      </p>
 
-          <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-            <div>
-              <label className="mb-2 block text-sm font-medium text-slate-700">
-                Veri Kaynağı
-              </label>
-              <select
-                value={selectedSourceId}
-                onChange={(e) => setSelectedSourceId(e.target.value)}
-                className="w-full rounded-xl border border-slate-300 p-3"
-              >
-                <option value="">Seçiniz</option>
-                {parsedSources.map((source) => (
-                  <option key={source.id} value={source.id}>
-                    {source.fileName}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {[
-              ["Ürün kodu kolonu", selectedCodeColumn, setSelectedCodeColumn],
-              ["Ürün açıklaması kolonu", selectedDescriptionColumn, setSelectedDescriptionColumn],
-              ["Talep edilen adet kolonu", selectedRequestedQtyColumn, setSelectedRequestedQtyColumn],
-              ["Firma adı kolonu", selectedSupplierColumn, setSelectedSupplierColumn],
-              ["Firma adedi kolonu", selectedSupplierQtyColumn, setSelectedSupplierQtyColumn],
-              ["Para birimi kolonu", selectedCurrencyColumn, setSelectedCurrencyColumn],
-              ["Birim fiyat kolonu", selectedUnitPriceColumn, setSelectedUnitPriceColumn],
-              ["İskonto kolonu", selectedDiscountColumn, setSelectedDiscountColumn],
-              ["Vade kolonu", selectedTermColumn, setSelectedTermColumn],
-              ["Termin kolonu", selectedLeadTimeColumn, setSelectedLeadTimeColumn],
-            ].map(([label, value, setter]) => (
-              <div key={label}>
-                <label className="mb-2 block text-sm font-medium text-slate-700">
-                  {label}
-                </label>
-                <select
-                  value={value}
-                  onChange={(e) => setter(e.target.value)}
-                  className="w-full rounded-xl border border-slate-300 p-3"
-                >
-                  <option value="">Seçiniz</option>
-                  {columns.map((col) => (
-                    <option key={col} value={col}>
-                      {col}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            ))}
-          </div>
-        </div>
+      <button
+        type="button"
+        onClick={handleAnalyze}
+        className="mt-4 w-full rounded-xl bg-slate-900 px-4 py-3 text-sm font-medium text-white hover:bg-slate-800"
+      >
+        Teklifleri Analiz Et
+      </button>
+    </div>
+  </div>
+</div>
 
         <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-6">
           <h2 className="text-lg font-semibold text-slate-800">Teklif Ön İzleme</h2>
