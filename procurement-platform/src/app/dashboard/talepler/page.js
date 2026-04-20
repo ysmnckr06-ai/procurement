@@ -24,13 +24,84 @@ export default function TaleplerPage() {
   const [parsedSources, setParsedSources] = useState([]);
   const [selectedSourceId, setSelectedSourceId] = useState("");
   const [selectedProductColumn, setSelectedProductColumn] = useState("");
+  const [selectedCodeColumn, setSelectedCodeColumn] = useState("");
+  const [selectedDescriptionColumn, setSelectedDescriptionColumn] = useState("");
   const [selectedQuantityColumn, setSelectedQuantityColumn] = useState("");
   const [selectedUnitColumn, setSelectedUnitColumn] = useState("");
   const [normalizedRows, setNormalizedRows] = useState([]);
+  const [mergePreviewRows, setMergePreviewRows] = useState([]);
+  const [matchCandidates, setMatchCandidates] = useState([]);
+  const [approvedMatches, setApprovedMatches] = useState([]);
+  const [autoCodeInfo, setAutoCodeInfo] = useState("");
   const [uploading, setUploading] = useState(false);
   const [processingImage, setProcessingImage] = useState(false);
   const [message, setMessage] = useState("");
   const [showDownloadMenu, setShowDownloadMenu] = useState(false);
+
+  const handleApproveMatch = (candidate) => {
+  setApprovedMatches((prev) => [...prev, candidate]);
+  setMatchCandidates((prev) =>
+    prev.filter((item) => item.id !== candidate.id)
+  );
+  };
+
+  const handleKeepSeparate = (candidate) => {
+    setMatchCandidates((prev) =>
+      prev.filter((item) => item.id !== candidate.id)
+    );
+  };
+  const handleFinalizeMerge = () => {
+  let finalRows = [...mergePreviewRows];
+
+  approvedMatches.forEach((match) => {
+    finalRows = finalRows.map((row) => {
+      if (row.urunKodu === match.newCode) {
+        return {
+          ...row,
+          urunKodu: match.suggestedCode,
+          urunAciklamasi: match.suggestedDescription,
+        };
+      }
+      return row;
+    });
+  });
+
+  const mergedMap = new Map();
+
+  finalRows.forEach((row) => {
+    const kod = (row.urunKodu || "").trim();
+    const aciklama = (row.urunAciklamasi || "").trim();
+    const birim = (row.birim || "").trim();
+    const miktar = Number(row.miktar || 0);
+
+    const key = `${kod.toLocaleLowerCase("tr-TR")}__${birim.toLocaleLowerCase("tr-TR")}`;
+
+    if (!mergedMap.has(key)) {
+      mergedMap.set(key, {
+        urunKodu: kod,
+        urunAciklamasi: aciklama,
+        miktar,
+        birim,
+      });
+    } else {
+      const existing = mergedMap.get(key);
+      existing.miktar += miktar;
+      mergedMap.set(key, existing);
+    }
+  });
+
+  const result = Array.from(mergedMap.values()).map((item, index) => ({
+    sira: index + 1,
+    urunKodu: item.urunKodu,
+    urunAciklamasi: item.urunAciklamasi,
+    miktar: item.miktar,
+    birim: item.birim,
+  }));
+
+  setNormalizedRows(result);
+  setMessage("Final icmal oluşturuldu ✅");
+  };
+
 
   const selectedSource = useMemo(() => {
     return parsedSources.find((item) => item.id === selectedSourceId);
@@ -62,13 +133,17 @@ export default function TaleplerPage() {
   };
 
   const handleCreateMergedList = async () => {
-  if (parsedSources.length === 0) {
-    setMessage("Önce en az bir kaynak yükleyin.");
+  const allNormalizedRows = parsedSources.flatMap(
+    (source) => source.normalizedRows || []
+  );
+
+  if (allNormalizedRows.length === 0) {
+    setMessage("Önce her kaynak için liste oluşturmalısın.");
     return;
   }
 
   try {
-    setMessage("Kaynaklar Python tarafında birleştiriliyor...");
+    setMessage("Tüm normalize edilmiş kaynaklar Python tarafında birleştiriliyor...");
 
     const response = await fetch("http://127.0.0.1:8000/merge-sources", {
       method: "POST",
@@ -76,7 +151,7 @@ export default function TaleplerPage() {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        parsedSources: parsedSources,
+        rows: allNormalizedRows,
       }),
     });
 
@@ -85,14 +160,26 @@ export default function TaleplerPage() {
     }
 
     const data = await response.json();
+      setMergePreviewRows(data.rows || []);
+      setMatchCandidates(data.matchCandidates || []);
+      setAutoCodeInfo(
+    data.autoAssignedCount > 0
+        ? `Kodu olmayan ${data.autoAssignedCount} ürüne otomatik ürün kodu atandı.`
+        : ""
+      );
 
-    setNormalizedRows(data.rows || []);
-    setMessage(data.message || "İcmalli liste oluşturuldu.");
+setNormalizedRows([]);
+setMessage(data.message || "Kaynaklar birleştirildi.");
+
+
+
+
+
   } catch (error) {
     console.error("Python birleştirme hatası:", error);
     setMessage("Python ile birleştirme sırasında hata oluştu: " + error.message);
   }
-};
+  };
 
   const normalizeQuantity = (value) => {
     const raw = String(value ?? "")
@@ -387,7 +474,6 @@ export default function TaleplerPage() {
       setSelectedProductColumn("");
       setSelectedQuantityColumn("");
       setSelectedUnitColumn("");
-      setNormalizedRows([]);
       setMessage("Excel okundu ✅");
     } catch (error) {
       console.error("Excel okuma hatası:", error);
@@ -396,110 +482,35 @@ export default function TaleplerPage() {
   };
 
   const readPDFFile = async (file) => {
-    try {
-      const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  try {
+    const formData = new FormData();
+    formData.append("file", file);
 
-      pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-        "pdfjs-dist/legacy/build/pdf.worker.min.mjs",
-        import.meta.url
-      ).toString();
+    const response = await fetch("http://127.0.0.1:8000/parse-pdf", {
+      method: "POST",
+      body: formData,
+    });
 
-      const arrayBuffer = await file.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-
-      const parsedRows = [];
-
-      for (let pageIndex = 1; pageIndex <= pdf.numPages; pageIndex++) {
-        const page = await pdf.getPage(pageIndex);
-        const content = await page.getTextContent();
-
-        const textItems = content.items
-          .filter((item) => item.str && item.str.trim())
-          .map((item) => ({
-            text: normalizeText(item.str),
-            x: item.transform[4],
-            y: item.transform[5],
-          }));
-
-        const rowMap = new Map();
-
-        textItems.forEach((item) => {
-          const yKey = Math.round(item.y / 3) * 3;
-
-          if (!rowMap.has(yKey)) {
-            rowMap.set(yKey, []);
-          }
-
-          rowMap.get(yKey).push(item);
-        });
-
-        const sortedRows = Array.from(rowMap.entries())
-          .sort((a, b) => b[0] - a[0])
-          .map(([, items]) =>
-            items.sort((a, b) => a.x - b.x).map((item) => item.text)
-          );
-
-        sortedRows.forEach((cols) => {
-          if (!cols.length) return;
-
-          const firstCell = normalizeText(cols[0] || "").toLocaleLowerCase("tr-TR");
-          const secondCell = normalizeText(cols[1] || "").toLocaleLowerCase("tr-TR");
-          const thirdCell = normalizeText(cols[2] || "").toLocaleLowerCase("tr-TR");
-          const fourthCell = normalizeText(cols[3] || "").toLocaleLowerCase("tr-TR");
-
-          const isHeaderRow =
-            firstCell.includes("ürün") ||
-            firstCell.includes("urun") ||
-            secondCell.includes("açıklama") ||
-            secondCell.includes("aciklama") ||
-            thirdCell.includes("birim") ||
-            fourthCell.includes("miktar") ||
-            fourthCell.includes("adet");
-
-          if (isHeaderRow) return;
-
-          parsedRows.push({
-            satirNo: parsedRows.length + 1,
-            urun: cols[0] || "",
-            aciklama: cols[1] || "",
-            birim: cols[2] || "",
-            miktar: cols[3] || "",
-            hamMetin: cols.join(" | "),
-          });
-        });
-      }
-
-      const cleanedRows = parsedRows.filter((row) => {
-        return row.urun || row.aciklama || row.birim || row.miktar;
-      });
-
-      const detectedColumns =
-        cleanedRows.length > 0 ? Object.keys(cleanedRows[0]) : [];
-
-      const newSource = {
-        id: `${file.name}-pdf-0`,
-        fileName: file.name,
-        sourceType: "pdf",
-        label: `PDF - ${file.name}`,
-        rows: cleanedRows,
-        columns: detectedColumns,
-      };
-
-      setParsedSources((prev) => [...prev, newSource]);
-
-      if (!selectedSourceId) {
-        setSelectedSourceId(newSource.id);
-      }
-
-      setSelectedProductColumn("");
-      setSelectedQuantityColumn("");
-      setSelectedUnitColumn("");
-      setNormalizedRows([]);
-      setMessage("PDF okundu ✅");
-    } catch (error) {
-      console.error("PDF okuma hatası:", error);
-      setMessage("PDF okuma hatası: " + error.message);
+    if (!response.ok) {
+      throw new Error("PDF backend'de işlenemedi.");
     }
+
+    const newSource = await response.json();
+
+    setParsedSources((prev) => [...prev, newSource]);
+
+    if (!selectedSourceId) {
+      setSelectedSourceId(newSource.id);
+    }
+
+    setSelectedProductColumn("");
+    setSelectedQuantityColumn("");
+    setSelectedUnitColumn("");
+    setMessage("PDF backend ile okundu ✅");
+  } catch (error) {
+    console.error("PDF okuma hatası:", error);
+    setMessage("PDF okuma hatası: " + error.message);
+  }
   };
 
   const handleProcessSelectedAreas = async () => {
@@ -581,7 +592,7 @@ export default function TaleplerPage() {
       setSelectedProductColumn("urun");
       setSelectedQuantityColumn("miktar");
       setSelectedUnitColumn("birim");
-      setNormalizedRows([]);
+  
 
       if (
         productLines.length !== quantityLines.length ||
@@ -661,7 +672,7 @@ export default function TaleplerPage() {
       setSelectedProductColumn("");
       setSelectedQuantityColumn("");
       setSelectedUnitColumn("");
-      setNormalizedRows([]);
+   
     }
   };
 
@@ -711,63 +722,69 @@ export default function TaleplerPage() {
   };
 
   const handleCreatePreviewList = () => {
-    if (!selectedSource) {
-      setMessage("Lütfen bir veri kaynağı seçin.");
-      return;
-    }
+  if (!selectedSource) {
+    setMessage("Lütfen bir veri kaynağı seçin.");
+    return;
+  }
 
-    if (
-      !selectedProductColumn ||
-      !selectedQuantityColumn ||
-      !selectedUnitColumn
-    ) {
-      setMessage("Lütfen ürün, miktar ve birim kolonlarını seçin.");
-      return;
-    }
+  if (!selectedDescriptionColumn || !selectedQuantityColumn || !selectedUnitColumn) {
+   setMessage("Lütfen ürün açıklaması, miktar ve birim kolonlarını seçin.");
+    return;
+  }
 
-    let allRows = [];
+  const mergedMap = new Map();
 
-    parsedSources.forEach(source => {
-    if (!source.rows) return;
+selectedSource.rows.forEach((row) => {
+  const urunKodu = selectedCodeColumn
+    ? normalizeText(row[selectedCodeColumn])
+    : "";
 
-    source.rows.forEach(row => {
-    allRows.push(row);
-      });
-      });
+  const urunAciklamasi = normalizeText(row[selectedDescriptionColumn]);
+  const birim = normalizeText(row[selectedUnitColumn]);
+  const miktar = normalizeQuantity(row[selectedQuantityColumn]);
 
-    const mergedMap = new Map();
+  if (!urunAciklamasi) return;
 
-      allRows.forEach((row) => {
-      const urun = normalizeText(row[selectedProductColumn]);
-      const birim = normalizeText(row[selectedUnitColumn]);
-      const miktar = normalizeQuantity(row[selectedQuantityColumn]);
+  const key = urunKodu
+    ? `${urunKodu.toLocaleLowerCase("tr-TR")}__${birim.toLocaleLowerCase("tr-TR")}`
+    : `${urunAciklamasi.toLocaleLowerCase("tr-TR")}__${birim.toLocaleLowerCase("tr-TR")}`;
 
-      if (!urun) return;
-
-      const key = `${urun.toLocaleLowerCase("tr-TR")}__${birim.toLocaleLowerCase("tr-TR")}`;
-
-      if (!mergedMap.has(key)) {
-        mergedMap.set(key, {
-          urun,
-          miktar,
-          birim,
-        });
-      } else {
-        const existing = mergedMap.get(key);
-        existing.miktar += miktar;
-        mergedMap.set(key, existing);
-      }
+  if (!mergedMap.has(key)) {
+    mergedMap.set(key, {
+      urunKodu,
+      urunAciklamasi,
+      miktar,
+      birim,
     });
+  } else {
+    const existing = mergedMap.get(key);
+    existing.miktar += miktar;
+    mergedMap.set(key, existing);
+  }
+});
 
-    const result = Array.from(mergedMap.values()).map((item, index) => ({
-      sira: index + 1,
-      urun: item.urun,
-      miktar: item.miktar,
-      birim: item.birim,
-    }));
+const result = Array.from(mergedMap.values()).map((item, index) => ({
+  sira: index + 1,
+  urunKodu: item.urunKodu,
+  urunAciklamasi: item.urunAciklamasi,
+  miktar: item.miktar,
+  birim: item.birim,
+}));
 
-    setNormalizedRows(result);
-    setMessage("Talep listesi icmalli olarak oluşturuldu.");
+  setNormalizedRows(result);
+
+  setParsedSources((prev) =>
+    prev.map((source) =>
+      source.id === selectedSourceId
+        ? {
+            ...source,
+            normalizedRows: result,
+          }
+        : source
+    )
+  );
+
+  setMessage(`${selectedSource.label} için ön liste oluşturuldu.`);
   };
 
   const handleExportExcel = () => {
@@ -778,7 +795,8 @@ export default function TaleplerPage() {
 
     const worksheetData = normalizedRows.map((row) => ({
       Sıra: row.sira,
-      Ürün: row.urun,
+      "Ürün Kodu": row.urunKodu || "-",
+      "Ürün Açıklaması": row.urunAciklamasi || "",
       Miktar: row.miktar,
       Birim: row.birim,
     }));
@@ -802,15 +820,16 @@ export default function TaleplerPage() {
     doc.text("Talep Listesi", 14, 15);
 
     const tableData = normalizedRows.map((row) => [
-      row.sira,
-      row.urun,
-      row.miktar,
-      row.birim,
+    row.sira,
+    row.urunKodu || "-",
+    row.urunAciklamasi || "",
+    row.miktar,
+    row.birim,
     ]);
 
     autoTable(doc, {
       startY: 25,
-      head: [["Sıra", "Ürün", "Miktar", "Birim"]],
+      head: [["Sıra", "Ürün Kodu", "Ürün Açıklaması", "Miktar", "Birim"]],
       body: tableData,
       styles: {
         fontSize: 10,
@@ -1100,7 +1119,7 @@ export default function TaleplerPage() {
                       setSelectedProductColumn("");
                       setSelectedQuantityColumn("");
                       setSelectedUnitColumn("");
-                      setNormalizedRows([]);
+                    
                     }}
                     className="w-full rounded-xl border border-slate-300 p-3 outline-none"
                   >
@@ -1120,8 +1139,8 @@ export default function TaleplerPage() {
                     Ürün kolonu
                   </label>
                   <select
-                    value={selectedProductColumn}
-                    onChange={(e) => setSelectedProductColumn(e.target.value)}
+                    value={selectedCodeColumn}
+                    onChange={(e) => setSelectedCodeColumn(e.target.value)}
                     className="w-full rounded-xl border border-slate-300 p-3 outline-none"
                   >
                     <option value="">Seçiniz</option>
@@ -1132,6 +1151,23 @@ export default function TaleplerPage() {
                     ))}
                   </select>
                 </div>
+                <div>
+                    <label className="mb-2 block text-sm font-medium text-slate-700">
+                Ürün açıklaması kolonu
+                      </label>
+                  <select
+                  value={selectedDescriptionColumn}
+                   onChange={(e) => setSelectedDescriptionColumn(e.target.value)}
+                  className="w-full rounded-xl border border-slate-300 p-3 outline-none"
+                  >
+                 <option value="">Seçiniz</option>
+                 {columns.map((col) => (
+                 <option key={col} value={col}>
+                  {col}
+                   </option>
+                     ))}
+                </select>
+              </div>
 
                 <div>
                   <label className="mb-2 block text-sm font-medium text-slate-700">
@@ -1282,7 +1318,8 @@ export default function TaleplerPage() {
                       <thead className="bg-slate-100">
                         <tr>
                           <th className="border border-slate-200 px-4 py-3 text-left">Sıra</th>
-                          <th className="border border-slate-200 px-4 py-3 text-left">Ürün</th>
+                          <th className="border border-slate-200 px-4 py-3 text-left">Ürün kodu</th>
+                          <th className="border border-slate-200 px-4 py-3 text-left">Ürün açıklaması</th>
                           <th className="border border-slate-200 px-4 py-3 text-left">Miktar</th>
                           <th className="border border-slate-200 px-4 py-3 text-left">Birim</th>
                         </tr>
@@ -1291,7 +1328,8 @@ export default function TaleplerPage() {
                         {normalizedRows.map((row) => (
                           <tr key={row.sira}>
                             <td className="border border-slate-200 px-4 py-3">{row.sira}</td>
-                            <td className="border border-slate-200 px-4 py-3">{row.urun}</td>
+                            <td className="border border-slate-200 px-4 py-3">{row.urunKodu}</td>
+                            <td className="border border-slate-200 px-4 py-3">{row.urunAciklamasi}</td>
                             <td className="border border-slate-200 px-4 py-3">{row.miktar}</td>
                             <td className="border border-slate-200 px-4 py-3">{row.birim}</td>
                           </tr>
@@ -1303,6 +1341,96 @@ export default function TaleplerPage() {
               </div>
             </div>
           )}
+{(autoCodeInfo || matchCandidates.length > 0 || mergePreviewRows.length > 0) && (
+  <div className="mt-8 rounded-2xl border border-slate-200 bg-white p-6">
+    <h3 className="text-xl font-semibold text-slate-800">
+      Eşleştirme ve Ön İcmal
+    </h3>
+
+    {autoCodeInfo && (
+      <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+        {autoCodeInfo}
+      </div>
+    )}
+
+    {matchCandidates.length > 0 ? (
+      <div className="mt-6">
+        <h4 className="text-lg font-medium text-slate-800">
+          Eşleştirme Gereken Ürünler
+        </h4>
+        <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-200">
+          <table className="w-full border-collapse text-sm">
+            <thead className="bg-slate-100">
+              <tr>
+                <th className="border border-slate-200 px-4 py-3 text-left">Yeni Kod</th>
+                <th className="border border-slate-200 px-4 py-3 text-left">Yeni Açıklama</th>
+                <th className="border border-slate-200 px-4 py-3 text-left">Önerilen Kod</th>
+                <th className="border border-slate-200 px-4 py-3 text-left">Önerilen Açıklama</th>
+                <th className="border border-slate-200 px-4 py-3 text-left">İşlem</th>
+              </tr>
+            </thead>
+            <tbody>
+              {matchCandidates.map((candidate) => (
+                <tr key={candidate.id}>
+                  <td className="border border-slate-200 px-4 py-3">
+                    {candidate.newCode || "-"}
+                  </td>
+                  <td className="border border-slate-200 px-4 py-3">
+                    {candidate.newDescription}
+                  </td>
+                  <td className="border border-slate-200 px-4 py-3">
+                    {candidate.suggestedCode || "-"}
+                  </td>
+                  <td className="border border-slate-200 px-4 py-3">
+                    {candidate.suggestedDescription || "-"}
+                  </td>
+                  <td className="border border-slate-200 px-4 py-3">
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        onClick={() => handleApproveMatch(candidate)}
+                        className="rounded-xl bg-emerald-600 px-3 py-2 text-white hover:bg-emerald-700"
+                      >
+                        Eşleştir
+                      </button>
+                      <button
+                        onClick={() => handleKeepSeparate(candidate)}
+                        className="rounded-xl bg-slate-200 px-3 py-2 text-slate-800 hover:bg-slate-300"
+                      >
+                        Ayrı Bırak
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="mt-6">
+                <button
+                  onClick={handleFinalizeMerge}
+                className="rounded-xl bg-blue-600 px-5 py-3 text-white hover:bg-blue-700"
+                 >
+                Final İcmali Oluştur
+                    </button>
+          </div>
+          </div>
+    ) : (
+      mergePreviewRows.length > 0 && (
+        <div className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+          Eşleştirme gerektiren ürün bulunamadı. Final icmal oluşturulabilir.
+        </div>
+      )
+    )}
+   <div className="mt-6">
+  <button
+    onClick={handleFinalizeMerge}
+    className="rounded-xl bg-blue-600 px-5 py-3 text-white hover:bg-blue-700"
+  >
+    Final İcmali Oluştur
+  </button>
+</div> 
+  </div>
+)}
 
           {message && (
             <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
