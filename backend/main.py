@@ -139,16 +139,17 @@ async def parse_pdf(file: UploadFile = File(...)):
         "rows": rows,
         "columns": ["sayfa", "satirNo", "urun", "birim", "miktar", "hamMetin"]
     }
-class ParsedSource(BaseModel):
-    id: str
-    fileName: str
-    sourceType: str
-    label: str
-    rows: List[dict]
-    columns: List[str]
+from pydantic import BaseModel
+from typing import List, Any
 
-class MergeRequest(BaseModel):
-    parsedSources: List[ParsedSource]
+class MergeRow(BaseModel):
+    urunKodu: str | None = ""
+    urunAciklamasi: str
+    miktar: float | int | str
+    birim: str
+
+class MergeRowsRequest(BaseModel):
+    rows: List[MergeRow]
 
 def normalize_text(value: Any) -> str:
     return str(value or "").strip()
@@ -167,39 +168,94 @@ def normalize_quantity(value: Any) -> float:
         return 0
 
 @app.post("/merge-sources")
-def merge_sources(payload: MergeRequest):
+def merge_sources(payload: MergeRowsRequest):
     merged = {}
+    auto_code_map = {}
+    auto_code_counter = 1
+    match_candidates = []
 
-    for source in payload.parsedSources:
-        for row in source.rows:
-            urun = normalize_text(row.get("urun"))
-            birim = normalize_text(row.get("birim"))
-            miktar = normalize_quantity(row.get("miktar"))
+    def generate_auto_code():
+        nonlocal auto_code_counter
+        code = f"PRD-{auto_code_counter:04}"
+        auto_code_counter += 1
+        return code
 
-            if not urun:
-                continue
+    def desc_key_of(aciklama: str, birim: str) -> str:
+        return f"{aciklama.lower()}__{birim.lower()}"
 
-            key = f"{urun.lower()}__{birim.lower()}"
+    # 1. GEÇİŞ: kodlu ürünleri topla
+    description_to_existing = {}
+    for row in payload.rows:
+        urun_kodu = normalize_text(row.urunKodu)
+        urun_aciklamasi = normalize_text(row.urunAciklamasi)
+        birim = normalize_text(row.birim)
 
-            if key not in merged:
-                merged[key] = {
-                    "urun": urun,
-                    "birim": birim,
-                    "miktar": miktar,
-                }
+        if urun_kodu and urun_aciklamasi:
+            description_to_existing[desc_key_of(urun_aciklamasi, birim)] = {
+                "urunKodu": urun_kodu,
+                "urunAciklamasi": urun_aciklamasi,
+            }
+
+    # 2. GEÇİŞ: tüm satırları işle
+    for row in payload.rows:
+        urun_kodu = normalize_text(row.urunKodu)
+        urun_aciklamasi = normalize_text(row.urunAciklamasi)
+        birim = normalize_text(row.birim)
+        miktar = normalize_quantity(row.miktar)
+
+        if not urun_aciklamasi:
+            continue
+
+        desc_key = desc_key_of(urun_aciklamasi, birim)
+
+        # Kod yoksa önce mevcut kodlu ürün var mı bak
+        if not urun_kodu:
+            if desc_key in description_to_existing:
+                suggested = description_to_existing[desc_key]
+
+                urun_kodu = generate_auto_code()
+
+                match_candidates.append({
+                    "id": f"{urun_kodu}__{desc_key}",
+                    "newCode": urun_kodu,
+                    "newDescription": urun_aciklamasi,
+                    "suggestedCode": suggested["urunKodu"],
+                    "suggestedDescription": suggested["urunAciklamasi"],
+                })
             else:
-                merged[key]["miktar"] += miktar
+                if desc_key not in auto_code_map:
+                    auto_code_map[desc_key] = generate_auto_code()
+                urun_kodu = auto_code_map[desc_key]
+
+        key = f"{urun_kodu.lower()}__{birim.lower()}"
+
+        if key not in merged:
+            merged[key] = {
+                "urunKodu": urun_kodu,
+                "urunAciklamasi": urun_aciklamasi,
+                "miktar": miktar,
+                "birim": birim,
+            }
+        else:
+            merged[key]["miktar"] += miktar
 
     result = []
     for i, item in enumerate(merged.values(), start=1):
         result.append({
             "sira": i,
-            "urun": item["urun"],
+            "urunKodu": item["urunKodu"],
+            "urunAciklamasi": item["urunAciklamasi"],
             "miktar": item["miktar"],
             "birim": item["birim"],
         })
 
+    auto_assigned_count = sum(
+        1 for item in result if item["urunKodu"].startswith("PRD-")
+    )
+
     return {
-        "message": "İcmal Python ile oluşturuldu ✅",
-        "rows": result
+        "message": "Kaynaklar birleştirildi.",
+        "rows": result,
+        "matchCandidates": match_candidates,
+        "autoAssignedCount": auto_assigned_count,
     }
