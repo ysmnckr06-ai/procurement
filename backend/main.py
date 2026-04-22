@@ -8,7 +8,9 @@ import pdfplumber
 import re
 import pytesseract
 from PIL import Image
-
+from fastapi.responses import StreamingResponse
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
 
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
@@ -471,12 +473,7 @@ class CompareOffersRequest(BaseModel):
     rows: List[dict]
     exchangeRates: dict
 
-
-@app.post("/compare-offers")
-def compare_offers(payload: CompareOffersRequest):
-    rows = payload.rows
-    exchange_rates = payload.exchangeRates or {"TRY": 1, "USD": 39.2, "EUR": 42.8}
-
+def build_offer_analysis(rows, exchange_rates):
     comparison_rows = []
     grouped = {}
 
@@ -490,13 +487,17 @@ def compare_offers(payload: CompareOffersRequest):
 
         key = f"{urun_kodu.lower()}__{urun_aciklamasi.lower()}"
 
+        normalized_para = safe_str(row.get("paraBirimi", "TRY")).upper() or "TRY"
+        if normalized_para in ["₺", "TL"]:
+            normalized_para = "TRY"
+
         normalized_row = {
             "urunKodu": urun_kodu,
             "urunAciklamasi": urun_aciklamasi,
             "talepEdilenAdet": safe_float(row.get("talepEdilenAdet", 0)),
             "firmaAdi": firma_adi,
             "firmaAdedi": safe_float(row.get("firmaAdedi", 0)),
-            "paraBirimi": safe_str(row.get("paraBirimi", "TRY")).upper() or "TRY",
+            "paraBirimi": normalized_para,
             "birimFiyat": safe_float(row.get("birimFiyat", 0)),
             "iskonto": safe_float(row.get("iskonto", 0)),
             "netBirimFiyatTRY": get_net_birim_fiyat(row, exchange_rates),
@@ -538,13 +539,141 @@ def compare_offers(payload: CompareOffersRequest):
             "termin": best["termin"],
         })
 
+    return comparison_rows, recommended_rows
+
+
+@app.post("/compare-offers")
+def compare_offers(payload: CompareOffersRequest):
+    rows = payload.rows
+    exchange_rates = payload.exchangeRates or {"TRY": 1, "USD": 39.2, "EUR": 42.8}
+
+    comparison_rows, recommended_rows = build_offer_analysis(rows, exchange_rates)
+
     return {
         "message": "Teklif karşılaştırması oluşturuldu.",
         "comparisonRows": comparison_rows,
         "recommendedRows": recommended_rows,
     }
 
+@app.post("/export-comparison-report")
+def export_comparison_report(payload: CompareOffersRequest):
 
+    rows = payload.rows
+    exchange_rates = payload.exchangeRates or {"TRY": 1, "USD": 39.2, "EUR": 42.8, "GBP": 41.2}
+
+    comparison_rows, recommended_rows = build_offer_analysis(rows, exchange_rates)
+
+    wb = Workbook()
+    ws_summary = wb.active
+    ws_summary.title = "Ozet"
+
+    ws_comparison = wb.create_sheet("Mukayese")
+    ws_recommended = wb.create_sheet("Oneri")
+
+    bold_font = Font(bold=True, color="FFFFFF")
+    dark_fill = PatternFill("solid", fgColor="1E3A8A")
+    thin = Side(style="thin", color="D1D5DB")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    center = Alignment(horizontal="center", vertical="center")
+
+    # Özet sayfası
+    ws_summary["A1"] = "TEKLIF KARŞILAŞTIRMA RAPORU"
+    ws_summary["A1"].font = Font(bold=True, size=16)
+
+    currencies = sorted(set([r["paraBirimi"] for r in comparison_rows])) if comparison_rows else []
+
+    summary_rows = [
+        ("Toplam Karşılaştırma Satırı", len(comparison_rows)),
+        ("Önerilen Firma Satırı", len(recommended_rows)),
+        ("Para Birimleri", ", ".join(currencies) if currencies else "-"),
+        ("USD Kuru", exchange_rates.get("USD", "")),
+        ("EUR Kuru", exchange_rates.get("EUR", "")),
+        ("GBP Kuru", exchange_rates.get("GBP", "")),
+    ]
+
+    row_index = 3
+    for label, value in summary_rows:
+        ws_summary[f"A{row_index}"] = label
+        ws_summary[f"B{row_index}"] = value
+        ws_summary[f"A{row_index}"].font = Font(bold=True)
+        row_index += 1
+
+    # Mukayese sayfası
+    comparison_headers = [
+        "urunKodu",
+        "urunAciklamasi",
+        "firmaAdi",
+        "firmaAdedi",
+        "paraBirimi",
+        "birimFiyat",
+        "iskonto",
+        "netBirimFiyatTRY",
+        "vade",
+        "termin",
+    ]
+
+    for col_index, header in enumerate(comparison_headers, start=1):
+        cell = ws_comparison.cell(row=1, column=col_index, value=header)
+        cell.font = bold_font
+        cell.fill = dark_fill
+        cell.alignment = center
+        cell.border = border
+
+    for row_index, item in enumerate(comparison_rows, start=2):
+        for col_index, header in enumerate(comparison_headers, start=1):
+            cell = ws_comparison.cell(row=row_index, column=col_index, value=item.get(header, ""))
+            cell.border = border
+
+    # Öneri sayfası
+    recommended_headers = [
+        "urunKodu",
+        "urunAciklamasi",
+        "onerilenFirma",
+        "onerilenParaBirimi",
+        "onerilenBirimFiyat",
+        "onerilenNetBirimFiyatTRY",
+        "firmaAdedi",
+        "vade",
+        "termin",
+    ]
+
+    for col_index, header in enumerate(recommended_headers, start=1):
+        cell = ws_recommended.cell(row=1, column=col_index, value=header)
+        cell.font = bold_font
+        cell.fill = dark_fill
+        cell.alignment = center
+        cell.border = border
+
+    for row_index, item in enumerate(recommended_rows, start=2):
+        for col_index, header in enumerate(recommended_headers, start=1):
+            cell = ws_recommended.cell(row=row_index, column=col_index, value=item.get(header, ""))
+            cell.border = border
+
+    # Kolon genişlikleri
+    for ws in [ws_summary, ws_comparison, ws_recommended]:
+        for col in ws.columns:
+            max_length = 0
+            column_letter = col[0].column_letter
+            for cell in col:
+                try:
+                    value_length = len(str(cell.value)) if cell.value is not None else 0
+                    if value_length > max_length:
+                        max_length = value_length
+                except:
+                    pass
+            ws.column_dimensions[column_letter].width = min(max(max_length + 2, 12), 30)
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": 'attachment; filename="teklif_karsilastirma_raporu.xlsx"'
+        },
+    )
 # -----------------------------
 # Merge Sources - eski yapı
 # -----------------------------
