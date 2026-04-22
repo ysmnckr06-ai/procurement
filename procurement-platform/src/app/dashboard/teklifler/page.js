@@ -161,9 +161,43 @@ export default function TekliflerPage() {
     }
   };
 
-  const handleDownloadReport = () => {
-    alert("Bir sonraki adımda bu butonu Excel/PDF rapor indirme endpointine bağlayacağız.");
-  };
+  const handleDownloadReport = async () => {
+  if (!reportReady || allParsedRows.length === 0) return;
+
+  try {
+    const response = await fetch("http://127.0.0.1:8000/export-comparison-report", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        rows: allParsedRows,
+        exchangeRates,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error("Rapor indirilemedi.");
+    }
+
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "teklif_karsilastirma_raporu.xlsx";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+
+    window.URL.revokeObjectURL(url);
+  } catch (error) {
+    console.error(error);
+    setMessage("Rapor indirilirken hata oluştu.");
+  }
+};
+
+
 
   return (
     <div className="min-h-screen bg-slate-100 p-6">
