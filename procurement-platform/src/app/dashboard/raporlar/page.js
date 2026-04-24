@@ -58,6 +58,19 @@ export default function RaporlarPage() {
     Gecikmiş: { arkaPlan: "#FEE2E2", yazi: "#991B1B" },
   };
 
+  function createOrderFromReport(rapor) {
+    const orderData = {
+      company: rapor.firma,
+      product: rapor.ad,
+      quantity: 1,
+      dueDate: "",
+    };
+
+    localStorage.setItem("pendingOrder", JSON.stringify(orderData));
+
+    window.location.href = "/dashboard/siparisler";
+  }
+
   return (
     <div
       style={{
@@ -320,6 +333,22 @@ export default function RaporlarPage() {
                 >
                   İncele
                 </Link>
+
+                <button
+                  type="button"
+                  onClick={() => createOrderFromReport(rapor)}
+                  style={{
+                    background: "#16a34a",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: "10px",
+                    padding: "10px 14px",
+                    fontWeight: "600",
+                    cursor: "pointer",
+                  }}
+                >
+                  Sipariş Oluştur
+                </button>
               </div>
             </div>
           ))}

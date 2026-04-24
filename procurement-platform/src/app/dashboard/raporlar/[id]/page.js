@@ -1,7 +1,9 @@
+"use client";
+
 import Link from "next/link";
 
-export default async function RaporDetayPage({ params }) {
-  const { id } = await params;
+export default function RaporDetayPage({ params }) {
+  const { id } = params;
 
   const rapor = {
     id,
@@ -15,7 +17,29 @@ export default async function RaporDetayPage({ params }) {
         : "Yazıcı Toneri",
     tarih: "2026-04-10",
     durum: "Hazır",
+    onerilenFirma:
+      id === "1"
+        ? "Tekno A.Ş."
+        : id === "2"
+        ? "Ofis Market"
+        : id === "3"
+        ? "Temiz Paket"
+        : "KartuşX",
+    miktar: id === "1" ? 10 : id === "2" ? 50 : id === "3" ? 30 : 20,
+    termin: "2026-04-30",
   };
+
+  function siparisOlustur() {
+    const orderData = {
+      company: rapor.onerilenFirma,
+      product: rapor.ad,
+      quantity: rapor.miktar,
+      dueDate: rapor.termin,
+    };
+
+    localStorage.setItem("pendingOrder", JSON.stringify(orderData));
+    window.location.href = "/dashboard/siparisler";
+  }
 
   return (
     <div
@@ -25,12 +49,7 @@ export default async function RaporDetayPage({ params }) {
         padding: "32px",
       }}
     >
-      <div
-        style={{
-          maxWidth: "1000px",
-          margin: "0 auto",
-        }}
-      >
+      <div style={{ maxWidth: "1000px", margin: "0 auto" }}>
         <div
           style={{
             background: "#ffffff",
@@ -64,6 +83,51 @@ export default async function RaporDetayPage({ params }) {
 
         <div
           style={{
+            background: "#ecfdf5",
+            border: "1px solid #bbf7d0",
+            borderRadius: "18px",
+            padding: "22px",
+            marginBottom: "24px",
+          }}
+        >
+          <h2
+            style={{
+              margin: 0,
+              fontSize: "22px",
+              color: "#166534",
+            }}
+          >
+            Önerilen Sipariş Kararı
+          </h2>
+
+          <p style={{ color: "#166534", marginTop: "10px" }}>
+            En uygun firma: <b>{rapor.onerilenFirma}</b>
+          </p>
+
+          <p style={{ color: "#166534" }}>
+            Ürün: <b>{rapor.ad}</b> • Miktar: <b>{rapor.miktar}</b> • Termin:{" "}
+            <b>{rapor.termin}</b>
+          </p>
+
+          <button
+            onClick={siparisOlustur}
+            style={{
+              marginTop: "12px",
+              background: "#16a34a",
+              color: "#fff",
+              border: "none",
+              borderRadius: "10px",
+              padding: "12px 16px",
+              fontWeight: "700",
+              cursor: "pointer",
+            }}
+          >
+            Bu Firmayla Sipariş Oluştur
+          </button>
+        </div>
+
+        <div
+          style={{
             display: "grid",
             gridTemplateColumns: "repeat(2, 1fr)",
             gap: "20px",
@@ -78,26 +142,13 @@ export default async function RaporDetayPage({ params }) {
               border: "1px solid #e5e7eb",
             }}
           >
-            <h2
-              style={{
-                marginTop: 0,
-                marginBottom: "12px",
-                fontSize: "22px",
-                color: "#111827",
-              }}
-            >
+            <h2 style={{ marginTop: 0, fontSize: "22px", color: "#111827" }}>
               Mukayese Raporu
             </h2>
 
-            <p
-              style={{
-                color: "#6b7280",
-                fontSize: "14px",
-                lineHeight: "1.6",
-              }}
-            >
-              Bu alanda firmaların teklif fiyatları, teslim süresi, uygunluk
-              durumu ve genel karşılaştırma bilgileri gösterilecek.
+            <p style={{ color: "#6b7280", fontSize: "14px", lineHeight: "1.6" }}>
+              Firmaların teklif fiyatları, teslim süresi ve genel karşılaştırma
+              bilgileri burada görüntülenir.
             </p>
 
             <Link
@@ -126,26 +177,13 @@ export default async function RaporDetayPage({ params }) {
               border: "1px solid #e5e7eb",
             }}
           >
-            <h2
-              style={{
-                marginTop: 0,
-                marginBottom: "12px",
-                fontSize: "22px",
-                color: "#111827",
-              }}
-            >
+            <h2 style={{ marginTop: 0, fontSize: "22px", color: "#111827" }}>
               Son Alım Raporu
             </h2>
 
-            <p
-              style={{
-                color: "#6b7280",
-                fontSize: "14px",
-                lineHeight: "1.6",
-              }}
-            >
-              Bu alanda ürünün geçmiş alım bilgileri, önceki fiyatlar, tedarikçi
-              geçmişi ve son alım özeti gösterilecek.
+            <p style={{ color: "#6b7280", fontSize: "14px", lineHeight: "1.6" }}>
+              Ürünün geçmiş alım bilgileri, önceki fiyatları ve tedarikçi geçmişi
+              burada görüntülenir.
             </p>
 
             <Link
