@@ -59,107 +59,66 @@ export default function TekliflerPage() {
     return detectedCurrencies.some((currency) => currency !== "TRY");
   }, [detectedCurrencies]);
 
-  const handleFileUpload = async (e) => {
-    const uploadedFiles = Array.from(e.target.files || []);
-    if (uploadedFiles.length === 0) return;
+ const handleFileUpload = async (e) => {
+  const uploadedFiles = Array.from(e.target.files || []);
+  if (uploadedFiles.length === 0) return;
 
-    const currentCount = files.length;
-    const remaining = Math.max(0, 15 - currentCount);
-    const allowedNewFiles = uploadedFiles.slice(0, remaining);
+  const currentCount = files.length;
+  const remaining = Math.max(0, 15 - currentCount);
+  const allowedNewFiles = uploadedFiles.slice(0, remaining);
 
-    if (allowedNewFiles.length === 0) {
-      setMessage("En fazla 15 dosya yükleyebilirsiniz.");
-      return;
-    }
+  if (allowedNewFiles.length === 0) {
+    setMessage("En fazla 15 dosya yükleyebilirsiniz.");
+    return;
+  }
 
-    setFiles((prev) => [...prev, ...allowedNewFiles]);
-    setMessage("");
-    setIsUploading(true);
-    setReportReady(false);
-
-    try {
-      const results = [];
-
-      for (const file of allowedNewFiles) {
-        const formData = new FormData();
-        formData.append("file", file);
-
-        const response = await fetch("http://127.0.0.1:8000/parse-offer-file", {
-          method: "POST",
-          body: formData,
-        });
-
-        const data = await response.json();
-
-        results.push({
-          id: data.id || `${file.name}-${Date.now()}`,
-          fileName: data.fileName || file.name,
-          sourceType: data.sourceType || "unknown",
-          rows: data.rows || [],
-          error: data.error || "",
-        });
-      }
-
-      setParsedSources((prev) => [...prev, ...results]);
-
-      const totalRows = results.reduce((sum, item) => sum + (item.rows?.length || 0), 0);
-
-      if (totalRows > 0) {
-        setMessage(`Dosyalar yüklendi. ${allowedNewFiles.length} yeni dosya işlendi.`);
-      } else {
-        setMessage("Dosyalar yüklendi ama analiz edilebilir satır bulunamadı.");
-      }
-    } catch (error) {
-      console.error(error);
-      setMessage("Dosyalar işlenirken hata oluştu.");
-    } finally {
-      setIsUploading(false);
-      e.target.value = "";
-    }
-  };
+  setFiles((prev) => [...prev, ...allowedNewFiles]);
+  setMessage("");
+  setReportReady(false);
+  e.target.value = "";
+};
 
   const handleAnalyze = async () => {
-    if (files.length === 0) {
-      setMessage("Lütfen önce teklif dosyası yükleyin.");
-      return;
+  if (files.length === 0) {
+    setMessage("Lütfen önce teklif dosyası yükleyin.");
+    return;
+  }
+
+  setIsAnalyzing(true);
+  setReportReady(false);
+  setMessage("");
+
+  try {
+    const formData = new FormData();
+
+    files.forEach((file) => {
+      formData.append("files", file);
+    });
+
+    formData.append("firma_adlari_text", "A Firması,B Firması,C Firması");
+
+    const response = await fetch("http://127.0.0.1:8000/analyze-offers", {
+      method: "POST",
+      body: formData,
+    });
+
+    const data = await response.json();
+
+    if (data.success) {
+      setReportReady(true);
+      setReportPath(`http://127.0.0.1:8000${data.reportPath}`);
+      setLastReportTime(new Date().toLocaleString("tr-TR"));
+      setMessage("Teklifler analiz edildi ve mukayese raporu oluşturuldu.");
+    } else {
+      setMessage(data.warnings?.join(" | ") || "Rapor oluşturulamadı.");
     }
-
-    if (allParsedRows.length === 0) {
-      setMessage("Yüklenen dosyalardan analiz edilebilir veri çıkarılamadı.");
-      return;
-    }
-
-    setIsAnalyzing(true);
-    setReportReady(false);
-
-    try {
-      const response = await fetch("http://127.0.0.1:8000/compare-offers", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          rows: allParsedRows,
-          exchangeRates,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (data.comparisonRows?.length || data.recommendedRows?.length) {
-        setReportReady(true);
-        setLastReportTime(new Date().toLocaleString("tr-TR"));
-        setMessage("Teklifler analiz edildi ve karşılaştırma raporu oluşturuldu.");
-      } else {
-        setMessage("Rapor oluşturulamadı.");
-      }
-    } catch (error) {
-      console.error(error);
-      setMessage("Teklif analizi sırasında hata oluştu.");
-    } finally {
-      setIsAnalyzing(false);
-    }
-  };
+  } catch (error) {
+    console.error(error);
+    setMessage("Teklif analizi sırasında hata oluştu.");
+  } finally {
+    setIsAnalyzing(false);
+  }
+};
 
   const handleDownloadReport = async () => {
   if (!reportReady || allParsedRows.length === 0) return;
