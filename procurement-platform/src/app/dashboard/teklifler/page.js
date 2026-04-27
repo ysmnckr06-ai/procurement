@@ -25,7 +25,8 @@ export default function TekliflerPage() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [reportReady, setReportReady] = useState(false);
   const [lastReportTime, setLastReportTime] = useState("");
-
+  const [reportPath, setReportPath] = useState("");
+  
   const [exchangeRates, setExchangeRates] = useState({
     TRY: 1,
     USD: 39.2,
@@ -120,40 +121,18 @@ export default function TekliflerPage() {
   }
 };
 
-  const handleDownloadReport = async () => {
-  if (!reportReady || allParsedRows.length === 0) return;
-
-  try {
-    const response = await fetch("http://127.0.0.1:8000/export-comparison-report", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        rows: allParsedRows,
-        exchangeRates,
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error("Rapor indirilemedi.");
-    }
-
-    const blob = await response.blob();
-    const url = window.URL.createObjectURL(blob);
-
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "teklif_karsilastirma_raporu.xlsx";
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-
-    window.URL.revokeObjectURL(url);
-  } catch (error) {
-    console.error(error);
-    setMessage("Rapor indirilirken hata oluştu.");
+const handleDownloadReport = () => {
+  if (!reportReady || !reportPath) {
+    setMessage("İndirilecek rapor bulunamadı.");
+    return;
   }
+
+  const link = document.createElement("a");
+  link.href = reportPath;
+  link.download = "mukayese_raporu.xlsx";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
 };
 
 
