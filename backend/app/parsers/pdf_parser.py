@@ -58,7 +58,7 @@ def parse_pdf(file_path, firma_adi, file_name):
 
         rows.append({
             "firmaAdi": firma_adi,
-            "urunKodu": f"PDF-{row_no:04d}",
+            "urunKodu": "",
             "urunAciklamasi": urun_aciklamasi,
             "birim": "adet",
             "talepEdilenAdet": adet,

@@ -163,7 +163,7 @@ def parse_image(image_path: str, firma_adi: str, file_name: str):
             "urunKodu": parsed["urunKodu"],
             "urunAciklamasi": parsed["urunAciklamasi"],
             "birim": "adet",
-            "talepEdilenAdet": parsed["firmaAdedi"],
+            "talepEdilenAdet": 0,
             "firmaAdedi": parsed["firmaAdedi"],
             "paraBirimi": parsed["paraBirimi"],
             "birimFiyat": parsed["birimFiyat"],

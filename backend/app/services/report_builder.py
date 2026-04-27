@@ -235,14 +235,13 @@ def build_excel_report(analyzed_groups, output_path):
         best = group.get("bestOffer", {})
         best_firma = _clean(best.get("firmaAdi", ""))
         best_net = _safe_num(best.get("netBirimFiyatTRY", 0))
-        talep = 0
+        talep = _safe_num(group.get("talepEdilenAdet", 0))
 
         # firma map
         offer_map = {}
         for o in offers:
             offer_map[_clean(o.get("firmaAdi", ""))] = o
-            if not talep:
-                talep = _safe_num(o.get("talepEdilenAdet", 0))
+            
 
         kod = _clean(group.get("urunKodu", ""))
         aciklama = _clean(group.get("urunAciklamasi", ""))
@@ -268,7 +267,7 @@ def build_excel_report(analyzed_groups, output_path):
             iskonto = _safe_num(o.get("iskonto", 0))
             net_birim = _safe_num(o.get("netBirimFiyatTRY", 0))
             firma_adedi = _safe_num(o.get("firmaAdedi", 0))
-            net_toplam = net_birim * (firma_adedi if firma_adedi > 0 else 1)
+            net_toplam = _safe_num(o.get("netToplamTRY", 0))
             vade = _clean(o.get("vade", ""))
             termin = _clean(o.get("termin", ""))
 
@@ -291,7 +290,7 @@ def build_excel_report(analyzed_groups, output_path):
 
         ws.write(row, c + 0, best_firma or "-", green_cell if best_firma else base_cell)
         ws.write(row, c + 1, reason, text_cell)
-        ws.write_number(row, c + 2, best_net * (_safe_num(best.get("firmaAdedi", 0)) if _safe_num(best.get("firmaAdedi", 0)) > 0 else 1), green_money if best_firma else money_cell)
+        ws.write_number(row, c + 2, _safe_num(best.get("netToplamTRY", 0)), green_money if best_firma else money_cell)
         ws.write(row, c + 3, note, text_cell)
 
         row += 1
@@ -347,7 +346,7 @@ def build_excel_report(analyzed_groups, output_path):
     ws.merge_range(box_row, 18, box_row, 23, "NOTLAR", note_box_title)
     notes = [
         "• Net birim fiyat = Birim fiyat x (1 - iskonto%).",
-        "• Net toplam = Net birim fiyat x firma adedi.",
+        "• Net toplam = Net birim fiyat x talep edilen adet.",
         "• Para birimi dönüşümleri kur bilgisine göre yapılmıştır.",
         "• Bu rapor bilgilendirme amaçlıdır."
     ]
