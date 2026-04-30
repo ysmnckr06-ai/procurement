@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 function InfoBox({ title, text, tone = "blue" }) {
   const toneClasses = {
@@ -26,7 +26,19 @@ export default function TekliflerPage() {
   const [reportReady, setReportReady] = useState(false);
   const [lastReportTime, setLastReportTime] = useState("");
   const [reportPath, setReportPath] = useState("");
+  const [requestLists, setRequestLists] = useState([]);
+  const [selectedRequestId, setSelectedRequestId] = useState("");
+  const [requestFile, setRequestFile] = useState(null);
   
+  useEffect(() => {
+  const stored = JSON.parse(localStorage.getItem("talepListeleri") || "[]");
+  setRequestLists(stored);
+
+  if (stored.length > 0) {
+    setSelectedRequestId(String(stored[0].id));
+  }
+  }, []);
+
   const [exchangeRates, setExchangeRates] = useState({
     TRY: 1,
     USD: 39.2,
@@ -77,20 +89,30 @@ export default function TekliflerPage() {
   setMessage("");
   setReportReady(false);
   e.target.value = "";
-};
+  };
 
   const handleAnalyze = async () => {
-  if (files.length === 0) {
+
+    const selectedRequest = requestLists.find(
+  (item) => String(item.id) === String(selectedRequestId)
+      );
+
+    if (!selectedRequest) {
+    setMessage("Lütfen önce bir talep listesi seçin.");
+    return;
+  }
+    if (files.length === 0) {
     setMessage("Lütfen önce teklif dosyası yükleyin.");
     return;
   }
-
   setIsAnalyzing(true);
   setReportReady(false);
   setMessage("");
 
   try {
     const formData = new FormData();
+      formData.append("request_report_path", selectedRequest.reportPath);
+      formData.append("request_file_name", selectedRequest.fileName);
 
     files.forEach((file) => {
       formData.append("files", file);
@@ -104,7 +126,9 @@ export default function TekliflerPage() {
     });
 
     const data = await response.json();
-
+    console.log("ANALİZ CEVABI:", data);
+    alert(JSON.stringify(data, null, 2));
+    
     if (data.success) {
       setReportReady(true);
       setReportPath(`http://127.0.0.1:8000${data.reportPath}`);
@@ -119,9 +143,9 @@ export default function TekliflerPage() {
   } finally {
     setIsAnalyzing(false);
   }
-};
+  };
 
-const handleDownloadReport = () => {
+  const handleDownloadReport = () => {
   if (!reportReady || !reportPath) {
     setMessage("İndirilecek rapor bulunamadı.");
     return;
@@ -133,9 +157,7 @@ const handleDownloadReport = () => {
   document.body.appendChild(link);
   link.click();
   link.remove();
-};
-
-
+  };
 
   return (
     <div className="min-h-screen bg-slate-100 p-6">
@@ -148,6 +170,32 @@ const handleDownloadReport = () => {
         </div>
 
         <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h2 className="text-xl font-semibold text-slate-800">Talep Listesi Seç</h2>
+          <p className="mt-2 text-sm text-slate-600">
+            Teklifleri hangi talep listesine göre karşılaştıracağınızı seçin.
+          </p>
+
+          <select
+            value={selectedRequestId}
+            onChange={(e) => setSelectedRequestId(e.target.value)}
+            className="mt-4 w-full rounded-xl border border-slate-300 bg-white p-3"
+          >
+          <option value="">Talep listesi seçin</option>
+
+    {requestLists.map((item) => (
+      <option key={item.id} value={item.id}>
+        {item.createdAt} - {item.fileName}
+      </option>
+    ))}
+  </select>
+
+  {selectedRequestId && (
+    <p className="mt-3 text-sm text-green-700">
+      Talep listesi seçildi ✅
+    </p>
+  )}
+</div>
           <h2 className="text-xl font-semibold text-slate-800">Dosya Yükleme</h2>
           <p className="mt-2 text-sm text-slate-600">
             En fazla 15 teklif dosyası yükleyebilirsiniz.

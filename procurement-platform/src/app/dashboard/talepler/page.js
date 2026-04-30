@@ -55,9 +55,30 @@ export default function TaleplerPage() {
   };
 
   const handleSendToOffers = () => {
-    localStorage.setItem("talepListesi", JSON.stringify(rows));
-    window.location.href = "/dashboard/teklifler";
+  if (!reportPath) {
+    setMessage("Önce talep listesi oluşturmalısınız.");
+    return;
+  }
+
+  const yeniTalep = {
+    id: Date.now(),
+    fileName: "talep_listesi.xlsx",
+    reportPath: reportPath,
+    rows: rows,
+    createdAt: new Date().toLocaleString("tr-TR"),
   };
+
+  const eskiTalepler = JSON.parse(
+    localStorage.getItem("talepListeleri") || "[]"
+  );
+
+  localStorage.setItem(
+    "talepListeleri",
+    JSON.stringify([yeniTalep, ...eskiTalepler])
+  );
+
+  window.location.href = "/dashboard/teklifler";
+};
 
   return (
     <div className="p-6 space-y-6">
