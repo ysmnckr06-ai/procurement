@@ -80,5 +80,27 @@ def group_rows(rows):
                 "master": build_master_row([row]),
                 "offers": [row]
             })
+def match_offers_to_requests(offers, requests):
+    groups = []
+
+    for req in requests:
+        req_key = (req.get("urunKodu") or "").strip().lower()
+        req_desc = (req.get("urunAciklamasi") or "").strip().lower()
+
+        matched = []
+
+        for off in offers:
+            off_key = (off.get("urunKodu") or "").strip().lower()
+            off_desc = (off.get("urunAciklamasi") or "").strip().lower()
+
+            if req_key and req_key == off_key:
+                matched.append(off)
+            elif req_desc and req_desc in off_desc:
+                matched.append(off)
+
+        groups.append({
+            "master": req,
+            "offers": matched
+        })
 
     return groups
