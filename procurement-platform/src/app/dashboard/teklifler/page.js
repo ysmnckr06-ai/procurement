@@ -29,6 +29,10 @@ export default function TekliflerPage() {
   const [requestLists, setRequestLists] = useState([]);
   const [selectedRequestId, setSelectedRequestId] = useState("");
   const [requestFile, setRequestFile] = useState(null);
+  const [maxBudget, setMaxBudget] = useState("");
+  const [minVadeDays, setMinVadeDays] = useState("");
+  const [maxTerminDays, setMaxTerminDays] = useState("");
+  const [allowMissingQty, setAllowMissingQty] = useState(false);
   
   useEffect(() => {
   const stored = JSON.parse(localStorage.getItem("talepListeleri") || "[]");
@@ -119,6 +123,10 @@ export default function TekliflerPage() {
     });
 
     formData.append("firma_adlari_text", "A Firması,B Firması,C Firması");
+    formData.append("max_budget", maxBudget);
+    formData.append("min_vade_days", minVadeDays);
+    formData.append("max_termin_days", maxTerminDays);
+    formData.append("allow_missing_qty", allowMissingQty ? "true" : "false");
 
     const response = await fetch("http://127.0.0.1:8000/analyze-offers", {
       method: "POST",
@@ -285,6 +293,47 @@ export default function TekliflerPage() {
           )}
         </div>
 
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h2 className="text-xl font-semibold text-slate-800">Satınalma Kriterleri</h2>
+
+          <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
+
+            <input
+              type="number"
+              placeholder="Maksimum bütçe"
+              value={maxBudget}
+              onChange={(e) => setMaxBudget(e.target.value)}
+              className="border p-2 rounded"
+            />
+
+            <input
+              type="number"
+              placeholder="Minimum vade (gün)"
+              value={minVadeDays}
+              onChange={(e) => setMinVadeDays(e.target.value)}
+              className="border p-2 rounded"
+            />
+
+            <input
+              type="number"
+              placeholder="Maksimum termin (gün)"
+              value={maxTerminDays}
+              onChange={(e) => setMaxTerminDays(e.target.value)}
+              className="border p-2 rounded"
+            />
+
+          </div>
+
+          <label className="mt-4 flex gap-2">
+            <input
+              type="checkbox"
+              checked={allowMissingQty}
+              onChange={(e) => setAllowMissingQty(e.target.checked)}
+            />
+            Eksik adet kabul et
+          </label>
+        </div>
+        
         <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <h2 className="text-xl font-semibold text-slate-800">Rapor Oluşturma</h2>
 
