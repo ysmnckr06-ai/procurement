@@ -317,10 +317,11 @@ def parse_image(image_path, firma_adi="", file_name=""):
         text = pytesseract.image_to_string(th, lang="eng", config="--psm 6")
 
     lines = [fix_ocr_text(l) for l in text.split("\n") if fix_ocr_text(l)]
-    firma = detect_company_from_image(img, firma_adi, file_name)
+
+    firma = detect_company_name(lines, firma_adi, file_name)
 
     if not firma or re.search(r"^[A-ZÇĞİÖŞÜ]?\s*firması$", firma, re.IGNORECASE):
-        firma = os.path.splitext(file_name)[0].replace("_", " ").replace("-", " ").title()
+        firma = os.path.splitext(file_name)[0].replace("_", " ").upper()
 
     vade, termin_footer, dip, kdv, genel = detect_footer(lines)
 
@@ -335,7 +336,7 @@ def parse_image(image_path, firma_adi="", file_name=""):
         rows.append({
             "firma": firma,
             "firmaAdi": firma,
-            "urunKodu": parsed["urunKodu"],
+            "urunKodu": str(parsed.get("urunKodu", "")).strip().upper(),
             "urunAciklamasi": parsed["urunAciklamasi"],
             "birim": parsed["birim"] or "adet",
             "firmaAdedi": parsed["firmaAdedi"],

@@ -1,6 +1,10 @@
 import os
 import shutil
 import re
+import json
+import uuid
+from datetime import datetime
+
 
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import FileResponse, HTMLResponse
@@ -51,6 +55,43 @@ app.add_middleware(
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMP_DIR = os.path.join(BASE_DIR, "app", "temp")
+REPORTS_FILE = os.path.join(TEMP_DIR, "reports.json")
+ORDERS_FILE = os.path.join(TEMP_DIR, "orders.json")
+
+
+def load_json(path):
+    if not os.path.exists(path):
+        return []
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def save_json(path, data):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def find_best_supplier(analyzed):
+    counts = {}
+
+    for group in analyzed:
+        best = (
+            group.get("best")
+            or group.get("bestOffer")
+            or group.get("onerilenTeklif")
+            or {}
+        )
+
+        firma = best.get("firmaAdi") or best.get("firma")
+
+        if firma:
+            counts[firma] = counts.get(firma, 0) + 1
+
+    if not counts:
+        return "-"
+
+    return max(counts, key=counts.get)
+
 os.makedirs(TEMP_DIR, exist_ok=True)
 
 
@@ -193,7 +234,7 @@ async def analyze_offers(
     ]
 
     for i, upload in enumerate(files):
-        firma_adi = firma_adlari[i] if i < len(firma_adlari) else f"Firma {i + 1}"
+        firma_adi = os.path.splitext(upload.filename)[0].replace("_", " ").replace("-", " ").title()
         file_type = detect_file_type(upload.filename)
         save_path = os.path.join(TEMP_DIR, upload.filename)
 
@@ -356,12 +397,32 @@ async def analyze_offers(
 
     build_excel_report(analyzed, report_path)
 
-    return {
-        "success": True,
+    reports = load_json(REPORTS_FILE)
+
+    report_id = str(uuid.uuid4())
+
+    report_record = {
+        "id": report_id,
+        "ad": request_file_name or "Teklif Mukayese Raporu",
+        "tarih": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "tur": "Mukayese",
+        "durum": "Bekliyor",
+        "onerilenFirma": find_best_supplier(analyzed),
         "reportPath": f"/download-report/{report_name}",
-        "warnings": warnings,
         "totalRows": len(filtered),
         "totalGroups": len(analyzed),
+    }
+
+    reports.insert(0, report_record)
+    save_json(REPORTS_FILE, reports)
+
+    return {
+    "success": True,
+    "reportId": report_id,
+    "reportPath": f"/download-report/{report_name}",
+    "warnings": warnings,
+    "totalRows": len(filtered),
+    "totalGroups": len(analyzed),
     }
 
 
@@ -526,3 +587,96 @@ def download_request_report(file_name: str):
         filename=file_name,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+
+@app.get("/reports")
+def list_reports():
+    return {
+        "success": True,
+        "reports": load_json(REPORTS_FILE)
+    }
+
+
+@app.get("/reports/{report_id}")
+def get_report(report_id: str):
+    reports = load_json(REPORTS_FILE)
+
+    for report in reports:
+        if report["id"] == report_id:
+            return {
+                "success": True,
+                "report": report
+            }
+
+    return {
+        "success": False,
+        "message": "Rapor bulunamadı."
+    }
+
+
+@app.post("/reports/{report_id}/approve")
+def approve_report(report_id: str):
+    reports = load_json(REPORTS_FILE)
+
+    for report in reports:
+        if report["id"] == report_id:
+            report["durum"] = "Tamamlandı"
+            save_json(REPORTS_FILE, reports)
+            return {
+                "success": True,
+                "report": report
+            }
+
+    return {
+        "success": False,
+        "message": "Rapor bulunamadı."
+    }
+
+
+@app.post("/reports/{report_id}/create-order")
+def create_order_from_report(report_id: str):
+    reports = load_json(REPORTS_FILE)
+    orders = load_json(ORDERS_FILE)
+
+    selected_report = None
+
+    for report in reports:
+        if report["id"] == report_id:
+            selected_report = report
+            break
+
+    if not selected_report:
+        return {
+            "success": False,
+            "message": "Rapor bulunamadı."
+        }
+
+    order = {
+        "id": str(uuid.uuid4()),
+        "siparisNo": f"SIP-{len(orders) + 1:04d}",
+        "firma": selected_report.get("onerilenFirma", "-"),
+        "urun": selected_report.get("ad", "Mukayese Raporu"),
+        "miktar": "-",
+        "siparisTarihi": datetime.now().strftime("%Y-%m-%d"),
+        "termin": "-",
+        "durum": "Bekliyor",
+        "reportId": report_id,
+    }
+
+    orders.insert(0, order)
+    save_json(ORDERS_FILE, orders)
+
+    selected_report["durum"] = "Tamamlandı"
+    save_json(REPORTS_FILE, reports)
+
+    return {
+        "success": True,
+        "order": order
+    }
+
+
+@app.get("/orders")
+def list_orders():
+    return {
+        "success": True,
+        "orders": load_json(ORDERS_FILE)
+    }

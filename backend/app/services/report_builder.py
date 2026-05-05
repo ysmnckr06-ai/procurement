@@ -389,7 +389,7 @@ def build_excel_report(analyzed_groups, output_path):
     karar_cols = [
         "Önerilen Firma",
         "Karar Nedeni",
-        "En Avantajlı Net Tutar (TRY)",
+        "En Avantajlı Değerlendirilmiş Maliyet (TRY)",
         "Not"
     ]
 
@@ -473,12 +473,38 @@ def build_excel_report(analyzed_groups, output_path):
 
             c += 8
 
-        reason = group.get("kararNedeni") or _pick_reason(best, offers)
+        if best and best.get("uygunMu"):
+            reason = (
+                f"{best.get('firmaAdi') or best.get('firma') or '-'} önerildi; "
+                f"bütçe, vade ve termin kriterlerini sağlıyor. "
+                f"Net toplam: {_safe_num(best.get('netToplamTRY', 0)):,.2f} TRY, "
+                f"vade: {best.get('vadeDays', 0)} gün, "
+                f"termin: {best.get('terminDays', 0)} gün."
+            )
+        else:
+            reason = group.get("kararNedeni") or _pick_reason(best, offers)
 
         note_parts = []
 
         if kod.upper().startswith("PRD-"):
             note_parts.append("*Otomatik kod")
+
+        urun_aciklamalari = set()
+
+        master_desc = str(group.get("master", {}).get("urunAciklamasi", "")).strip().upper()
+        if master_desc:
+            urun_aciklamalari.add(master_desc)
+
+        for offer in offers:
+            desc = str(offer.get("urunAciklamasi", "")).strip().upper()
+            if desc:
+                urun_aciklamalari.add(desc)
+
+        if kod and not kod.upper().startswith("PRD-") and len(urun_aciklamalari) > 1:
+            note_parts.append(
+                f"Kritik uyarı: {kod} kodu farklı ürün açıklamalarıyla geldi: "
+                + ", ".join(sorted(urun_aciklamalari))
+            )
 
         if best and _safe_num(best.get("eksikAdet", 0)) > 0:
             note_parts.append("Eksik adet uyarısı")
@@ -486,12 +512,27 @@ def build_excel_report(analyzed_groups, output_path):
         for n in best.get("kararNotlari", []) if best else []:
             note_parts.append(str(n))
 
+        for offer in offers:
+            if not offer.get("uygunMu"):
+                firma = offer.get("firmaAdi") or offer.get("firma") or "-"
+                reasons = offer.get("kararNotlari", []) or offer.get("eliminationReasons", [])
+
+                kriter_reasons = [
+                    str(r) for r in reasons
+                    if "Kriter dışı" in str(r) or "Elendi" in str(r)
+                ]
+
+                if kriter_reasons:
+                    note_parts.append(
+                        f"{firma} elendi: " + "; ".join(kriter_reasons)
+                    )
+
         note = " | ".join(note_parts) if note_parts else "-"
 
         ws.write(row, c + 0, best_firma or "-", green_cell if best_firma else base_cell)
         ws.write(row, c + 1, reason, text_cell)
 
-        best_total = _safe_num(best.get("netToplamTRY", 0))
+        best_total = _safe_num(best.get("evaluatedCostTRY", 0))
 
 
         ws.write_number(row, c + 2, best_total, green_money if best_firma else money_cell)

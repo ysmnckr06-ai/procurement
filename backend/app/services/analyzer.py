@@ -292,22 +292,21 @@ def score_offer(row, exchange_rates, talep_edilen_adet, config=None, constraints
 
     uygun = True
 
-    if constraints:
-        max_budget = constraints.get("max_budget")
-        min_vade = constraints.get("min_vade_days")
-        max_termin = constraints.get("max_termin_days")
-        allow_missing = constraints.get("allow_missing_qty")
+    max_budget = constraints.get("max_budget")
+    min_vade = constraints.get("min_vade_days")
+    max_termin = constraints.get("max_termin_days")
+    allow_missing = constraints.get("allow_missing_qty", True)
 
-    if max_budget and net_toplam_try > max_budget:
+    if max_budget is not None and max_budget > 0 and net_toplam_try > max_budget:
         uygun = False
 
-    if min_vade and vade_days < min_vade:
+    if min_vade is not None and min_vade > 0 and vade_days < min_vade:
         uygun = False
 
-    if max_termin and termin_days > max_termin:
+    if max_termin is not None and max_termin > 0 and termin_days > max_termin:
         uygun = False
 
-    if not allow_missing and eksik_adet > 0:
+    if allow_missing is False and eksik_adet > 0:
         uygun = False
 
     constraint_result = apply_constraints(metrics, constraints) or {
@@ -362,7 +361,7 @@ def score_offer(row, exchange_rates, talep_edilen_adet, config=None, constraints
 
     metrics.update({
         "eligible": constraint_result["eligible"],
-        "uygunMu": birim_fiyat > 0 and constraint_result["eligible"] and uygun,
+        "uygunMu": net_birim_try > 0 and constraint_result["eligible"] and uygun,
         "eliminationReasons": constraint_result["eliminationReasons"],
         "kararNotlari": karar_notlari,
     })
