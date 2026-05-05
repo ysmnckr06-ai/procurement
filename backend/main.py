@@ -1,7 +1,6 @@
 import os
 import shutil
 import re
-import unicodedata
 
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import FileResponse, HTMLResponse
@@ -12,14 +11,30 @@ from app.parsers.pdf_parser import parse_pdf
 from app.parsers.image_parser import parse_image
 from app.parsers.request_parser import parse_request_file
 
-from app.services.matcher import match_offers_to_requests
+from app.services.matcher import match_offers_to_requests, group_rows
 from app.services.analyzer import analyze_groups
 from app.services.report_builder import build_excel_report
 from app.services.request_report_builder import build_request_report
 
 from app.utils import normalize_text
 
+def safe_float_form(val):
+    try:
+        if val is None or val == "":
+            return None
+        return float(str(val).replace(",", "."))
+    except:
+        return None
 
+
+def safe_int_form(val):
+    try:
+        if val is None or val == "":
+            return None
+        return int(val)
+    except:
+        return None
+    
 app = FastAPI()
 
 app.add_middleware(
@@ -27,6 +42,7 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        "http://192.168.1.5:3000",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -40,51 +56,46 @@ os.makedirs(TEMP_DIR, exist_ok=True)
 
 def detect_file_type(filename: str) -> str:
     ext = filename.lower().split(".")[-1]
+
     if ext in ["xlsx", "xls"]:
         return "excel"
+
     if ext == "pdf":
         return "pdf"
+
     if ext in ["png", "jpg", "jpeg", "webp"]:
         return "image"
+
     return "unknown"
 
+
 def clean_key(value: str) -> str:
-    import re
+    text = str(value or "").lower()
 
-    text = value.lower()
-
-    # Türkçe karakter normalize
     text = (
         text.replace("ı", "i")
-            .replace("ğ", "g")
-            .replace("ü", "u")
-            .replace("ş", "s")
-            .replace("ö", "o")
-            .replace("ç", "c")
+        .replace("ğ", "g")
+        .replace("ü", "u")
+        .replace("ş", "s")
+        .replace("ö", "o")
+        .replace("ç", "c")
     )
 
-    # Fazla boşluk temizle
     text = re.sub(r"\s+", " ", text)
-
-    # Harf dışı karakterleri temizle
     text = re.sub(r"[^a-z0-9\s]", "", text)
 
-    # Kelime bazlı sadeleştirme (GENEL!)
     words = text.split()
-
     normalized_words = []
-    for w in words:
-        # çok küçük farkları normalize et (OCR hataları)
-        if len(w) > 4:
-            w = w[:5]  # kök mantığı gibi davranır
 
+    for w in words:
+        if len(w) > 4:
+            w = w[:5]
         normalized_words.append(w)
 
     return " ".join(normalized_words).strip()
 
-def find_merge_key(merged: dict, kod_key: str, aciklama_key: str, birim_key: str):
 
-    # 1) EN GÜÇLÜ: açıklama + birim
+def find_merge_key(merged: dict, kod_key: str, aciklama_key: str, birim_key: str):
     for key, item in merged.items():
         if (
             item.get("_aciklamaKey") == aciklama_key
@@ -92,7 +103,6 @@ def find_merge_key(merged: dict, kod_key: str, aciklama_key: str, birim_key: str
         ):
             return key
 
-    # 2) açıklama yoksa fallback: kod + birim
     if kod_key:
         for key, item in merged.items():
             if (
@@ -102,6 +112,7 @@ def find_merge_key(merged: dict, kod_key: str, aciklama_key: str, birim_key: str
                 return key
 
     return None
+
 
 @app.get("/")
 def root():
@@ -121,6 +132,7 @@ def test_upload_page():
             <form action="/analyze-offers" enctype="multipart/form-data" method="post">
                 <label><b>Dosyalar:</b></label><br><br>
                 <input type="file" name="files" multiple><br><br>
+
                 <label><b>Firma adları (virgülle):</b></label><br><br>
                 <input
                     type="text"
@@ -128,6 +140,7 @@ def test_upload_page():
                     style="width: 450px; padding: 8px;"
                     value="A Firması, B Firması, C Firması"
                 ><br><br>
+
                 <button type="submit" style="padding: 10px 18px;">Analiz Et</button>
             </form>
         </body>
@@ -136,27 +149,48 @@ def test_upload_page():
 
 
 @app.post("/analyze-offers")
+
 async def analyze_offers(
     files: list[UploadFile] = File(...),
-    firma_adlari_text: str = Form(...),
+    firma_adlari_text: str = Form(""),
     request_report_path: str = Form(""),
-    request_file_name: str = Form("")
+    request_file_name: str = Form(""),
+
+    max_budget: str = Form(""),
+    min_vade_days: str = Form(""),
+    max_termin_days: str = Form(""),
+    allow_missing_qty: str = Form("false"),
+
 ):
     all_rows = []
     warnings = []
+
+    user_constraints = {
+        "max_budget": safe_float_form(max_budget),
+        "min_vade_days": safe_int_form(min_vade_days),
+        "max_termin_days": safe_int_form(max_termin_days),
+        "allow_missing_qty": allow_missing_qty == "true",
+    }
+    
+    print("USER CONSTRAINTS:", user_constraints)
     print("SEÇİLEN TALEP DOSYASI:", request_file_name)
     print("SEÇİLEN TALEP PATH:", request_report_path)
+    print("GELEN TEKLİF DOSYALARI:", [f.filename for f in files])
 
     if len(files) > 15:
         return {
             "success": False,
             "warnings": ["En fazla 15 dosya yükleyebilirsiniz."],
-            "rows": [],
             "reportPath": None,
-            "totalRows": 0
+            "totalRows": 0,
+            "totalGroups": 0,
         }
 
-    firma_adlari = [x.strip() for x in firma_adlari_text.split(",") if x.strip()]
+    firma_adlari = [
+        x.strip()
+        for x in firma_adlari_text.split(",")
+        if x.strip()
+    ]
 
     for i, upload in enumerate(files):
         firma_adi = firma_adlari[i] if i < len(firma_adlari) else f"Firma {i + 1}"
@@ -169,13 +203,20 @@ async def analyze_offers(
         try:
             if file_type == "excel":
                 rows = parse_excel(save_path, firma_adi, upload.filename)
+
             elif file_type == "pdf":
                 rows = parse_pdf(save_path, firma_adi, upload.filename)
+
             elif file_type == "image":
                 rows = parse_image(save_path, firma_adi, upload.filename)
+
             else:
                 rows = []
                 warnings.append(f"Desteklenmeyen dosya: {upload.filename}")
+
+            print("OKUNAN TEKLİF DOSYASI:", upload.filename)
+            print("OKUNAN SATIR SAYISI:", len(rows))
+            print("İLK SATIRLAR:", rows[:3])
 
             if not rows:
                 warnings.append(f"Veri okunamadı: {upload.filename}")
@@ -189,57 +230,130 @@ async def analyze_offers(
     if not all_rows:
         return {
             "success": False,
-            "warnings": warnings,
-            "reportPath": None
+            "warnings": warnings + ["Hiç teklif satırı okunamadı."],
+            "reportPath": None,
+            "totalRows": 0,
+            "totalGroups": 0,
         }
 
     filtered = []
+
     for row in all_rows:
         has_code = bool(row.get("urunKodu"))
         has_desc = bool(row.get("urunAciklamasi"))
-        has_price = float(row.get("birimFiyat", 0) or 0) > 0
+
+        try:
+            has_price = float(row.get("birimFiyat", 0) or 0) > 0
+        except Exception:
+            has_price = False
 
         if (has_code or has_desc) and has_price:
             filtered.append(row)
+
+    print("TOPLAM OKUNAN SATIR:", len(all_rows))
+    print("FİLTRELENEN GEÇERLİ SATIR:", len(filtered))
 
     if not filtered:
         return {
             "success": False,
             "warnings": warnings + ["Geçerli ürün/fiyat satırı bulunamadı."],
-            "reportPath": None
+            "reportPath": None,
+            "totalRows": 0,
+            "totalGroups": 0,
         }
 
-# --- TALEP listesini oku ---
+    # --- TALEP LİSTESİNİ OKU ---
     request_items = []
 
     if request_report_path:
         request_file_path = os.path.join(
-        TEMP_DIR,
-        os.path.basename(request_report_path)
-    )
+            TEMP_DIR,
+            os.path.basename(request_report_path)
+        )
 
-    if os.path.exists(request_file_path):
-        request_items = parse_request_file(request_file_path, request_file_name)
+        if os.path.exists(request_file_path):
+            try:
+                request_items = parse_request_file(request_file_path, request_file_name)
+                print("TALEP SATIR SAYISI:", len(request_items))
+            except Exception as e:
+                print("TALEP DOSYASI OKUMA HATASI:", str(e))
+                warnings.append(f"Talep dosyası okunamadı: {str(e)}")
+        else:
+            print("TALEP DOSYASI BULUNAMADI:", request_file_path)
+            warnings.append("Talep dosyası bulunamadı, teklifler kendi içinde gruplanacak.")
+
+    # --- GRUPLAMA ---
+    if request_items:
+        groups = match_offers_to_requests(filtered, request_items)
+
+        matched_offer_ids = set()
+
+        for g in groups:
+            for o in g.get("offers", []):
+                matched_offer_ids.add(id(o))
+
+        unmatched_offers = [
+            o for o in filtered
+            if id(o) not in matched_offer_ids
+        ]
+
+        if unmatched_offers:
+            warnings.append(
+                f"{len(unmatched_offers)} teklif satırı talep listesiyle eşleşmedi, ayrıca rapora eklendi."
+            )
+
+            extra_groups = group_rows(unmatched_offers)
+            groups.extend(extra_groups)
+
     else:
-        print("TALEP DOSYASI BULUNAMADI")
+        groups = group_rows(filtered)
 
-    # --- TEKLİFLERİ TALEBE GÖRE EŞLE ---
-    groups = match_offers_to_requests(filtered, request_items)
+    print("FİRMALARA GÖRE SATIR SAYISI:")
+    firma_debug = {}
 
+    for r in filtered:
+        firma = r.get("firma") or r.get("firmaAdi") or "Bilinmeyen"
+        firma_debug[firma] = firma_debug.get(firma, 0) + 1
 
+    print(firma_debug)
+    print("OLUŞAN GRUP SAYISI:", len(groups))
 
-
-
+    # --- KUR BİLGİSİ ---
     exchange_rates = {
         "TRY": 1.0,
         "USD": 39.2,
-        "EUR": 42.8
+        "EUR": 42.8,
     }
 
-    analyzed = analyze_groups(groups, exchange_rates)
+    # --- ŞİRKET / KARAR MOTORU AYARLARI ---
+    decision_config = {
+        "annual_interest_rate": 45.0,
+        "daily_delay_cost": 0.0,
+        "missing_qty_penalty_multiplier": 1.25,
+        "supplier_risk_rate": 0.0,
+    }
+
+    # --- KULLANICI ÖNCELİKLERİ ---
+    user_preferences = {
+        "price_weight": 50,
+        "vade_weight": 20,
+        "termin_weight": 20,
+        "risk_weight": 10,
+    }
+
+    analyzed = analyze_groups(
+        groups,
+        exchange_rates,
+        config=decision_config,
+        constraints=user_constraints,
+        preferences=user_preferences,
+    )
+
+    print("ANALİZ EDİLEN GRUP SAYISI:", len(analyzed))
 
     report_name = "mukayese_raporu.xlsx"
     report_path = os.path.join(TEMP_DIR, report_name)
+
     build_excel_report(analyzed, report_path)
 
     return {
@@ -247,15 +361,20 @@ async def analyze_offers(
         "reportPath": f"/download-report/{report_name}",
         "warnings": warnings,
         "totalRows": len(filtered),
-        "totalGroups": len(analyzed)
+        "totalGroups": len(analyzed),
     }
 
 
 @app.get("/download-report/{file_name}")
 def download_report(file_name: str):
     file_path = os.path.join(TEMP_DIR, file_name)
+
     if not os.path.exists(file_path):
-        return {"success": False, "message": "Dosya bulunamadı."}
+        return {
+            "success": False,
+            "message": "Dosya bulunamadı."
+        }
+
     return FileResponse(
         path=file_path,
         filename=file_name,
@@ -269,7 +388,8 @@ async def analyze_requests(
 ):
     all_rows = []
     warnings = []
-    print("BACKEND GELEN DOSYALAR:", [upload.filename for upload in files])
+
+    print("BACKEND GELEN TALEP DOSYALARI:", [upload.filename for upload in files])
 
     for upload in files:
         save_path = os.path.join(TEMP_DIR, upload.filename)
@@ -279,9 +399,10 @@ async def analyze_requests(
 
         try:
             rows = parse_request_file(save_path, upload.filename)
-            print("OKUNAN DOSYA:", upload.filename)
-            print("OKUNAN SATIR SAYISI:", len(rows))
-            print("OKUNAN SATIRLAR:", rows[:20])
+
+            print("OKUNAN TALEP DOSYASI:", upload.filename)
+            print("OKUNAN TALEP SATIR SAYISI:", len(rows))
+            print("OKUNAN TALEP SATIRLAR:", rows[:20])
 
             if not rows:
                 warnings.append(f"Veri okunamadı: {upload.filename}")
@@ -289,6 +410,7 @@ async def analyze_requests(
             all_rows.extend(rows)
 
         except Exception as e:
+            print("TALEP DOSYASI HATASI:", upload.filename, str(e))
             warnings.append(f"Hata ({upload.filename}): {str(e)}")
 
     if not all_rows:
@@ -300,7 +422,6 @@ async def analyze_requests(
             "totalRows": 0
         }
 
-    # --- Merge / birleştirme ---
     merged = {}
     auto_code_counter = 1
 
@@ -312,7 +433,7 @@ async def analyze_requests(
 
         try:
             adet = float(str(adet_raw).replace(",", "."))
-        except:
+        except Exception:
             adet = 0
 
         if normalize_text(kod) in ["nan", "none", "null", "-"]:
@@ -331,23 +452,19 @@ async def analyze_requests(
         aciklama_key = clean_key(aciklama)
         birim_key = clean_key(birim)
 
-        print("MERGE DEBUG:", {
-            "kod": kod,
-            "kod_key": kod_key,
-            "aciklama": aciklama,
-            "aciklama_key": aciklama_key,
-            "birim": birim,
-            "birim_key": birim_key,
-            "adet": adet,
-                })
-
-        merge_key = find_merge_key(merged, kod_key, aciklama_key, birim_key)
+        merge_key = find_merge_key(
+            merged,
+            kod_key,
+            aciklama_key,
+            birim_key
+        )
 
         if merge_key is None:
             if kod_key:
                 merge_key = f"KOD_{kod_key}_{birim_key}"
             else:
                 merge_key = f"ACIKLAMA_{aciklama_key}_{birim_key}"
+
             merged[merge_key] = {
                 "urunKodu": kod or "",
                 "urunAciklamasi": aciklama,
@@ -359,15 +476,16 @@ async def analyze_requests(
                 "_aciklamaKey": aciklama_key,
                 "_birimKey": birim_key,
             }
+
         else:
-            #merged[merge_key]["tumKodlar"].add(kod)
             merged[merge_key]["talepEdilenAdet"] += adet
+
             if not merged[merge_key]["urunKodu"] and kod:
                 merged[merge_key]["urunKodu"] = kod
                 merged[merge_key]["_kodKey"] = kod_key
 
-    # --- Sonuç listesi oluştur ---
     result_rows = []
+
     for item in merged.values():
         if not item["urunKodu"]:
             item["urunKodu"] = f"PRD-{auto_code_counter:04d}"
@@ -381,6 +499,7 @@ async def analyze_requests(
 
     report_name = "talep_listesi.xlsx"
     report_path = os.path.join(TEMP_DIR, report_name)
+
     build_request_report(result_rows, report_path)
 
     return {
@@ -395,8 +514,13 @@ async def analyze_requests(
 @app.get("/download-request-report/{file_name}")
 def download_request_report(file_name: str):
     file_path = os.path.join(TEMP_DIR, file_name)
+
     if not os.path.exists(file_path):
-        return {"success": False, "message": "Dosya bulunamadı."}
+        return {
+            "success": False,
+            "message": "Dosya bulunamadı."
+        }
+
     return FileResponse(
         path=file_path,
         filename=file_name,

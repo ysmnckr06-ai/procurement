@@ -2,6 +2,7 @@ import cv2
 import pytesseract
 import numpy as np
 import re
+import os
 
 
 def read_image_unicode(image_path):
@@ -11,8 +12,7 @@ def read_image_unicode(image_path):
 
 def clean_text(val):
     text = str(val or "").strip()
-    text = re.sub(r"\s+", " ", text)
-    return text
+    return re.sub(r"\s+", " ", text)
 
 
 def clean_number(val):
@@ -26,6 +26,11 @@ def clean_number(val):
     s = s.replace("%", "")
     s = s.replace(",", ".")
     s = s.replace("O", "0").replace("o", "0")
+
+    if s.count(".") > 1:
+        parts = s.split(".")
+        s = "".join(parts[:-1]) + "." + parts[-1]
+
     s = re.sub(r"[^0-9.\-]", "", s)
 
     try:
@@ -55,39 +60,73 @@ def fix_ocr_text(line):
     return clean_text(line)
 
 
-def detect_currency(text):
-    text = str(text or "").upper()
+def detect_company_name(lines, fallback, file_name):
+    for line in lines[:10]:
+        low = line.lower()
 
+        if "firma" in low or "tedarik" in low or "satici" in low:
+            parts = re.split(r":|-", line)
+            if len(parts) > 1:
+                return clean_text(parts[1])
+
+        if len(line) > 3 and "teklif" not in low and "urun" not in low:
+            return line
+
+    if fallback:
+        return fallback
+
+    return os.path.splitext(file_name)[0]
+
+
+def detect_footer(lines):
+    vade = ""
+    termin = ""
+    dip = 0
+    kdv = 0
+    genel = 0
+
+    for line in lines:
+        low = line.lower()
+
+        if "vade" in low or "odeme" in low:
+            vade = line
+
+        if "termin" in low or "teslim" in low:
+            termin = line
+
+        nums = re.findall(r"\d+(?:[.,]\d+)?", line)
+        nums = [clean_number(x) for x in nums]
+
+        if "toplam" in low:
+            if nums:
+                dip = nums[-1]
+
+        if "kdv" in low:
+            if nums:
+                kdv = nums[-1]
+
+        if "genel toplam" in low:
+            if nums:
+                genel = nums[-1]
+
+    return vade, termin, dip, kdv, genel
+
+
+def detect_currency(text):
+    text = text.upper()
     if "$" in text or "USD" in text:
         return "USD"
     if "€" in text or "EUR" in text:
         return "EUR"
-    if "₺" in text or "TL" in text or "TRY" in text:
-        return "TRY"
-
     return "TRY"
 
 
 def should_skip_line(line):
     low = line.lower()
 
-    skip_words = [
-        "firma",
-        "tarih",
-        "teklif",
-        "ürün kodu",
-        "urun kodu",
-        "ürün açıklaması",
-        "urun aciklamasi",
-        "birim fiyat",
-        "toplam",
-        "iskonto",
-        "vade",
-        "termin",
-        "teslim",
-    ]
-
-    return any(word in low for word in skip_words)
+    return any(x in low for x in [
+        "toplam", "kdv", "vade", "termin", "firma", "tarih"
+    ])
 
 
 def parse_offer_line(line):
@@ -99,115 +138,80 @@ def parse_offer_line(line):
     currency = detect_currency(line)
 
     price_match = re.search(
-        r"(?P<price>\d+(?:[.,]\d+)?)\s*(?P<currency>₺|TL|TRY|\$|USD|€|EUR)",
-        line,
-        re.IGNORECASE,
+        r"(\d+(?:[.,]\d+)?)\s*(₺|TL|TRY|\$|USD|€|EUR)",
+        line
     )
 
     if not price_match:
         return None
 
-    price = clean_number(price_match.group("price"))
-    before_price = line[:price_match.start()].strip()
-    after_price = line[price_match.end():].strip()
+    price = clean_number(price_match.group(1))
+    before = line[:price_match.start()].strip()
+    after = line[price_match.end():].strip()
 
-    discount = 0.0
-    discount_match = re.search(r"(\d+(?:[.,]\d+)?)\s*%", after_price)
-    if discount_match:
-        discount = clean_number(discount_match.group(1))
+    discount = 0
+    m = re.search(r"(\d+(?:[.,]\d+)?)\s*%", line)
+    if m:
+        discount = clean_number(m.group(1))
 
     term = ""
-    term_match = re.search(
-        r"(\d+\s*-\s*\d+\s*gün|\d+\s*gün|stok|hemen|hazır)",
-        after_price,
-        re.IGNORECASE,
-    )
-    if term_match:
-        term = clean_text(term_match.group(1))
+    t = re.search(r"(\d+\s*gün|\d+-\d+\s*gün|stok|hemen)", line.lower())
+    if t:
+        term = t.group(1)
 
-    tokens = before_price.split()
+    tokens = before.split()
 
     if len(tokens) < 2:
         return None
 
-    unit = "adet"
+    qty = clean_number(tokens[-1])
+    desc_tokens = tokens[:-1]
 
-    if tokens[-1].lower() in ["adet", "ad", "pcs", "kutu", "metre", "mt", "m"]:
-        unit = tokens[-1]
-        qty_token = tokens[-2]
-        product_tokens = tokens[:-2]
-    else:
-        qty_token = tokens[-1]
-        product_tokens = tokens[:-1]
-
-    qty = clean_number(qty_token)
-
-    if qty <= 0 or price <= 0 or not product_tokens:
+    if qty <= 0:
         return None
 
-    code = ""
-    desc_tokens = product_tokens
-
-    first = product_tokens[0]
-    if re.fullmatch(r"[A-Za-z]{1,5}[-]?\d{1,6}", first):
-        code = first
-        desc_tokens = product_tokens[1:]
-
-    desc = clean_text(" ".join(desc_tokens))
-
-    if not desc:
-        return None
+    desc = " ".join(desc_tokens)
 
     return {
-        "urunKodu": code,
+        "urunKodu": "",
         "urunAciklamasi": desc,
-        "birim": unit or "adet",
+        "birim": "adet",
         "firmaAdedi": qty,
         "paraBirimi": currency,
         "birimFiyat": price,
         "iskonto": discount,
-        "vade": "",
         "termin": term,
+        "vade": "",
     }
 
 
-def preprocess_image(img):
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    gray = cv2.resize(gray, None, fx=1.8, fy=1.8, interpolation=cv2.INTER_CUBIC)
-    gray = cv2.GaussianBlur(gray, (3, 3), 0)
-    _, th = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    return th
-
-
-def parse_image(image_path: str, firma_adi: str, file_name: str):
+def parse_image(image_path, firma_adi, file_name):
     img = read_image_unicode(image_path)
 
     if img is None:
         return []
 
-    processed = preprocess_image(img)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    gray = cv2.resize(gray, None, fx=2, fy=2)
+    _, th = cv2.threshold(gray, 0, 255, cv2.THRESH_OTSU)
 
-    text = pytesseract.image_to_string(
-        processed,
-        lang="eng",
-        config="--oem 3 --psm 6",
-    )
+    text = pytesseract.image_to_string(th, lang="eng")
+
+    lines = [fix_ocr_text(l) for l in text.split("\n") if fix_ocr_text(l)]
+
+    firma = detect_company_name(lines, firma_adi, file_name)
+    vade, termin_footer, dip, kdv, genel = detect_footer(lines)
 
     rows = []
 
-    for raw_line in text.split("\n"):
-        line = fix_ocr_text(raw_line)
-
-        if not line:
-            continue
-
+    for line in lines:
         parsed = parse_offer_line(line)
-
         if not parsed:
             continue
 
         rows.append({
-            "firmaAdi": firma_adi,
+            "firma": firma,
+            "firmaAdi": firma,
             "urunKodu": parsed["urunKodu"],
             "urunAciklamasi": parsed["urunAciklamasi"],
             "birim": parsed["birim"],
@@ -215,8 +219,11 @@ def parse_image(image_path: str, firma_adi: str, file_name: str):
             "paraBirimi": parsed["paraBirimi"],
             "birimFiyat": parsed["birimFiyat"],
             "iskonto": parsed["iskonto"],
-            "vade": parsed["vade"],
-            "termin": parsed["termin"],
+            "vade": vade,
+            "termin": parsed["termin"] or termin_footer,
+            "firmaDipToplam": dip,
+            "firmaKdv": kdv,
+            "firmaGenelToplam": genel,
             "kaynakDosya": file_name,
             "kaynakTipi": "image",
         })
