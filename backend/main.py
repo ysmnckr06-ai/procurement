@@ -207,15 +207,43 @@ async def analyze_offers(
     max_termin_days: str = Form(""),
     allow_missing_qty: str = Form("false"),
 
+    annual_interest_rate: float = Form(45),
+
+    critical_level: str = Form("medium"),
+    delay_impact: str = Form("medium"),
+    alternative_stock: str = Form("partial"),
+
+    shipping_included: str = Form("included"),
+    shipping_cost: float = Form(0),
+
+    supplier_trust: str = Form("medium"),
+    quality_history: str = Form("unknown"),
+
+    currency_risk: str = Form("medium"),
+
 ):
     all_rows = []
     warnings = []
 
     user_constraints = {
-        "max_budget": safe_float_form(max_budget),
-        "min_vade_days": safe_int_form(min_vade_days),
-        "max_termin_days": safe_int_form(max_termin_days),
-        "allow_missing_qty": allow_missing_qty == "true",
+    "max_budget": safe_float_form(max_budget),
+    "min_vade_days": safe_int_form(min_vade_days),
+    "max_termin_days": safe_int_form(max_termin_days),
+    "allow_missing_qty": allow_missing_qty == "true",
+
+    "annual_interest_rate": annual_interest_rate,
+
+    "critical_level": critical_level,
+    "delay_impact": delay_impact,
+    "alternative_stock": alternative_stock,
+
+    "shipping_included": shipping_included,
+    "shipping_cost": shipping_cost,
+
+    "supplier_trust": supplier_trust,
+    "quality_history": quality_history,
+
+    "currency_risk": currency_risk
     }
     
     print("USER CONSTRAINTS:", user_constraints)

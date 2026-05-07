@@ -1,10 +1,11 @@
 from app.utils import extract_days
 
 DEFAULT_DECISION_CONFIG = {
-    "annual_interest_rate": 45.0,      # yıllık finansman maliyeti %
-    "daily_delay_cost": 0.0,           # termin gecikme günlük sabit maliyet
-    "missing_qty_penalty_multiplier": 1.25,
-    "supplier_risk_rate": 0.0,         # firma risk primi %
+    "currency_rates": {
+        "USD": 39.2,
+        "EUR": 42.8,
+        "GBP": 41.2
+    }
 }
 
 DEFAULT_USER_CONSTRAINTS = {
@@ -15,10 +16,19 @@ DEFAULT_USER_CONSTRAINTS = {
 }
 
 DEFAULT_USER_PREFERENCES = {
-    "price_weight": 50,
-    "vade_weight": 20,
-    "termin_weight": 20,
-    "risk_weight": 10,
+    "annual_interest_rate": 45,
+
+    "critical_level": "medium",
+    "delay_impact": "medium",
+    "alternative_stock": "partial",
+
+    "shipping_included": "included",
+    "shipping_cost": 0,
+
+    "supplier_trust": "medium",
+    "quality_history": "unknown",
+
+    "currency_risk": "medium",
 }
 
 def calculate_offer_score(offer, all_offers):
@@ -142,6 +152,90 @@ def calculate_missing_qty_cost(eksik_adet, net_birim_try, multiplier):
 def calculate_supplier_risk(net_toplam_try, supplier_risk_rate):
     return net_toplam_try * (supplier_risk_rate / 100)
 
+def calculate_advanced_risk_costs(net_toplam_try, constraints):
+    critical_map = {
+        "low": 0.00,
+        "medium": 0.03,
+        "high": 0.07,
+        "critical": 0.12,
+    }
+
+    delay_map = {
+        "none": 0.00,
+        "low": 0.02,
+        "medium": 0.05,
+        "high": 0.10,
+    }
+
+    stock_map = {
+        "full": 0.00,
+        "partial": 0.05,
+        "none": 0.15,
+    }
+
+    shipping_map = {
+        "included": 0.00,
+        "excluded": 0.03,
+        "unknown": 0.05,
+    }
+
+    trust_map = {
+        "high": 0.00,
+        "medium": 0.02,
+        "low": 0.05,
+    }
+
+    quality_map = {
+        "good": 0.00,
+        "medium": 0.03,
+        "bad": 0.08,
+        "unknown": 0.04,
+    }
+
+    currency_map = {
+        "none": 0.00,
+        "low": 0.02,
+        "medium": 0.05,
+        "high": 0.08,
+    }
+
+    critical_rate = critical_map.get(constraints.get("critical_level", "medium"), 0.03)
+    delay_rate = delay_map.get(constraints.get("delay_impact", "medium"), 0.05)
+    stock_rate = stock_map.get(constraints.get("alternative_stock", "partial"), 0.05)
+    shipping_rate = shipping_map.get(constraints.get("shipping_included", "included"), 0.00)
+    trust_rate = trust_map.get(constraints.get("supplier_trust", "medium"), 0.02)
+    quality_rate = quality_map.get(constraints.get("quality_history", "unknown"), 0.04)
+    currency_rate = currency_map.get(constraints.get("currency_risk", "medium"), 0.05)
+
+    shipping_cost = safe_float(constraints.get("shipping_cost"), 0)
+
+    total_risk_rate = (
+        critical_rate
+        + delay_rate
+        + stock_rate
+        + shipping_rate
+        + trust_rate
+        + quality_rate
+        + currency_rate
+    )
+
+    # Güvenlik sınırı: toplam risk etkisi net toplamın %35'ini geçmesin
+    total_risk_rate = min(total_risk_rate, 0.35)
+
+    advanced_risk_cost = net_toplam_try * total_risk_rate + shipping_cost
+
+    return {
+        "criticalRiskRate": critical_rate,
+        "delayRiskRate": delay_rate,
+        "stockRiskRate": stock_rate,
+        "shippingRiskRate": shipping_rate,
+        "supplierTrustRiskRate": trust_rate,
+        "qualityRiskRate": quality_rate,
+        "currencyRiskRate": currency_rate,
+        "totalRiskRate": total_risk_rate,
+        "advancedRiskCostTRY": round(advanced_risk_cost, 4),
+    }
+
 def normalize_weights(preferences):
     total = (
         safe_float(preferences.get("price_weight", 0))
@@ -228,7 +322,7 @@ def score_offer(row, exchange_rates, talep_edilen_adet, config=None, constraints
     finance_advantage = calculate_finance_advantage(
         net_toplam_try,
         vade_days,
-        safe_float(config.get("annual_interest_rate", 0))
+        safe_float(constraints.get("annual_interest_rate", config.get("annual_interest_rate", 45)))
     )
 
     delay_penalty = calculate_delay_penalty(
@@ -246,6 +340,8 @@ def score_offer(row, exchange_rates, talep_edilen_adet, config=None, constraints
         net_toplam_try,
         safe_float(row.get("supplierRiskRate", config.get("supplier_risk_rate", 0)))
     )
+    advanced_risk = calculate_advanced_risk_costs(net_toplam_try, constraints)
+    advanced_risk_cost = safe_float(advanced_risk.get("advancedRiskCostTRY"), 0)
 
 # TCO = gerçek toplam maliyet.
 # Net toplamdan küçük olmaz; risk ve ek maliyetleri üzerine ekler.
@@ -254,6 +350,7 @@ def score_offer(row, exchange_rates, talep_edilen_adet, config=None, constraints
         + delay_penalty
         + missing_qty_cost
         + supplier_risk_cost
+        + advanced_risk_cost
     )
     evaluated_cost = tco_try - finance_advantage
 
@@ -288,6 +385,15 @@ def score_offer(row, exchange_rates, talep_edilen_adet, config=None, constraints
         "evaluatedCostTRY": round(evaluated_cost, 4),
         "score": round(weighted_score, 4),
         "eksikAdet": round(eksik_adet, 2),
+        "advancedRiskCostTRY": round(advanced_risk_cost, 4),
+        "totalRiskRate": round(advanced_risk.get("totalRiskRate", 0), 4),
+        "criticalRiskRate": round(advanced_risk.get("criticalRiskRate", 0), 4),
+        "delayRiskRate": round(advanced_risk.get("delayRiskRate", 0), 4),
+        "stockRiskRate": round(advanced_risk.get("stockRiskRate", 0), 4),
+        "shippingRiskRate": round(advanced_risk.get("shippingRiskRate", 0), 4),
+        "supplierTrustRiskRate": round(advanced_risk.get("supplierTrustRiskRate", 0), 4),
+        "qualityRiskRate": round(advanced_risk.get("qualityRiskRate", 0), 4),
+        "currencyRiskRate": round(advanced_risk.get("currencyRiskRate", 0), 4),
     }
 
     uygun = True

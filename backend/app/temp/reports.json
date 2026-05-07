@@ -1,5 +1,38 @@
 [
   {
+    "id": "a6df252f-b389-4e08-b0d8-431c08042196",
+    "ad": "talep_listesi.xlsx",
+    "tarih": "2026-05-07 21:09",
+    "tur": "Mukayese",
+    "durum": "Bekliyor",
+    "onerilenFirma": "Nova Kurumsal Tedari̇k",
+    "reportPath": "/download-report/mukayese_raporu.xlsx",
+    "totalRows": 84,
+    "totalGroups": 14
+  },
+  {
+    "id": "7dded742-1e62-4f58-accb-98536ebe3faa",
+    "ad": "talep_listesi.xlsx",
+    "tarih": "2026-05-07 21:00",
+    "tur": "Mukayese",
+    "durum": "Bekliyor",
+    "onerilenFirma": "Aydin Kirtasi̇ye Ltd. Şti̇.",
+    "reportPath": "/download-report/mukayese_raporu.xlsx",
+    "totalRows": 84,
+    "totalGroups": 14
+  },
+  {
+    "id": "dcaa3b52-0db7-4862-8cd4-9b5469de2799",
+    "ad": "talep_listesi.xlsx",
+    "tarih": "2026-05-07 20:53",
+    "tur": "Mukayese",
+    "durum": "Bekliyor",
+    "onerilenFirma": "Zirve Tedarik",
+    "reportPath": "/download-report/mukayese_raporu.xlsx",
+    "totalRows": 84,
+    "totalGroups": 14
+  },
+  {
     "id": "2e88227f-cc58-406d-b9fd-c2eb36bce234",
     "ad": "talep_listesi.xlsx",
     "tarih": "2026-05-07 20:28",
