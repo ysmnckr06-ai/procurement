@@ -17,6 +17,70 @@ function InfoBox({ title, text, tone = "blue" }) {
   );
 }
 
+function StatCard({ icon, title, value, text }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex items-center gap-4">
+        <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100 text-2xl">
+          {icon}
+        </div>
+        <div>
+          <div className="text-sm text-slate-500">{title}</div>
+          <div className="mt-1 text-3xl font-bold text-slate-900">{value}</div>
+          <div className="text-sm text-slate-500">{text}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Sidebar() {
+  const menu = [
+    { name: "Dashboard", icon: "🏠", href: "/dashboard" },
+    { name: "Talepler", icon: "📚", href: "/dashboard/talepler" },
+    { name: "Teklifler", icon: "📊", href: "/dashboard/teklifler", active: true },
+    { name: "Raporlar", icon: "📄", href: "/dashboard/raporlar" },
+    { name: "Siparişler", icon: "🛒", href: "/dashboard/siparisler" },
+    { name: "Tedarikçiler", icon: "🏢", href: "/dashboard/tedarikciler" },
+    { name: "Ayarlar", icon: "⚙️", href: "/dashboard/ayarlar" },
+  ];
+
+  return (
+    <aside className="hidden min-h-screen w-72 shrink-0 border-r border-slate-200 bg-white p-5 lg:block">
+      <div className="rounded-2xl bg-slate-900 p-5 text-white">
+        <div className="text-xl font-bold">Procurement AI</div>
+        <div className="mt-1 text-sm text-slate-300">Satınalma analiz paneli</div>
+      </div>
+
+      <nav className="mt-6 space-y-2">
+        {menu.map((item) => (
+          <button
+            key={item.name}
+            onClick={() => {
+              window.location.href = item.href;
+            }}
+            className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-semibold transition-all hover:scale-[1.01] ${
+              item.active
+                ? "bg-blue-600 text-white shadow-sm"
+                : "text-slate-600 hover:bg-slate-100"
+            }`}
+          >
+            <span className="text-lg">{item.icon}</span>
+            {item.name}
+          </button>
+        ))}
+      </nav>
+
+      <div className="mt-8 rounded-2xl border border-blue-100 bg-blue-50 p-4 text-sm text-blue-900">
+        <div className="font-bold">Akıllı Mukayese</div>
+        <p className="mt-1">
+          Teklifleri fiyat, vade, termin ve adet uygunluğuna göre karşılaştırın.
+        </p>
+      </div>
+    </aside>
+  );
+}
+
 export default function TekliflerPage() {
   const [files, setFiles] = useState([]);
   const [parsedSources, setParsedSources] = useState([]);
@@ -28,20 +92,12 @@ export default function TekliflerPage() {
   const [reportPath, setReportPath] = useState("");
   const [requestLists, setRequestLists] = useState([]);
   const [selectedRequestId, setSelectedRequestId] = useState("");
-  const [requestFile, setRequestFile] = useState(null);
   const [maxBudget, setMaxBudget] = useState("");
   const [minVadeDays, setMinVadeDays] = useState("");
   const [maxTerminDays, setMaxTerminDays] = useState("");
   const [allowMissingQty, setAllowMissingQty] = useState(false);
-  
-  useEffect(() => {
-  const stored = JSON.parse(localStorage.getItem("talepListeleri") || "[]");
-  setRequestLists(stored);
-
-  if (stored.length > 0) {
-    setSelectedRequestId(String(stored[0].id));
-  }
-  }, []);
+  const [createdReportId, setCreatedReportId] = useState(null);
+  const [analysisMode, setAnalysisMode] = useState("withRequest");
 
   const [exchangeRates, setExchangeRates] = useState({
     TRY: 1,
@@ -49,6 +105,15 @@ export default function TekliflerPage() {
     EUR: 42.8,
     GBP: 41.2,
   });
+
+  useEffect(() => {
+    const stored = JSON.parse(localStorage.getItem("talepListeleri") || "[]");
+    setRequestLists(stored);
+
+    if (stored.length > 0) {
+      setSelectedRequestId(String(stored[0].id));
+    }
+  }, []);
 
   const allParsedRows = useMemo(() => {
     return parsedSources.flatMap((item) => item.rows || []);
@@ -59,7 +124,6 @@ export default function TekliflerPage() {
 
     allParsedRows.forEach((row) => {
       const raw = String(row?.paraBirimi || "").trim().toUpperCase();
-
       if (!raw) return;
 
       if (raw === "₺" || raw === "TL") {
@@ -76,319 +140,485 @@ export default function TekliflerPage() {
     return detectedCurrencies.some((currency) => currency !== "TRY");
   }, [detectedCurrencies]);
 
- const handleFileUpload = async (e) => {
-  const uploadedFiles = Array.from(e.target.files || []);
-  if (uploadedFiles.length === 0) return;
+  const selectedRequest = useMemo(() => {
+    return requestLists.find((item) => String(item.id) === String(selectedRequestId));
+  }, [requestLists, selectedRequestId]);
 
-  const currentCount = files.length;
-  const remaining = Math.max(0, 15 - currentCount);
-  const allowedNewFiles = uploadedFiles.slice(0, remaining);
+  const handleFileUpload = async (e) => {
+    const uploadedFiles = Array.from(e.target.files || []);
+    if (uploadedFiles.length === 0) return;
 
-  if (allowedNewFiles.length === 0) {
-    setMessage("En fazla 15 dosya yükleyebilirsiniz.");
-    return;
-  }
+    const currentCount = files.length;
+    const remaining = Math.max(0, 15 - currentCount);
+    const allowedNewFiles = uploadedFiles.slice(0, remaining);
 
-  setFiles((prev) => [...prev, ...allowedNewFiles]);
-  setMessage("");
-  setReportReady(false);
-  e.target.value = "";
+    if (allowedNewFiles.length === 0) {
+      setMessage("En fazla 15 dosya yükleyebilirsiniz.");
+      return;
+    }
+
+    setFiles((prev) => [...prev, ...allowedNewFiles]);
+    setMessage("");
+    setReportReady(false);
+    e.target.value = "";
   };
 
   const handleAnalyze = async () => {
-
-    const selectedRequest = requestLists.find(
-  (item) => String(item.id) === String(selectedRequestId)
-      );
-
-    if (!selectedRequest) {
-    setMessage("Lütfen önce bir talep listesi seçin.");
-    return;
-  }
-    if (files.length === 0) {
-    setMessage("Lütfen önce teklif dosyası yükleyin.");
-    return;
-  }
-  setIsAnalyzing(true);
-  setReportReady(false);
-  setMessage("");
-
-  try {
-    const formData = new FormData();
-      formData.append("request_report_path", selectedRequest.reportPath);
-      formData.append("request_file_name", selectedRequest.fileName);
-
-    files.forEach((file) => {
-      formData.append("files", file);
-    });
-
-    formData.append("firma_adlari_text", "A Firması,B Firması,C Firması");
-    formData.append("max_budget", maxBudget);
-    formData.append("min_vade_days", minVadeDays);
-    formData.append("max_termin_days", maxTerminDays);
-    formData.append("allow_missing_qty", allowMissingQty ? "true" : "false");
-
-    const response = await fetch("http://127.0.0.1:8000/analyze-offers", {
-      method: "POST",
-      body: formData,
-    });
-
-    const data = await response.json();
-    console.log("ANALİZ CEVABI:", data);
-    alert(JSON.stringify(data, null, 2));
-    
-    if (data.success) {
-      setReportReady(true);
-      setReportPath(`http://127.0.0.1:8000${data.reportPath}`);
-      setLastReportTime(new Date().toLocaleString("tr-TR"));
-      setMessage("Teklifler analiz edildi ve mukayese raporu oluşturuldu.");
-    } else {
-      setMessage(data.warnings?.join(" | ") || "Rapor oluşturulamadı.");
+    if (analysisMode === "withRequest" && !selectedRequest) {
+      setMessage("Lütfen önce bir talep listesi seçin veya talep olmadan karşılaştırma modunu seçin.");
+      return;
     }
-  } catch (error) {
-    console.error(error);
-    setMessage("Teklif analizi sırasında hata oluştu.");
-  } finally {
-    setIsAnalyzing(false);
-  }
+
+    if (files.length === 0) {
+      setMessage("Lütfen önce teklif dosyası yükleyin.");
+      return;
+    }
+
+    setIsAnalyzing(true);
+    setReportReady(false);
+    setMessage("");
+
+    try {
+      const formData = new FormData();
+
+      if (analysisMode === "withRequest" && selectedRequest) {
+        formData.append("request_report_path", selectedRequest.reportPath);
+        formData.append("request_file_name", selectedRequest.fileName);
+      } else {
+        formData.append("request_report_path", "");
+        formData.append("request_file_name", "Talep Olmadan Teklif Karşılaştırma");
+      }
+
+      files.forEach((file) => {
+        formData.append("files", file);
+      });
+
+      formData.append("firma_adlari_text", "A Firması,B Firması,C Firması");
+      formData.append("max_budget", maxBudget);
+      formData.append("min_vade_days", minVadeDays);
+      formData.append("max_termin_days", maxTerminDays);
+      formData.append("allow_missing_qty", allowMissingQty ? "true" : "false");
+
+      const response = await fetch("http://127.0.0.1:8000/analyze-offers", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await response.json();
+      console.log("ANALİZ CEVABI:", data);
+
+      if (data.success) {
+        setReportReady(true);
+        setReportPath(`http://127.0.0.1:8000${data.reportPath}`);
+        setCreatedReportId(data.reportId || null);
+        setLastReportTime(new Date().toLocaleString("tr-TR"));
+        setMessage("Mukayese raporu oluşturuldu ve Raporlar sayfasına aktarıldı.");
+      } else {
+        setMessage(data.warnings?.join(" | ") || "Rapor oluşturulamadı.");
+      }
+    } catch (error) {
+      console.error(error);
+      setMessage("Teklif analizi sırasında hata oluştu.");
+    } finally {
+      setIsAnalyzing(false);
+    }
   };
 
   const handleDownloadReport = () => {
-  if (!reportReady || !reportPath) {
-    setMessage("İndirilecek rapor bulunamadı.");
-    return;
-  }
+    if (!reportReady || !reportPath) {
+      setMessage("İndirilecek rapor bulunamadı.");
+      return;
+    }
 
-  const link = document.createElement("a");
-  link.href = reportPath;
-  link.download = "mukayese_raporu.xlsx";
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
+    const link = document.createElement("a");
+    link.href = reportPath;
+    link.download = "mukayese_raporu.xlsx";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
   };
 
   return (
-    <div className="min-h-screen bg-slate-100 p-6">
-      <div className="mx-auto max-w-5xl space-y-6">
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h1 className="text-3xl font-bold text-slate-800">Teklif Karşılaştırma</h1>
-          <p className="mt-2 text-sm text-slate-600">
-            Excel, PDF veya görsel teklif dosyalarını yükleyin. Sistem analiz ederek karşılaştırma raporu oluşturacaktır.
-          </p>
-        </div>
+    <div className="flex min-h-screen bg-slate-100">
+      <Sidebar />
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-            <h2 className="text-xl font-semibold text-slate-800">Talep Listesi Seç</h2>
-          <p className="mt-2 text-sm text-slate-600">
-            Teklifleri hangi talep listesine göre karşılaştıracağınızı seçin.
-          </p>
-
-          <select
-            value={selectedRequestId}
-            onChange={(e) => setSelectedRequestId(e.target.value)}
-            className="mt-4 w-full rounded-xl border border-slate-300 bg-white p-3"
-          >
-          <option value="">Talep listesi seçin</option>
-
-    {requestLists.map((item) => (
-      <option key={item.id} value={item.id}>
-        {item.createdAt} - {item.fileName}
-      </option>
-    ))}
-  </select>
-
-  {selectedRequestId && (
-    <p className="mt-3 text-sm text-green-700">
-      Talep listesi seçildi ✅
-    </p>
-  )}
-</div>
-          <h2 className="text-xl font-semibold text-slate-800">Dosya Yükleme</h2>
-          <p className="mt-2 text-sm text-slate-600">
-            En fazla 15 teklif dosyası yükleyebilirsiniz.
-          </p>
-
-          <div className="mt-4 rounded-2xl border border-dashed border-blue-300 bg-slate-50 p-8 text-center">
-            <input
-              type="file"
-              multiple
-              accept=".xlsx,.xls,.pdf,.png,.jpg,.jpeg"
-              onChange={handleFileUpload}
-              className="mx-auto block w-full max-w-xl rounded-xl border border-slate-300 bg-white p-3"
-            />
-            <p className="mt-3 text-sm text-slate-500">
-              Desteklenen formatlar: .xlsx, .xls, .pdf, .png, .jpg, .jpeg
-            </p>
-          </div>
-
-          {isUploading && (
-            <p className="mt-3 text-sm text-blue-600">Dosyalar işleniyor...</p>
-          )}
-        </div>
-
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="text-xl font-semibold text-slate-800">Yüklenen Dosyalar</h2>
-
-          <div className="mt-4 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-            <div className="rounded-2xl border border-blue-100 bg-blue-50 px-5 py-4">
-              <div className="text-sm text-slate-500">Dosya Yüklendi</div>
-              <div className="mt-1 text-4xl font-bold text-blue-700">{files.length}</div>
-              <div className="text-sm text-slate-500">
-                Toplam {files.length} dosya başarıyla yüklendi.
-              </div>
-            </div>
-
-            {files.length > 0 && (
-              <button
-                type="button"
-                className="rounded-xl border border-slate-300 px-4 py-3 text-sm font-medium text-slate-700"
-                onClick={() => {
-                  const names = files.map((f) => f.name).join("\n");
-                  alert(names);
-                }}
-              >
-                Dosya Listesini Gör
-              </button>
-            )}
-          </div>
-        </div>
-
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="text-xl font-semibold text-slate-800">Kur Bilgileri</h2>
-          <p className="mt-2 text-sm text-slate-600">
-            Dövizli teklifler varsa kur bilgilerini giriniz. Boş bırakılan kurlar için mevcut değerler kullanılacaktır.
-          </p>
-
-          <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
-            {["USD", "EUR", "GBP"].map((currency) => (
-              <div key={currency}>
-                <label className="mb-2 block text-sm font-medium text-slate-700">
-                  {currency} Kuru (TRY)
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={exchangeRates[currency]}
-                  onChange={(e) =>
-                    setExchangeRates((prev) => ({
-                      ...prev,
-                      [currency]: Number(e.target.value),
-                    }))
-                  }
-                  className="w-full rounded-xl border border-slate-300 p-3"
-                />
-              </div>
-            ))}
-          </div>
-
-          {hasForeignCurrency && (
-            <div className="mt-4">
-              <InfoBox
-                title="Bilgilendirme"
-                text="Yüklenen teklifler arasında dövizli kalemler tespit edildi. Lütfen kur bilgilerini kontrol ediniz."
-                tone="yellow"
-              />
-            </div>
-          )}
-        </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-            <h2 className="text-xl font-semibold text-slate-800">Satınalma Kriterleri</h2>
-
-          <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
-
-            <input
-              type="number"
-              placeholder="Maksimum bütçe"
-              value={maxBudget}
-              onChange={(e) => setMaxBudget(e.target.value)}
-              className="border p-2 rounded"
-            />
-
-            <input
-              type="number"
-              placeholder="Minimum vade (gün)"
-              value={minVadeDays}
-              onChange={(e) => setMinVadeDays(e.target.value)}
-              className="border p-2 rounded"
-            />
-
-            <input
-              type="number"
-              placeholder="Maksimum termin (gün)"
-              value={maxTerminDays}
-              onChange={(e) => setMaxTerminDays(e.target.value)}
-              className="border p-2 rounded"
-            />
-
-          </div>
-
-          <label className="mt-4 flex gap-2">
-            <input
-              type="checkbox"
-              checked={allowMissingQty}
-              onChange={(e) => setAllowMissingQty(e.target.checked)}
-            />
-            Eksik adet kabul et
-          </label>
-        </div>
-        
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="text-xl font-semibold text-slate-800">Rapor Oluşturma</h2>
-
-          <div className="mt-5 flex flex-col gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-5 md:flex-row md:items-center md:justify-between">
+      <main className="flex-1 p-6">
+        <div className="mx-auto max-w-7xl space-y-6">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <div className="text-2xl font-bold text-slate-800">
-                {reportReady ? "Analiz Tamamlandı" : "Rapor Bekleniyor"}
+              <div className="inline-flex rounded-full bg-blue-100 px-4 py-2 text-sm font-bold text-blue-700">
+                Teklif Yönetimi
               </div>
-              <div className="mt-2 text-sm text-slate-600">
-                {reportReady
-                  ? "Teklifler analiz edildi ve karşılaştırma raporu oluşturuldu."
-                  : "Dosyaları yükleyip analiz başlattığınızda rapor hazır olacaktır."}
+
+              <h1 className="mt-3 text-4xl font-bold text-slate-900">
+                Teklif Karşılaştırma
+              </h1>
+
+              <p className="mt-2 max-w-2xl text-sm text-slate-600">
+                Excel, PDF veya görsel teklif dosyalarını yükleyin. Sistem
+                teklifleri talep listesine göre analiz ederek mukayese raporu oluşturur.
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="text-sm text-slate-500">Rapor Durumu</div>
+              <div className="mt-1 text-2xl font-bold text-slate-900">
+                {reportReady ? "Hazır ✅" : "Bekliyor"}
               </div>
-              {lastReportTime && (
-                <div className="mt-2 text-sm text-slate-500">
-                  Rapor tarihi: {lastReportTime}
+              <div className="text-xs text-slate-500">
+                {lastReportTime || "Henüz analiz yapılmadı"}
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+            <StatCard
+              icon="📎"
+              title="Yüklenen Teklif"
+              value={files.length}
+              text="Dosya seçildi"
+            />
+
+            <StatCard
+              icon="📚"
+              title="Talep Listesi"
+              value={analysisMode === "withRequest" ? (selectedRequest ? "Seçildi" : "Yok") : "Yok"}
+              text={analysisMode === "withRequest" ? "Talebe göre analiz" : "Manuel analiz"}
+            />
+
+            <StatCard
+              icon="💱"
+              title="Kur Kontrolü"
+              value={hasForeignCurrency ? "Gerekli" : "Standart"}
+              text="TRY / USD / EUR / GBP"
+            />
+
+            <StatCard
+              icon="📄"
+              title="Rapor"
+              value={reportReady ? "Oluştu" : "Bekliyor"}
+              text="Mukayese çıktısı"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+            <div className="space-y-6 xl:col-span-2">
+              <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <h2 className="text-xl font-bold text-slate-800">Talep Kullanımı</h2>
+                    <p className="mt-2 text-sm text-slate-600">
+                      Teklifleri mevcut talep listesine göre veya talep olmadan kendi içinde karşılaştırabilirsiniz.
+                    </p>
+                  </div>
+
+                  <span className="rounded-full bg-purple-100 px-4 py-2 text-xs font-bold text-purple-700">
+                    Analiz Modu
+                  </span>
+                </div>
+
+                <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={() => setAnalysisMode("withRequest")}
+                    className={`rounded-2xl border px-5 py-4 text-left text-sm font-bold transition-all hover:scale-[1.01] ${
+                      analysisMode === "withRequest"
+                        ? "border-blue-600 bg-blue-600 text-white shadow-sm"
+                        : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
+                    }`}
+                  >
+                    <div className="text-lg">📚 Talep Listesiyle Analiz</div>
+                    <div className={`mt-1 text-xs ${analysisMode === "withRequest" ? "text-blue-100" : "text-slate-500"}`}>
+                      Teklifleri seçilen talep listesine göre karşılaştırır.
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAnalysisMode("withoutRequest");
+                      setSelectedRequestId("");
+                    }}
+                    className={`rounded-2xl border px-5 py-4 text-left text-sm font-bold transition-all hover:scale-[1.01] ${
+                      analysisMode === "withoutRequest"
+                        ? "border-slate-900 bg-slate-900 text-white shadow-sm"
+                        : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
+                    }`}
+                  >
+                    <div className="text-lg">⚡ Talep Olmadan Analiz</div>
+                    <div className={`mt-1 text-xs ${analysisMode === "withoutRequest" ? "text-slate-300" : "text-slate-500"}`}>
+                      Teklifleri ürün kodu ve açıklama benzerliğine göre gruplar.
+                    </div>
+                  </button>
+                </div>
+
+                {analysisMode === "withRequest" ? (
+                  <>
+                    <select
+                      value={selectedRequestId}
+                      onChange={(e) => setSelectedRequestId(e.target.value)}
+                      className="mt-5 w-full rounded-xl border border-slate-300 bg-white p-3 text-sm"
+                    >
+                      <option value="">Talep listesi seçin</option>
+
+                      {requestLists.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.createdAt} - {item.fileName}
+                        </option>
+                      ))}
+                    </select>
+
+                    {selectedRequestId && (
+                      <div className="mt-4 rounded-xl border border-green-200 bg-green-50 p-4 text-sm text-green-800">
+                        Talep listesi seçildi ✅ Bu liste teklif analizinde referans alınacak.
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="mt-4 rounded-xl border border-yellow-200 bg-yellow-50 p-4 text-sm text-yellow-800">
+                    Talep listesi seçilmeden analiz yapılacak. Sistem teklifleri kendi içinde ürün kodu ve açıklama benzerliğine göre gruplandıracaktır.
+                  </div>
+                )}
+              </section>
+
+              <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                <h2 className="text-xl font-bold text-slate-800">Teklif Dosyalarını Yükle</h2>
+                <p className="mt-2 text-sm text-slate-600">
+                  En fazla 15 teklif dosyası yükleyebilirsiniz.
+                </p>
+
+                <div className="mt-5 rounded-3xl border border-dashed border-blue-300 bg-blue-50/40 p-8 text-center">
+                  <div className="text-4xl">📎</div>
+                  <div className="mt-2 text-lg font-bold text-slate-800">
+                    Dosyaları seçin veya sürükleyin
+                  </div>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Excel, PDF, PNG, JPG ve JPEG desteklenir.
+                  </p>
+
+                  <input
+                    type="file"
+                    multiple
+                    accept=".xlsx,.xls,.pdf,.png,.jpg,.jpeg"
+                    onChange={handleFileUpload}
+                    className="mx-auto mt-5 block w-full max-w-xl rounded-xl border border-slate-300 bg-white p-3"
+                  />
+                </div>
+
+                {files.length > 0 && (
+                  <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-2">
+                    {files.map((file, index) => (
+                      <div
+                        key={`${file.name}-${index}`}
+                        className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 p-4"
+                      >
+                        <div>
+                          <div className="font-bold text-slate-800">📄 {file.name}</div>
+                          <div className="text-xs text-slate-500">
+                            {(file.size / 1024).toFixed(1)} KB
+                          </div>
+                        </div>
+
+                        <span className="rounded-full bg-green-100 px-3 py-1 text-xs font-bold text-green-700">
+                          Hazır
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {isUploading && (
+                  <p className="mt-3 text-sm text-blue-600">Dosyalar işleniyor...</p>
+                )}
+              </section>
+
+              <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                <h2 className="text-xl font-bold text-slate-800">Satınalma Kriterleri</h2>
+                <p className="mt-2 text-sm text-slate-600">
+                  Rapor karar notlarında kullanılacak bütçe, vade ve termin sınırlarını girin.
+                </p>
+
+                <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
+                  <div>
+                    <label className="mb-2 block text-sm font-bold text-slate-700">
+                      Maksimum Bütçe
+                    </label>
+                    <input
+                      type="number"
+                      placeholder="Örn: 50000"
+                      value={maxBudget}
+                      onChange={(e) => setMaxBudget(e.target.value)}
+                      className="w-full rounded-xl border border-slate-300 p-3 text-sm"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-2 block text-sm font-bold text-slate-700">
+                      Minimum Vade
+                    </label>
+                    <input
+                      type="number"
+                      placeholder="Örn: 60 gün"
+                      value={minVadeDays}
+                      onChange={(e) => setMinVadeDays(e.target.value)}
+                      className="w-full rounded-xl border border-slate-300 p-3 text-sm"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-2 block text-sm font-bold text-slate-700">
+                      Maksimum Termin
+                    </label>
+                    <input
+                      type="number"
+                      placeholder="Örn: 6 gün"
+                      value={maxTerminDays}
+                      onChange={(e) => setMaxTerminDays(e.target.value)}
+                      className="w-full rounded-xl border border-slate-300 p-3 text-sm"
+                    />
+                  </div>
+                </div>
+
+                <label className="mt-5 flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm font-semibold text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={allowMissingQty}
+                    onChange={(e) => setAllowMissingQty(e.target.checked)}
+                  />
+                  Eksik adet kabul et
+                </label>
+              </section>
+            </div>
+
+            <div className="space-y-6">
+              <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                <h2 className="text-xl font-bold text-slate-800">Kur Bilgileri</h2>
+                <p className="mt-2 text-sm text-slate-600">
+                  Dövizli teklifler varsa kur bilgilerini kontrol edin.
+                </p>
+
+                <div className="mt-5 space-y-4">
+                  {["USD", "EUR", "GBP"].map((currency) => (
+                    <div key={currency}>
+                      <label className="mb-2 block text-sm font-bold text-slate-700">
+                        {currency} Kuru
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={exchangeRates[currency]}
+                        onChange={(e) =>
+                          setExchangeRates((prev) => ({
+                            ...prev,
+                            [currency]: Number(e.target.value),
+                          }))
+                        }
+                        className="w-full rounded-xl border border-slate-300 p-3"
+                      />
+                    </div>
+                  ))}
+                </div>
+
+                {hasForeignCurrency && (
+                  <div className="mt-4">
+                    <InfoBox
+                      title="Bilgilendirme"
+                      text="Yüklenen teklifler arasında dövizli kalemler tespit edildi. Lütfen kur bilgilerini kontrol ediniz."
+                      tone="yellow"
+                    />
+                  </div>
+                )}
+              </section>
+
+              <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                <h2 className="text-xl font-bold text-slate-800">Analiz Durumu</h2>
+
+                <div className="mt-5 rounded-2xl bg-slate-50 p-5">
+                  <div className="text-2xl font-bold text-slate-900">
+                    {reportReady ? "Analiz Tamamlandı" : "Rapor Bekleniyor"}
+                  </div>
+
+                  <p className="mt-2 text-sm text-slate-600">
+                    {reportReady
+                      ? "Teklifler analiz edildi ve mukayese raporu oluşturuldu."
+                      : "Dosyaları yükleyip analiz başlattığınızda rapor hazır olacaktır."}
+                  </p>
+
+                  {lastReportTime && (
+                    <div className="mt-3 text-sm text-slate-500">
+                      Rapor tarihi: {lastReportTime}
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-5 space-y-3">
+                  <button
+                    type="button"
+                    onClick={handleAnalyze}
+                    disabled={isAnalyzing}
+                    className="w-full rounded-xl bg-slate-900 px-5 py-3 text-sm font-bold text-white transition-all hover:scale-[1.01] hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+                  >
+                    {isAnalyzing ? "Analiz Yapılıyor..." : "Teklifleri Analiz Et"}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleDownloadReport}
+                    disabled={!reportReady}
+                    className={`w-full rounded-xl px-5 py-3 text-sm font-bold transition-all ${
+                      reportReady
+                        ? "bg-green-600 text-white hover:scale-[1.01] hover:bg-green-700"
+                        : "cursor-not-allowed bg-slate-200 text-slate-500"
+                    }`}
+                  >
+                    Raporu İndir
+                  </button>
+                </div>
+              </section>
+
+              {message && (
+                <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm font-medium text-slate-700 shadow-sm">
+                  {message}
                 </div>
               )}
             </div>
+          </div>
 
-            <div className="flex flex-col gap-3 md:w-80">
-              <button
-                type="button"
-                onClick={handleAnalyze}
-                className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-medium text-white hover:bg-slate-800"
-              >
-                {isAnalyzing ? "Analiz Yapılıyor..." : "Teklifleri Analiz Et"}
-              </button>
+          {createdReportId && (
+            <div className="rounded-2xl border border-green-200 bg-green-50 p-5 text-sm text-green-900 shadow-sm">
+              <div className="text-lg font-bold">
+                Mukayese raporu Raporlar sayfasına aktarıldı ✅
+              </div>
 
-              <button
-                type="button"
-                onClick={handleDownloadReport}
-                disabled={!reportReady}
-                className={`rounded-xl px-5 py-3 text-sm font-medium ${
-                  reportReady
-                    ? "bg-green-600 text-white hover:bg-green-700"
-                    : "cursor-not-allowed bg-slate-200 text-slate-500"
-                }`}
-              >
-                Raporu İndir
-              </button>
+              <p className="mt-2">
+                Raporu incelemek, indirmek veya siparişe çevirmek için devam edebilirsiniz.
+              </p>
+
+              <div className="mt-4 flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    window.location.href = `/dashboard/raporlar/${createdReportId}`;
+                  }}
+                  className="rounded-xl bg-green-600 px-4 py-2 text-sm font-bold text-white hover:bg-green-700"
+                >
+                  Rapor Detayına Git
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    window.location.href = "/dashboard/raporlar";
+                  }}
+                  className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800"
+                >
+                  Tüm Raporları Gör
+                </button>
+              </div>
             </div>
-          </div>
-
-          <p className="mt-4 text-sm text-slate-500">
-            Rapor içeriğinde ürün karşılaştırmaları, en avantajlı firma önerileri ve icmal bilgileri yer alacaktır.
-          </p>
+          )}
         </div>
-
-        {message && (
-          <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 shadow-sm">
-            {message}
-          </div>
-        )}
-      </div>
+      </main>
     </div>
   );
 }

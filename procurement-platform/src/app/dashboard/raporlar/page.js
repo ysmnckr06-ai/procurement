@@ -36,18 +36,29 @@ export default function RaporlarPage() {
     Gecikmiş: { arkaPlan: "#FEE2E2", yazi: "#991B1B" },
   };
 
-  async function createOrderFromReport(rapor) {
-    const res = await fetch(
-      `http://127.0.0.1:8000/reports/${rapor.id}/create-order`,
-      { method: "POST" }
-    );
+async function createOrderFromReport(rapor) {
+  localStorage.setItem(
+    "pendingOrder",
+    JSON.stringify({
+      company: rapor.onerilenFirma || "",
+      product: rapor.ad || "",
+      quantity: 1,
+      dueDate: "",
+      reportId: rapor.id,
+      reportName: rapor.ad,
+    })
+  );
 
-    const data = await res.json();
-
-    if (data.success) {
-      window.location.href = "/dashboard/siparisler";
-    }
+  try {
+    await fetch(`http://127.0.0.1:8000/reports/${rapor.id}/create-order`, {
+      method: "POST",
+    });
+  } catch (error) {
+    console.log("Backend sipariş oluşturma hatası:", error);
   }
+
+  window.location.href = "/dashboard/siparisler";
+}
 
   return (
     <div style={{ minHeight: "100vh", background: "#f3f4f6", padding: "32px" }}>
@@ -139,10 +150,19 @@ export default function RaporlarPage() {
 
                   <button
                     type="button"
+                    disabled={rapor.durum === "Tamamlandı"}
                     onClick={() => createOrderFromReport(rapor)}
-                    style={{ background: "#16a34a", color: "#fff", border: "none", borderRadius: "10px", padding: "10px 14px", fontWeight: "600", cursor: "pointer" }}
+                    style={{
+                      background: rapor.durum === "Tamamlandı" ? "#9ca3af" : "#16a34a",
+                      color: "#fff",
+                      border: "none",
+                      borderRadius: "10px",
+                      padding: "10px 14px",
+                      fontWeight: "600",
+                      cursor: rapor.durum === "Tamamlandı" ? "not-allowed" : "pointer",
+                    }}
                   >
-                    Sipariş Oluştur
+                    {rapor.durum === "Tamamlandı" ? "Sipariş Oluşturuldu" : "Sipariş Oluştur"}
                   </button>
                 </div>
               </div>
