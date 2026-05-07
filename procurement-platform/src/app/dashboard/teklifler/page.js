@@ -98,6 +98,16 @@ export default function TekliflerPage() {
   const [allowMissingQty, setAllowMissingQty] = useState(false);
   const [createdReportId, setCreatedReportId] = useState(null);
   const [analysisMode, setAnalysisMode] = useState("withRequest");
+  const [annualInterestRate, setAnnualInterestRate] = useState(45);
+
+  const [criticalLevel, setCriticalLevel] = useState("medium");
+  const [delayImpact, setDelayImpact] = useState("medium");
+  const [alternativeStock, setAlternativeStock] = useState("partial");
+  const [shippingIncluded, setShippingIncluded] = useState("included");
+  const [shippingCost, setShippingCost] = useState("");
+  const [supplierTrust, setSupplierTrust] = useState("medium");
+  const [qualityHistory, setQualityHistory] = useState("unknown");
+  const [currencyRisk, setCurrencyRisk] = useState("medium");
 
   const [exchangeRates, setExchangeRates] = useState({
     TRY: 1,
@@ -198,7 +208,19 @@ export default function TekliflerPage() {
       formData.append("min_vade_days", minVadeDays);
       formData.append("max_termin_days", maxTerminDays);
       formData.append("allow_missing_qty", allowMissingQty ? "true" : "false");
+      formData.append("annual_interest_rate", annualInterestRate);
 
+      formData.append("critical_level", criticalLevel);
+      formData.append("delay_impact", delayImpact);
+      formData.append("alternative_stock", alternativeStock);
+
+      formData.append("shipping_included", shippingIncluded);
+      formData.append("shipping_cost", shippingCost);
+
+      formData.append("supplier_trust", supplierTrust);
+      formData.append("quality_history", qualityHistory);
+
+      formData.append("currency_risk", currencyRisk);
       const response = await fetch("http://127.0.0.1:8000/analyze-offers", {
         method: "POST",
         body: formData,
@@ -485,6 +507,167 @@ export default function TekliflerPage() {
                     checked={allowMissingQty}
                     onChange={(e) => setAllowMissingQty(e.target.checked)}
                   />
+                  <div className="mt-8 border-t border-slate-200 pt-6">
+  <h3 className="text-xl font-bold text-slate-800">
+    Gelişmiş Satınalma Analizi
+  </h3>
+
+  <p className="mt-2 text-sm text-slate-500">
+    Sistem TCO, risk maliyeti ve değerlendirilmiş maliyet hesaplarını bu bilgilerle oluşturur.
+  </p>
+
+  <div className="mt-6 grid grid-cols-1 gap-5 md:grid-cols-2">
+
+    <div>
+      <label className="mb-2 block text-sm font-bold text-slate-700">
+        Yıllık Finansman / Faiz Oranı (%)
+      </label>
+
+      <input
+        type="number"
+        value={annualInterestRate}
+        onChange={(e) => setAnnualInterestRate(e.target.value)}
+        className="w-full rounded-xl border border-slate-300 p-3"
+      />
+
+      <p className="mt-1 text-xs text-slate-500">
+        Vadeli ödeme avantajı hesabında kullanılır.
+      </p>
+    </div>
+
+    <div>
+      <label className="mb-2 block text-sm font-bold text-slate-700">
+        Ürün Kritiklik Seviyesi
+      </label>
+
+      <select
+        value={criticalLevel}
+        onChange={(e) => setCriticalLevel(e.target.value)}
+        className="w-full rounded-xl border border-slate-300 p-3"
+      >
+        <option value="low">Kritik değil</option>
+        <option value="medium">Orta kritik</option>
+        <option value="high">Üretimi etkiler</option>
+        <option value="critical">Operasyonu durdurabilir</option>
+      </select>
+    </div>
+
+    <div>
+      <label className="mb-2 block text-sm font-bold text-slate-700">
+        Geç Teslim Etkisi
+      </label>
+
+      <select
+        value={delayImpact}
+        onChange={(e) => setDelayImpact(e.target.value)}
+        className="w-full rounded-xl border border-slate-300 p-3"
+      >
+        <option value="none">Etkilemez</option>
+        <option value="low">Küçük gecikme</option>
+        <option value="medium">İş kaybı olabilir</option>
+        <option value="high">Operasyon durabilir</option>
+      </select>
+    </div>
+
+    <div>
+      <label className="mb-2 block text-sm font-bold text-slate-700">
+        Alternatif Stok Durumu
+      </label>
+
+      <select
+        value={alternativeStock}
+        onChange={(e) => setAlternativeStock(e.target.value)}
+        className="w-full rounded-xl border border-slate-300 p-3"
+      >
+        <option value="full">Yeterli stok var</option>
+        <option value="partial">Kısmen var</option>
+        <option value="none">Stok yok</option>
+      </select>
+    </div>
+
+    <div>
+      <label className="mb-2 block text-sm font-bold text-slate-700">
+        Nakliye Durumu
+      </label>
+
+      <select
+        value={shippingIncluded}
+        onChange={(e) => setShippingIncluded(e.target.value)}
+        className="w-full rounded-xl border border-slate-300 p-3"
+      >
+        <option value="included">Nakliye dahil</option>
+        <option value="excluded">Nakliye hariç</option>
+        <option value="unknown">Emin değilim</option>
+      </select>
+    </div>
+
+    {shippingIncluded === "excluded" && (
+      <div>
+        <label className="mb-2 block text-sm font-bold text-slate-700">
+          Tahmini Nakliye Maliyeti
+        </label>
+
+        <input
+          type="number"
+          value={shippingCost}
+          onChange={(e) => setShippingCost(e.target.value)}
+          className="w-full rounded-xl border border-slate-300 p-3"
+        />
+      </div>
+    )}
+
+    <div>
+      <label className="mb-2 block text-sm font-bold text-slate-700">
+        Tedarikçi Güven Seviyesi
+      </label>
+
+      <select
+        value={supplierTrust}
+        onChange={(e) => setSupplierTrust(e.target.value)}
+        className="w-full rounded-xl border border-slate-300 p-3"
+      >
+        <option value="low">İlk kez çalışıyoruz</option>
+        <option value="medium">Birkaç kez çalıştık</option>
+        <option value="high">Uzun süredir çalışıyoruz</option>
+      </select>
+    </div>
+
+    <div>
+      <label className="mb-2 block text-sm font-bold text-slate-700">
+        Kalite Geçmişi
+      </label>
+
+      <select
+        value={qualityHistory}
+        onChange={(e) => setQualityHistory(e.target.value)}
+        className="w-full rounded-xl border border-slate-300 p-3"
+      >
+        <option value="unknown">Bilinmiyor</option>
+        <option value="good">Problem yaşanmadı</option>
+        <option value="medium">Ara sıra yaşandı</option>
+        <option value="bad">Sık yaşandı</option>
+      </select>
+    </div>
+
+    <div>
+      <label className="mb-2 block text-sm font-bold text-slate-700">
+        Kur Riski
+      </label>
+
+      <select
+        value={currencyRisk}
+        onChange={(e) => setCurrencyRisk(e.target.value)}
+        className="w-full rounded-xl border border-slate-300 p-3"
+      >
+        <option value="none">Kur riski yok</option>
+        <option value="low">Düşük</option>
+        <option value="medium">Orta</option>
+        <option value="high">Yüksek</option>
+      </select>
+    </div>
+
+  </div>
+</div>
                   Eksik adet kabul et
                 </label>
               </section>
