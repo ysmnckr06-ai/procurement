@@ -475,14 +475,14 @@ def build_excel_report(analyzed_groups, output_path):
 
         if best and best.get("uygunMu"):
             reason = (
-                f"{best.get('firmaAdi') or best.get('firma') or '-'} önerildi; "
-                f"bütçe, vade ve termin kriterlerini sağlıyor. "
-                f"Net toplam: {_safe_num(best.get('netToplamTRY', 0)):,.2f} TRY, "
-                f"vade: {best.get('vadeDays', 0)} gün, "
-                f"termin: {best.get('terminDays', 0)} gün."
+                f"{best.get('firmaAdi') or best.get('firma') or '-'} önerildi. "
+                f"En düşük değerlendirilmiş maliyet ve satınalma kriter uygunluğu dikkate alındı. "
+                f"Net toplam: {_safe_num(best.get('netToplamTRY', 0)):,.2f} TRY | "
+                f"Vade: {best.get('vadeDays', 0)} gün | "
+                f"Termin: {best.get('terminDays', 0)} gün"
             )
         else:
-            reason = group.get("kararNedeni") or _pick_reason(best, offers)
+            reason = "Kriterleri sağlayan uygun teklif bulunamadı."
 
         note_parts = []
 
@@ -627,7 +627,7 @@ def build_excel_report(analyzed_groups, output_path):
         "• TCO (Toplam Maliyet) = Net Toplam + Gecikme Maliyeti + Eksik Adet Maliyeti + Risk Primi",
         "• Karar, öncelikle değerlendirilmiş maliyete göre verilmiştir.",
         "Not:",
-        "• Kriter dışı teklifler elenebilir, ancak alternatif olarak yine de önerilebilir.",
+        "• Satınalma kriterlerini sağlamayan teklifler öneri değerlendirmesine alınmaz.",
         "• Termin süresi, belirlenen maksimum süreyi aşarsa uyarı verilir.",
     ]
 

@@ -18,7 +18,7 @@ from app.parsers.request_parser import parse_request_file
 from app.services.matcher import match_offers_to_requests, group_rows
 from app.services.analyzer import analyze_groups
 from app.services.report_builder import build_excel_report
-from app.services.request_report_builder import build_request_report
+from app.services.request_report_builder import build_request_excel_report
 
 from app.utils import normalize_text
 
@@ -65,11 +65,17 @@ def load_json(path):
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 
-
 def save_json(path, data):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
+def clean_supplier_name(name):
+    name = str(name or "").strip()
+    name = name.replace("_", " ").replace("-", " ")
+    name = re.sub(r"\bteklif\b", "", name, flags=re.IGNORECASE)
+    name = re.sub(r"\s+", " ", name).strip()
+
+    return name.title() if name else "-"
 
 def find_best_supplier(analyzed):
     counts = {}
@@ -90,10 +96,9 @@ def find_best_supplier(analyzed):
     if not counts:
         return "-"
 
-    return max(counts, key=counts.get)
+    return clean_supplier_name(max(counts, key=counts.get))
 
 os.makedirs(TEMP_DIR, exist_ok=True)
-
 
 def detect_file_type(filename: str) -> str:
     ext = filename.lower().split(".")[-1]
@@ -561,7 +566,7 @@ async def analyze_requests(
     report_name = "talep_listesi.xlsx"
     report_path = os.path.join(TEMP_DIR, report_name)
 
-    build_request_report(result_rows, report_path)
+    build_request_excel_report(result_rows, report_path)
 
     return {
         "success": True,

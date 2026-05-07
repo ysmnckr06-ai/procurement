@@ -163,21 +163,21 @@ def normalize_weights(preferences):
 def apply_constraints(metrics, constraints):
     reasons = []
 
-    max_budget = constraints.get("max_budget")
-    min_vade = constraints.get("min_vade_days")
-    max_termin = constraints.get("max_termin_days")
+    max_budget = safe_float(constraints.get("max_budget"), 0)
+    min_vade = safe_float(constraints.get("min_vade_days"), 0)
+    max_termin = safe_float(constraints.get("max_termin_days"), 0)
     allow_missing = constraints.get("allow_missing_qty", False)
 
-    if max_budget is not None and safe_float(max_budget) > 0:
-        if metrics["tcoTRY"] > safe_float(max_budget):
+    if max_budget > 0:
+        if metrics["tcoTRY"] > max_budget:
             reasons.append(f"Bütçe üst limitini aşıyor ({metrics['tcoTRY']:.2f} TRY)")
 
-    if min_vade is not None and safe_float(min_vade) > 0:
-        if metrics["vadeDays"] < safe_float(min_vade):
+    if min_vade > 0:
+        if metrics["vadeDays"] < min_vade:
             reasons.append(f"Minimum vade şartını sağlamıyor ({metrics['vadeDays']} gün)")
 
-    if max_termin is not None and safe_float(max_termin) > 0:
-        if metrics["terminDays"] > safe_float(max_termin):
+    if max_termin > 0:
+        if metrics["terminDays"] > max_termin:
             reasons.append(f"Maksimum termin şartını aşıyor ({metrics['terminDays']} gün)")
 
     if not allow_missing and metrics["eksikAdet"] > 0:
@@ -292,18 +292,18 @@ def score_offer(row, exchange_rates, talep_edilen_adet, config=None, constraints
 
     uygun = True
 
-    max_budget = constraints.get("max_budget")
-    min_vade = constraints.get("min_vade_days")
-    max_termin = constraints.get("max_termin_days")
-    allow_missing = constraints.get("allow_missing_qty", True)
+    max_budget = safe_float(constraints.get("max_budget"), 0)
+    min_vade = safe_float(constraints.get("min_vade_days"), 0)
+    max_termin = safe_float(constraints.get("max_termin_days"), 0)
+    allow_missing = constraints.get("allow_missing_qty", False)
 
-    if max_budget is not None and max_budget > 0 and net_toplam_try > max_budget:
+    if max_budget > 0 and net_toplam_try > max_budget:
         uygun = False
 
-    if min_vade is not None and min_vade > 0 and vade_days < min_vade:
+    if min_vade > 0 and vade_days < min_vade:
         uygun = False
 
-    if max_termin is not None and max_termin > 0 and termin_days > max_termin:
+    if max_termin > 0 and termin_days > max_termin:
         uygun = False
 
     if allow_missing is False and eksik_adet > 0:
@@ -316,10 +316,10 @@ def score_offer(row, exchange_rates, talep_edilen_adet, config=None, constraints
 
     karar_notlari = []
     if constraints:
-        max_budget = constraints.get("max_budget")
-        min_vade = constraints.get("min_vade_days")
-        max_termin = constraints.get("max_termin_days")
-        allow_missing = constraints.get("allow_missing_qty")
+        max_budget = safe_float(constraints.get("max_budget"), 0)
+        min_vade = safe_float(constraints.get("min_vade_days"), 0)
+        max_termin = safe_float(constraints.get("max_termin_days"), 0)
+        allow_missing = constraints.get("allow_missing_qty", False)
 
         if min_vade is not None and vade_days < min_vade:
             karar_notlari.append(f"Kriter dışı: minimum vade {min_vade} gün, teklif {vade_days} gün")
@@ -369,30 +369,30 @@ def score_offer(row, exchange_rates, talep_edilen_adet, config=None, constraints
     return metrics
 
 def choose_best_offer(offers):
-    eligible = [
-        offer for offer in offers
-        if offer.get("uygunMu") and safe_float(offer.get("tcoTRY", 0)) > 0
-    ]
-
-    pool = eligible if eligible else [
-        offer for offer in offers
-        if safe_float(offer.get("tcoTRY", 0)) > 0
-    ]
-
-    if not pool:
+    if not offers:
         return None
 
-    return sorted(
-        pool,
+    # SADECE kriterleri sağlayan teklifler
+    eligible_offers = [
+        o for o in offers
+        if o.get("uygunMu") is True
+    ]
+
+    # Eğer hiçbir teklif kriteri sağlamıyorsa
+    if not eligible_offers:
+        return None
+
+    # En düşük değerlendirilmiş maliyet
+    eligible_offers.sort(
         key=lambda x: (
-            0 if x.get("uygunMu") else 1,
             safe_float(x.get("evaluatedCostTRY", 999999999)),
             safe_float(x.get("tcoTRY", 999999999)),
-            safe_float(x.get("score", 999999999)),
-            safe_float(x.get("terminDays", 999)),
             -safe_float(x.get("vadeDays", 0)),
+            safe_float(x.get("terminDays", 999999999)),
         )
-    )[0]
+    )
+
+    return eligible_offers[0]
 
 def generate_decision(best, offers):
     if not best:

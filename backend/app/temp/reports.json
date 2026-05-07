@@ -1,5 +1,104 @@
 [
   {
+    "id": "2e88227f-cc58-406d-b9fd-c2eb36bce234",
+    "ad": "talep_listesi.xlsx",
+    "tarih": "2026-05-07 20:28",
+    "tur": "Mukayese",
+    "durum": "Bekliyor",
+    "onerilenFirma": "Zirve Tedarik",
+    "reportPath": "/download-report/mukayese_raporu.xlsx",
+    "totalRows": 84,
+    "totalGroups": 14
+  },
+  {
+    "id": "6ee38b86-ff44-49db-8d26-60d6864b1f24",
+    "ad": "talep_listesi.xlsx",
+    "tarih": "2026-05-07 19:53",
+    "tur": "Mukayese",
+    "durum": "Bekliyor",
+    "onerilenFirma": "Zirve Tedarik",
+    "reportPath": "/download-report/mukayese_raporu.xlsx",
+    "totalRows": 84,
+    "totalGroups": 14
+  },
+  {
+    "id": "19e35cfc-4bf8-4997-9e37-40cf1f7c2a90",
+    "ad": "talep_listesi.xlsx",
+    "tarih": "2026-05-07 19:44",
+    "tur": "Mukayese",
+    "durum": "Bekliyor",
+    "onerilenFirma": "Zirve Tedarik",
+    "reportPath": "/download-report/mukayese_raporu.xlsx",
+    "totalRows": 84,
+    "totalGroups": 14
+  },
+  {
+    "id": "752cba4f-99b7-431f-9cea-7cf2a0a30dc8",
+    "ad": "talep_listesi.xlsx",
+    "tarih": "2026-05-07 18:52",
+    "tur": "Mukayese",
+    "durum": "Bekliyor",
+    "onerilenFirma": "Zirve Tedarik",
+    "reportPath": "/download-report/mukayese_raporu.xlsx",
+    "totalRows": 84,
+    "totalGroups": 14
+  },
+  {
+    "id": "1487a387-1d48-4fa6-a0cd-370dc6d2468f",
+    "ad": "talep_listesi.xlsx",
+    "tarih": "2026-05-07 18:52",
+    "tur": "Mukayese",
+    "durum": "Bekliyor",
+    "onerilenFirma": "Aydin Kirtasi̇ye Ltd. Şti̇.",
+    "reportPath": "/download-report/mukayese_raporu.xlsx",
+    "totalRows": 84,
+    "totalGroups": 14
+  },
+  {
+    "id": "cb6e2970-4dbf-4d4b-a298-3d86cf54c85d",
+    "ad": "talep_listesi.xlsx",
+    "tarih": "2026-05-06 13:15",
+    "tur": "Mukayese",
+    "durum": "Tamamlandı",
+    "onerilenFirma": "Aydin Kirtasi̇ye Ltd. Şti̇.",
+    "reportPath": "/download-report/mukayese_raporu.xlsx",
+    "totalRows": 84,
+    "totalGroups": 14
+  },
+  {
+    "id": "f4aed13e-bdcb-4f9c-a0b9-e19170432740",
+    "ad": "talep_listesi.xlsx",
+    "tarih": "2026-05-06 13:15",
+    "tur": "Mukayese",
+    "durum": "Bekliyor",
+    "onerilenFirma": "Zirve Tedarik",
+    "reportPath": "/download-report/mukayese_raporu.xlsx",
+    "totalRows": 84,
+    "totalGroups": 14
+  },
+  {
+    "id": "0b2dd04c-fb48-4cd6-8feb-906aec0899b5",
+    "ad": "talep_listesi.xlsx",
+    "tarih": "2026-05-06 13:12",
+    "tur": "Mukayese",
+    "durum": "Bekliyor",
+    "onerilenFirma": "Zirve Tedarik",
+    "reportPath": "/download-report/mukayese_raporu.xlsx",
+    "totalRows": 84,
+    "totalGroups": 14
+  },
+  {
+    "id": "4111da12-03e7-4362-b6b8-db78097e6505",
+    "ad": "talep_listesi.xlsx",
+    "tarih": "2026-05-06 12:38",
+    "tur": "Mukayese",
+    "durum": "Bekliyor",
+    "onerilenFirma": "Mavi̇ Ofi̇s Tedari̇k A.Ş.",
+    "reportPath": "/download-report/mukayese_raporu.xlsx",
+    "totalRows": 84,
+    "totalGroups": 14
+  },
+  {
     "id": "7e0d9455-c958-4e78-bbdb-6ce33a232c32",
     "ad": "talep_listesi.xlsx",
     "tarih": "2026-05-05 21:39",
