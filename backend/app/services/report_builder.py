@@ -421,7 +421,14 @@ def build_excel_report(analyzed_groups, output_path):
             if firma_key:
                 offer_map[firma_key] = o
 
-        kod = _clean(group.get("urunKodu", ""))
+        first_offer = offers[0] if offers else {}
+
+        kod = _clean(
+            group.get("urunKodu")
+            or group.get("master", {}).get("urunKodu")
+            or first_offer.get("urunKodu")
+            or "-"
+        )
         aciklama = _clean(group.get("urunAciklamasi", ""))
         birim = _clean(group.get("birim", ""))
 
@@ -476,10 +483,7 @@ def build_excel_report(analyzed_groups, output_path):
         if best and best.get("uygunMu"):
             reason = (
                 f"{best.get('firmaAdi') or best.get('firma') or '-'} önerildi. "
-                f"En düşük değerlendirilmiş maliyet ve satınalma kriter uygunluğu dikkate alındı. "
-                f"Net toplam: {_safe_num(best.get('netToplamTRY', 0)):,.2f} TRY | "
-                f"Vade: {best.get('vadeDays', 0)} gün | "
-                f"Termin: {best.get('terminDays', 0)} gün"
+                f"En düşük değerlendirilmiş maliyet ve kriter uygunluğu dikkate alındı."
             )
         else:
             reason = "Kriterleri sağlayan uygun teklif bulunamadı."
@@ -509,25 +513,56 @@ def build_excel_report(analyzed_groups, output_path):
         if best and _safe_num(best.get("eksikAdet", 0)) > 0:
             note_parts.append("Eksik adet uyarısı")
 
-        for n in best.get("kararNotlari", []) if best else []:
-            note_parts.append(str(n))
+        #for n in best.get("kararNotlari", []) if best else []:
+            #note_parts.append(str(n))
+        if best:
+            total_risk_rate = _safe_num(best.get("totalRiskRate", 0)) * 100
+            advanced_risk_cost = _safe_num(best.get("advancedRiskCostTRY", 0))
+            finance_advantage = _safe_num(best.get("financeAdvantageTRY", 0))
 
-        for offer in offers:
-            if not offer.get("uygunMu"):
-                firma = offer.get("firmaAdi") or offer.get("firma") or "-"
-                reasons = offer.get("kararNotlari", []) or offer.get("eliminationReasons", [])
+            #note_parts.append(
+                #f"Risk: %{total_risk_rate:.0f} | "
+                #f"Risk maliyeti: {advanced_risk_cost:,.2f} TRY | "
+                #f"Vade avantajı: {finance_advantage:,.2f} TRY"
+            #)
 
-                kriter_reasons = [
-                    str(r) for r in reasons
-                    if "Kriter dışı" in str(r) or "Elendi" in str(r)
-                ]
+        #elenen_firmalar = []
 
-                if kriter_reasons:
-                    note_parts.append(
-                        f"{firma} elendi: " + "; ".join(kriter_reasons)
-                    )
+        #for offer in offers:
+            #if not offer.get("uygunMu"):
+                #firma = offer.get("firmaAdi") or offer.get("firma") or "-"
+                #reasons = offer.get("eliminationReasons", []) or offer.get("kararNotlari", [])
 
-        note = " | ".join(note_parts) if note_parts else "-"
+                #short_reason = "Kriter dışı"
+                #for r in reasons:
+                    #r_text = str(r)
+                    #if "vade" in r_text.lower():
+                        #short_reason = "Yetersiz vade"
+                        #break
+                    #if "termin" in r_text.lower():
+                        #short_reason = "Termin sınırı aşıldı"
+                        #break
+                    #if "bütçe" in r_text.lower():
+                        #short_reason = "Bütçe aşıldı"
+                        #break
+
+                #elenen_firmalar.append(f"{firma}: {short_reason}")
+
+            #if elenen_firmalar:
+                #note_parts.append("Elenenler: " + " | ".join(elenen_firmalar[:4]))
+
+        if best:
+            total_risk_rate = _safe_num(best.get("totalRiskRate", 0)) * 100
+            advanced_risk_cost = _safe_num(best.get("advancedRiskCostTRY", 0))
+            finance_advantage = _safe_num(best.get("financeAdvantageTRY", 0))
+
+            note = (
+                f"Risk %{total_risk_rate:.0f}, "
+                f"risk maliyeti {advanced_risk_cost:,.2f} TRY, "
+                f"vade avantajı {finance_advantage:,.2f} TRY."
+            )
+        else:
+            note = "Uygun teklif bulunamadı."
 
         ws.write(row, c + 0, best_firma or "-", green_cell if best_firma else base_cell)
         ws.write(row, c + 1, reason, text_cell)
@@ -537,7 +572,7 @@ def build_excel_report(analyzed_groups, output_path):
 
         ws.write_number(row, c + 2, best_total, green_money if best_firma else money_cell)
         ws.write(row, c + 3, note, text_cell)
-
+        ws.set_row(row, 24)
         row += 1
 
     legend_row = row + 1
@@ -634,12 +669,13 @@ def build_excel_report(analyzed_groups, output_path):
     ws.merge_range(
         box_row + 1,
         18,
-        box_row + 6,
-        23,
+        box_row + 10,
+        28,
         "\n".join(notes),
         note_box_cell
     )
-
+    ws.set_row(box_row + 1, 120)
+    
     footer_row = box_row + 8
 
     ws.write(footer_row, 0, "Rapor Oluşturan: Sistem", small_gray)

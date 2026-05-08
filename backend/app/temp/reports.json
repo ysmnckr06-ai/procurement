@@ -1,5 +1,82 @@
 [
   {
+    "id": "62b676e1-846a-4473-89b1-900d20a9fc7d",
+    "ad": "talep_listesi.xlsx",
+    "tarih": "2026-05-08 19:05",
+    "tur": "Mukayese",
+    "durum": "Tamamlandı",
+    "onerilenFirma": "Zirve Tedarik",
+    "reportPath": "/download-report/mukayese_raporu.xlsx",
+    "totalRows": 84,
+    "totalGroups": 14
+  },
+  {
+    "id": "3b0c1a25-0b62-4af0-8ddd-4e5a9c1df4b5",
+    "ad": "talep_listesi.xlsx",
+    "tarih": "2026-05-08 12:00",
+    "tur": "Mukayese",
+    "durum": "Tamamlandı",
+    "onerilenFirma": "Nova Kurumsal Tedari̇k",
+    "reportPath": "/download-report/mukayese_raporu.xlsx",
+    "totalRows": 84,
+    "totalGroups": 14
+  },
+  {
+    "id": "39012379-83ff-4c02-a79e-aaa5f4dba18e",
+    "ad": "talep_listesi.xlsx",
+    "tarih": "2026-05-08 11:52",
+    "tur": "Mukayese",
+    "durum": "Bekliyor",
+    "onerilenFirma": "Zirve Tedarik",
+    "reportPath": "/download-report/mukayese_raporu.xlsx",
+    "totalRows": 84,
+    "totalGroups": 14
+  },
+  {
+    "id": "31c2fc03-6693-4d27-b361-5d5a6a2f4490",
+    "ad": "talep_listesi.xlsx",
+    "tarih": "2026-05-08 11:34",
+    "tur": "Mukayese",
+    "durum": "Bekliyor",
+    "onerilenFirma": "Nova Kurumsal Tedari̇k",
+    "reportPath": "/download-report/mukayese_raporu.xlsx",
+    "totalRows": 84,
+    "totalGroups": 14
+  },
+  {
+    "id": "a55deb93-df44-4a1e-8d46-af3d573f0cb5",
+    "ad": "talep_listesi.xlsx",
+    "tarih": "2026-05-08 11:30",
+    "tur": "Mukayese",
+    "durum": "Bekliyor",
+    "onerilenFirma": "Nova Kurumsal Tedari̇k",
+    "reportPath": "/download-report/mukayese_raporu.xlsx",
+    "totalRows": 84,
+    "totalGroups": 14
+  },
+  {
+    "id": "9b853dcf-4963-4897-b94b-0f6dd59a7f0c",
+    "ad": "talep_listesi.xlsx",
+    "tarih": "2026-05-08 11:16",
+    "tur": "Mukayese",
+    "durum": "Bekliyor",
+    "onerilenFirma": "Nova Kurumsal Tedari̇k",
+    "reportPath": "/download-report/mukayese_raporu.xlsx",
+    "totalRows": 84,
+    "totalGroups": 14
+  },
+  {
+    "id": "82a4108a-f6aa-488a-9413-b14c299030df",
+    "ad": "talep_listesi.xlsx",
+    "tarih": "2026-05-07 22:56",
+    "tur": "Mukayese",
+    "durum": "Bekliyor",
+    "onerilenFirma": "Nova Kurumsal Tedari̇k",
+    "reportPath": "/download-report/mukayese_raporu.xlsx",
+    "totalRows": 84,
+    "totalGroups": 14
+  },
+  {
     "id": "a6df252f-b389-4e08-b0d8-431c08042196",
     "ad": "talep_listesi.xlsx",
     "tarih": "2026-05-07 21:09",
