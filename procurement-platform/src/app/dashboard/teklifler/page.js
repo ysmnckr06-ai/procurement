@@ -260,6 +260,7 @@ export default function TekliflerPage() {
 
       if (data.success) {
         setReportReady(true);
+
         setReportPath(`https://procurement-production-f3ac.up.railway.app${data.reportPath}`);
         setCreatedReportId(data.reportId || null);
         setLastReportTime(new Date().toLocaleString("tr-TR"));

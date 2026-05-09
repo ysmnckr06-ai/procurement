@@ -9,7 +9,8 @@ export default function RaporlarPage() {
   const [durumFiltre, setDurumFiltre] = useState("Tümü");
 
   useEffect(() => {
-    fetch("https://procurement-production-f3ac.up.railway.app")
+
+    fetch("https://procurement-production-f3ac.up.railway.app/reports")
       .then((res) => res.json())
       .then((data) => {
         if (data.success) setRaporlar(data.reports || []);
