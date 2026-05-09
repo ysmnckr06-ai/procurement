@@ -1,7 +1,6 @@
 venv/
 __pycache__/
 *.pyc
-app/temp/
 
 .env
 .env.local
@@ -11,4 +10,7 @@ app/temp/
 node_modules/
 
 desktop.ini
-backend/backend/app/temp/
+
+backend/**/__pycache__/
+backend/**/*.pyc
+backend/app/temp/
