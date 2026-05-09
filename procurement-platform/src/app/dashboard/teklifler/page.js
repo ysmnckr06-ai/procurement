@@ -271,8 +271,7 @@ export default function TekliflerPage() {
           body: formData,
         }
       );
-      const data = await response.json();
-      console.log("ANALİZ CEVABI:", data);
+
 
       if (data.success) {
         setReportReady(true);

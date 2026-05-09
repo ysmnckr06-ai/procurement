@@ -31,7 +31,7 @@ export default function LoginPage() {
         return;
       }
 
-      console.log("LOGIN DATA:", data);
+
       setMessage("Giriş başarılı");
       router.push("/dashboard");
     } catch (err) {

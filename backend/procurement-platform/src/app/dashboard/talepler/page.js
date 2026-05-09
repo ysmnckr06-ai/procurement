@@ -123,10 +123,7 @@ export default function TaleplerPage() {
     const formData = new FormData();
     files.forEach((file) => formData.append("files", file));
 
-    console.log(
-      "GÖNDERİLEN DOSYALAR:",
-      files.map((f) => f.name)
-    );
+
 
     try {
       const response = await fetch("https://procurement-production-f3ac.up.railway.app/analyze-requests", {
