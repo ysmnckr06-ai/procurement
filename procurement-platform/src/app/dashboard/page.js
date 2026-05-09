@@ -154,12 +154,6 @@ export default function DashboardPage() {
                   </div>
                 </div>
               </div>
-                <button
-                onClick={handleLogout}
-                className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-bold text-white hover:bg-slate-800"
-              >
-                Çıkış Yap →
-                </button>
             </div>
             <div className="absolute right-12 top-8 hidden text-9xl opacity-10 lg:block">
               📋
