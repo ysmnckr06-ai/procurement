@@ -9,3 +9,4 @@ pdfplumber
 numpy
 opencv-python-headless
 pytesseract
+requests
