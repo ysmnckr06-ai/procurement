@@ -33,7 +33,7 @@ export default function LoginPage() {
 
 
       setMessage("Giriş başarılı");
-      router.push("/dashboard");
+      window.location.href = "/dashboard";
     } catch (err) {
       console.error("LOGIN CATCH:", err);
       setMessage("Bağlantı hatası oluştu.");
