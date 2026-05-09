@@ -1,4 +1,13 @@
-venv/ 
-__pycache__/ 
-*.pyc 
-app/temp/ 
+venv/
+__pycache__/
+*.pyc
+app/temp/
+
+.env
+.env.local
+.env.production
+
+.next/
+node_modules/
+
+desktop.ini

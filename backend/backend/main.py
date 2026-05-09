@@ -3,15 +3,12 @@ import shutil
 import re
 import json
 import uuid
-import requests
-
 from datetime import datetime
 
 
-from fastapi import FastAPI, UploadFile, File, Form, Header, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
-
 
 from app.parsers.excel_parser import parse_excel
 from app.parsers.pdf_parser import parse_pdf
@@ -59,31 +56,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMP_DIR = os.path.join(BASE_DIR, "app", "temp")
 REPORTS_FILE = os.path.join(TEMP_DIR, "reports.json")
 ORDERS_FILE = os.path.join(TEMP_DIR, "orders.json")
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
 
-def verify_user_token(authorization: str):
-    if not authorization:
-        raise HTTPException(status_code=401, detail="Authorization header eksik")
-
-    if not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Geçersiz token formatı")
-
-    token = authorization.replace("Bearer ", "")
-
-    response = requests.get(
-        f"{SUPABASE_URL}/auth/v1/user",
-        headers={
-            "apikey": SUPABASE_ANON_KEY,
-            "Authorization": f"Bearer {token}",
-        },
-        timeout=10,
-    )
-
-    if response.status_code != 200:
-        raise HTTPException(status_code=401, detail="Geçersiz veya süresi dolmuş token")
-
-    return response.json()
 
 def load_json(path):
     if not os.path.exists(path):
@@ -221,6 +194,7 @@ def test_upload_page():
 
 
 @app.post("/analyze-offers")
+
 async def analyze_offers(
     files: list[UploadFile] = File(...),
     firma_adlari_text: str = Form(""),
@@ -231,7 +205,7 @@ async def analyze_offers(
     min_vade_days: str = Form(""),
     max_termin_days: str = Form(""),
     allow_missing_qty: str = Form("false"),
-    authorization: str = Header(None),
+
     annual_interest_rate: float = Form(45),
 
     critical_level: str = Form("medium"),
@@ -247,29 +221,6 @@ async def analyze_offers(
     currency_risk: str = Form("medium"),
 
 ):
-    _ = verify_user_token(authorization)
-
-    if len(files) > 15:
-        raise HTTPException(status_code=400, detail="En fazla 15 dosya yükleyebilirsiniz.")
-
-    MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
-
-    for file in files:
-
-        allowed_extensions = [".pdf", ".xlsx", ".xls", ".png", ".jpg", ".jpeg"]
-
-        if not any(file.filename.lower().endswith(ext) for ext in allowed_extensions):
-            raise HTTPException(
-                status_code=400,
-                detail=f"{file.filename} desteklenmeyen dosya türü."
-        )
-        
-        contents = await file.read()
-
-        if len(contents) > MAX_FILE_SIZE:
-            raise HTTPException(status_code=400, detail=f"{file.filename} dosyası 10 MB sınırını aşıyor.")
-        await file.seek(0)
-
     all_rows = []
     warnings = []
 

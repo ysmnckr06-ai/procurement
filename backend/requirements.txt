@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+python-multipart
+pandas
+openpyxl
+xlsxwriter
+rapidfuzz
+pdfplumber
+numpy
+opencv-python-headless
+pytesseract
+requests
