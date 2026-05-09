@@ -11,3 +11,4 @@ app/temp/
 node_modules/
 
 desktop.ini
+backend/backend/app/temp/
