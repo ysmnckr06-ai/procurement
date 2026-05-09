@@ -9,7 +9,7 @@ export default function RaporlarPage() {
   const [durumFiltre, setDurumFiltre] = useState("Tümü");
 
   useEffect(() => {
-    fetch("http://127.0.0.1:8000/reports")
+    fetch("https://procurement-production-f3ac.up.railway.app")
       .then((res) => res.json())
       .then((data) => {
         if (data.success) setRaporlar(data.reports || []);
@@ -50,7 +50,7 @@ async function createOrderFromReport(rapor) {
   );
 
   try {
-    await fetch(`http://127.0.0.1:8000/reports/${rapor.id}/create-order`, {
+    await fetch(`https://procurement-production-f3ac.up.railway.app/reports/${rapor.id}/create-order`, {
       method: "POST",
     });
   } catch (error) {
@@ -142,7 +142,7 @@ async function createOrderFromReport(rapor) {
                   </Link>
 
                   <a
-                    href={`http://127.0.0.1:8000${rapor.reportPath}`}
+                    href={`https://procurement-production-f3ac.up.railway.app${rapor.reportPath}`}
                     style={{ background: "#2563eb", color: "#fff", textDecoration: "none", borderRadius: "10px", padding: "10px 14px", fontWeight: "600" }}
                   >
                     Raporu İndir

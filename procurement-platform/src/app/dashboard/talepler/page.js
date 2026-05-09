@@ -129,7 +129,7 @@ export default function TaleplerPage() {
     );
 
     try {
-      const response = await fetch("http://127.0.0.1:8000/analyze-requests", {
+      const response = await fetch("https://procurement-production-f3ac.up.railway.app/analyze-requests", {
         method: "POST",
         body: formData,
       });
@@ -155,7 +155,7 @@ export default function TaleplerPage() {
 
   const handleDownload = () => {
     if (!reportPath) return;
-    window.open(`http://127.0.0.1:8000${reportPath}`, "_blank");
+    window.open(`https://procurement-production-f3ac.up.railway.app${reportPath}`, "_blank");
   };
 
   const handleSendToOffers = () => {

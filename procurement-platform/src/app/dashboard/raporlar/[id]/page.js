@@ -14,7 +14,7 @@ export default function RaporDetayPage() {
   useEffect(() => {
     if (!id) return;
 
-    fetch(`http://127.0.0.1:8000/reports/${id}`)
+    fetch(`https://procurement-production-f3ac.up.railway.app/reports/${id}`)
       .then((res) => res.json())
       .then((data) => {
         if (data.success) {
@@ -30,7 +30,7 @@ export default function RaporDetayPage() {
 
   async function siparisOlustur() {
     const res = await fetch(
-      `http://127.0.0.1:8000/reports/${id}/create-order`,
+      `https://procurement-production-f3ac.up.railway.app/reports/${id}/create-order`,
       { method: "POST" }
     );
 

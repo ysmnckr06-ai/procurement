@@ -250,7 +250,7 @@ export default function TekliflerPage() {
       formData.append("quality_history", qualityHistory);
 
       formData.append("currency_risk", currencyRisk);
-      const response = await fetch("http://127.0.0.1:8000/analyze-offers", {
+      const response = await fetch("https://procurement-production-f3ac.up.railway.app/analyze-offers", {
         method: "POST",
         body: formData,
       });
@@ -260,7 +260,7 @@ export default function TekliflerPage() {
 
       if (data.success) {
         setReportReady(true);
-        setReportPath(`http://127.0.0.1:8000${data.reportPath}`);
+        setReportPath(`https://procurement-production-f3ac.up.railway.app${data.reportPath}`);
         setCreatedReportId(data.reportId || null);
         setLastReportTime(new Date().toLocaleString("tr-TR"));
         setMessage("Mukayese raporu oluşturuldu ve Raporlar sayfasına aktarıldı.");
