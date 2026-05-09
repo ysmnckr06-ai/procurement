@@ -150,12 +150,23 @@ export default function DashboardPage() {
                 <div className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-3">
                   <div className="rounded-2xl bg-slate-50 p-4">
                     <div className="text-sm text-slate-500">Bugün</div>
-                    <div className="mt-1 font-bold text-slate-900">06 Mayıs 2026</div>
+                    <div className="mt-1 font-bold text-slate-900">
+                      {new Date().toLocaleDateString("tr-TR", {
+                    day: "2-digit",
+                    month: "long",
+                    year: "numeric",
+                  })}
+                </div>
                   </div>
 
                   <div className="rounded-2xl bg-slate-50 p-4">
                     <div className="text-sm text-slate-500">Saat</div>
-                    <div className="mt-1 font-bold text-slate-900">13:42</div>
+                    <div className="mt-1 font-bold text-slate-900">
+                    {new Date().toLocaleTimeString("tr-TR", {
+                     hour: "2-digit",
+                     minute: "2-digit",
+                  })}
+                  </div>
                   </div>
 
                   <div className="rounded-2xl bg-slate-50 p-4">
