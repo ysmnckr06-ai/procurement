@@ -7,3 +7,5 @@ xlsxwriter
 rapidfuzz
 pdfplumber
 numpy
+opencv-python-headless
+pytesseract
