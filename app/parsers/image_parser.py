@@ -4,6 +4,9 @@ import numpy as np
 import re
 import os
 
+pytesseract.pytesseract.tesseract_cmd = (
+    r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+)
 
 def read_image_unicode(image_path):
     data = np.fromfile(image_path, dtype=np.uint8)
