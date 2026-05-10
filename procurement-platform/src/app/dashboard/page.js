@@ -1,11 +1,11 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 
-function Sidebar() {
-
+function Sidebar({ userEmail }) {
   const router = useRouter();
 
   const handleLogout = async () => {
@@ -58,11 +58,18 @@ function Sidebar() {
             Y
           </div>
           <div>
-            <div className="font-bold text-slate-800">Yasemin Çakar</div>
-            <div className="text-xs text-slate-500">ysmnckr06@icloud.com</div>
+            <div className="font-bold text-slate-800">Kullanıcı</div>
+            <div className="text-xs text-slate-500">{userEmail || "Oturum açık"}</div>
           </div>
         </div>
       </div>
+
+      <button
+        onClick={handleLogout}
+        className="mt-6 w-full rounded-xl bg-slate-900 px-5 py-3 text-sm font-bold text-white hover:bg-slate-800"
+      >
+        Çıkış Yap →
+      </button>
     </aside>
   );
 }
@@ -77,7 +84,9 @@ function StatCard({ icon, title, value, text }) {
           </div>
           <div>
             <div className="text-sm text-slate-500">{title}</div>
-            <div className="mt-1 text-3xl font-bold text-slate-900">{value}</div>
+            <div className="mt-1 text-3xl font-bold text-slate-900">
+              {value}
+            </div>
             <div className="text-sm text-slate-500">{text}</div>
           </div>
         </div>
@@ -99,11 +108,16 @@ function ModuleCard({ icon, title, text, href, button, tone = "blue" }) {
     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition-all hover:-translate-y-1 hover:shadow-md">
       <div className="flex items-start justify-between gap-5">
         <div>
-          <div className={`mb-4 inline-flex h-14 w-14 items-center justify-center rounded-2xl border text-2xl ${styles[tone]}`}>
+          <div
+            className={`mb-4 inline-flex h-14 w-14 items-center justify-center rounded-2xl border text-2xl ${styles[tone]}`}
+          >
             {icon}
           </div>
+
           <h2 className="text-2xl font-bold text-slate-900">{title}</h2>
-          <p className="mt-3 max-w-md text-sm leading-6 text-slate-600">{text}</p>
+          <p className="mt-3 max-w-md text-sm leading-6 text-slate-600">
+            {text}
+          </p>
 
           <Link
             href={href}
@@ -119,32 +133,126 @@ function ModuleCard({ icon, title, text, href, button, tone = "blue" }) {
   );
 }
 
-export default function DashboardPage() {
-  const handleLogout = async () => {
-   await supabase.auth.signOut();
-   window.location.href = "/login";
+function ActivityEmpty() {
+  return (
+    <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4 text-sm font-medium text-slate-500">
+      Henüz aktivite bulunmuyor.
+    </div>
+  );
+}
+
+function Tip({ text, tone }) {
+  const styles = {
+    blue: "border-blue-200 bg-blue-50 text-blue-900",
+    orange: "border-orange-200 bg-orange-50 text-orange-900",
+    green: "border-green-200 bg-green-50 text-green-900",
   };
+
+  return (
+    <div className={`rounded-xl border p-4 text-sm font-medium ${styles[tone]}`}>
+      ✅ {text}
+    </div>
+  );
+}
+
+export default function DashboardPage() {
+  const [userEmail, setUserEmail] = useState("");
+  const [currentTime, setCurrentTime] = useState("--:--");
+
+  const [stats, setStats] = useState({
+    talepler: 0,
+    teklifler: 0,
+    raporlar: 0,
+    siparisler: 0,
+  });
+  useEffect(() => {
+    const updateClock = () => {
+      setCurrentTime(
+        new Date().toLocaleTimeString("tr-TR", {
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      );
+    };
+
+    updateClock();
+
+    const interval = setInterval(updateClock, 1000);
+
+    return () => clearInterval(interval);
+    }, []);
+
+
+  useEffect(() => {
+    const loadDashboardStats = async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        window.location.href = "/login";
+        return;
+      }
+
+      setUserEmail(user.email || "");
+
+      const [taleplerRes, tekliflerRes, raporlarRes, siparislerRes] =
+        await Promise.all([
+          supabase
+            .from("talepler")
+            .select("*", { count: "exact", head: true })
+            .eq("user_id", user.id),
+
+          supabase
+            .from("teklifler")
+            .select("*", { count: "exact", head: true })
+            .eq("user_id", user.id),
+
+          supabase
+            .from("raporlar")
+            .select("*", { count: "exact", head: true })
+            .eq("user_id", user.id),
+
+          supabase
+            .from("siparisler")
+            .select("*", { count: "exact", head: true })
+            .eq("user_id", user.id),
+        ]);
+
+      setStats({
+        talepler: taleplerRes.count || 0,
+        teklifler: tekliflerRes.count || 0,
+        raporlar: raporlarRes.count || 0,
+        siparisler: siparislerRes.count || 0,
+      });
+    };
+
+    loadDashboardStats();
+  }, []);
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    window.location.href = "/login";
+  };
+
   return (
     <div className="flex min-h-screen bg-slate-100">
-      <Sidebar />
+      <Sidebar userEmail={userEmail} />
 
       <main className="flex-1 p-6">
         <div className="mx-auto max-w-7xl space-y-6">
           <section className="relative overflow-hidden rounded-3xl border border-slate-200 bg-white p-8 shadow-sm">
             <div className="relative z-10 flex items-start justify-between gap-6">
-                <button
-  onClick={handleLogout}
-  className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-bold text-white hover:bg-slate-800"
->
-  Çıkış Yap →
-</button>
+
+
               <div>
                 <h1 className="text-4xl font-bold text-slate-900">
-                  Hoş geldin Yasemin Çakar 👋
+                  Satınalma Yönetim Paneli 👋
                 </h1>
+
                 <p className="mt-3 max-w-2xl text-sm text-slate-600">
-                  Satınalma süreçlerinizi tek yerden yönetin, teklifleri analiz edin
-                  ve en doğru kararları raporlarla destekleyin.
+                  Satınalma süreçlerinizi tek yerden yönetin, teklifleri analiz
+                  edin ve en doğru kararları raporlarla destekleyin.
                 </p>
 
                 <div className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-3">
@@ -152,40 +260,60 @@ export default function DashboardPage() {
                     <div className="text-sm text-slate-500">Bugün</div>
                     <div className="mt-1 font-bold text-slate-900">
                       {new Date().toLocaleDateString("tr-TR", {
-                    day: "2-digit",
-                    month: "long",
-                    year: "numeric",
-                  })}
-                </div>
+                        day: "2-digit",
+                        month: "long",
+                        year: "numeric",
+                      })}
+                    </div>
                   </div>
 
                   <div className="rounded-2xl bg-slate-50 p-4">
                     <div className="text-sm text-slate-500">Saat</div>
                     <div className="mt-1 font-bold text-slate-900">
-                    {new Date().toLocaleTimeString("tr-TR", {
-                     hour: "2-digit",
-                     minute: "2-digit",
-                  })}
-                  </div>
+                      {currentTime}
+                    </div>
                   </div>
 
                   <div className="rounded-2xl bg-slate-50 p-4">
                     <div className="text-sm text-slate-500">Bildirim</div>
-                    <div className="mt-1 font-bold text-slate-900">3 yeni bildirim</div>
+                    <div className="mt-1 font-bold text-slate-900">
+                      0 yeni bildirim
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
+
             <div className="absolute right-12 top-8 hidden text-9xl opacity-10 lg:block">
               📋
             </div>
           </section>
 
           <section className="grid grid-cols-1 gap-4 md:grid-cols-4">
-            <StatCard icon="📚" title="Toplam Talep Listesi" value="8" text="Aktif talepler" />
-            <StatCard icon="📎" title="Toplam Teklif Dosyası" value="12" text="Yüklenen teklifler" />
-            <StatCard icon="📊" title="Oluşturulan Rapor" value="5" text="Toplam rapor" />
-            <StatCard icon="🛒" title="Bekleyen Sipariş" value="2" text="Onay bekleyen" />
+            <StatCard
+              icon="📚"
+              title="Toplam Talep Listesi"
+              value={stats.talepler}
+              text="Aktif talepler"
+            />
+            <StatCard
+              icon="📎"
+              title="Toplam Teklif Dosyası"
+              value={stats.teklifler}
+              text="Yüklenen teklifler"
+            />
+            <StatCard
+              icon="📊"
+              title="Oluşturulan Rapor"
+              value={stats.raporlar}
+              text="Toplam rapor"
+            />
+            <StatCard
+              icon="🛒"
+              title="Bekleyen Sipariş"
+              value={stats.siparisler}
+              text="Onay bekleyen"
+            />
           </section>
 
           <section className="grid grid-cols-1 gap-5 xl:grid-cols-2">
@@ -229,14 +357,13 @@ export default function DashboardPage() {
           <section className="grid grid-cols-1 gap-5 xl:grid-cols-2">
             <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
               <div className="flex items-center justify-between">
-                <h2 className="text-xl font-bold text-slate-900">Son Aktiviteler</h2>
-                <button className="text-sm font-bold text-purple-700">Tümünü Gör</button>
+                <h2 className="text-xl font-bold text-slate-900">
+                  Son Aktiviteler
+                </h2>
               </div>
 
               <div className="mt-5 space-y-4">
-                <Activity title="Talep listesi oluşturuldu" time="05.05.2026 16:21" />
-                <Activity title="Teklif analizi tamamlandı" time="05.05.2026 12:38" />
-                <Activity title="Mukayese raporu oluşturuldu" time="05.05.2026 12:45" />
+                <ActivityEmpty />
               </div>
             </div>
 
@@ -244,43 +371,23 @@ export default function DashboardPage() {
               <h2 className="text-xl font-bold text-slate-900">Hızlı İpuçları</h2>
 
               <div className="mt-5 space-y-3">
-                <Tip tone="blue" text="Talep listesi oluşturmadan teklif analizi yapabilirsiniz." />
-                <Tip tone="orange" text="Dövizli teklifler için kur bilgilerini güncel tutmayı unutmayın." />
-                <Tip tone="green" text="Raporlar sayfasından geçmiş tüm raporlarınıza ulaşabilirsiniz." />
+                <Tip
+                  tone="blue"
+                  text="Talep listesi oluşturmadan teklif analizi yapabilirsiniz."
+                />
+                <Tip
+                  tone="orange"
+                  text="Dövizli teklifler için kur bilgilerini güncel tutmayı unutmayın."
+                />
+                <Tip
+                  tone="green"
+                  text="Raporlar sayfasından geçmiş tüm raporlarınıza ulaşabilirsiniz."
+                />
               </div>
             </div>
           </section>
         </div>
       </main>
-    </div>
-  );
-}
-
-function Activity({ title, time }) {
-  return (
-    <div className="flex items-center justify-between rounded-2xl border border-slate-100 bg-slate-50 p-4">
-      <div>
-        <div className="font-bold text-slate-800">{title}</div>
-        <div className="mt-1 text-xs text-slate-500">{time}</div>
-      </div>
-
-      <span className="rounded-full bg-green-100 px-3 py-1 text-xs font-bold text-green-700">
-        Başarılı
-      </span>
-    </div>
-  );
-}
-
-function Tip({ text, tone }) {
-  const styles = {
-    blue: "border-blue-200 bg-blue-50 text-blue-900",
-    orange: "border-orange-200 bg-orange-50 text-orange-900",
-    green: "border-green-200 bg-green-50 text-green-900",
-  };
-
-  return (
-    <div className={`rounded-xl border p-4 text-sm font-medium ${styles[tone]}`}>
-      ✅ {text}
     </div>
   );
 }
