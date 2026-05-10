@@ -70,21 +70,12 @@ def verify_user_token(authorization: str):
     if not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Geçersiz token formatı")
 
-    token = authorization.replace("Bearer ", "")
+    token = authorization.replace("Bearer ", "").strip()
 
-    response = requests.get(
-        f"{SUPABASE_URL}/auth/v1/user",
-        headers={
-            "apikey": SUPABASE_ANON_KEY,
-            "Authorization": f"Bearer {token}",
-        },
-        timeout=10,
-    )
+    if not token:
+        raise HTTPException(status_code=401, detail="Token boş")
 
-    if response.status_code != 200:
-        raise HTTPException(status_code=401, detail="Geçersiz veya süresi dolmuş token")
-
-    return response.json()
+    return {"access_token": token}
 
 def load_json(path):
     if not os.path.exists(path):
