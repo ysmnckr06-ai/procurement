@@ -5,75 +5,6 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 
-function Sidebar({ userEmail }) {
-  const router = useRouter();
-
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-    router.push("/login");
-  };
-
-  const menu = [
-    { name: "Dashboard", icon: "🏠", href: "/dashboard", active: true },
-    { name: "Talepler", icon: "📚", href: "/dashboard/talepler" },
-    { name: "Teklifler", icon: "📊", href: "/dashboard/teklifler" },
-    { name: "Raporlar", icon: "📄", href: "/dashboard/raporlar" },
-    { name: "Siparişler", icon: "🛒", href: "/dashboard/siparisler" },
-    { name: "Tedarikçiler", icon: "🏢", href: "/dashboard/tedarikciler" },
-    { name: "Ayarlar", icon: "⚙️", href: "/dashboard/ayarlar" },
-  ];
-
-  return (
-    <aside className="hidden min-h-screen w-72 shrink-0 border-r border-slate-200 bg-white p-5 lg:block">
-      <div className="flex items-center gap-3">
-        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-600 text-2xl text-white">
-          🛒
-        </div>
-        <div>
-          <div className="text-xl font-bold text-slate-900">Satınalma</div>
-          <div className="text-sm text-slate-500">Yönetim Sistemi</div>
-        </div>
-      </div>
-
-      <nav className="mt-8 space-y-2">
-        {menu.map((item) => (
-          <Link
-            key={item.name}
-            href={item.href}
-            className={`flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold transition-all hover:scale-[1.01] ${
-              item.active
-                ? "bg-purple-100 text-purple-700"
-                : "text-slate-600 hover:bg-slate-100"
-            }`}
-          >
-            <span className="text-lg">{item.icon}</span>
-            {item.name}
-          </Link>
-        ))}
-      </nav>
-
-      <div className="mt-20 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-full bg-purple-600 font-bold text-white">
-            Y
-          </div>
-          <div>
-            <div className="font-bold text-slate-800">Kullanıcı</div>
-            <div className="text-xs text-slate-500">{userEmail || "Oturum açık"}</div>
-          </div>
-        </div>
-      </div>
-
-      <button
-        onClick={handleLogout}
-        className="mt-6 w-full rounded-xl bg-slate-900 px-5 py-3 text-sm font-bold text-white hover:bg-slate-800"
-      >
-        Çıkış Yap →
-      </button>
-    </aside>
-  );
-}
-
 function StatCard({ icon, title, value, text }) {
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -237,7 +168,6 @@ export default function DashboardPage() {
 
   return (
     <div className="flex min-h-screen bg-slate-100">
-      <Sidebar userEmail={userEmail} />
 
       <main className="flex-1 p-6">
         <div className="mx-auto max-w-7xl space-y-6">
