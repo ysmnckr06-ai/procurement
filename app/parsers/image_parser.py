@@ -4,9 +4,18 @@ import numpy as np
 import re
 import os
 
-pytesseract.pytesseract.tesseract_cmd = (
-    r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-)
+os.environ["PATH"] += os.pathsep + r"C:\Program Files\Tesseract-OCR"
+
+tesseract_path = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+tessdata_path = r"C:\Program Files\Tesseract-OCR\tessdata"
+
+pytesseract.pytesseract.tesseract_cmd = tesseract_path
+os.environ["TESSDATA_PREFIX"] = tessdata_path
+
+print("IMAGE PARSER LOADED:", __file__)
+print("TESSERACT EXISTS:", os.path.exists(tesseract_path), tesseract_path)
+print("TESSDATA EXISTS:", os.path.exists(tessdata_path), tessdata_path)
+print("TESSERACT CMD:", pytesseract.pytesseract.tesseract_cmd)
 
 def read_image_unicode(image_path):
     data = np.fromfile(image_path, dtype=np.uint8)
@@ -26,9 +35,18 @@ def detect_company_from_image(img, fallback, file_name):
     _, th = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
     try:
-        text = pytesseract.image_to_string(th, lang="tur", config="--psm 6")
-    except Exception:
-        text = pytesseract.image_to_string(th, lang="eng", config="--psm 6")
+       text = pytesseract.image_to_string(
+            th,
+            lang="tur+eng",
+            config=f'--tessdata-dir "{tessdata_path}" --psm 6'
+        )
+    except Exception as e:
+        print("OCR TUR HATASI:", repr(e))
+        text = pytesseract.image_to_string(
+            th,
+            lang="eng",
+            config=f'--tessdata-dir "{tessdata_path}" --psm 6'
+        )
 
     lines = [clean_text(x) for x in text.split("\n") if clean_text(x)]
 
@@ -315,10 +333,18 @@ def parse_image(image_path, firma_adi="", file_name=""):
     _, th = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
     try:
-        text = pytesseract.image_to_string(th, lang="tur", config="--psm 6")
-    except Exception:
-        text = pytesseract.image_to_string(th, lang="eng", config="--psm 6")
-
+        text = pytesseract.image_to_string(
+            th,
+            lang="tur+eng",
+            config=f'--tessdata-dir "{tessdata_path}" --psm 6'
+        )
+    except Exception as e:
+        print("OCR TUR HATASI:", repr(e))
+        text = pytesseract.image_to_string(
+            th,
+            lang="eng",
+            config=f'--tessdata-dir "{tessdata_path}" --psm 6'
+        )
     lines = [fix_ocr_text(l) for l in text.split("\n") if fix_ocr_text(l)]
 
     firma = detect_company_name(lines, firma_adi, file_name)

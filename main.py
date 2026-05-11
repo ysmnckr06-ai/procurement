@@ -5,7 +5,15 @@ import json
 import uuid
 import requests
 
+from dotenv import load_dotenv
+load_dotenv()
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+
+
 from datetime import datetime
+
 
 
 from fastapi import FastAPI, UploadFile, File, Form, Header, HTTPException
@@ -55,6 +63,30 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+def save_report_to_supabase(report_data):
+
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        print("SUPABASE ENV eksik")
+        return
+
+    url = f"{SUPABASE_URL}/rest/v1/reports"
+
+    headers = {
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+        "Content-Type": "application/json",
+        "Prefer": "return=minimal"
+    }
+
+    response = requests.post(
+        url,
+        headers=headers,
+        json=report_data
+    )
+
+    print("SUPABASE REPORT RESPONSE:", response.status_code)
+    print(response.text)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMP_DIR = os.path.join(BASE_DIR, "app", "temp")
@@ -470,24 +502,22 @@ async def analyze_offers(
 
     build_excel_report(analyzed, report_path)
 
-    reports = load_json(REPORTS_FILE)
-
     report_id = str(uuid.uuid4())
 
     report_record = {
-        "id": report_id,
+     "id": report_id,
+        "user_id": "demo-user",
         "ad": request_file_name or "Teklif Mukayese Raporu",
         "tarih": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "tur": "Mukayese",
         "durum": "Bekliyor",
-        "onerilenFirma": find_best_supplier(analyzed),
-        "reportPath": f"/download-report/{report_name}",
-        "totalRows": len(filtered),
-        "totalGroups": len(analyzed),
+        "onerilenfirma": find_best_supplier(analyzed),
+        "reportpath": f"/download-report/{report_name}",
+        "totalrows": len(filtered),
+        "totalgroups": len(analyzed),
     }
 
-    reports.insert(0, report_record)
-    save_json(REPORTS_FILE, reports)
+    save_report_to_supabase(report_record)
 
     return {
     "success": True,

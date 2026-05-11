@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabase";
+const API_URL = process.env.NEXT_PUBLIC_API_URL;
 
 function InfoBox({ title, text, tone = "blue" }) {
   const toneClasses = {
@@ -35,8 +36,54 @@ function StatCard({ icon, title, value, text }) {
   );
 }
 
+function Sidebar() {
+  const menu = [
+    { name: "Dashboard", icon: "🏠", href: "/dashboard" },
+    { name: "Talepler", icon: "📚", href: "/dashboard/talepler" },
+    { name: "Teklifler", icon: "📊", href: "/dashboard/teklifler", active: true },
+    { name: "Raporlar", icon: "📄", href: "/dashboard/raporlar" },
+    { name: "Siparişler", icon: "🛒", href: "/dashboard/siparisler" },
+    { name: "Tedarikçiler", icon: "🏢", href: "/dashboard/tedarikciler" },
+    { name: "Ayarlar", icon: "⚙️", href: "/dashboard/ayarlar" },
+  ];
+
+  return (
+    <aside className="hidden min-h-screen w-72 shrink-0 border-r border-slate-200 bg-white p-5 lg:block">
+      <div className="rounded-2xl bg-slate-900 p-5 text-white">
+        <div className="text-xl font-bold">Procurement AI</div>
+        <div className="mt-1 text-sm text-slate-300">Satınalma analiz paneli</div>
+      </div>
+
+      <nav className="mt-6 space-y-2">
+        {menu.map((item) => (
+          <button
+            key={item.name}
+            onClick={() => {
+              window.location.href = item.href;
+            }}
+            className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-semibold transition-all hover:scale-[1.01] ${
+              item.active
+                ? "bg-blue-600 text-white shadow-sm"
+                : "text-slate-600 hover:bg-slate-100"
+            }`}
+          >
+            <span className="text-lg">{item.icon}</span>
+            {item.name}
+          </button>
+        ))}
+      </nav>
+
+      <div className="mt-8 rounded-2xl border border-blue-100 bg-blue-50 p-4 text-sm text-blue-900">
+        <div className="font-bold">Akıllı Mukayese</div>
+        <p className="mt-1">
+          Teklifleri fiyat, vade, termin ve adet uygunluğuna göre karşılaştırın.
+        </p>
+      </div>
+    </aside>
+  );
+}
+
 export default function TekliflerPage() {
-  const router = useRouter();
   const [files, setFiles] = useState([]);
   const [parsedSources, setParsedSources] = useState([]);
   const [message, setMessage] = useState("");
@@ -215,23 +262,28 @@ export default function TekliflerPage() {
         setMessage("Oturum bulunamadı. Lütfen tekrar giriş yapın.");
         return;
       }
-
+      if (!API_URL) {
+        setMessage("API adresi bulunamadı. NEXT_PUBLIC_API_URL kontrol edilmeli.");
+        return;
+      }
+      
       const response = await fetch(
-        "https://procurement-production-f3ac.up.railway.app/analyze-offers",
+        API_URL + "/analyze-offers",
         {
-          method: "POST",
+           method: "POST",
           headers: {
-          Authorization: `Bearer ${token}`,
+            Authorization: `Bearer ${token}`,
           },
           body: formData,
         }
-      );
+      );;
 
+      const data = await response.json();
 
       if (data.success) {
         setReportReady(true);
         setReportPath(
-          `https://procurement-production-f3ac.up.railway.app${data.reportPath}`
+          API_URL + data.reportPath
         );
         setCreatedReportId(data.reportId || null);
         setLastReportTime(new Date().toLocaleString("tr-TR"));
@@ -263,6 +315,7 @@ export default function TekliflerPage() {
 
   return (
   <div className="flex min-h-screen bg-slate-100">
+    <Sidebar />
 
     <main className="flex-1 p-6">
       <div className="mx-auto max-w-7xl space-y-6">
@@ -827,7 +880,7 @@ export default function TekliflerPage() {
               <button
                 type="button"
                 onClick={() => {
-                  router.push(`/dashboard/raporlar/${createdReportId}`);
+                  window.location.href = `/dashboard/raporlar/${createdReportId}`;
                 }}
                 className="rounded-xl bg-green-600 px-4 py-2 text-sm font-bold text-white hover:bg-green-700"
               >
@@ -837,7 +890,7 @@ export default function TekliflerPage() {
               <button
                 type="button"
                 onClick={() => {
-                  router.push("/dashboard/raporlar");
+                  window.location.href = "/dashboard/raporlar";
                 }}
                 className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800"
               >

@@ -5,7 +5,15 @@ import json
 import uuid
 import requests
 
+from dotenv import load_dotenv
+load_dotenv()
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+
+
 from datetime import datetime
+
 
 
 from fastapi import FastAPI, UploadFile, File, Form, Header, HTTPException
@@ -47,6 +55,7 @@ app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        "http://127.0.0.1:3000",
         "http://localhost:3000",
         "https://procurement-dun.vercel.app",
     ],
@@ -54,6 +63,30 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+def save_report_to_supabase(report_data):
+
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        print("SUPABASE ENV eksik")
+        return
+
+    url = f"{SUPABASE_URL}/rest/v1/reports"
+
+    headers = {
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+        "Content-Type": "application/json",
+        "Prefer": "return=minimal"
+    }
+
+    response = requests.post(
+        url,
+        headers=headers,
+        json=report_data
+    )
+
+    print("SUPABASE REPORT RESPONSE:", response.status_code)
+    print(response.text)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMP_DIR = os.path.join(BASE_DIR, "app", "temp")
@@ -69,21 +102,12 @@ def verify_user_token(authorization: str):
     if not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Geçersiz token formatı")
 
-    token = authorization.replace("Bearer ", "")
+    token = authorization.replace("Bearer ", "").strip()
 
-    response = requests.get(
-        f"{SUPABASE_URL}/auth/v1/user",
-        headers={
-            "apikey": SUPABASE_ANON_KEY,
-            "Authorization": f"Bearer {token}",
-        },
-        timeout=10,
-    )
+    if not token:
+        raise HTTPException(status_code=401, detail="Token boş")
 
-    if response.status_code != 200:
-        raise HTTPException(status_code=401, detail="Geçersiz veya süresi dolmuş token")
-
-    return response.json()
+    return {"access_token": token}
 
 def load_json(path):
     if not os.path.exists(path):
@@ -478,24 +502,22 @@ async def analyze_offers(
 
     build_excel_report(analyzed, report_path)
 
-    reports = load_json(REPORTS_FILE)
-
     report_id = str(uuid.uuid4())
 
     report_record = {
-        "id": report_id,
+     "id": report_id,
+        "user_id": "demo-user",
         "ad": request_file_name or "Teklif Mukayese Raporu",
         "tarih": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "tur": "Mukayese",
         "durum": "Bekliyor",
-        "onerilenFirma": find_best_supplier(analyzed),
-        "reportPath": f"/download-report/{report_name}",
-        "totalRows": len(filtered),
-        "totalGroups": len(analyzed),
+        "onerilenfirma": find_best_supplier(analyzed),
+        "reportpath": f"/download-report/{report_name}",
+        "totalrows": len(filtered),
+        "totalgroups": len(analyzed),
     }
 
-    reports.insert(0, report_record)
-    save_json(REPORTS_FILE, reports)
+    save_report_to_supabase(report_record)
 
     return {
     "success": True,
