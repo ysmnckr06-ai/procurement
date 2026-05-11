@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { supabase } from "@/lib/supabase";
+const API_URL = process.env.NEXT_PUBLIC_API_URL;
 
 function InfoBox({ title, text, tone = "blue" }) {
   const toneClasses = {
@@ -260,23 +262,28 @@ export default function TekliflerPage() {
         setMessage("Oturum bulunamadı. Lütfen tekrar giriş yapın.");
         return;
       }
-
+      if (!API_URL) {
+        setMessage("API adresi bulunamadı. NEXT_PUBLIC_API_URL kontrol edilmeli.");
+        return;
+      }
+      
       const response = await fetch(
-        "https://procurement-production-f3ac.up.railway.app/analyze-offers",
+        API_URL + "/analyze-offers",
         {
-          method: "POST",
+           method: "POST",
           headers: {
-          Authorization: `Bearer ${token}`,
+            Authorization: `Bearer ${token}`,
           },
           body: formData,
         }
-      );
+      );;
 
+      const data = await response.json();
 
       if (data.success) {
         setReportReady(true);
         setReportPath(
-          `https://procurement-production-f3ac.up.railway.app${data.reportPath}`
+          API_URL + data.reportPath
         );
         setCreatedReportId(data.reportId || null);
         setLastReportTime(new Date().toLocaleString("tr-TR"));
