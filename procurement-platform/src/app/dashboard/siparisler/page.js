@@ -13,63 +13,6 @@ const emptyForm = {
   status: "Bekliyor",
 };
 
-function Sidebar() {
-  const menu = [
-    { name: "Dashboard", icon: "🏠", href: "/dashboard" },
-    { name: "Talepler", icon: "📚", href: "/dashboard/talepler" },
-    { name: "Teklifler", icon: "📊", href: "/dashboard/teklifler" },
-    { name: "Raporlar", icon: "📄", href: "/dashboard/raporlar" },
-    { name: "Siparişler", icon: "🛒", href: "/dashboard/siparisler", active: true },
-    { name: "Tedarikçiler", icon: "🏢", href: "/dashboard/tedarikciler" },
-    { name: "Ayarlar", icon: "⚙️", href: "/dashboard/ayarlar" },
-  ];
-
-  return (
-    <aside className="hidden min-h-screen w-72 shrink-0 border-r border-slate-200 bg-white p-5 lg:block">
-      <div className="flex items-center gap-3">
-        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-600 text-2xl text-white">
-          🛒
-        </div>
-        <div>
-          <div className="text-xl font-bold text-slate-900">Satınalma</div>
-          <div className="text-sm text-slate-500">Yönetim Sistemi</div>
-        </div>
-      </div>
-
-      <nav className="mt-8 space-y-2">
-        {menu.map((item) => (
-          <button
-            key={item.name}
-            onClick={() => {
-              window.location.href = item.href;
-            }}
-            className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-semibold transition-all hover:scale-[1.01] ${
-              item.active
-                ? "bg-purple-100 text-purple-700"
-                : "text-slate-600 hover:bg-slate-100"
-            }`}
-          >
-            <span className="text-lg">{item.icon}</span>
-            {item.name}
-          </button>
-        ))}
-      </nav>
-
-      <div className="mt-20 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-full bg-purple-600 font-bold text-white">
-            Y
-          </div>
-          <div>
-            <div className="font-bold text-slate-800">Yasemin Çakar</div>
-            <div className="text-xs text-slate-500">ysmnckr06@icloud.com</div>
-          </div>
-        </div>
-      </div>
-    </aside>
-  );
-}
-
 function createOrderNo() {
   return `SIP-${Date.now().toString().slice(-5)}`;
 }
@@ -327,8 +270,7 @@ export default function OrdersPage() {
   }
 
   return (
-    <div className="flex min-h-screen bg-slate-100">
-      <Sidebar />
+    <div className="min-h-screen bg-slate-100">
 
       <main className="flex-1 p-6">
         <div className="mx-auto max-w-7xl space-y-6">

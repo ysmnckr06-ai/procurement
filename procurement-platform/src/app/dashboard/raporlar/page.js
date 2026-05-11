@@ -2,8 +2,10 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 
 export default function RaporlarPage() {
+  const router = useRouter();
   const [raporlar, setRaporlar] = useState([]);
   const [arama, setArama] = useState("");
   const [durumFiltre, setDurumFiltre] = useState("Tümü");
@@ -58,16 +60,45 @@ async function createOrderFromReport(rapor) {
     console.log("Backend sipariş oluşturma hatası:", error);
   }
 
-  window.location.href = "/dashboard/siparisler";
+  router.push("/dashboard/siparisler");
 }
 
   return (
     <div style={{ minHeight: "100vh", background: "#f3f4f6", padding: "32px" }}>
       <div style={{ maxWidth: "1100px", margin: "0 auto" }}>
         <div style={{ marginBottom: "24px" }}>
-          <h1 style={{ margin: 0, fontSize: "34px", fontWeight: "700", color: "#111827" }}>
-            Raporlar
-          </h1>
+<div className="rounded-3xl bg-gradient-to-r from-slate-900 via-slate-800 to-blue-900 p-8 text-white shadow-xl">
+  <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+    <div>
+      <div className="mb-3 inline-flex rounded-full bg-white/10 px-4 py-2 text-sm font-semibold text-blue-100">
+        Procurement AI • Rapor Merkezi
+      </div>
+
+      <h1 className="text-4xl font-black tracking-tight">
+        Satınalma Raporları
+      </h1>
+
+      <p className="mt-3 max-w-2xl text-sm text-slate-200">
+        Teklif analizlerini inceleyin, en uygun firmaları değerlendirin
+        ve sipariş süreçlerini yönetin.
+      </p>
+    </div>
+
+    <div className="grid grid-cols-2 gap-4">
+      <MiniCard
+        title="Toplam Rapor"
+        value={raporlar.length}
+      />
+
+      <MiniCard
+        title="Siparişe Dönüşen"
+        value={
+          raporlar.filter((r) => r.durum === "Tamamlandı").length
+        }
+      />
+    </div>
+  </div>
+</div>
           <p style={{ marginTop: "8px", color: "#6b7280", fontSize: "15px" }}>
             Oluşturulan raporları görüntüleyin, filtreleyin ve yönetin.
           </p>
@@ -79,7 +110,7 @@ async function createOrderFromReport(rapor) {
           <StatCard title="Bekleyen" value={raporlar.filter((r) => r.durum === "Bekliyor").length} color="#92400E" />
           <StatCard title="Gecikmiş" value={raporlar.filter((r) => r.durum === "Gecikmiş").length} color="#991B1B" />
         </div>
-
+    
         <div style={{ background: "#ffffff", borderRadius: "16px", padding: "18px", boxShadow: "0 10px 25px rgba(0,0,0,0.06)", marginBottom: "20px", display: "flex", gap: "12px", flexWrap: "wrap" }}>
           <input
             type="text"
@@ -185,3 +216,17 @@ function StatCard({ title, value, color }) {
     </div>
   );
 }
+
+    function MiniCard({ title, value }) {
+      return (
+        <div className="rounded-2xl border border-white/10 bg-white/10 p-4 backdrop-blur">
+        <div className="text-xs text-slate-300">
+          {title}
+        </div>
+
+        <div className="mt-2 text-3xl font-black text-white">
+          {value}
+        </div>
+      </div>
+      );
+    }

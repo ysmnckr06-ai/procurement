@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 
 function InfoBox({ title, text, tone = "blue" }) {
   const toneClasses = {
@@ -34,54 +35,8 @@ function StatCard({ icon, title, value, text }) {
   );
 }
 
-function Sidebar() {
-  const menu = [
-    { name: "Dashboard", icon: "🏠", href: "/dashboard" },
-    { name: "Talepler", icon: "📚", href: "/dashboard/talepler" },
-    { name: "Teklifler", icon: "📊", href: "/dashboard/teklifler", active: true },
-    { name: "Raporlar", icon: "📄", href: "/dashboard/raporlar" },
-    { name: "Siparişler", icon: "🛒", href: "/dashboard/siparisler" },
-    { name: "Tedarikçiler", icon: "🏢", href: "/dashboard/tedarikciler" },
-    { name: "Ayarlar", icon: "⚙️", href: "/dashboard/ayarlar" },
-  ];
-
-  return (
-    <aside className="hidden min-h-screen w-72 shrink-0 border-r border-slate-200 bg-white p-5 lg:block">
-      <div className="rounded-2xl bg-slate-900 p-5 text-white">
-        <div className="text-xl font-bold">Procurement AI</div>
-        <div className="mt-1 text-sm text-slate-300">Satınalma analiz paneli</div>
-      </div>
-
-      <nav className="mt-6 space-y-2">
-        {menu.map((item) => (
-          <button
-            key={item.name}
-            onClick={() => {
-              window.location.href = item.href;
-            }}
-            className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-semibold transition-all hover:scale-[1.01] ${
-              item.active
-                ? "bg-blue-600 text-white shadow-sm"
-                : "text-slate-600 hover:bg-slate-100"
-            }`}
-          >
-            <span className="text-lg">{item.icon}</span>
-            {item.name}
-          </button>
-        ))}
-      </nav>
-
-      <div className="mt-8 rounded-2xl border border-blue-100 bg-blue-50 p-4 text-sm text-blue-900">
-        <div className="font-bold">Akıllı Mukayese</div>
-        <p className="mt-1">
-          Teklifleri fiyat, vade, termin ve adet uygunluğuna göre karşılaştırın.
-        </p>
-      </div>
-    </aside>
-  );
-}
-
 export default function TekliflerPage() {
+  const router = useRouter();
   const [files, setFiles] = useState([]);
   const [parsedSources, setParsedSources] = useState([]);
   const [message, setMessage] = useState("");
@@ -308,7 +263,6 @@ export default function TekliflerPage() {
 
   return (
   <div className="flex min-h-screen bg-slate-100">
-    <Sidebar />
 
     <main className="flex-1 p-6">
       <div className="mx-auto max-w-7xl space-y-6">
@@ -873,7 +827,7 @@ export default function TekliflerPage() {
               <button
                 type="button"
                 onClick={() => {
-                  window.location.href = `/dashboard/raporlar/${createdReportId}`;
+                  router.push(`/dashboard/raporlar/${createdReportId}`);
                 }}
                 className="rounded-xl bg-green-600 px-4 py-2 text-sm font-bold text-white hover:bg-green-700"
               >
@@ -883,7 +837,7 @@ export default function TekliflerPage() {
               <button
                 type="button"
                 onClick={() => {
-                  window.location.href = "/dashboard/raporlar";
+                  router.push("/dashboard/raporlar");
                 }}
                 className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800"
               >

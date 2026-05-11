@@ -10,6 +10,7 @@ export default function RaporDetayPage() {
 
   const [rapor, setRapor] = useState(null);
   const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -28,7 +29,11 @@ export default function RaporDetayPage() {
       });
   }, [id]);
 
-  async function siparisOlustur() {
+async function siparisOlustur() {
+  try {
+    setLoading(true);
+    setMessage("Sipariş oluşturuluyor...");
+
     const res = await fetch(
       `https://procurement-production-f3ac.up.railway.app/reports/${id}/create-order`,
       { method: "POST" }
@@ -37,11 +42,17 @@ export default function RaporDetayPage() {
     const data = await res.json();
 
     if (data.success) {
+      setMessage("Sipariş başarıyla oluşturuldu. Yönlendiriliyorsun...");
       window.location.href = "/dashboard/siparisler";
     } else {
-      setMessage("Sipariş oluşturulamadı.");
+      setMessage(data.message || "Sipariş oluşturulamadı.");
     }
+  } catch (error) {
+    setMessage("Bağlantı hatası. Sipariş oluşturulamadı.");
+  } finally {
+    setLoading(false);
   }
+}
 
   if (!rapor) {
     return (
@@ -75,16 +86,17 @@ export default function RaporDetayPage() {
           </div>
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="text-xl font-bold text-slate-900">Rapor İşlemleri</h2>
-
-          <div className="mt-5 flex flex-wrap gap-3">
-            <button
-              onClick={siparisOlustur}
-              className="rounded-xl bg-green-600 px-5 py-3 text-sm font-bold text-white hover:bg-green-700"
-            >
-              Sipariş Oluştur
-            </button>
+          <button
+            onClick={siparisOlustur}
+            disabled={loading}
+            className={`rounded-xl px-5 py-3 text-sm font-bold text-white ${
+              loading
+                ? "cursor-not-allowed bg-slate-400"
+                : "bg-green-600 hover:bg-green-700"
+            }`}
+          >
+            {loading ? "Sipariş Oluşturuluyor..." : "Sipariş Oluştur"}
+          </button>
 
             <Link
               href={`/dashboard/raporlar/${id}/mukayese`}
@@ -107,8 +119,6 @@ export default function RaporDetayPage() {
             </div>
           )}
         </div>
-      </div>
-    </div>
   );
 }
 
