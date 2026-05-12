@@ -64,10 +64,10 @@ export default function TaleplerPage() {
 
 
     try {
-      const response = await fetch("https://procurement-production-f3ac.up.railway.app/analyze-requests", {
+      const response = await fetch("http://127.0.0.1:8000/analyze-requests", {
         method: "POST",
         body: formData,
-      });
+    });
 
       const data = await response.json();
 

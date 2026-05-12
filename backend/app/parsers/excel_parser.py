@@ -196,6 +196,10 @@ def parse_excel(file_path, firma_adi="", file_name=""):
         "aciklama",
         "malzeme adi",
         "malzeme tanimi",
+        "ürün",
+        "urun",
+        "ÜRÜN",
+        "URUN",
     ], exclude_keywords=["kod", "sira", "sıra"])
 
     qty_col = find_col_exact_or_contains(df.columns, [
@@ -214,6 +218,10 @@ def parse_excel(file_path, firma_adi="", file_name=""):
     price_col = find_col_exact_or_contains(df.columns, [
         "birim fiyat",
         "unit price",
+        "fiyat",
+        "FIYAT",
+        "FİYAT",
+        "FIYAT",
     ], exclude_keywords=[
         "iskontolu",
         "net",

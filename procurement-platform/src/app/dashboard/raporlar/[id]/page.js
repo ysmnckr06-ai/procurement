@@ -15,7 +15,7 @@ export default function RaporDetayPage() {
   useEffect(() => {
     if (!id) return;
 
-    fetch(`https://procurement-production-f3ac.up.railway.app/reports/${id}`)
+    fetch(`${process.env.NEXT_PUBLIC_API_URL}/reports/${id}`)
       .then((res) => res.json())
       .then((data) => {
         if (data.success) {

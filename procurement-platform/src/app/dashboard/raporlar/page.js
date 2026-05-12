@@ -12,7 +12,7 @@ export default function RaporlarPage() {
 
   useEffect(() => {
 
-    fetch("https://procurement-production-f3ac.up.railway.app/reports")
+    fetch(`${process.env.NEXT_PUBLIC_API_URL}/reports`)
       .then((res) => res.json())
       .then((data) => {
         if (data.success) setRaporlar(data.reports || []);
