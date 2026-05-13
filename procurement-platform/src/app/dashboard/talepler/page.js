@@ -35,6 +35,7 @@ function Step({ no, title, text }) {
 
 export default function TaleplerPage() {
   const router = useRouter();
+  const API_URL = process.env.NEXT_PUBLIC_API_URL;
   const [files, setFiles] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [message, setMessage] = useState("");
@@ -64,7 +65,7 @@ export default function TaleplerPage() {
 
 
     try {
-      const response = await fetch("http://127.0.0.1:8000/analyze-requests", {
+      const response = await fetch(`${API_URL}/analyze-requests`, {
         method: "POST",
         body: formData,
     });
