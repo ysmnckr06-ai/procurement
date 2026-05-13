@@ -8,12 +8,17 @@ import requests
 from dotenv import load_dotenv
 load_dotenv()
 
+from supabase import create_client
+
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
+supabase = create_client(
+    SUPABASE_URL,
+    SUPABASE_SERVICE_ROLE_KEY
+)
 
 from datetime import datetime
-
 
 
 from fastapi import FastAPI, UploadFile, File, Form, Header, HTTPException
@@ -666,6 +671,13 @@ async def analyze_requests(
 
     build_request_excel_report(result_rows, report_path)
 
+    with open(report_path, "rb") as f:
+        supabase.storage.from_("request-reports").upload(
+            report_name,
+            f,
+            {"content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}
+        )
+
     return {
         "success": True,
         "warnings": warnings,
@@ -674,22 +686,14 @@ async def analyze_requests(
         "totalRows": len(result_rows)
     }
 
-
 @app.get("/download-request-report/{file_name}")
 def download_request_report(file_name: str):
-    file_path = os.path.join(TEMP_DIR, file_name)
+    public_url = supabase.storage.from_("request-reports").get_public_url(file_name)
 
-    if not os.path.exists(file_path):
-        return {
-            "success": False,
-            "message": "Dosya bulunamadı."
-        }
-
-    return FileResponse(
-        path=file_path,
-        filename=file_name,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+    return {
+        "success": True,
+        "downloadUrl": public_url
+    }
 
 @app.get("/reports")
 def list_reports():
