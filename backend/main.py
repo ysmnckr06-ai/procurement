@@ -677,7 +677,17 @@ async def analyze_requests(
             f,
             {"content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}
         )
+    request_record = {
+        "user_id": "demo-user",
+        "ad": "Talep Listesi",
+        "tarih": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "durum": "Oluşturuldu",
+        "filepath": report_name,
+        "totalitems": len(result_rows)
+    }
 
+    supabase.table("requests").insert(request_record).execute()
+    
     return {
         "success": True,
         "warnings": warnings,
