@@ -220,35 +220,6 @@ def root():
     return {"status": "ok", "message": "Procurement backend is running"}
 
 
-#@app.get("/test-upload", response_class=HTMLResponse)
-#def test_upload_page():
-    #return """
-    #<html>
-        #<head>
-            #<meta charset="utf-8" />
-            #<title>Teklif Test Upload</title>
-        #</head>
-        #<body style="font-family: Arial; padding: 30px;">
-            #<h2>Teklif Dosyaları Test</h2>
-            #<form action="/analyze-offers" enctype="multipart/form-data" method="post">
-                #<label><b>Dosyalar:</b></label><br><br>
-                #<input type="file" name="files" multiple><br><br>
-
-                #<label><b>Firma adları (virgülle):</b></label><br><br>
-                #<input
-                    #type="text"
-                    #name="firma_adlari_text"
-                    #style="width: 450px; padding: 8px;"
-                    #value="A Firması, B Firması, C Firması"
-                #><br><br>
-
-                #<button type="submit" style="padding: 10px 18px;">Analiz Et</button>
-            #</form>
-        #</body>
-    #</html>
-    #"""
-
-
 @app.post("/analyze-offers")
 async def analyze_offers(
     files: list[UploadFile] = File(...),
@@ -687,7 +658,7 @@ async def analyze_requests(
     }
 
     supabase.table("requests").insert(request_record).execute()
-    
+
     return {
         "success": True,
         "warnings": warnings,
@@ -703,6 +674,15 @@ def download_request_report(file_name: str):
     return {
         "success": True,
         "downloadUrl": public_url
+    }
+
+@app.get("/requests")
+def get_requests():
+    response = supabase.table("requests").select("*").order("created_at", desc=True).execute()
+
+    return {
+        "success": True,
+        "requests": response.data
     }
 
 @app.get("/reports")
