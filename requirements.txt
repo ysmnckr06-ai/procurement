@@ -12,7 +12,7 @@ fastapi==0.136.1
 h11==0.16.0
 idna==3.11
 numpy==2.4.4
-opencv-python==4.13.0.92
+opencv-python-headless==4.13.0.92
 openpyxl==3.1.5
 packaging==26.1
 pandas==3.0.2
