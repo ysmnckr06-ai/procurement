@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabase";
 
 function StatCard({ icon, title, value, text }) {
   return (
@@ -59,6 +60,12 @@ export default function TaleplerPage() {
     setIsLoading(true);
     setMessage("");
 
+    const {
+    data: { session },
+    } = await supabase.auth.getSession();
+
+    const token = session?.access_token;
+
     const formData = new FormData();
     files.forEach((file) => formData.append("files", file));
 
@@ -66,9 +73,12 @@ export default function TaleplerPage() {
 
     try {
       const response = await fetch(`${API_URL}/analyze-requests`, {
-        method: "POST",
-        body: formData,
-    });
+  method: "POST",
+  headers: {
+    Authorization: `Bearer ${token}`,
+  },
+  body: formData,
+});
 
       const data = await response.json();
 

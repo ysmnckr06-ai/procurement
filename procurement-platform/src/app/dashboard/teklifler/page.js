@@ -221,6 +221,8 @@ export default function TekliflerPage() {
         return;
       }
       
+      formData.append("request_id", selectedRequestId);
+
       const response = await fetch(
         API_URL + "/analyze-offers",
         {

@@ -2,11 +2,15 @@ import os
 import shutil
 import re
 import json
+import token
+import token
 import uuid
 import requests
 
 from dotenv import load_dotenv
-load_dotenv()
+from pathlib import Path
+env_path = Path(__file__).resolve().parent.parent / ".env.local"
+load_dotenv(env_path)
 
 from supabase import create_client
 
@@ -224,6 +228,7 @@ def root():
 async def analyze_offers(
     files: list[UploadFile] = File(...),
     firma_adlari_text: str = Form(""),
+    request_id: str = Form(""),
     request_report_path: str = Form(""),
     request_file_name: str = Form(""),
 
@@ -524,8 +529,9 @@ def download_report(file_name: str):
 
 @app.post("/analyze-requests")
 async def analyze_requests(
-    files: list[UploadFile] = File(...)
-):
+    files: list[UploadFile] = File(...),
+    authorization: str = Header(None),
+    ):
     all_rows = []
     warnings = []
 
@@ -646,12 +652,23 @@ async def analyze_requests(
         supabase.storage.from_("request-reports").upload(
             report_name,
             f,
-            {"content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}
-        )
+        {
+                "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "x-upsert": "true"
+        }
+    )
+    token = authorization.replace("Bearer ", "")
+
+    user_response = supabase.auth.get_user(token)
+    user_id = user_response.user.id  
+    token = authorization.replace("Bearer ", "")
+
+    user_response = supabase.auth.get_user(token)
+    user_id = user_response.user.id  
     request_record = {
-        "user_id": "demo-user",
+
+        "user_id": user_id,
         "ad": "Talep Listesi",
-        "tarih": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "durum": "Oluşturuldu",
         "filepath": report_name,
         "totalitems": len(result_rows)
