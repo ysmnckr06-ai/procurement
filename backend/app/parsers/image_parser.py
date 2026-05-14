@@ -1,3 +1,5 @@
+from pydoc import text
+
 import cv2
 import pytesseract
 import numpy as np
@@ -22,7 +24,9 @@ def detect_company_from_image(img, fallback, file_name):
     top = img[0:int(h * 0.18), 0:w]
 
     gray = cv2.cvtColor(top, cv2.COLOR_BGR2GRAY)
-    gray = cv2.resize(gray, None, fx=2, fy=2)
+    gray = cv2.resize(gray, None, fx=4, fy=4)
+    gray = cv2.fastNlMeansDenoising(gray)
+    gray = cv2.GaussianBlur(gray, (3, 3), 0)
     _, th = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
     try:
@@ -314,10 +318,36 @@ def parse_image(image_path, firma_adi="", file_name=""):
 
     _, th = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
-    try:
-        text = pytesseract.image_to_string(th, lang="tur", config="--psm 6")
-    except Exception:
-        text = pytesseract.image_to_string(th, lang="eng", config="--psm 6")
+    blur = cv2.GaussianBlur(gray, (3, 3), 0)
+
+    adaptive = cv2.adaptiveThreshold(
+        blur,
+        255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY,
+        31,
+        2
+    )
+    texts = []
+
+    configs = ["--psm 6", "--psm 11", "--psm 4"]
+    images_to_try = [gray, th, adaptive]
+
+    for img_try in images_to_try:
+        for cfg in configs:
+            try:
+                texts.append(pytesseract.image_to_string(img_try, lang="tur", config=cfg))
+            except Exception:
+                pass
+                try:
+                    texts.append(pytesseract.image_to_string(img_try, lang="eng", config=cfg))
+                except Exception:
+                    pass
+
+    text = "\n".join([t for t in texts if t.strip()])
+
+    print("OCR RAW TEXT LENGTH:", len(text))
+    print("OCR RAW TEXT PREVIEW:", text[:1000])
 
     lines = [fix_ocr_text(l) for l in text.split("\n") if fix_ocr_text(l)]
 
@@ -333,6 +363,9 @@ def parse_image(image_path, firma_adi="", file_name=""):
     for line in lines:
         parsed = parse_offer_line(line)
 
+        print("LINE:", line)
+        print("PARSED:", parsed)
+        
         if not parsed:
             continue
 
