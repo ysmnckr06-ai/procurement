@@ -1,12 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-<<<<<<< HEAD
 import { supabase } from "@/lib/supabase";
-=======
 import { useState, useMemo, useEffect } from "react";
->>>>>>> 5f32807 (Added saved requests list)
 
 function StatCard({ icon, title, value, text }) {
   return (
