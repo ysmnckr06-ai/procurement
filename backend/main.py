@@ -7,17 +7,19 @@ import requests
 
 from dotenv import load_dotenv
 from pathlib import Path
-env_path = Path(__file__).resolve().parent.parent / ".env.local"
+
+env_path = Path(__file__).resolve().parent / ".env"
 load_dotenv(env_path)
 
 from supabase import create_client
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
 
 supabase = create_client(
     SUPABASE_URL,
-    SUPABASE_SERVICE_ROLE_KEY
+    SUPABASE_ANON_KEY
 )
 
 from datetime import datetime
@@ -120,7 +122,7 @@ def verify_user_token(authorization: str):
     response = requests.get(
         f"{SUPABASE_URL}/auth/v1/user",
         headers={
-            "apikey": SUPABASE_ANON_KEY,
+            "apikey": SUPABASE_SERVICE_ROLE_KEY,
             "Authorization": f"Bearer {token}",
         },
         timeout=10,
