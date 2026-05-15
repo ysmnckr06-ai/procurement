@@ -6,14 +6,23 @@ import uuid
 import requests
 
 from dotenv import load_dotenv
-load_dotenv()
+from pathlib import Path
+
+env_path = Path(__file__).resolve().parent / ".env"
+load_dotenv(env_path)
+
+from supabase import create_client
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
 
+supabase = create_client(
+    SUPABASE_URL,
+    SUPABASE_ANON_KEY
+)
 
 from datetime import datetime
-
 
 
 from fastapi import FastAPI, UploadFile, File, Form, Header, HTTPException
@@ -110,14 +119,21 @@ def verify_user_token(authorization: str):
     if not SUPABASE_URL or not SUPABASE_ANON_KEY:
         raise HTTPException(status_code=500, detail="Supabase ayarları eksik")
 
-    response = requests.get(
-        f"{SUPABASE_URL}/auth/v1/user",
-        headers={
-            "apikey": SUPABASE_ANON_KEY,
-            "Authorization": f"Bearer {token}",
-        },
-        timeout=10,
-    )
+    try:
+        response = requests.get(
+            f"{SUPABASE_URL}/auth/v1/user",
+            headers={
+                "apikey": SUPABASE_SERVICE_ROLE_KEY,
+                "Authorization": f"Bearer {token}",
+            },
+            timeout=10,
+        )
+    except requests.RequestException as e:
+        print("SUPABASE AUTH CONNECTION ERROR:", str(e))
+        raise HTTPException(
+            status_code=503,
+            detail="Supabase kullanıcı doğrulamasına ulaşılamadı. Lütfen tekrar deneyin.",
+        )
 
     if response.status_code != 200:
         raise HTTPException(status_code=401, detail="Token doğrulanamadı")
@@ -235,39 +251,11 @@ def root():
     return {"status": "ok", "message": "Procurement backend is running"}
 
 
-#@app.get("/test-upload", response_class=HTMLResponse)
-#def test_upload_page():
-    #return """
-    #<html>
-        #<head>
-            #<meta charset="utf-8" />
-            #<title>Teklif Test Upload</title>
-        #</head>
-        #<body style="font-family: Arial; padding: 30px;">
-            #<h2>Teklif Dosyaları Test</h2>
-            #<form action="/analyze-offers" enctype="multipart/form-data" method="post">
-                #<label><b>Dosyalar:</b></label><br><br>
-                #<input type="file" name="files" multiple><br><br>
-
-                #<label><b>Firma adları (virgülle):</b></label><br><br>
-                #<input
-                    #type="text"
-                    #name="firma_adlari_text"
-                    #style="width: 450px; padding: 8px;"
-                    #value="A Firması, B Firması, C Firması"
-                #><br><br>
-
-                #<button type="submit" style="padding: 10px 18px;">Analiz Et</button>
-            #</form>
-        #</body>
-    #</html>
-    #"""
-
-
 @app.post("/analyze-offers")
 async def analyze_offers(
     files: list[UploadFile] = File(...),
     firma_adlari_text: str = Form(""),
+    request_id: str = Form(""),
     request_report_path: str = Form(""),
     request_file_name: str = Form(""),
 
@@ -569,8 +557,9 @@ def download_report(file_name: str):
 
 @app.post("/analyze-requests")
 async def analyze_requests(
-    files: list[UploadFile] = File(...)
-):
+    files: list[UploadFile] = File(...),
+    authorization: str = Header(None),
+    ):
     all_rows = []
     warnings = []
 
@@ -687,6 +676,34 @@ async def analyze_requests(
 
     build_request_excel_report(result_rows, report_path)
 
+    with open(report_path, "rb") as f:
+        supabase.storage.from_("request-reports").upload(
+            report_name,
+            f,
+        {
+                "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "x-upsert": "true"
+        }
+    )
+    token = authorization.replace("Bearer ", "")
+
+    user_response = supabase.auth.get_user(token)
+    user_id = user_response.user.id  
+    token = authorization.replace("Bearer ", "")
+
+    user_response = supabase.auth.get_user(token)
+    user_id = user_response.user.id  
+    request_record = {
+
+        "user_id": user_id,
+        "ad": "Talep Listesi",
+        "durum": "Oluşturuldu",
+        "filepath": report_name,
+        "totalitems": len(result_rows)
+    }
+
+    supabase.table("requests").insert(request_record).execute()
+
     return {
         "success": True,
         "warnings": warnings,
@@ -695,22 +712,23 @@ async def analyze_requests(
         "totalRows": len(result_rows)
     }
 
-
 @app.get("/download-request-report/{file_name}")
 def download_request_report(file_name: str):
-    file_path = os.path.join(TEMP_DIR, file_name)
+    public_url = supabase.storage.from_("request-reports").get_public_url(file_name)
 
-    if not os.path.exists(file_path):
-        return {
-            "success": False,
-            "message": "Dosya bulunamadı."
-        }
+    return {
+        "success": True,
+        "downloadUrl": public_url
+    }
 
-    return FileResponse(
-        path=file_path,
-        filename=file_name,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+@app.get("/requests")
+def get_requests():
+    response = supabase.table("requests").select("*").order("created_at", desc=True).execute()
+
+    return {
+        "success": True,
+        "requests": response.data
+    }
 
 @app.get("/reports")
 def list_reports():
