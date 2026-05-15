@@ -16,4 +16,4 @@ pillow
 supabase==2.3.4
 httpx==0.24.1
 gotrue==2.4.2
-postgrest==0.16.8
+postgrest==0.15.0
