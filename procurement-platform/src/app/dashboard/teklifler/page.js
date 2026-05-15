@@ -156,18 +156,13 @@ export default function TekliflerPage() {
   if (score <= 45) return 35;
   if (score <= 65) return 45;
   return 60;
-  };
+    };
 
   const handleAnalyze = async () => {
-    if (analysisMode === "withRequest" && !selectedRequest) {
-      setMessage("Lütfen önce bir talep listesi seçin veya talep olmadan karşılaştırma modunu seçin.");
-      return;
-    }
-
     if (files.length === 0) {
       setMessage("Lütfen önce teklif dosyası yükleyin.");
       return;
-    }
+    };
 
     setIsAnalyzing(true);
     setReportReady(false);
