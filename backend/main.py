@@ -2,24 +2,24 @@ import os
 import shutil
 import re
 import json
-import token
-import token
 import uuid
 import requests
 
 from dotenv import load_dotenv
 from pathlib import Path
-env_path = Path(__file__).resolve().parent.parent / ".env.local"
+
+env_path = Path(__file__).resolve().parent / ".env"
 load_dotenv(env_path)
 
 from supabase import create_client
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
 
 supabase = create_client(
     SUPABASE_URL,
-    SUPABASE_SERVICE_ROLE_KEY
+    SUPABASE_ANON_KEY
 )
 
 from datetime import datetime
@@ -116,7 +116,34 @@ def verify_user_token(authorization: str):
     if not token:
         raise HTTPException(status_code=401, detail="Token boş")
 
-    return {"access_token": token}
+    if not SUPABASE_URL or not SUPABASE_ANON_KEY:
+        raise HTTPException(status_code=500, detail="Supabase ayarları eksik")
+
+    try:
+        response = requests.get(
+            f"{SUPABASE_URL}/auth/v1/user",
+            headers={
+                "apikey": SUPABASE_SERVICE_ROLE_KEY,
+                "Authorization": f"Bearer {token}",
+            },
+            timeout=10,
+        )
+    except requests.RequestException as e:
+        print("SUPABASE AUTH CONNECTION ERROR:", str(e))
+        raise HTTPException(
+            status_code=503,
+            detail="Supabase kullanıcı doğrulamasına ulaşılamadı. Lütfen tekrar deneyin.",
+        )
+
+    if response.status_code != 200:
+        raise HTTPException(status_code=401, detail="Token doğrulanamadı")
+
+    user = response.json()
+
+    if not user.get("id"):
+        raise HTTPException(status_code=401, detail="Kullanıcı bilgisi alınamadı")
+
+    return user
 
 def load_json(path):
     if not os.path.exists(path):
@@ -252,7 +279,8 @@ async def analyze_offers(
     currency_risk: str = Form("medium"),
 
 ):
-    _ = verify_user_token(authorization)
+    user = verify_user_token(authorization)
+    user_id = user["id"]
 
     if len(files) > 15:
         raise HTTPException(status_code=400, detail="En fazla 15 dosya yükleyebilirsiniz.")
@@ -487,7 +515,7 @@ async def analyze_offers(
 
     report_record = {
      "id": report_id,
-        "user_id": "demo-user",
+        "user_id": user_id,
         "ad": request_file_name or "Teklif Mukayese Raporu",
         "tarih": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "tur": "Mukayese",

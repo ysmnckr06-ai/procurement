@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { useState, useMemo, useEffect } from "react";
 
 function StatCard({ icon, title, value, text }) {
   return (
@@ -42,11 +42,28 @@ export default function TaleplerPage() {
   const [message, setMessage] = useState("");
   const [reportPath, setReportPath] = useState("");
   const [rows, setRows] = useState([]);
+  const [savedRequests, setSavedRequests] = useState([]);
 
   const totalQty = useMemo(() => {
     return rows.reduce((sum, r) => sum + Number(r.talepEdilenAdet || 0), 0);
   }, [rows]);
+    useEffect(() => {
+      loadRequests();
+    }, []);
 
+  const loadRequests = async () => {
+    try {
+      const response = await fetch(`${API_URL}/requests`);
+      const data = await response.json();
+
+      if (data.success) {
+        setSavedRequests(data.requests || []);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+  
   const handleFileChange = (e) => {
     setFiles(Array.from(e.target.files || []));
   };
@@ -135,6 +152,7 @@ export default function TaleplerPage() {
       router.push("/dashboard/teklifler");
     }, 700);
   };
+
   return (
     <div className="min-h-screen bg-slate-100">
 
@@ -244,6 +262,56 @@ export default function TaleplerPage() {
               </div>
             )}
           </div>
+
+          <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="mb-4 flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">Oluşturulan Talep Listeleri</h2>
+                <p className="text-sm text-slate-500">Daha önce oluşturduğunuz talep listeleri burada görünür.</p>
+              </div>
+              <span className="rounded-full bg-blue-50 px-3 py-1 text-sm font-semibold text-blue-700">
+                {savedRequests.length} kayıt
+              </span>
+            </div>
+
+            {savedRequests.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500">
+                Henüz kayıtlı talep listesi yok.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {savedRequests.map((req) => (
+                  <div
+                    key={req.id}
+                    className="flex items-center justify-between rounded-xl border border-slate-200 p-4"
+                >
+                  <div>
+                    <div className="font-semibold text-slate-900">{req.ad || "Talep Listesi"}</div>
+                    <div className="text-sm text-slate-500">
+                      {req.tarih} • {req.totalitems || 0} kalem • {req.durum}
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => window.open(`${API_URL}/download-request-report/${req.filepath}`, "_blank")}
+                      className="rounded-lg bg-green-600 px-3 py-2 text-sm font-semibold text-white"
+                    >
+                      Excel İndir
+                    </button>
+
+                    <button
+                      onClick={() => router.push("/dashboard/teklifler")}
+                      className="rounded-lg bg-purple-600 px-3 py-2 text-sm font-semibold text-white"
+                    >
+                      Tekliflere Aktar
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
           {rows.length > 0 && (
             <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">

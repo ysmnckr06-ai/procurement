@@ -130,7 +130,7 @@ export default function DashboardPage() {
       const [taleplerRes, tekliflerRes, raporlarRes, siparislerRes] =
         await Promise.all([
           supabase
-            .from("talepler")
+            .from("requests")
             .select("*", { count: "exact", head: true })
             .eq("user_id", user.id),
 
@@ -140,7 +140,7 @@ export default function DashboardPage() {
             .eq("user_id", user.id),
 
           supabase
-            .from("raporlar")
+            .from("reports")
             .select("*", { count: "exact", head: true })
             .eq("user_id", user.id),
 
