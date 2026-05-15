@@ -270,9 +270,9 @@ export default function OrdersPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-100">
+    <div className="bg-slate-100">
 
-      <main className="flex-1 p-6">
+      <main className="p-6">
         <div className="mx-auto max-w-7xl space-y-6">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>

@@ -154,9 +154,9 @@ export default function TaleplerPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-100">
+    <div className="bg-slate-100">
 
-      <main className="flex-1 p-6">
+      <main className="p-6">
         <div className="mx-auto max-w-7xl space-y-6">
           <div className="flex items-center gap-4">
             <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-purple-100 text-3xl">
