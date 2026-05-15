@@ -3,7 +3,6 @@ uvicorn
 python-multipart
 python-dotenv
 requests
-supabase==2.4.0
 openpyxl
 pandas
 numpy
@@ -14,3 +13,7 @@ opencv-python-headless
 rapidfuzz
 xlsxwriter
 pillow
+supabase==2.3.4
+httpx==0.24.1
+gotrue==2.4.2
+postgrest==0.16.8
