@@ -107,7 +107,27 @@ def verify_user_token(authorization: str):
     if not token:
         raise HTTPException(status_code=401, detail="Token boş")
 
-    return {"access_token": token}
+    if not SUPABASE_URL or not SUPABASE_ANON_KEY:
+        raise HTTPException(status_code=500, detail="Supabase ayarları eksik")
+
+    response = requests.get(
+        f"{SUPABASE_URL}/auth/v1/user",
+        headers={
+            "apikey": SUPABASE_ANON_KEY,
+            "Authorization": f"Bearer {token}",
+        },
+        timeout=10,
+    )
+
+    if response.status_code != 200:
+        raise HTTPException(status_code=401, detail="Token doğrulanamadı")
+
+    user = response.json()
+
+    if not user.get("id"):
+        raise HTTPException(status_code=401, detail="Kullanıcı bilgisi alınamadı")
+
+    return user
 
 def load_json(path):
     if not os.path.exists(path):
@@ -271,7 +291,8 @@ async def analyze_offers(
     currency_risk: str = Form("medium"),
 
 ):
-    _ = verify_user_token(authorization)
+    user = verify_user_token(authorization)
+    user_id = user["id"]
 
     if len(files) > 15:
         raise HTTPException(status_code=400, detail="En fazla 15 dosya yükleyebilirsiniz.")
@@ -506,7 +527,7 @@ async def analyze_offers(
 
     report_record = {
      "id": report_id,
-        "user_id": "demo-user",
+        "user_id": user_id,
         "ad": request_file_name or "Teklif Mukayese Raporu",
         "tarih": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "tur": "Mukayese",
