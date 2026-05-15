@@ -119,14 +119,21 @@ def verify_user_token(authorization: str):
     if not SUPABASE_URL or not SUPABASE_ANON_KEY:
         raise HTTPException(status_code=500, detail="Supabase ayarları eksik")
 
-    response = requests.get(
-        f"{SUPABASE_URL}/auth/v1/user",
-        headers={
-            "apikey": SUPABASE_SERVICE_ROLE_KEY,
-            "Authorization": f"Bearer {token}",
-        },
-        timeout=10,
-    )
+    try:
+        response = requests.get(
+            f"{SUPABASE_URL}/auth/v1/user",
+            headers={
+                "apikey": SUPABASE_SERVICE_ROLE_KEY,
+                "Authorization": f"Bearer {token}",
+            },
+            timeout=10,
+        )
+    except requests.RequestException as e:
+        print("SUPABASE AUTH CONNECTION ERROR:", str(e))
+        raise HTTPException(
+            status_code=503,
+            detail="Supabase kullanıcı doğrulamasına ulaşılamadı. Lütfen tekrar deneyin.",
+        )
 
     if response.status_code != 200:
         raise HTTPException(status_code=401, detail="Token doğrulanamadı")
