@@ -18,12 +18,14 @@ export default function RaporDetayPage() {
     fetch(`${process.env.NEXT_PUBLIC_API_URL}/reports/${id}`)
       .then((res) => res.json())
       .then((data) => {
-        if (data.success) {
-          setRapor(data.report);
-        } else {
-          setMessage("Rapor bulunamadı.");
-        }
-      })
+    console.log("RAPOR DETAY DATA:", data);
+
+    if (data.success) {
+        setRapor(data.report);
+    } else {
+        setMessage("Rapor bulunamadı.");
+    }
+})
       .catch(() => {
         setMessage("Rapor detayı alınırken hata oluştu.");
       });

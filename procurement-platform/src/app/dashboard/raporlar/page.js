@@ -145,8 +145,15 @@ async function createOrderFromReport(rapor) {
             return (
               <div
                 key={rapor.id}
-                style={{ background: "#ffffff", borderRadius: "18px", padding: "20px", boxShadow: "0 10px 25px rgba(0,0,0,0.06)", border: "1px solid #e5e7eb" }}
-              >
+                onClick={() => router.push("/dashboard/raporlar/" + rapor.id)}
+                style={{
+                  background: "#fff",
+                  borderRadius: "18px",
+                  cursor: "pointer",
+                  transition: "0.2s",
+                }}
+>
+              
                 <div style={{ display: "flex", justifyContent: "space-between", gap: "16px", alignItems: "flex-start", flexWrap: "wrap" }}>
                   <div>
                     <div style={{ fontSize: "20px", fontWeight: "700", color: "#111827", marginBottom: "8px" }}>

@@ -1,23 +1,50 @@
 export default async function MukayesePage({ params }) {
   const { id } = await params;
 
-  const firmalar = [
-    { firma: "Tekno A.Ş.", fiyat: "120.000 TL", teslim: "5 Gün", durum: "Uygun" },
-    { firma: "Nova Teknoloji", fiyat: "128.500 TL", teslim: "3 Gün", durum: "Uygun" },
-    { firma: "Artemis Bilişim", fiyat: "135.000 TL", teslim: "7 Gün", durum: "İnceleniyor" },
-  ];
+  const response = await fetch(
+ `${process.env.NEXT_PUBLIC_API_URL}/reports/${id}`
+);
+
+const data = await response.json();
+
+const firmalar = data?.report?.analysis || [];
+
+if (firmalar.length === 0) {
+  return (
+    <div style={{ minHeight: "100vh", background: "#f3f4f6", padding: "32px" }}>
+      <div style={{
+        maxWidth: "900px",
+        margin: "0 auto",
+        background: "#fff",
+        borderRadius: "18px",
+        padding: "24px",
+        boxShadow: "0 10px 25px rgba(0,0,0,0.06)"
+      }}>
+        <h1>Mukayese verisi bulunamadı</h1>
+        <p>
+          Rapor kaydı geldi ama detaylı firma listesi henüz rapora kaydedilmemiş.
+        </p>
+        <pre style={{ whiteSpace: "pre-wrap", background: "#f8fafc", padding: "16px" }}>
+          {JSON.stringify(data?.report, null, 2)}
+        </pre>
+      </div>
+    </div>
+  );
+}
 
   const enUcuz = firmalar.reduce((min, item) => {
-    const fiyat = parseInt(item.fiyat.replace(/\D/g, ""));
-    const minFiyat = parseInt(min.fiyat.replace(/\D/g, ""));
-    return fiyat < minFiyat ? item : min;
-  });
+  const fiyat = Number(item.fiyat ?? item.birimFiyat ?? item.satirToplamDosyadan ?? 0);
+  const minFiyat = Number(min.fiyat ?? min.birimFiyat ?? min.satirToplamDosyadan ?? 0);
+
+  return fiyat < minFiyat ? item : min;
+});
 
   const enHizli = firmalar.reduce((min, item) => {
-    const gun = parseInt(item.teslim);
-    const minGun = parseInt(min.teslim);
-    return gun < minGun ? item : min;
-  });
+  const gun = parseInt(item.teslim ?? item.termin ?? 999);
+  const minGun = parseInt(min.teslim ?? min.termin ?? 999);
+
+  return gun < minGun ? item : min;
+});
 
   const altinOneri = enUcuz.firma === enHizli.firma ? enUcuz : null;
 
@@ -141,6 +168,80 @@ export default async function MukayesePage({ params }) {
               ))}
             </tbody>
           </table>
+          <div
+             style={{
+              marginTop: "24px",
+              background: "#f8fafc",
+              border: "1px solid #e2e8f0",
+              borderRadius: "16px",
+              padding: "20px",
+            }}
+          >
+            <h3
+            style={{
+              marginTop: 0,
+              marginBottom: "12px",
+              color: "#0f172a",
+              fontSize: "20px",
+            }}
+          >
+            🤖 AI Değerlendirmesi
+          </h3>
+
+          <p style={{ color: "#475569", lineHeight: "1.7" }}>
+            {enUcuz.firma} firması fiyat avantajı nedeniyle ön plana çıkmıştır.
+            Teslim süresi değerlendirildiğinde operasyon açısından uygun görünmektedir.
+            Genel maliyet ve termin dengesi incelendiğinde satın alma için en avantajlı teklif olarak önerilmektedir.
+          </p>
+
+          <div
+            style={{
+              marginTop: "16px",
+              display: "flex",
+              gap: "12px",
+              flexWrap: "wrap",
+            }}
+          >
+            <span
+              style={{
+                background: "#dcfce7",
+                color: "#166534",
+                padding: "6px 12px",
+                borderRadius: "999px",
+                fontSize: "13px",
+                fontWeight: "600",
+              }}
+            >
+              ✔ En uygun fiyat
+            </span>
+
+            <span
+              style={{
+                background: "#dbeafe",
+                color: "#1d4ed8",
+                padding: "6px 12px",
+                borderRadius: "999px",
+                fontSize: "13px",
+                fontWeight: "600",
+              }}
+            >
+              ⚡ Uygun teslim süresi
+            </span>
+
+            <span
+              style={{
+                background: "#fef3c7",
+                color: "#92400e",
+                padding: "6px 12px",
+                borderRadius: "999px",
+                fontSize: "13px",
+                fontWeight: "600",
+              }}
+            >
+              🏆 Satın alma önerisi
+    </span>
+  </div>
+</div>
         </div>
       </div>
     </div>
