@@ -19,16 +19,14 @@ SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
 
 supabase = create_client(
     SUPABASE_URL,
-    SUPABASE_ANON_KEY
+    SUPABASE_SERVICE_ROLE_KEY
 )
 
 from datetime import datetime
 
-
 from fastapi import FastAPI, UploadFile, File, Form, Header, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
-
 
 from app.parsers.excel_parser import parse_excel
 from app.parsers.pdf_parser import parse_pdf
@@ -49,7 +47,6 @@ def safe_float_form(val):
         return float(str(val).replace(",", "."))
     except:
         return None
-
 
 def safe_int_form(val):
     try:
@@ -200,7 +197,6 @@ def detect_file_type(filename: str) -> str:
 
     return "unknown"
 
-
 def clean_key(value: str) -> str:
     text = str(value or "").lower()
 
@@ -226,7 +222,6 @@ def clean_key(value: str) -> str:
 
     return " ".join(normalized_words).strip()
 
-
 def find_merge_key(merged: dict, kod_key: str, aciklama_key: str, birim_key: str):
     for key, item in merged.items():
         if (
@@ -245,11 +240,9 @@ def find_merge_key(merged: dict, kod_key: str, aciklama_key: str, birim_key: str
 
     return None
 
-
 @app.get("/")
 def root():
     return {"status": "ok", "message": "Procurement backend is running"}
-
 
 @app.post("/analyze-offers")
 async def analyze_offers(
@@ -537,7 +530,6 @@ async def analyze_offers(
     "totalGroups": len(analyzed),
     }
 
-
 @app.get("/download-report/{file_name}")
 def download_report(file_name: str):
     file_path = os.path.join(TEMP_DIR, file_name)
@@ -553,7 +545,6 @@ def download_report(file_name: str):
         filename=file_name,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-
 
 @app.post("/analyze-requests")
 async def analyze_requests(
@@ -685,16 +676,15 @@ async def analyze_requests(
                 "x-upsert": "true"
         }
     )
-    token = authorization.replace("Bearer ", "")
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authorization header eksik veya geçersiz")
+    
+    token = authorization.replace("Bearer ", "").strip()
 
     user_response = supabase.auth.get_user(token)
-    user_id = user_response.user.id  
-    token = authorization.replace("Bearer ", "")
+    user_id = user_response.user.id 
 
-    user_response = supabase.auth.get_user(token)
-    user_id = user_response.user.id  
     request_record = {
-
         "user_id": user_id,
         "ad": "Talep Listesi",
         "durum": "Oluşturuldu",
@@ -737,7 +727,6 @@ def list_reports():
         "reports": load_json(REPORTS_FILE)
     }
 
-
 @app.get("/reports/{report_id}")
 def get_report(report_id: str):
     reports = load_json(REPORTS_FILE)
@@ -753,7 +742,6 @@ def get_report(report_id: str):
         "success": False,
         "message": "Rapor bulunamadı."
     }
-
 
 @app.post("/reports/{report_id}/approve")
 def approve_report(report_id: str):
@@ -772,7 +760,6 @@ def approve_report(report_id: str):
         "success": False,
         "message": "Rapor bulunamadı."
     }
-
 
 @app.post("/reports/{report_id}/create-order")
 def create_order_from_report(report_id: str):
@@ -815,10 +802,15 @@ def create_order_from_report(report_id: str):
         "order": order
     }
 
-
 @app.get("/orders")
 def list_orders():
     return {
         "success": True,
         "orders": load_json(ORDERS_FILE)
     }
+
+from fastapi.responses import Response
+
+@app.get("/favicon.ico")
+async def favicon():
+    return Response(status_code=204)

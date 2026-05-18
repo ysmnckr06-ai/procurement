@@ -127,25 +127,6 @@ export default function TaleplerPage() {
       return;
     }
 
-    const yeniTalep = {
-      id: Date.now(),
-      fileName: "talep_listesi.xlsx",
-      reportPath: reportPath,
-      rows: rows,
-      createdAt: new Date().toLocaleString("tr-TR"),
-      itemCount: rows.length,
-      status: "Aktif",
-    };
-
-    const eskiTalepler = JSON.parse(
-      localStorage.getItem("talepListeleri") || "[]"
-    );
-
-    localStorage.setItem(
-      "talepListeleri",
-      JSON.stringify([yeniTalep, ...eskiTalepler])
-    );
-
     setMessage("Talep listesi tekliflere aktarıldı ✅");
 
     setTimeout(() => {

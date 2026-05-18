@@ -76,13 +76,25 @@ export default function TekliflerPage() {
   });
 
   useEffect(() => {
-    const stored = JSON.parse(localStorage.getItem("talepListeleri") || "[]");
-    setRequestLists(stored);
-
-    if (stored.length > 0) {
-      setSelectedRequestId(String(stored[0].id));
-    }
+    loadRequests();
   }, []);
+
+  const loadRequests = async () => {
+    try {
+      const response = await fetch(`${API_URL}/requests`);
+      const data = await response.json();
+
+      if (data.success) {
+        setRequestLists(data.requests || []);
+
+        if (data.requests?.length > 0) {
+          setSelectedRequestId(String(data.requests[0].id));
+        }
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
 
   const allParsedRows = useMemo(() => {
     return parsedSources.flatMap((item) => item.rows || []);
