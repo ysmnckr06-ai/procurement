@@ -87,6 +87,7 @@ function Tip({ text, tone }) {
 }
 
 export default function DashboardPage() {
+  const API_URL = process.env.NEXT_PUBLIC_API_URL;
   const [userEmail, setUserEmail] = useState("");
   const [currentTime, setCurrentTime] = useState("--:--");
 
@@ -107,6 +108,30 @@ export default function DashboardPage() {
     };
 
     updateClock();
+    const loadDashboardCounts = async () => {
+  try {
+    const [requestsRes, reportsRes, ordersRes] = await Promise.all([
+      fetch(`${API_URL}/requests`),
+      fetch(`${API_URL}/reports`),
+      fetch(`${API_URL}/orders`),
+    ]);
+
+    const requestsData = await requestsRes.json();
+    const reportsData = await reportsRes.json();
+    const ordersData = await ordersRes.json();
+
+    setStats({
+      talepler: requestsData.requests?.length || 0,
+      teklifler: 0,
+      raporlar: reportsData.reports?.length || 0,
+      siparisler: ordersData.orders?.length || 0,
+    });
+  } catch (err) {
+    console.error("Dashboard verileri alınamadı:", err);
+  }
+};
+
+loadDashboardCounts();
 
     const interval = setInterval(updateClock, 1000);
 
@@ -115,7 +140,7 @@ export default function DashboardPage() {
 
 
   useEffect(() => {
-    const loadDashboardStats = async () => {
+    const loadDashboardCounts = async () => {
       const {
         data: { user },
       } = await supabase.auth.getUser();
@@ -158,7 +183,7 @@ export default function DashboardPage() {
       });
     };
 
-    loadDashboardStats();
+    loadDashboardCounts();
   }, []);
 
   const handleLogout = async () => {
