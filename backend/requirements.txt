@@ -13,5 +13,5 @@ opencv-python-headless
 rapidfuzz
 xlsxwriter
 pillow
-supabase==2.3.4
+supabase==2.10.0
 httpx==0.24.1
