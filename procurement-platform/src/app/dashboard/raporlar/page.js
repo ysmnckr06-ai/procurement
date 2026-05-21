@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabase";
+
 
 export default function RaporlarPage() {
   const router = useRouter();
@@ -10,14 +12,38 @@ export default function RaporlarPage() {
   const [arama, setArama] = useState("");
   const [durumFiltre, setDurumFiltre] = useState("Tümü");
 
-  useEffect(() => {
+useEffect(() => {
+  const loadReports = async () => {
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
 
-    fetch(`${process.env.NEXT_PUBLIC_API_URL}/reports`)
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.success) setRaporlar(data.reports || []);
-      });
-  }, []);
+      if (!user) {
+        router.push("/login");
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("reports")
+        .select("*")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        console.error(error);
+        return;
+      }
+
+      setRaporlar(data || []);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  loadReports();
+}, [router]);
+
 
   const filtreliRaporlar = useMemo(() => {
     return raporlar.filter((rapor) => {
@@ -44,7 +70,7 @@ async function createOrderFromReport(rapor) {
     "pendingOrder",
     JSON.stringify({
       company: rapor.onerilenFirma || "",
-      product: rapor.ad || "",
+      product: rapor.ad || rapor.name || rapor.file_name || "Mukayese Raporu",
       quantity: 1,
       dueDate: "",
       reportId: rapor.id,
@@ -52,13 +78,6 @@ async function createOrderFromReport(rapor) {
     })
   );
 
-  try {
-    await fetch(`https://procurement-production-f3ac.up.railway.app/reports/${rapor.id}/create-order`, {
-      method: "POST",
-    });
-  } catch (error) {
-    console.log("Backend sipariş oluşturma hatası:", error);
-  }
 
   router.push("/dashboard/siparisler");
 }
@@ -157,13 +176,15 @@ async function createOrderFromReport(rapor) {
                 <div style={{ display: "flex", justifyContent: "space-between", gap: "16px", alignItems: "flex-start", flexWrap: "wrap" }}>
                   <div>
                     <div style={{ fontSize: "20px", fontWeight: "700", color: "#111827", marginBottom: "8px" }}>
-                      {index + 1}. {rapor.ad}
+                      {index + 1}. {rapor.ad || rapor.name || rapor.file_name || "Mukayese Raporu"}
                     </div>
 
                     <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", fontSize: "14px", color: "#6b7280" }}>
-                      <span>Tarih: {rapor.tarih}</span>
-                      <span>Tür: {rapor.tur}</span>
-                      <span>Firma: {rapor.onerilenFirma}</span>
+                      <span>
+                          Tarih: {rapor.created_at ? new Date(rapor.created_at).toLocaleString("tr-TR") : rapor.tarih || "-"}
+                      </span>
+                      <span>Tür: {rapor.tur || rapor.type || "Mukayese"}</span>
+                      <span>Firma: {rapor.onerilenFirma || rapor.recommended_firm || "-"}</span>
                     </div>
                   </div>
 
@@ -181,7 +202,13 @@ async function createOrderFromReport(rapor) {
                   </Link>
 
                   <a
-                    href={`https://procurement-production-f3ac.up.railway.app${rapor.reportPath}`}
+                    href={
+                      rapor.report_path
+                        ? `${process.env.NEXT_PUBLIC_API_URL}${rapor.report_path}`
+                        : rapor.reportPath
+                        ? `${process.env.NEXT_PUBLIC_API_URL}${rapor.reportPath}`
+                        : "#"
+                    }
                     style={{ background: "#2563eb", color: "#fff", textDecoration: "none", borderRadius: "10px", padding: "10px 14px", fontWeight: "600" }}
                   >
                     Raporu İndir

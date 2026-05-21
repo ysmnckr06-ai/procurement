@@ -55,17 +55,44 @@ export default function TaleplerPage() {
 
   const loadRequests = async () => {
     try {
-      const response = await fetch(`${API_URL}/requests`);
-      const data = await response.json();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
 
-      if (data.success) {
-        setSavedRequests(data.requests || []);
+      if (!user) {
+        router.push("/login");
+        return;
       }
+
+      const { data, error } = await supabase
+        .from("requests")
+        .select("*")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        console.error(error);
+        return;
+      }
+
+      setSavedRequests(data || []);
     } catch (err) {
       console.error(err);
     }
   };
-  
+
+  const formatDateTime = (value) => {
+  if (!value) return "-";
+
+  return new Date(value).toLocaleString("tr-TR", {
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  };
+
   const handleFileChange = (e) => {
     setFiles(Array.from(e.target.files || []));
   };
@@ -138,7 +165,7 @@ const handleDownload = async () => {
     setMessage("Talep listesi tekliflere aktarıldı ✅");
 
     setTimeout(() => {
-      router.push("/dashboard/teklifler");
+      router.push(`/dashboard/teklifler?requestId=${req.id}`)
     }, 700);
   };
 
@@ -269,46 +296,50 @@ const handleDownload = async () => {
               </div>
             ) : (
               <div className="space-y-3">
-                {(showAllRequests ? savedRequests : savedRequests.slice(0, 5)).map((req) => (
+                {(showAllRequests ? savedRequests : savedRequests.slice(0, 5)).map((req, index) => (
                   <div
                     key={req.id}
-                    className="flex items-center justify-between rounded-xl border border-slate-200 p-4"
-                >
-                  <div>
-                    <div className="font-semibold text-slate-900">{req.ad || "Talep Listesi"}</div>
-                    <div className="text-sm text-slate-500">
-                      {req.tarih} • {req.totalitems || 0} kalem • {req.durum}
+                    className="grid grid-cols-1 gap-4 rounded-xl border border-slate-200 p-4 md:grid-cols-[80px_1fr_auto]"
+                  >
+                    <div>
+                      <div className="text-xs font-semibold text-slate-500">Sıra No</div>
+                      <div className="mt-1 font-bold text-slate-900">{index + 1}</div>
+                    </div>
+
+                    <div>
+                      <div className="text-xs font-semibold text-slate-500">Oluşturulma Tarihi</div>
+                      <div className="mt-1 font-semibold text-slate-900">
+                        {formatDateTime(req.created_at || req.tarih)}
+                      </div>
+                    </div>
+
+                    <div className="flex gap-2">
+                      <button
+                        onClick={async () => {
+                          const response = await fetch(
+                            `${API_URL}/download-request-report/${req.filepath}`
+                          );
+
+                          const data = await response.json();
+
+                          if (data.reportPath) {
+                            window.open(data.reportPath, "_blank");
+                          }
+                        }}
+                        className="rounded-lg bg-green-600 px-3 py-2 text-sm font-semibold text-white"
+                      >
+                        Excel İndir
+                      </button>
+
+                      <button
+                        onClick={() => router.push(`/dashboard/teklifler?requestId=${req.id}`)}
+                        className="rounded-lg bg-purple-600 px-3 py-2 text-sm font-semibold text-white"
+                      >
+                        Tekliflere Aktar
+                      </button>
                     </div>
                   </div>
-
-                  <div className="flex gap-2">
-                    <button
-                      onClick={async () => {
-                      const response = await fetch(
-                        `${API_URL}/download-request-report/${req.filepath}`
-                      );
-
-                      const data = await response.json();
-
-                      if (data.reportPath) {
-                        window.open(data.reportPath, "_blank");
-                      }
-                    }}
-                    className="rounded-lg bg-green-600 px-3 py-2 text-sm font-semibold text-white"
-                  >
-                    Excel İndir
-                  </button>
-
-                    <button
-                      onClick={() => router.push("/dashboard/teklifler")}
-                      className="rounded-lg bg-purple-600 px-3 py-2 text-sm font-semibold text-white"
-                    >
-                      Tekliflere Aktar
-                    </button>
-                  </div>
-                </div>
-              ))}
-            
+                ))}     
 <div className="flex justify-center pt-2">
   <button
     onClick={() => setShowAllRequests(!showAllRequests)}

@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL;
 
 function InfoBox({ title, text, tone = "blue" }) {
@@ -38,6 +40,8 @@ function StatCard({ icon, title, value, text }) {
 
 
 export default function TekliflerPage() {
+  const searchParams = useSearchParams();
+  const requestIdFromUrl = searchParams.get("requestId");
   const [files, setFiles] = useState([]);
   const [parsedSources, setParsedSources] = useState([]);
   const [message, setMessage] = useState("");
@@ -79,22 +83,39 @@ export default function TekliflerPage() {
     loadRequests();
   }, []);
 
-  const loadRequests = async () => {
-    try {
-      const response = await fetch(`${API_URL}/requests`);
-      const data = await response.json();
+const loadRequests = async () => {
+  try {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
 
-      if (data.success) {
-        setRequestLists(data.requests || []);
-
-        if (data.requests?.length > 0) {
-          setSelectedRequestId(String(data.requests[0].id));
-        }
-      }
-    } catch (err) {
-      console.error(err);
+    if (!user) {
+      window.location.href = "/login";
+      return;
     }
-  };
+
+    const { data, error } = await supabase
+      .from("requests")
+      .select("*")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error(error);
+      return;
+    }
+
+    setRequestLists(data || []);
+
+    if (requestIdFromUrl) {
+      setSelectedRequestId(String(requestIdFromUrl));
+    } else if (data?.length > 0) {
+      setSelectedRequestId(String(data[0].id));
+    }
+  } catch (err) {
+    console.error(err);
+  }
+};
 
   const allParsedRows = useMemo(() => {
     return parsedSources.flatMap((item) => item.rows || []);
@@ -391,10 +412,12 @@ export default function TekliflerPage() {
                     className="mt-5 w-full rounded-xl border border-slate-300 bg-white p-3 text-sm"
                   >
                     <option value="">Talep listesi seçin</option>
-                    {requestLists.map((item) => (
+                    {requestLists.map((item, index) => (
                       <option key={item.id} value={item.id}>
-                        {`${item.ad || "Talep Listesi"} — ${item.totalitems || 0} kalem — ${
-                          item.createdAt ? new Date(item.createdAt).toLocaleDateString("tr-TR") : ""
+                        {`Talep #${index + 1} — ${
+                          item.created_at
+                            ? new Date(item.created_at).toLocaleString("tr-TR")
+                            : "Tarih yok"
                         }`}
                       </option>
                     ))}
@@ -819,6 +842,17 @@ export default function TekliflerPage() {
                 >
                   Raporu İndir
                 </button>
+                {reportReady && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      window.location.href = "/dashboard/raporlar";
+                    }}
+                    className="w-full rounded-xl border border-green-300 bg-green-50 px-5 py-3 text-sm font-bold text-green-800 hover:bg-green-100"
+                >
+                  Raporlar sayfasına aktarıldı ✅
+                </button>
+                )}
               </div>
             </section>
 
@@ -829,40 +863,6 @@ export default function TekliflerPage() {
             )}
           </div>
         </div>
-
-        {createdReportId && (
-          <div className="rounded-2xl border border-green-200 bg-green-50 p-5 text-sm text-green-900 shadow-sm">
-            <div className="text-lg font-bold">
-              Mukayese raporu Raporlar sayfasına aktarıldı ✅
-            </div>
-
-            <p className="mt-2">
-              Raporu incelemek, indirmek veya siparişe çevirmek için devam edebilirsiniz.
-            </p>
-
-            <div className="mt-4 flex flex-wrap gap-3">
-              <button
-                type="button"
-                onClick={() => {
-                  window.location.href = `/dashboard/raporlar/${createdReportId}`;
-                }}
-                className="rounded-xl bg-green-600 px-4 py-2 text-sm font-bold text-white hover:bg-green-700"
-              >
-                Rapor Detayına Git
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  window.location.href = "/dashboard/raporlar";
-                }}
-                className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800"
-              >
-                Tüm Raporları Gör
-              </button>
-            </div>
-          </div>
-        )}
       </div>
     </main>
   </div>

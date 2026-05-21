@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { supabase } from "@/lib/supabase";
 
 export default function RaporDetayPage() {
   const params = useParams();
@@ -13,48 +14,52 @@ export default function RaporDetayPage() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!id) return;
+    const loadReport = async () => {
+      if (!id) return;
 
-    fetch(`${process.env.NEXT_PUBLIC_API_URL}/reports/${id}`)
-      .then((res) => res.json())
-      .then((data) => {
-    console.log("RAPOR DETAY DATA:", data);
+      const { data, error } = await supabase
+        .from("reports")
+        .select("*")
+        .eq("id", id)
+        .single();
 
-    if (data.success) {
-        setRapor(data.report);
-    } else {
+      if (error || !data) {
+        console.error(error);
         setMessage("Rapor bulunamadı.");
-    }
-})
-      .catch(() => {
-        setMessage("Rapor detayı alınırken hata oluştu.");
-      });
+        return;
+      }
+
+      setRapor(data);
+    };
+
+    loadReport();
   }, [id]);
 
-async function siparisOlustur() {
-  try {
+  function siparisOlustur() {
     setLoading(true);
-    setMessage("Sipariş oluşturuluyor...");
 
-    const res = await fetch(
-      `https://procurement-production-f3ac.up.railway.app/reports/${id}/create-order`,
-      { method: "POST" }
+    localStorage.setItem(
+      "pendingOrder",
+      JSON.stringify({
+        company: rapor.onerilenFirma || rapor.recommended_firm || "",
+        product:
+          rapor.ad ||
+          rapor.name ||
+          rapor.file_name ||
+          "Mukayese Raporu",
+        quantity: 1,
+        dueDate: "",
+        reportId: rapor.id,
+        reportName:
+          rapor.ad ||
+          rapor.name ||
+          rapor.file_name ||
+          "Mukayese Raporu",
+      })
     );
 
-    const data = await res.json();
-
-    if (data.success) {
-      setMessage("Sipariş başarıyla oluşturuldu. Yönlendiriliyorsun...");
-      window.location.href = "/dashboard/siparisler";
-    } else {
-      setMessage(data.message || "Sipariş oluşturulamadı.");
-    }
-  } catch (error) {
-    setMessage("Bağlantı hatası. Sipariş oluşturulamadı.");
-  } finally {
-    setLoading(false);
+    window.location.href = "/dashboard/siparisler";
   }
-}
 
   if (!rapor) {
     return (
@@ -66,28 +71,35 @@ async function siparisOlustur() {
     );
   }
 
+  const raporAdi =
+    rapor.ad || rapor.name || rapor.file_name || "Mukayese Raporu";
+
+  const raporTarihi = rapor.created_at
+    ? new Date(rapor.created_at).toLocaleString("tr-TR")
+    : rapor.tarih || "-";
+
+  const firma = rapor.onerilenFirma || rapor.recommended_firm || "-";
+
   return (
     <div className="min-h-screen bg-slate-100 p-8">
       <div className="mx-auto max-w-4xl space-y-6">
         <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <Link
-            href="/dashboard/raporlar"
-            className="text-sm font-bold text-blue-700"
-          >
+          <Link href="/dashboard/raporlar" className="text-sm font-bold text-blue-700">
             ← Raporlara Dön
           </Link>
 
           <h1 className="mt-4 text-3xl font-bold text-slate-900">
-            {rapor.ad}
+            {raporAdi}
           </h1>
 
           <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
-            <Info label="Tarih" value={rapor.tarih || "-"} />
-            <Info label="Durum" value={rapor.durum || "-"} />
-            <Info label="Önerilen Firma" value={rapor.onerilenFirma || "-"} />
+            <Info label="Tarih" value={raporTarihi} />
+            <Info label="Durum" value={rapor.durum || "Bekliyor"} />
+            <Info label="Önerilen Firma" value={firma} />
           </div>
         </div>
 
+        <div className="flex flex-wrap gap-3 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <button
             onClick={siparisOlustur}
             disabled={loading}
@@ -97,30 +109,31 @@ async function siparisOlustur() {
                 : "bg-green-600 hover:bg-green-700"
             }`}
           >
-            {loading ? "Sipariş Oluşturuluyor..." : "Sipariş Oluştur"}
+            {loading ? "Yönlendiriliyor..." : "Sipariş Oluştur"}
           </button>
 
-            <Link
-              href={`/dashboard/raporlar/${id}/mukayese`}
-              className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-bold text-white hover:bg-slate-800"
-            >
-              Mukayese Raporu
-            </Link>
+          <Link
+            href={`/dashboard/raporlar/${id}/mukayese`}
+            className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-bold text-white hover:bg-slate-800"
+          >
+            Mukayese Raporu
+          </Link>
 
-            <Link
-              href={`/dashboard/raporlar/${id}/son-alim`}
-              className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white hover:bg-blue-700"
-            >
-              Son Alım
-            </Link>
-          </div>
-
-          {message && (
-            <div className="mt-4 rounded-xl bg-slate-50 p-3 text-sm text-slate-700">
-              {message}
-            </div>
-          )}
+          <Link
+            href={`/dashboard/raporlar/${id}/son-alim`}
+            className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white hover:bg-blue-700"
+          >
+            Son Alım
+          </Link>
         </div>
+
+        {message && (
+          <div className="rounded-xl bg-slate-50 p-3 text-sm text-slate-700">
+            {message}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

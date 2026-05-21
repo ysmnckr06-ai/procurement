@@ -218,18 +218,12 @@ export default function DashboardPage() {
             </div>
           </section>
 
-          <section className="grid grid-cols-1 gap-4 md:grid-cols-4">
+          <section className="grid grid-cols-1 gap-4 md:grid-cols-3">
             <StatCard
               icon="📚"
               title="Toplam Talep Listesi"
               value={stats.talepler}
               text="Aktif talepler"
-            />
-            <StatCard
-              icon="⏳"
-              title="Analiz Bekleyen"
-              value={Math.max(stats.talepler - stats.raporlar, 0)}
-              text="Teklif bekleyen talepler"
             />
             <StatCard
               icon="📊"
