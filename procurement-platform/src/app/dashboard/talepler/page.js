@@ -43,6 +43,8 @@ export default function TaleplerPage() {
   const [reportPath, setReportPath] = useState("");
   const [rows, setRows] = useState([]);
   const [savedRequests, setSavedRequests] = useState([]);
+  const [showAllRequests, setShowAllRequests] = useState(false);
+
 
   const totalQty = useMemo(() => {
     return rows.reduce((sum, r) => sum + Number(r.talepEdilenAdet || 0), 0);
@@ -267,7 +269,7 @@ const handleDownload = async () => {
               </div>
             ) : (
               <div className="space-y-3">
-                {savedRequests.map((req) => (
+                {(showAllRequests ? savedRequests : savedRequests.slice(0, 5)).map((req) => (
                   <div
                     key={req.id}
                     className="flex items-center justify-between rounded-xl border border-slate-200 p-4"
@@ -281,11 +283,21 @@ const handleDownload = async () => {
 
                   <div className="flex gap-2">
                     <button
-                      onClick={() => window.open(`${API_URL}/download-request-report/${req.filepath}`, "_blank")}
-                      className="rounded-lg bg-green-600 px-3 py-2 text-sm font-semibold text-white"
-                    >
-                      Excel İndir
-                    </button>
+                      onClick={async () => {
+                      const response = await fetch(
+                        `${API_URL}/download-request-report/${req.filepath}`
+                      );
+
+                      const data = await response.json();
+
+                      if (data.reportPath) {
+                        window.open(data.reportPath, "_blank");
+                      }
+                    }}
+                    className="rounded-lg bg-green-600 px-3 py-2 text-sm font-semibold text-white"
+                  >
+                    Excel İndir
+                  </button>
 
                     <button
                       onClick={() => router.push("/dashboard/teklifler")}
@@ -296,6 +308,15 @@ const handleDownload = async () => {
                   </div>
                 </div>
               ))}
+            
+<div className="flex justify-center pt-2">
+  <button
+    onClick={() => setShowAllRequests(!showAllRequests)}
+    className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium hover:bg-slate-100"
+  >
+    {showAllRequests ? "Daha az göster" : "Tüm talepleri göster"}
+  </button>
+</div>      
             </div>
           )}
         </div>

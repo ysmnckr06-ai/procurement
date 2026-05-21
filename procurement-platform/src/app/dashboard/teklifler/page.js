@@ -393,7 +393,9 @@ export default function TekliflerPage() {
                     <option value="">Talep listesi seçin</option>
                     {requestLists.map((item) => (
                       <option key={item.id} value={item.id}>
-                        {item.createdAt} - {item.fileName}
+                        {`${item.ad || "Talep Listesi"} — ${item.totalitems || 0} kalem — ${
+                          item.createdAt ? new Date(item.createdAt).toLocaleDateString("tr-TR") : ""
+                        }`}
                       </option>
                     ))}
                   </select>

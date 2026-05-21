@@ -518,8 +518,40 @@ async def analyze_offers(
         "totalrows": len(filtered),
         "totalgroups": len(analyzed),
     }
+    offer_groups = {}
 
-    save_report_to_supabase(report_record)
+    for row in filtered:
+        dosya_adi = row.get("kaynakDosya") or row.get("dosyaAdi") or "Bilinmeyen dosya"
+        firma_adi = row.get("firma") or row.get("firmaAdi") or os.path.splitext(dosya_adi)[0]
+
+        if dosya_adi not in offer_groups:
+            offer_groups[dosya_adi] = {
+                "firma_adi": firma_adi,
+                "dosya_adi": dosya_adi,
+                "toplam_tutar": 0,
+                "para_birimi": row.get("paraBirimi") or "TRY",
+                "satir_sayisi": 0,
+            }
+
+        offer_groups[dosya_adi]["satir_sayisi"] += 1
+        offer_groups[dosya_adi]["toplam_tutar"] += safe_float_form(
+            row.get("netToplam") or row.get("toplamTutar") or 0
+        )
+
+    for offer in offer_groups.values():
+        offer_record = {
+            "user_id": user_id,
+            "request_id": request_id if request_id else None,
+            "firma_adi": offer["firma_adi"],
+            "dosya_adi": offer["dosya_adi"],
+            "para_birimi": offer["para_birimi"],
+            "toplam_tutar": offer["toplam_tutar"],
+            "durum": "Analiz edildi",
+        }
+
+        supabase.table("offers").insert(offer_record).execute()
+
+        save_report_to_supabase(report_record)
 
     return {
     "success": True,
@@ -716,12 +748,38 @@ def download_request_report(file_name: str):
     }
 
 @app.get("/requests")
-def get_requests():
-    response = supabase.table("requests").select("*").order("created_at", desc=True).execute()
+def get_requests(authorization: str = Header(None)):
+
+    user = verify_user_token(authorization)
+    token = user["access_token"]
+
+    user_response = supabase.auth.get_user(token)
+    user_id = user_response.user.id
+
+    response = (
+        supabase.table("requests")
+        .select("*")
+        .eq("user_id", user_id)
+        .order("created_at", desc=True)
+        .execute()
+    )
+
+    formatted_requests = []
+
+    for row in response.data:
+        formatted_requests.append({
+            "id": row["id"],
+            "ad": row.get("ad"),
+            "durum": row.get("durum"),
+            "filepath": row.get("filepath"),
+            "fileName": row.get("filepath"),
+            "createdAt": row.get("created_at"),
+            "totalitems": row.get("totalitems")
+        })
 
     return {
         "success": True,
-        "requests": response.data
+        "requests": formatted_requests
     }
 
 @app.get("/reports")
