@@ -691,24 +691,28 @@ async def analyze_requests(
         "filepath": report_name,
         "totalitems": len(result_rows)
     }
-
     supabase.table("requests").insert(request_record).execute()
+
+    signed = supabase.storage.from_("request-reports").create_signed_url(report_name, 3600)
+    public_url = signed.get("signedURL") or signed.get("signedUrl") or signed.get("signed_url")
+    print(public_url)
 
     return {
         "success": True,
         "warnings": warnings,
         "rows": result_rows,
-        "reportPath": f"/download-request-report/{report_name}",
+        "reportPath": public_url,
         "totalRows": len(result_rows)
     }
 
 @app.get("/download-request-report/{file_name}")
 def download_request_report(file_name: str):
-    public_url = supabase.storage.from_("request-reports").get_public_url(file_name)
+    signed = supabase.storage.from_("request-reports").create_signed_url(file_name, 3600)
+    public_url = signed.get("signedURL") or signed.get("signedUrl") or signed.get("signed_url")
 
     return {
         "success": True,
-        "downloadUrl": public_url
+        "reportPath": public_url
     }
 
 @app.get("/requests")

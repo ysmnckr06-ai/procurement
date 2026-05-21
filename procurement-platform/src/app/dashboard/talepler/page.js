@@ -106,7 +106,7 @@ export default function TaleplerPage() {
       }
 
       setRows(data.rows || []);
-      setReportPath(data.reportPath || "");
+      setReportPath(data.reportPath);
       setMessage("Talep listesi oluşturuldu ✅");
     } catch (err) {
       console.error(err);
@@ -116,10 +116,16 @@ export default function TaleplerPage() {
     setIsLoading(false);
   };
 
-  const handleDownload = () => {
-    if (!reportPath) return;
-    window.open(`https://procurement-production-f3ac.up.railway.app${reportPath}`, "_blank");
-  };
+const handleDownload = async () => {
+  if (!reportPath) return;
+
+  try {
+    window.open(reportPath, "_blank");
+  } catch (err) {
+    console.error(err);
+    setMessage("Excel indirilemedi ❌");
+  }
+};
 
   const handleSendToOffers = () => {
     if (!reportPath) {
