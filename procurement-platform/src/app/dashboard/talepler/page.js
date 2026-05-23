@@ -165,7 +165,7 @@ const handleDownload = async () => {
     setMessage("Talep listesi tekliflere aktarıldı ✅");
 
     setTimeout(() => {
-      router.push(`/dashboard/teklifler?requestId=${req.id}`)
+    router.push("/dashboard/teklifler");
     }, 700);
   };
 

@@ -34,8 +34,10 @@ useEffect(() => {
         console.error(error);
         return;
       }
+      console.log("RAPORLAR DATA:", JSON.stringify(data, null, 2));
 
       setRaporlar(data || []);
+
     } catch (err) {
       console.error(err);
     }
@@ -44,11 +46,44 @@ useEffect(() => {
   loadReports();
 }, [router]);
 
+function getReportName(rapor) {
+  const name =
+    rapor.ad ||
+    rapor.name ||
+    rapor.file_name ||
+    rapor.report_name ||
+    rapor.title ||
+    rapor.request_name ||
+    rapor.talep_adi ||
+    "";
+
+  if (
+    !name ||
+    name === "undefined" ||
+    name.trim() === ""
+  ) {
+    return "Karşılaştırma Raporu";
+  }
+
+  return name;
+}
+
+function getReportFirma(rapor) {
+  return (
+    rapor.onerilenFirma ||
+    rapor.onerilenfirma ||
+    rapor.recommended_firm ||
+    rapor.recommendedFirm ||
+    rapor.firma ||
+    rapor.company ||
+    "-"
+  );
+}
 
   const filtreliRaporlar = useMemo(() => {
     return raporlar.filter((rapor) => {
-      const ad = String(rapor.ad || "").toLowerCase();
-      const firma = String(rapor.onerilenFirma || "").toLowerCase();
+      const ad = String(getReportName(rapor)).toLowerCase();
+      const firma = String(getReportFirma(rapor)).toLowerCase();
       const aramaLower = arama.toLowerCase();
 
       const aramaUyum = ad.includes(aramaLower) || firma.includes(aramaLower);
@@ -69,12 +104,12 @@ async function createOrderFromReport(rapor) {
   localStorage.setItem(
     "pendingOrder",
     JSON.stringify({
-      company: rapor.onerilenFirma || "",
-      product: rapor.ad || rapor.name || rapor.file_name || "Mukayese Raporu",
+      company: getReportFirma(rapor) === "-" ? "" : getReportFirma(rapor),
+      product: getReportName(rapor),
       quantity: 1,
       dueDate: "",
       reportId: rapor.id,
-      reportName: rapor.ad,
+      reportName: getReportName(rapor),
     })
   );
 
@@ -176,7 +211,7 @@ async function createOrderFromReport(rapor) {
                 <div style={{ display: "flex", justifyContent: "space-between", gap: "16px", alignItems: "flex-start", flexWrap: "wrap" }}>
                   <div>
                     <div style={{ fontSize: "20px", fontWeight: "700", color: "#111827", marginBottom: "8px" }}>
-                      {index + 1}. {rapor.ad || rapor.name || rapor.file_name || "Mukayese Raporu"}
+                      {index + 1}. {getReportName(rapor)}
                     </div>
 
                     <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", fontSize: "14px", color: "#6b7280" }}>
@@ -184,7 +219,7 @@ async function createOrderFromReport(rapor) {
                           Tarih: {rapor.created_at ? new Date(rapor.created_at).toLocaleString("tr-TR") : rapor.tarih || "-"}
                       </span>
                       <span>Tür: {rapor.tur || rapor.type || "Mukayese"}</span>
-                      <span>Firma: {rapor.onerilenFirma || rapor.recommended_firm || "-"}</span>
+                      <span>Firma: {getReportFirma(rapor)}</span>
                     </div>
                   </div>
 

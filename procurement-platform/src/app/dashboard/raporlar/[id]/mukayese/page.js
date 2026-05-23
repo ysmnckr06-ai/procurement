@@ -1,13 +1,40 @@
+import { supabase } from "@/lib/supabase";
 export default async function MukayesePage({ params }) {
   const { id } = await params;
 
-  const response = await fetch(
- `${process.env.NEXT_PUBLIC_API_URL}/reports/${id}`
-);
+const { data: report, error } = await supabase
+  .from("reports")
+  .select("*")
+  .eq("id", id)
+  .single();
 
-const data = await response.json();
+if (error || !report) {
+  return (
+    <div style={{ minHeight: "100vh", background: "#f3f4f6", padding: "32px" }}>
+      <div style={{
+        maxWidth: "900px",
+        margin: "0 auto",
+        background: "#fff",
+        borderRadius: "18px",
+        padding: "24px",
+        boxShadow: "0 10px 25px rgba(0,0,0,0.06)"
+      }}>
+        <h1>Rapor bulunamadı</h1>
+        <p>Supabase içinde bu ID ile rapor kaydı bulunamadı.</p>
+      </div>
+    </div>
+  );
+}
 
-const firmalar = data?.report?.analysis || [];
+console.log("MUKAYESE REPORT:", report);
+
+const analiz = report?.analysis || {};
+
+const firmalar =
+  analiz.mukayese ||
+  analiz.groups ||
+  analiz.analyzed ||
+  (Array.isArray(analiz) ? analiz : []);
 
 if (firmalar.length === 0) {
   return (
@@ -25,7 +52,7 @@ if (firmalar.length === 0) {
           Rapor kaydı geldi ama detaylı firma listesi henüz rapora kaydedilmemiş.
         </p>
         <pre style={{ whiteSpace: "pre-wrap", background: "#f8fafc", padding: "16px" }}>
-          {JSON.stringify(data?.report, null, 2)}
+          {JSON.stringify(report, null, 2)}
         </pre>
       </div>
     </div>
@@ -118,54 +145,37 @@ if (firmalar.length === 0) {
               </tr>
             </thead>
             <tbody>
-              {firmalar.map((item, index) => (
-                <tr
-                  key={index}
-                  style={{
-                    backgroundColor: item.firma === enUcuz.firma ? "#ecfdf5" : "white",
-                  }}
-                >
+              {firmalar.map((item, index) => {
+                const best = item.bestOffer || {};
+
+                const firmaAdi =
+                  item.onerilenFirma ||
+                  best.firma ||
+                  best.firmaAdi ||
+                  "-";
+
+                const fiyat =
+                  item.enAvantajliNetTutarTRY ||
+                  best.netToplamTRY ||
+                  best.tcoTRY ||
+                  best.birimFiyat ||
+                  "-";
+
+                const teslim = "-";
+
+                return (
+                  <tr key={index}>
+                  <td style={tdStyle}>{firmaAdi}</td>
+                  <td style={tdStyle}>{fiyat}</td>
                   <td style={tdStyle}>
-                    {item.firma}
-
-                    {item.firma === enUcuz.firma && (
-                      <span
-                        style={{
-                          marginLeft: "10px",
-                          background: "#16a34a",
-                          color: "white",
-                          padding: "4px 8px",
-                          borderRadius: "999px",
-                          fontSize: "12px",
-                          fontWeight: "600",
-                        }}
-                      >
-                        SEÇİLDİ
-                      </span>
-                    )}
-
-                    {altinOneri && item.firma === altinOneri.firma && (
-                      <span
-                        style={{
-                          marginLeft: "10px",
-                          background: "#f59e0b",
-                          color: "white",
-                          padding: "4px 8px",
-                          borderRadius: "999px",
-                          fontSize: "12px",
-                          fontWeight: "600",
-                        }}
-                      >
-                        ALTIN ÖNERİ
-                      </span>
-                    )}
+                    {typeof teslim === "number"
+                      ? `${teslim} gün`
+                      : teslim}
                   </td>
-
-                  <td style={tdStyle}>{item.fiyat}</td>
-                  <td style={tdStyle}>{item.teslim}</td>
-                  <td style={tdStyle}>{item.durum}</td>
-                </tr>
-              ))}
+                  <td style={tdStyle}>{item.durum || "Hazır"}</td>
+              </tr>
+            );
+          })}
             </tbody>
           </table>
           <div

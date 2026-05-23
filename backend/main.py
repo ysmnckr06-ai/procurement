@@ -517,6 +517,7 @@ async def analyze_offers(
         "reportpath": f"/download-report/{report_name}",
         "totalrows": len(filtered),
         "totalgroups": len(analyzed),
+        "analysis": analyzed,
     }
     offer_groups = {}
 
