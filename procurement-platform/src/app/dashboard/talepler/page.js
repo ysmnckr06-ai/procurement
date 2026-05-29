@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 
 function StatCard({ icon, title, value, text }) {
   return (
@@ -44,7 +44,7 @@ export default function TaleplerPage() {
   const [rows, setRows] = useState([]);
   const [savedRequests, setSavedRequests] = useState([]);
   const [showAllRequests, setShowAllRequests] = useState(false);
-
+  const isAnalyzingRef = useRef(false);
 
   const totalQty = useMemo(() => {
     return rows.reduce((sum, r) => sum + Number(r.talepEdilenAdet || 0), 0);
@@ -98,8 +98,12 @@ export default function TaleplerPage() {
   };
 
   const handleAnalyze = async () => {
+    if (isAnalyzingRef.current) return;
+    isAnalyzingRef.current = true;
+
     if (files.length === 0) {
       setMessage("Lütfen dosya yükleyin.");
+      isAnalyzingRef.current = false;
       return;
     }
 
@@ -131,6 +135,7 @@ export default function TaleplerPage() {
       if (!data.success) {
         setMessage(data.warnings?.join(", ") || "Hata oluştu.");
         setIsLoading(false);
+        isAnalyzingRef.current = false;
         return;
       }
 
@@ -168,6 +173,34 @@ const handleDownload = async () => {
     router.push("/dashboard/teklifler");
     }, 700);
   };
+
+  async function deleteRequest(requestId) {
+  const onay = window.confirm("Bu talep listesini silmek istediğine emin misin?");
+  if (!onay) return;
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    alert("Kullanıcı bulunamadı.");
+    return;
+  }
+
+  const { error } = await supabase
+    .from("requests")
+    .delete()
+    .eq("id", requestId)
+    .eq("user_id", user.id);
+
+  if (error) {
+    alert("Talep silinemedi: " + error.message);
+    console.error(error);
+    return;
+  }
+
+  setSavedRequests((prev) => prev.filter((r) => r.id !== requestId));
+}
 
   return (
     <div className="bg-slate-100">
@@ -270,6 +303,7 @@ const handleDownload = async () => {
               >
                 Tekliflere Aktar
               </button>
+
             </div>
 
             {message && (
@@ -337,6 +371,12 @@ const handleDownload = async () => {
                       >
                         Tekliflere Aktar
                       </button>
+                      <button
+                        onClick={() => deleteRequest(req.id)}
+                        className="rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white"
+                      >
+                        sil
+                    </button>
                     </div>
                   </div>
                 ))}     

@@ -143,10 +143,11 @@ export default function DashboardPage() {
             .select("*", { count: "exact", head: true })
             .eq("user_id", user.id),
 
-          supabase
-            .from("siparisler")
-            .select("*", { count: "exact", head: true })
-            .eq("user_id", user.id),
+supabase
+  .from("orders")
+  .select("*", { count: "exact", head: true })
+  .eq("user_id", user.id)
+  .eq("status", "Bekliyor"),
         ]);
 
       setStats({

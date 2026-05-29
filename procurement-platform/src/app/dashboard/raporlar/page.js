@@ -101,20 +101,86 @@ function getReportFirma(rapor) {
   };
 
 async function createOrderFromReport(rapor) {
+
+  console.log("SİPARİŞE AKTARILAN RAPOR:", rapor);
+
+  const orderData = {
+    company:
+      getReportFirma(rapor) === "-"
+        ? ""
+        : getReportFirma(rapor),
+
+    reportId: rapor.id,
+
+    reportName: getReportName(rapor),
+
+    orderNo: `SIP-${Date.now()}`,
+
+    orderDate: new Date().toISOString(),
+
+    status: "Bekliyor",
+
+    dueDate:
+      rapor.terminTarihi ||
+      rapor.termin_tarihi ||
+      "",
+
+    paymentTerm:
+      rapor.vade ||
+      rapor.payment_term ||
+      "",
+
+    totalAmount:
+      rapor.toplamTutar ||
+      rapor.total_amount ||
+      0,
+
+    items:
+      rapor.items ||
+      rapor.products ||
+      rapor.rows ||
+      rapor.urunler ||
+      [],
+  };
+
   localStorage.setItem(
     "pendingOrder",
-    JSON.stringify({
-      company: getReportFirma(rapor) === "-" ? "" : getReportFirma(rapor),
-      product: getReportName(rapor),
-      quantity: 1,
-      dueDate: "",
-      reportId: rapor.id,
-      reportName: getReportName(rapor),
-    })
+    JSON.stringify(orderData)
   );
 
-
   router.push("/dashboard/siparisler");
+}
+
+async function deleteReport(reportId) {
+  const onay = window.confirm("Bu raporu silmek istediğine emin misin?");
+  if (!onay) return;
+
+  console.log("SİLİNECEK RAPOR ID:", reportId);
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    alert("Kullanıcı bulunamadı.");
+    return;
+  }
+
+  const { error } = await supabase
+    .from("reports")
+    .delete()
+    .eq("id", reportId)
+    .eq("user_id", user.id);
+
+  if (error) {
+    console.error("Rapor silme hatası:", error);
+    alert("Rapor silinemedi: " + error.message);
+    return;
+  }
+
+  setRaporlar((prev) => prev.filter((r) => r.id !== reportId));
+
+  alert("Rapor silindi.");
 }
 
   return (
@@ -199,14 +265,13 @@ async function createOrderFromReport(rapor) {
             return (
               <div
                 key={rapor.id}
-                onClick={() => router.push("/dashboard/raporlar/" + rapor.id)}
                 style={{
                   background: "#fff",
                   borderRadius: "18px",
                   cursor: "pointer",
                   transition: "0.2s",
                 }}
->
+              >
               
                 <div style={{ display: "flex", justifyContent: "space-between", gap: "16px", alignItems: "flex-start", flexWrap: "wrap" }}>
                   <div>
@@ -229,21 +294,19 @@ async function createOrderFromReport(rapor) {
                 </div>
 
                 <div style={{ marginTop: "16px", display: "flex", gap: "10px", flexWrap: "wrap" }}>
-                  <Link
-                    href={`/dashboard/raporlar/${rapor.id}`}
-                    style={{ background: "#111827", color: "#fff", textDecoration: "none", borderRadius: "10px", padding: "10px 14px", fontWeight: "600" }}
-                  >
-                    İncele
-                  </Link>
 
                   <a
                     href={
-                      rapor.report_path
+                      rapor.reportpath
+                        ? `${process.env.NEXT_PUBLIC_API_URL}${rapor.reportpath}`
+                        : rapor.report_path
                         ? `${process.env.NEXT_PUBLIC_API_URL}${rapor.report_path}`
                         : rapor.reportPath
                         ? `${process.env.NEXT_PUBLIC_API_URL}${rapor.reportPath}`
                         : "#"
                     }
+                    download
+                    onClick={(e) => e.stopPropagation()}
                     style={{ background: "#2563eb", color: "#fff", textDecoration: "none", borderRadius: "10px", padding: "10px 14px", fontWeight: "600" }}
                   >
                     Raporu İndir
@@ -252,7 +315,10 @@ async function createOrderFromReport(rapor) {
                   <button
                     type="button"
                     disabled={rapor.durum === "Tamamlandı"}
-                    onClick={() => createOrderFromReport(rapor)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      createOrderFromReport(rapor);
+                    }}
                     style={{
                       background: rapor.durum === "Tamamlandı" ? "#9ca3af" : "#16a34a",
                       color: "#fff",
@@ -264,6 +330,24 @@ async function createOrderFromReport(rapor) {
                     }}
                   >
                     {rapor.durum === "Tamamlandı" ? "Sipariş Oluşturuldu" : "Sipariş Oluştur"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      deleteReport(rapor.id);
+                    }}
+                    style={{
+                      background: "#dc2626",
+                      color: "#fff",
+                      border: "none",
+                      borderRadius: "10px",
+                      padding: "10px 14px",
+                      fontWeight: "600",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Sil
                   </button>
                 </div>
               </div>
@@ -286,7 +370,7 @@ function StatCard({ title, value, color }) {
   );
 }
 
-    function MiniCard({ title, value }) {
+function MiniCard({ title, value }) {
       return (
         <div className="rounded-2xl border border-white/10 bg-white/10 p-4 backdrop-blur">
         <div className="text-xs text-slate-300">
@@ -298,4 +382,4 @@ function StatCard({ title, value, color }) {
         </div>
       </div>
       );
-    }
+}

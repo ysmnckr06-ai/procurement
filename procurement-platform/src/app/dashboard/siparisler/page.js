@@ -1,24 +1,42 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
+import { supabase } from "@/lib/supabase";
+import { useRouter } from "next/navigation";
 
 const emptyForm = {
   orderNo: "",
   company: "",
   product: "",
-  quantity: "",
+  quantity: 1,
+
+  items: [],
+  totalAmount: 0,
+  note: "",
+  currency: "TRY",
+
   orderDate: "",
   dueDate: "",
   deliveryDate: "",
   status: "Bekliyor",
 };
 
-function createOrderNo() {
-  return `SIP-${Date.now().toString().slice(-5)}`;
+function createOrderNo(count = 0) {
+  return `SIP-${String(count + 1).padStart(5, "0")}`;
+
 }
 
 function getToday() {
   return new Date().toISOString().split("T")[0];
+}
+
+function formatMoney(value, currency = "TRY") {
+  const number = Number(value || 0);
+
+  return new Intl.NumberFormat("tr-TR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(number) + " " + currency;
 }
 
 function getStatusClass(status) {
@@ -41,19 +59,38 @@ function getStatusClass(status) {
 }
 
 function calculateDelayDays(order) {
-  if (!order.dueDate) return 0;
-  const due = new Date(order.dueDate);
-  const endDate = order.deliveryDate ? new Date(order.deliveryDate) : new Date();
-  const diff = Math.ceil((endDate - due) / (1000 * 60 * 60 * 24));
+  if (!order.termin_date) return 0;
+
+  const due = new Date(order.termin_date);
+
+  const endDate = order.delivery_date
+    ? new Date(order.delivery_date)
+    : new Date();
+
+  const diff = Math.ceil(
+    (endDate - due) / (1000 * 60 * 60 * 24)
+  );
+
   return diff > 0 ? diff : 0;
 }
 
 function getSmartStatus(order) {
-  if (order.status === "Teslim Edildi") return "Teslim Edildi";
-  if (order.status === "İptal") return "İptal";
-  if (order.dueDate && !order.deliveryDate && new Date(order.dueDate) < new Date()) {
+  if (order.status === "Teslim Edildi") {
+    return "Teslim Edildi";
+  }
+
+  if (order.status === "İptal") {
+    return "İptal";
+  }
+
+  if (
+    order.termin_date &&
+    !order.delivery_date &&
+    new Date(order.termin_date) < new Date()
+  ) {
     return "Gecikti";
   }
+
   return order.status;
 }
 
@@ -75,6 +112,8 @@ function StatCard({ icon, title, value, text }) {
 }
 
 export default function OrdersPage() {
+  const isSubmittingRef = useRef(false);
+  const router = useRouter();
   const [orders, setOrders] = useState([]);
   const [searchCompany, setSearchCompany] = useState("");
   const [searchProduct, setSearchProduct] = useState("");
@@ -86,25 +125,70 @@ export default function OrdersPage() {
   const [autoOrderMessage, setAutoOrderMessage] = useState("");
 
   useEffect(() => {
-    const savedOrders = JSON.parse(localStorage.getItem("siparisler") || "[]");
-    setOrders(savedOrders);
+    loadOrders();
+    async function loadOrders() {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        router.push("/login");
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("orders")
+        .select("*")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        console.error("Siparişler yüklenemedi:", error);
+        return;
+      }
+
+      setOrders(data || []);
+    }
+
 
     const pendingOrder = localStorage.getItem("pendingOrder");
 
     if (pendingOrder) {
       const parsedOrder = JSON.parse(pendingOrder);
 
-      setFormData({
-        orderNo: createOrderNo(),
-        company: parsedOrder.company || "",
-        product: parsedOrder.product || parsedOrder.reportName || "",
-        quantity: parsedOrder.quantity || 1,
-        orderDate: getToday(),
-        dueDate: parsedOrder.dueDate || "",
-        deliveryDate: "",
-        status: "Bekliyor",
-      });
+      const items = parsedOrder.items || [];
 
+      setFormData({
+        orderNo: createOrderNo(orders.length),
+
+        company: parsedOrder.company || "",
+
+        product:
+          parsedOrder.reportName ||
+          "Karşılaştırma Raporu",
+
+        quantity: items.length || 1,
+
+        orderDate: getToday(),
+
+        dueDate: parsedOrder.dueDate || "",
+
+        deliveryDate: "",
+
+       status: "Bekliyor",
+
+  reportId: parsedOrder.reportId || null,
+
+  items,
+
+  totalAmount: items.reduce(
+    (sum, item) =>
+      sum + Number(item.total || 0),
+    0
+  ),
+
+  note: "",
+});
       setShowForm(true);
       setEditingId(null);
       setAutoOrderMessage("Raporlardan gelen sipariş bilgileri forma aktarıldı ✅");
@@ -112,9 +196,6 @@ export default function OrdersPage() {
     }
   }, []);
 
-  useEffect(() => {
-    localStorage.setItem("siparisler", JSON.stringify(orders));
-  }, [orders]);
 
   const ordersWithSmartStatus = useMemo(() => {
     return orders.map((order) => ({
@@ -178,6 +259,85 @@ export default function OrdersPage() {
     setFormData((prev) => ({ ...prev, [name]: value }));
   }
 
+  function updateOrderItem(index, field, value) {
+  setFormData((prev) => {
+    const items = [...(prev.items || [])];
+
+    items[index] = {
+      ...items[index],
+      [field]: value,
+    };
+
+    const quantity = Number(items[index].quantity || 0);
+    const unitPrice = Number(items[index].unitPrice || 0);
+    const discount = Number(items[index].discount || 0);
+
+    const netUnitPrice = unitPrice - (unitPrice * discount) / 100;
+    const total = quantity * netUnitPrice;
+
+    items[index].netUnitPrice = netUnitPrice;
+    items[index].total = total;
+
+    return {
+      ...prev,
+      items,
+      quantity: items.length,
+      totalAmount: items.reduce(
+        (sum, item) => sum + Number(item.total || 0),
+        0
+      ),
+    };
+  });
+  }
+
+  function deleteOrderItem(index) {
+  setFormData((prev) => {
+    const items = [...(prev.items || [])];
+    items.splice(index, 1);
+
+    return {
+      ...prev,
+      items,
+      quantity: items.length,
+      totalAmount: items.reduce(
+        (sum, item) => sum + Number(item.total || 0),
+        0
+      ),
+    };
+  });
+  }
+
+  function addOrderItem() {
+  setFormData((prev) => {
+    const items = [
+      ...(prev.items || []),
+      {
+        productCode: "",
+        productName: "",
+        unit: "adet",
+        quantity: 1,
+        unitPrice: 0,
+        discount: 0,
+        netUnitPrice: 0,
+        total: 0,
+        paymentTerm: "",
+        deliveryTerm: "",
+        currency: "TRY",
+      },
+    ];
+
+    return {
+      ...prev,
+      items,
+      quantity: items.length,
+      totalAmount: items.reduce(
+        (sum, item) => sum + Number(item.total || 0),
+        0
+      ),
+    };
+  });
+}
+
   function resetForm() {
     setFormData(emptyForm);
     setEditingId(null);
@@ -185,8 +345,11 @@ export default function OrdersPage() {
     setAutoOrderMessage("");
   }
 
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault();
+
+    if (isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
 
     if (
       !formData.orderNo ||
@@ -196,62 +359,138 @@ export default function OrdersPage() {
       !formData.orderDate ||
       !formData.status
     ) {
-      alert("Lütfen zorunlu alanları doldurun.");
+    alert("Lütfen zorunlu alanları doldurun.");
+    isSubmittingRef.current = false;
+    return;
+  }
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    alert("Kullanıcı bulunamadı.");
+    return;
+  }
+  
+if (!editingId && formData.reportId) {
+  const { data: existingOrder, error: existingError } = await supabase
+    .from("orders")
+    .select("id")
+    .eq("user_id", user.id)
+    .eq("report_id", formData.reportId)
+    .limit(1);
+
+  if (existingError) {
+    alert("Sipariş kontrolü yapılamadı: " + existingError.message);
+    isSubmittingRef.current = false;
+    return;
+  }
+
+  if (existingOrder && existingOrder.length > 0) {
+    alert("Bu rapor için zaten sipariş oluşturulmuş.");
+    isSubmittingRef.current = false;
+    return;
+  }
+}
+
+const payload = {
+  user_id: user.id,
+  order_no: formData.orderNo,
+  supplier_name: formData.company,
+  product_name: formData.product,
+  quantity: Number(formData.quantity),
+  order_date: formData.orderDate || null,
+  termin_date: formData.dueDate || null,
+  delivery_date: formData.deliveryDate || null,
+  status: formData.status,
+  report_id: formData.reportId || null,
+
+  items: formData.items || [],
+  total_amount: Number(formData.totalAmount || 0),
+  note: formData.note || "",
+  currency: formData.currency || "TRY",
+};
+  if (editingId) {
+    const { error } = await supabase
+      .from("orders")
+      .update(payload)
+      .eq("id", editingId)
+      .eq("user_id", user.id);
+
+    if (error) {
+      alert("Sipariş güncellenemedi: " + error.message);
+      isSubmittingRef.current = false;
       return;
     }
+  } else {
+    const { error } = await supabase
+      .from("orders")
+      .insert(payload);
 
-    if (editingId) {
-      setOrders((prev) =>
-        prev.map((order) =>
-          order.id === editingId
-            ? {
-                ...order,
-                ...formData,
-                quantity: Number(formData.quantity),
-              }
-            : order
-        )
-      );
-    } else {
-      const newOrder = {
-        id: Date.now(),
-        ...formData,
-        quantity: Number(formData.quantity),
-      };
-
-      setOrders((prev) => [newOrder, ...prev]);
-    }
-
-    resetForm();
-  }
-
-  function handleDelete(id) {
-    const confirmed = window.confirm("Bu sipariş silinsin mi?");
-    if (!confirmed) return;
-
-    setOrders((prev) => prev.filter((order) => order.id !== id));
-
-    if (editingId === id) {
-      resetForm();
+    if (error) {
+      alert("Sipariş oluşturulamadı: " + error.message);
+      isSubmittingRef.current = false;
+      return;
     }
   }
 
-  function handleEdit(order) {
-    setFormData({
-      orderNo: order.orderNo,
-      company: order.company,
-      product: order.product,
-      quantity: order.quantity,
-      orderDate: order.orderDate,
-      dueDate: order.dueDate || "",
-      deliveryDate: order.deliveryDate || "",
-      status: order.status,
-    });
-
-    setEditingId(order.id);
-    setShowForm(true);
-    setAutoOrderMessage("");
+  window.location.reload();
+  resetForm();
   }
+
+  async function handleDelete(id) {
+  const confirmed = window.confirm("Bu sipariş silinsin mi?");
+  if (!confirmed) return;
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    alert("Kullanıcı bulunamadı.");
+    isSubmittingRef.current = false;
+    return;
+  }
+
+  const { error } = await supabase
+    .from("orders")
+    .delete()
+    .eq("id", id)
+    .eq("user_id", user.id);
+
+  if (error) {
+    alert("Sipariş silinemedi: " + error.message);
+    return;
+  }
+
+  setOrders((prev) => prev.filter((order) => order.id !== id));
+  }
+
+function handleEdit(order) {
+  setFormData({
+    orderNo: order.order_no || "",
+    company: order.supplier_name || "",
+    product: order.product_name || "",
+    quantity: order.quantity || (order.items?.length || 1),
+
+    orderDate: order.order_date || "",
+    dueDate: order.termin_date || "",
+    deliveryDate: order.delivery_date || "",
+
+    status: order.status || "Bekliyor",
+    reportId: order.report_id || null,
+
+    items: order.items || [],
+    totalAmount: Number(order.total_amount || 0),
+    note: order.note || "",
+    currency: order.currency || "TRY",
+  });
+
+  setEditingId(order.id);
+  setShowForm(true);
+  setAutoOrderMessage("");
+}
 
   function handleNewOrder() {
     if (showForm && !editingId) {
@@ -337,13 +576,30 @@ export default function OrdersPage() {
               <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
                 <Input name="orderNo" label="Sipariş No" value={formData.orderNo} onChange={handleChange} />
                 <Input name="company" label="Firma" value={formData.company} onChange={handleChange} />
-                <Input name="product" label="Ürün / Rapor" value={formData.product} onChange={handleChange} />
-                <Input name="quantity" label="Miktar" type="number" value={formData.quantity} onChange={handleChange} />
+                <Input name="product" label="Sipariş Başlığı" value={formData.product} onChange={handleChange} />
+                <Input name="quantity" label="Kalem Sayısı" type="number" value={formData.quantity} onChange={handleChange} />
                 <Input name="orderDate" label="Sipariş Tarihi" type="date" value={formData.orderDate} onChange={handleChange} />
-                <Input name="dueDate" label="Termin Tarihi" type="date" value={formData.dueDate} onChange={handleChange} />
                 <Input name="deliveryDate" label="Teslim Tarihi" type="date" value={formData.deliveryDate} onChange={handleChange} />
+              <div>
+  <label className="mb-2 block text-sm font-bold text-slate-700">
+    Para Birimi
+  </label>
 
-                <div>
+  <select
+    name="currency"
+    value={formData.currency || "TRY"}
+    onChange={handleChange}
+    className="w-full rounded-xl border border-slate-300 p-3 text-sm"
+  >
+    <option value="TRY">TRY - Türk Lirası</option>
+    <option value="USD">USD - Amerikan Doları</option>
+    <option value="EUR">EUR - Euro</option>
+    <option value="GBP">GBP - Sterlin</option>
+  </select>
+</div>
+
+<div>
+ 
                   <label className="mb-2 block text-sm font-bold text-slate-700">
                     Durum
                   </label>
@@ -362,7 +618,151 @@ export default function OrdersPage() {
                   </select>
                 </div>
               </div>
+{formData.items?.length > 0 && (
+  <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+<div className="mb-3 flex items-center justify-between">
+  <h3 className="text-lg font-bold text-slate-900">
+    Siparişe Aktarılan Ürün Kalemleri
+  </h3>
 
+  <button
+    type="button"
+    onClick={addOrderItem}
+    className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white hover:bg-blue-700"
+  >
+    + Yeni Kalem Ekle
+  </button>
+</div>
+
+    <div className="overflow-x-auto">
+      <table className="w-full text-left text-sm">
+        <thead className="bg-white text-slate-500">
+          <tr>
+            <th className="p-3">Ürün Kodu</th>
+            <th className="p-3">Ürün Açıklaması</th>
+            <th className="p-3">Birim</th>
+            <th className="p-3">Miktar</th>
+            <th className="p-3">Birim Fiyat</th>
+            <th className="p-3">İskonto</th>
+            <th className="p-3">Net Fiyat</th>
+            <th className="p-3">Toplam</th>
+            <th className="p-3">Vade</th>
+            <th className="p-3">Termin</th>
+            <th className="p-3">İşlem</th>
+          </tr>
+        </thead>
+
+        <tbody>
+          {formData.items.map((item, index) => (
+            <tr key={index} className="border-t border-slate-200">
+              <td className="p-3">
+  <input
+    className="w-full border rounded px-2 py-1"
+    value={item.productCode || ""}
+    onChange={(e) =>
+      updateOrderItem(index, "productCode", e.target.value)
+    }
+  />
+</td>
+              <td className="p-3">
+  <input
+    className="w-full border rounded px-2 py-1"
+    value={item.productName || ""}
+    onChange={(e) =>
+      updateOrderItem(index, "productName", e.target.value)
+    }
+  />
+</td>
+              <td className="p-3">
+  <input
+    className="w-16 border rounded px-2 py-1"
+    value={item.unit || ""}
+    onChange={(e) =>
+      updateOrderItem(index, "unit", e.target.value)
+    }
+  />
+</td>
+              <td className="p-3">
+  <input
+    type="number"
+    className="w-20 border rounded px-2 py-1"
+    value={item.quantity || 0}
+    onChange={(e) =>
+      updateOrderItem(index, "quantity", e.target.value)
+    }
+  />
+</td>
+              <td className="p-3">
+  <input
+    type="number"
+    className="w-24 border rounded px-2 py-1"
+    value={item.unitPrice || 0}
+    onChange={(e) =>
+      updateOrderItem(index, "unitPrice", e.target.value)
+    }
+  />
+</td>
+              <td className="p-3">
+  <input
+    type="number"
+    className="w-20 border rounded px-2 py-1"
+    value={item.discount || 0}
+    onChange={(e) =>
+      updateOrderItem(index, "discount", e.target.value)
+    }
+  />
+</td>
+              <td className="p-3 font-semibold">
+  {formatMoney(item.netUnitPrice, item.currency || "TRY")}
+</td>
+              <td className="p-3 font-bold">
+  {formatMoney(item.total, item.currency || "TRY")}
+</td>
+              <td className="p-3">
+  <input
+    className="w-24 border rounded px-2 py-1"
+    value={item.paymentTerm || ""}
+    onChange={(e) =>
+      updateOrderItem(index, "paymentTerm", e.target.value)
+    }
+  />
+</td>
+              <td className="p-3">
+  <input
+    className="w-24 border rounded px-2 py-1"
+    value={item.deliveryTerm || ""}
+    onChange={(e) =>
+      updateOrderItem(index, "deliveryTerm", e.target.value)
+    }
+  />
+</td>
+              <td className="p-3">
+  <button
+    type="button"
+    onClick={() => deleteOrderItem(index)}
+    className="rounded bg-red-600 px-3 py-1 text-xs font-bold text-white hover:bg-red-700"
+  >
+    Sil
+  </button>
+</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="mt-4 flex justify-end">
+  <div className="rounded-xl bg-white px-5 py-3 shadow-sm text-right">
+    <div className="text-sm text-slate-500">
+      Toplam Kalem: {formData.items?.length || 0}
+    </div>
+
+    <div className="mt-1 text-lg font-black text-slate-900">
+      Genel Toplam: {formatMoney(formData.totalAmount, formData.currency || "TRY")}
+    </div>
+  </div>
+</div>
+    </div>
+  </div>
+)}
               <div className="mt-5 flex justify-end">
                 <button
                   type="submit"
@@ -432,53 +832,80 @@ export default function OrdersPage() {
                     <th className="p-4">İşlem</th>
                   </tr>
                 </thead>
-
                 <tbody>
-                  {sortedOrders.map((o) => (
-                    <tr key={o.id} className="border-t border-slate-100">
-                      <td className="p-4 font-bold text-slate-800">{o.orderNo}</td>
-                      <td className="p-4">{o.company}</td>
-                      <td className="p-4">{o.product}</td>
-                      <td className="p-4">{o.quantity}</td>
-                      <td className="p-4">{o.orderDate}</td>
-                      <td className="p-4">{o.dueDate || "-"}</td>
-                      <td className="p-4">{o.deliveryDate || "-"}</td>
-                      <td className="p-4">{o.delayDays > 0 ? `${o.delayDays} gün` : "-"}</td>
+  {sortedOrders.map((o) => (
+    <tr key={o.id} className="border-t border-slate-100">
+      <td className="p-4 font-bold text-slate-800">
+        {o.order_no}
+      </td>
 
-                      <td className="p-4">
-                        <span className={`rounded-full px-3 py-1 text-xs font-bold ${getStatusClass(o.status)}`}>
-                          {o.status}
-                        </span>
-                      </td>
+      <td className="p-4">
+        {o.supplier_name}
+      </td>
 
-                      <td className="p-4">
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => handleEdit(o)}
-                            className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold hover:bg-slate-50"
-                          >
-                            Düzenle
-                          </button>
+      <td className="p-4">
+        {o.product_name}
+      </td>
 
-                          <button
-                            onClick={() => handleDelete(o.id)}
-                            className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-50"
-                          >
-                            Sil
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+      <td className="p-4">
+        {o.quantity}
+      </td>
 
-                  {sortedOrders.length === 0 && (
-                    <tr>
-                      <td colSpan="10" className="p-8 text-center text-slate-500">
-                        Henüz sipariş kaydı yok.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
+      <td className="p-4">
+        {o.order_date}
+      </td>
+
+      <td className="p-4">
+        {o.termin_date || "-"}
+      </td>
+
+      <td className="p-4">
+        {o.delivery_date || "-"}
+      </td>
+
+      <td className="p-4">
+        {o.delayDays > 0 ? `${o.delayDays} gün` : "-"}
+      </td>
+
+      <td className="p-4">
+        <span
+          className={`rounded-full px-3 py-1 text-xs font-bold ${getStatusClass(o.status)}`}
+        >
+          {o.status}
+        </span>
+      </td>
+
+      <td className="p-4">
+        <div className="flex gap-2">
+          <button
+            onClick={() => handleEdit(o)}
+            className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold hover:bg-slate-50"
+          >
+            Düzenle
+          </button>
+
+          <button
+            onClick={() => handleDelete(o.id)}
+            className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-50"
+          >
+            Sil
+          </button>
+        </div>
+      </td>
+    </tr>
+  ))}
+
+  {sortedOrders.length === 0 && (
+    <tr>
+      <td
+        colSpan="10"
+        className="p-8 text-center text-slate-500"
+      >
+        Henüz sipariş kaydı yok.
+      </td>
+    </tr>
+  )}
+</tbody>
               </table>
             </div>
           </div>
