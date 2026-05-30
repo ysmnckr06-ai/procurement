@@ -3,11 +3,14 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import { useRouter } from "next/navigation";
 
-function StatCard({ icon, title, value, text }) {
+function StatCard({ icon, title, value, text, href }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+    <Link
+      href={href}
+      aria-label={`${title} sayfasina git`}
+      className="group block rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-md focus:outline-none focus:ring-4 focus:ring-blue-100"
+    >
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
           <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100 text-2xl">
@@ -23,7 +26,7 @@ function StatCard({ icon, title, value, text }) {
         </div>
         <span className="text-xl text-slate-400">→</span>
       </div>
-    </div>
+    </Link>
   );
 }
 
@@ -80,15 +83,15 @@ function Tip({ text, tone }) {
   };
 
   return (
-    <div className={`rounded-xl border p-4 text-sm font-medium ${styles[tone]}`}>
+    <div
+      className={`rounded-xl border p-4 text-sm font-medium ${styles[tone]}`}
+    >
       ✅ {text}
     </div>
   );
 }
 
 export default function DashboardPage() {
-  const API_URL = process.env.NEXT_PUBLIC_API_URL;
-  const [userEmail, setUserEmail] = useState("");
   const [currentTime, setCurrentTime] = useState("--:--");
 
   const [stats, setStats] = useState({
@@ -103,15 +106,15 @@ export default function DashboardPage() {
         new Date().toLocaleTimeString("tr-TR", {
           hour: "2-digit",
           minute: "2-digit",
-        })
+        }),
       );
     };
 
     updateClock();
-      const interval = setInterval(updateClock, 1000);
+    const interval = setInterval(updateClock, 1000);
 
-      return () => clearInterval(interval);
-    }, []);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     const loadDashboardCounts = async () => {
@@ -123,8 +126,6 @@ export default function DashboardPage() {
         window.location.href = "/login";
         return;
       }
-
-      setUserEmail(user.email || "");
 
       const [taleplerRes, tekliflerRes, raporlarRes, siparislerRes] =
         await Promise.all([
@@ -143,11 +144,11 @@ export default function DashboardPage() {
             .select("*", { count: "exact", head: true })
             .eq("user_id", user.id),
 
-supabase
-  .from("orders")
-  .select("*", { count: "exact", head: true })
-  .eq("user_id", user.id)
-  .eq("status", "Bekliyor"),
+          supabase
+            .from("orders")
+            .select("*", { count: "exact", head: true })
+            .eq("user_id", user.id)
+            .eq("status", "Bekliyor"),
         ]);
 
       setStats({
@@ -161,20 +162,12 @@ supabase
     loadDashboardCounts();
   }, []);
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-    window.location.href = "/login";
-  };
-
   return (
     <div className="flex min-h-screen bg-slate-100">
-
       <main className="flex-1 p-6">
         <div className="mx-auto max-w-7xl space-y-6">
           <section className="relative overflow-hidden rounded-3xl border border-slate-200 bg-white p-8 shadow-sm">
             <div className="relative z-10 flex items-start justify-between gap-6">
-
-
               <div>
                 <h1 className="text-4xl font-bold text-slate-900">
                   Satınalma Yönetim Paneli 👋
@@ -225,18 +218,21 @@ supabase
               title="Toplam Talep Listesi"
               value={stats.talepler}
               text="Aktif talepler"
+              href="/dashboard/talepler"
             />
             <StatCard
               icon="📊"
               title="Oluşturulan Rapor"
               value={stats.raporlar}
               text="Toplam rapor"
+              href="/dashboard/raporlar"
             />
             <StatCard
               icon="🛒"
               title="Bekleyen Sipariş"
               value={stats.siparisler}
               text="Onay bekleyen"
+              href="/dashboard/siparisler"
             />
           </section>
 
@@ -292,7 +288,9 @@ supabase
             </div>
 
             <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-              <h2 className="text-xl font-bold text-slate-900">Hızlı İpuçları</h2>
+              <h2 className="text-xl font-bold text-slate-900">
+                Hızlı İpuçları
+              </h2>
 
               <div className="mt-5 space-y-3">
                 <Tip

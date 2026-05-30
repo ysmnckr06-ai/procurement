@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
 const emptyForm = {
@@ -46,18 +46,37 @@ function formatMoney(value, currency = "TRY") {
   }).format(Number(value || 0))} ${currency}`;
 }
 
+function readNumberField(item, primaryKey, fallbackKey, defaultValue = 0) {
+  const value = item?.[primaryKey] ?? item?.[fallbackKey] ?? defaultValue;
+
+  if (value === "") return "";
+
+  return Number(value || 0);
+}
+
 function normalizeItems(items) {
   return (items || []).map((item) => {
-    const quantity = Number(item.quantity || item.miktar || 0);
-    const unitPrice = Number(item.unitPrice || item.birimFiyat || 0);
-    const discount = Number(item.discount || item.iskonto || 0);
-    const netUnitPrice = Number(item.netUnitPrice || unitPrice - (unitPrice * discount) / 100);
-    const total = Number(item.total || quantity * netUnitPrice);
-    const deliveredQuantity = Number(item.deliveredQuantity || item.delivered || 0);
+    const quantity = readNumberField(item, "quantity", "miktar");
+    const unitPrice = readNumberField(item, "unitPrice", "birimFiyat");
+    const discount = readNumberField(item, "discount", "iskonto");
+    const quantityNumber = Number(quantity || 0);
+    const unitPriceNumber = Number(unitPrice || 0);
+    const discountNumber = Number(discount || 0);
+    const netUnitPrice = Number(
+      item.netUnitPrice ||
+        unitPriceNumber - (unitPriceNumber * discountNumber) / 100,
+    );
+    const total = Number(item.total || quantityNumber * netUnitPrice);
+    const deliveredQuantity = readNumberField(
+      item,
+      "deliveredQuantity",
+      "delivered",
+    );
 
     return {
       productCode: item.productCode || item.urunKodu || "",
-      productName: item.productName || item.urunAciklamasi || item.product || "",
+      productName:
+        item.productName || item.urunAciklamasi || item.product || "",
       unit: item.unit || item.birim || "adet",
       quantity,
       deliveredQuantity,
@@ -73,15 +92,21 @@ function normalizeItems(items) {
 }
 
 function calculateOrderTotal(items) {
-  return normalizeItems(items).reduce((sum, item) => sum + Number(item.total || 0), 0);
+  return normalizeItems(items).reduce(
+    (sum, item) => sum + Number(item.total || 0),
+    0,
+  );
 }
 
 function calculateItemCounts(order) {
   const items = normalizeItems(order.items);
-  const totalQuantity = items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+  const totalQuantity = items.reduce(
+    (sum, item) => sum + Number(item.quantity || 0),
+    0,
+  );
   const deliveredQuantity = items.reduce(
     (sum, item) => sum + Number(item.deliveredQuantity || 0),
-    0
+    0,
   );
 
   return {
@@ -94,11 +119,19 @@ function calculateItemCounts(order) {
 
 function getSmartStatus(order) {
   const status = order.status || "Bekliyor";
-  if (status === "Teslim Edildi" || status === "İptal" || status === "Kısmi Teslim") {
+  if (
+    status === "Teslim Edildi" ||
+    status === "İptal" ||
+    status === "Kısmi Teslim"
+  ) {
     return status;
   }
 
-  if (order.termin_date && !order.delivery_date && new Date(order.termin_date) < new Date()) {
+  if (
+    order.termin_date &&
+    !order.delivery_date &&
+    new Date(order.termin_date) < new Date()
+  ) {
     return "Gecikti";
   }
 
@@ -125,7 +158,9 @@ function calculateDelayDays(order) {
   if (!order.termin_date) return 0;
 
   const due = new Date(order.termin_date);
-  const endDate = order.delivery_date ? new Date(order.delivery_date) : new Date();
+  const endDate = order.delivery_date
+    ? new Date(order.delivery_date)
+    : new Date();
   const diff = Math.ceil((endDate - due) / (1000 * 60 * 60 * 24));
 
   return diff > 0 ? diff : 0;
@@ -160,6 +195,8 @@ export default function OrdersPage() {
   const [statusFilter, setStatusFilter] = useState("Tümü");
   const [message, setMessage] = useState("");
 
+  // Initial load should run once; these functions intentionally read current mount state.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: initial page hydration only
   useEffect(() => {
     loadData();
     hydratePendingOrder();
@@ -215,11 +252,15 @@ export default function OrdersPage() {
       reportId: parsedOrder.reportId || null,
       items,
       totalAmount: calculateOrderTotal(items),
-      note: parsedOrder.paymentTerm ? `Ödeme vadesi: ${parsedOrder.paymentTerm}` : "",
+      note: parsedOrder.paymentTerm
+        ? `Ödeme vadesi: ${parsedOrder.paymentTerm}`
+        : "",
     });
     setShowForm(true);
     setEditingId(null);
-    setMessage("Rapor verileri otomatik olarak yüklendi. Kontrol edip siparişi oluşturabilirsiniz.");
+    setMessage(
+      "Rapor verileri otomatik olarak yüklendi. Kontrol edip siparişi oluşturabilirsiniz.",
+    );
     localStorage.removeItem("pendingOrder");
   }
 
@@ -240,7 +281,8 @@ export default function OrdersPage() {
         .join(" ")
         .toLowerCase();
       const searchMatch = needle ? haystack.includes(needle) : true;
-      const statusMatch = statusFilter === "Tümü" ? true : order.status === statusFilter;
+      const statusMatch =
+        statusFilter === "Tümü" ? true : order.status === statusFilter;
 
       return searchMatch && statusMatch;
     });
@@ -248,11 +290,17 @@ export default function OrdersPage() {
 
   const totalAmount = enrichedOrders.reduce(
     (sum, order) => sum + Number(order.total_amount || 0),
-    0
+    0,
   );
-  const waitingCount = enrichedOrders.filter((order) => order.status === "Bekliyor").length;
-  const deliveredCount = enrichedOrders.filter((order) => order.status === "Teslim Edildi").length;
-  const delayedCount = enrichedOrders.filter((order) => order.status === "Gecikti").length;
+  const waitingCount = enrichedOrders.filter(
+    (order) => order.status === "Bekliyor",
+  ).length;
+  const deliveredCount = enrichedOrders.filter(
+    (order) => order.status === "Teslim Edildi",
+  ).length;
+  const delayedCount = enrichedOrders.filter(
+    (order) => order.status === "Gecikti",
+  ).length;
 
   function handleChange(event) {
     const { name, value } = event.target;
@@ -274,7 +322,10 @@ export default function OrdersPage() {
       const deliveredQuantity = Number(items[index].deliveredQuantity || 0);
       const netUnitPrice = unitPrice - (unitPrice * discount) / 100;
 
-      items[index].deliveredQuantity = Math.min(Math.max(deliveredQuantity, 0), quantity);
+      items[index].deliveredQuantity =
+        items[index].deliveredQuantity === ""
+          ? ""
+          : Math.min(Math.max(deliveredQuantity, 0), quantity);
       items[index].netUnitPrice = netUnitPrice;
       items[index].total = quantity * netUnitPrice;
 
@@ -371,7 +422,12 @@ export default function OrdersPage() {
     if (isSubmittingRef.current) return;
     isSubmittingRef.current = true;
 
-    if (!formData.orderNo || !formData.company || !formData.product || !formData.orderDate) {
+    if (
+      !formData.orderNo ||
+      !formData.company ||
+      !formData.product ||
+      !formData.orderDate
+    ) {
       setMessage("Sipariş no, firma, başlık ve sipariş tarihi zorunludur.");
       isSubmittingRef.current = false;
       return;
@@ -404,8 +460,14 @@ export default function OrdersPage() {
       currency: formData.currency || "TRY",
     };
 
-    const totalQuantity = items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
-    const deliveredQuantity = items.reduce((sum, item) => sum + Number(item.deliveredQuantity || 0), 0);
+    const totalQuantity = items.reduce(
+      (sum, item) => sum + Number(item.quantity || 0),
+      0,
+    );
+    const deliveredQuantity = items.reduce(
+      (sum, item) => sum + Number(item.deliveredQuantity || 0),
+      0,
+    );
     if (deliveredQuantity >= totalQuantity && totalQuantity > 0) {
       payload.status = "Teslim Edildi";
       payload.delivery_date = payload.delivery_date || getToday();
@@ -477,10 +539,12 @@ export default function OrdersPage() {
               <div className="inline-flex rounded-full bg-green-100 px-4 py-2 text-sm font-bold text-green-700">
                 Sipariş Yönetimi
               </div>
-              <h1 className="mt-3 text-4xl font-bold text-slate-900">Siparişler</h1>
+              <h1 className="mt-3 text-4xl font-bold text-slate-900">
+                Siparişler
+              </h1>
               <p className="mt-2 max-w-2xl text-sm text-slate-600">
-                Raporlardan gelen veya manuel oluşturulan siparişleri durum, termin ve teslimat
-                bilgileriyle takip edin.
+                Raporlardan gelen veya manuel oluşturulan siparişleri durum,
+                termin ve teslimat bilgileriyle takip edin.
               </p>
             </div>
 
@@ -494,11 +558,31 @@ export default function OrdersPage() {
           </div>
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-5">
-            <StatCard title="Toplam Sipariş" value={enrichedOrders.length} text="Kayıtlı sipariş" />
-            <StatCard title="Toplam Tutar" value={formatMoney(totalAmount)} text="Tüm siparişler" />
-            <StatCard title="Bekleyen" value={waitingCount} text="Aksiyon bekliyor" />
-            <StatCard title="Teslim Edilen" value={deliveredCount} text="Tamamlandı" />
-            <StatCard title="Geciken" value={delayedCount} text="Termin aşıldı" />
+            <StatCard
+              title="Toplam Sipariş"
+              value={enrichedOrders.length}
+              text="Kayıtlı sipariş"
+            />
+            <StatCard
+              title="Toplam Tutar"
+              value={formatMoney(totalAmount)}
+              text="Tüm siparişler"
+            />
+            <StatCard
+              title="Bekleyen"
+              value={waitingCount}
+              text="Aksiyon bekliyor"
+            />
+            <StatCard
+              title="Teslim Edilen"
+              value={deliveredCount}
+              text="Tamamlandı"
+            />
+            <StatCard
+              title="Geciken"
+              value={delayedCount}
+              text="Termin aşıldı"
+            />
           </div>
 
           {message && (
@@ -579,14 +663,18 @@ function OrderForm({
   const items = normalizeItems(formData.items);
 
   return (
-    <form onSubmit={onSubmit} className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+    <form
+      onSubmit={onSubmit}
+      className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"
+    >
       <div className="mb-5 flex items-center justify-between">
         <div>
           <h2 className="text-xl font-bold text-slate-900">
             {editingId ? "Siparişi Düzenle" : "Sipariş Oluştur"}
           </h2>
           <p className="mt-1 text-sm text-slate-500">
-            Rapor verileri geldiyse ürün kalemleri otomatik dolar; istersen elle de ekleyebilirsin.
+            Rapor verileri geldiyse ürün kalemleri otomatik dolar; istersen elle
+            de ekleyebilirsin.
           </p>
         </div>
         <button
@@ -599,7 +687,12 @@ function OrderForm({
       </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <Input label="Sipariş No" name="orderNo" value={formData.orderNo} onChange={onChange} />
+        <Input
+          label="Sipariş No"
+          name="orderNo"
+          value={formData.orderNo}
+          onChange={onChange}
+        />
         <SupplierInput
           label="Firma"
           name="company"
@@ -607,7 +700,12 @@ function OrderForm({
           onChange={onSupplierChange}
           suppliers={suppliers}
         />
-        <Input label="Sipariş Başlığı" name="product" value={formData.product} onChange={onChange} />
+        <Input
+          label="Sipariş Başlığı"
+          name="product"
+          value={formData.product}
+          onChange={onChange}
+        />
         <Select
           label="Durum"
           name="status"
@@ -684,11 +782,16 @@ function OrderForm({
             </thead>
             <tbody>
               {items.map((item, index) => (
-                <tr key={`${item.productName}-${index}`} className="border-t border-slate-200">
+                <tr
+                  key={`${item.productName}-${index}`}
+                  className="border-t border-slate-200"
+                >
                   <td className="p-3">
                     <input
                       value={item.productName}
-                      onChange={(event) => onItemChange(index, "productName", event.target.value)}
+                      onChange={(event) =>
+                        onItemChange(index, "productName", event.target.value)
+                      }
                       className="w-full rounded border border-slate-300 px-2 py-1"
                     />
                   </td>
@@ -696,7 +799,14 @@ function OrderForm({
                     <input
                       type="number"
                       value={item.quantity}
-                      onChange={(event) => onItemChange(index, "quantity", event.target.value)}
+                      onFocus={() => {
+                        if (Number(item.quantity || 0) === 0) {
+                          onItemChange(index, "quantity", "");
+                        }
+                      }}
+                      onChange={(event) =>
+                        onItemChange(index, "quantity", event.target.value)
+                      }
                       className="w-24 rounded border border-slate-300 px-2 py-1"
                     />
                   </td>
@@ -707,14 +817,29 @@ function OrderForm({
                         min="0"
                         max={item.quantity}
                         value={item.deliveredQuantity}
+                        onFocus={() => {
+                          if (Number(item.deliveredQuantity || 0) === 0) {
+                            onItemChange(index, "deliveredQuantity", "");
+                          }
+                        }}
                         onChange={(event) =>
-                          onItemChange(index, "deliveredQuantity", event.target.value)
+                          onItemChange(
+                            index,
+                            "deliveredQuantity",
+                            event.target.value,
+                          )
                         }
                         className="w-24 rounded border border-slate-300 px-2 py-1"
                       />
                       <button
                         type="button"
-                        onClick={() => onItemChange(index, "deliveredQuantity", item.quantity)}
+                        onClick={() =>
+                          onItemChange(
+                            index,
+                            "deliveredQuantity",
+                            item.quantity,
+                          )
+                        }
                         className="whitespace-nowrap rounded border border-green-200 bg-green-50 px-2 py-1 text-xs font-bold text-green-700"
                       >
                         Tamamı
@@ -722,13 +847,24 @@ function OrderForm({
                     </div>
                   </td>
                   <td className="p-3 font-semibold text-slate-700">
-                    {Math.max(Number(item.quantity || 0) - Number(item.deliveredQuantity || 0), 0)}
+                    {Math.max(
+                      Number(item.quantity || 0) -
+                        Number(item.deliveredQuantity || 0),
+                      0,
+                    )}
                   </td>
                   <td className="p-3">
                     <input
                       type="number"
                       value={item.unitPrice}
-                      onChange={(event) => onItemChange(index, "unitPrice", event.target.value)}
+                      onFocus={() => {
+                        if (Number(item.unitPrice || 0) === 0) {
+                          onItemChange(index, "unitPrice", "");
+                        }
+                      }}
+                      onChange={(event) =>
+                        onItemChange(index, "unitPrice", event.target.value)
+                      }
                       className="w-28 rounded border border-slate-300 px-2 py-1"
                     />
                   </td>
@@ -736,11 +872,20 @@ function OrderForm({
                     <input
                       type="number"
                       value={item.discount}
-                      onChange={(event) => onItemChange(index, "discount", event.target.value)}
+                      onFocus={() => {
+                        if (Number(item.discount || 0) === 0) {
+                          onItemChange(index, "discount", "");
+                        }
+                      }}
+                      onChange={(event) =>
+                        onItemChange(index, "discount", event.target.value)
+                      }
                       className="w-20 rounded border border-slate-300 px-2 py-1"
                     />
                   </td>
-                  <td className="p-3 font-bold">{formatMoney(item.total, formData.currency)}</td>
+                  <td className="p-3 font-bold">
+                    {formatMoney(item.total, formData.currency)}
+                  </td>
                   <td className="p-3">
                     <button
                       type="button"
@@ -774,7 +919,11 @@ function OrderForm({
       </div>
 
       <div className="mt-5 flex justify-end gap-3">
-        <button type="button" onClick={onCancel} className="rounded-xl border px-5 py-3 text-sm font-bold">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="rounded-xl border px-5 py-3 text-sm font-bold"
+        >
           İptal
         </button>
         <button
@@ -793,7 +942,9 @@ function OrdersTable({ orders, onView, onEdit, onDelete }) {
     <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
       <div className="border-b border-slate-100 p-5">
         <h2 className="text-xl font-bold text-slate-900">Sipariş Listesi</h2>
-        <p className="mt-1 text-sm text-slate-500">Durum ve termin odaklı sipariş görünümü.</p>
+        <p className="mt-1 text-sm text-slate-500">
+          Durum ve termin odaklı sipariş görünümü.
+        </p>
       </div>
 
       <div className="overflow-x-auto">
@@ -812,7 +963,9 @@ function OrdersTable({ orders, onView, onEdit, onDelete }) {
           <tbody>
             {orders.map((order) => (
               <tr key={order.id} className="border-t border-slate-100">
-                <td className="p-4 font-bold text-slate-900">{order.order_no}</td>
+                <td className="p-4 font-bold text-slate-900">
+                  {order.order_no}
+                </td>
                 <td className="p-4">{order.supplier_name}</td>
                 <td className="p-4">{order.order_date || "-"}</td>
                 <td className="p-4">{order.termin_date || "-"}</td>
@@ -820,7 +973,9 @@ function OrdersTable({ orders, onView, onEdit, onDelete }) {
                   {formatMoney(order.total_amount, order.currency || "TRY")}
                 </td>
                 <td className="p-4">
-                  <span className={`rounded-full px-3 py-1 text-xs font-bold ${getStatusClass(order.status)}`}>
+                  <span
+                    className={`rounded-full px-3 py-1 text-xs font-bold ${getStatusClass(order.status)}`}
+                  >
                     {order.status}
                   </span>
                 </td>
@@ -867,13 +1022,21 @@ function OrdersTable({ orders, onView, onEdit, onDelete }) {
 
 function TerminTable({ orders }) {
   const dueOrders = [...orders]
-    .filter((order) => order.status !== "Teslim Edildi" && order.status !== "İptal")
-    .sort((a, b) => new Date(a.termin_date || "2999-01-01") - new Date(b.termin_date || "2999-01-01"))
+    .filter(
+      (order) => order.status !== "Teslim Edildi" && order.status !== "İptal",
+    )
+    .sort(
+      (a, b) =>
+        new Date(a.termin_date || "2999-01-01") -
+        new Date(b.termin_date || "2999-01-01"),
+    )
     .slice(0, 6);
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-      <h2 className="text-xl font-bold text-slate-900">Termin Takip Görünümü</h2>
+      <h2 className="text-xl font-bold text-slate-900">
+        Termin Takip Görünümü
+      </h2>
       <div className="mt-4 overflow-x-auto">
         <table className="w-full text-left text-sm">
           <thead className="bg-slate-50 text-slate-500">
@@ -894,21 +1057,21 @@ function TerminTable({ orders }) {
                   <td className="p-3">{order.supplier_name}</td>
                   <td className="p-3">{order.termin_date || "-"}</td>
                   <td className="p-3">
-                    {remaining === null ? (
-                      "-"
-                    ) : (
-                      <span
-                        className={`rounded-full px-3 py-1 text-xs font-bold ${
-                          remaining < 0
-                            ? "bg-red-100 text-red-700"
-                            : remaining <= 7
-                              ? "bg-yellow-100 text-yellow-700"
-                              : "bg-slate-100 text-slate-600"
-                        }`}
-                      >
-                        {remaining < 0 ? `${Math.abs(remaining)} gün geçti` : `${remaining} gün kaldı`}
-                      </span>
-                    )}
+                    {remaining === null
+                      ? "-"
+                      : <span
+                          className={`rounded-full px-3 py-1 text-xs font-bold ${
+                            remaining < 0
+                              ? "bg-red-100 text-red-700"
+                              : remaining <= 7
+                                ? "bg-yellow-100 text-yellow-700"
+                                : "bg-slate-100 text-slate-600"
+                          }`}
+                        >
+                          {remaining < 0
+                            ? `${Math.abs(remaining)} gün geçti`
+                            : `${remaining} gün kaldı`}
+                        </span>}
                   </td>
                   <td className="p-3">{order.status}</td>
                 </tr>
@@ -924,7 +1087,9 @@ function TerminTable({ orders }) {
 function Input({ label, name, value, onChange, type = "text" }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-sm font-bold text-slate-700">{label}</span>
+      <span className="mb-2 block text-sm font-bold text-slate-700">
+        {label}
+      </span>
       <input
         type={type}
         name={name}
@@ -939,7 +1104,9 @@ function Input({ label, name, value, onChange, type = "text" }) {
 function Select({ label, name, value, onChange, options }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-sm font-bold text-slate-700">{label}</span>
+      <span className="mb-2 block text-sm font-bold text-slate-700">
+        {label}
+      </span>
       <select
         name={name}
         value={value}
@@ -957,7 +1124,9 @@ function Select({ label, name, value, onChange, options }) {
 function SupplierInput({ label, name, value, onChange, suppliers }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-sm font-bold text-slate-700">{label}</span>
+      <span className="mb-2 block text-sm font-bold text-slate-700">
+        {label}
+      </span>
       <input
         list="supplier-options"
         name={name}

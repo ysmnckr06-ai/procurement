@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { supabase } from "@/lib/supabase";
 
 const emptyForm = {
   name: "",
@@ -44,6 +45,27 @@ const sortOptions = [
   { label: "Son siparise gore", value: "lastOrderDate" },
   { label: "Teslim oranina gore", value: "onTimeRate" },
 ];
+
+function normalizeSupplierName(value) {
+  return String(value || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLocaleLowerCase("tr-TR");
+}
+
+function getReportSupplierName(report) {
+  return (
+    report?.supplier_name ||
+    report?.supplierName ||
+    report?.onerilenFirma ||
+    report?.onerilenfirma ||
+    report?.recommended_firm ||
+    report?.recommendedFirm ||
+    report?.firma ||
+    report?.company ||
+    ""
+  );
+}
 
 function getAverageScore(supplier) {
   const scores = [
@@ -277,6 +299,8 @@ export default function SuppliersPage() {
   const [selectedId, setSelectedId] = useState(null);
   const [formData, setFormData] = useState(emptyForm);
   const [message, setMessage] = useState(null);
+  const [suggestedSuppliers, setSuggestedSuppliers] = useState([]);
+  const [suggestionsDismissed, setSuggestionsDismissed] = useState(false);
 
   const loadSuppliers = useCallback(async () => {
     if (!API_URL) {
@@ -338,6 +362,94 @@ export default function SuppliersPage() {
 
   useEffect(() => {
     localStorage.setItem("tedarikciler", JSON.stringify(suppliers));
+  }, [suppliers]);
+
+  useEffect(() => {
+    async function discoverSuppliersFromWorkflows() {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        setSuggestedSuppliers([]);
+        return;
+      }
+
+      const [ordersRes, reportsRes] = await Promise.all([
+        supabase
+          .from("orders")
+          .select("supplier_name,product_name,order_date,created_at,items")
+          .eq("user_id", user.id),
+        supabase.from("reports").select("*").eq("user_id", user.id),
+      ]);
+
+      const knownNames = new Set(
+        suppliers
+          .map((supplier) => normalizeSupplierName(supplier.name))
+          .filter(Boolean),
+      );
+      const candidates = new Map();
+
+      for (const order of ordersRes.data || []) {
+        const name = String(order.supplier_name || "").trim();
+        const key = normalizeSupplierName(name);
+
+        if (!key || knownNames.has(key)) continue;
+
+        const existing = candidates.get(key) || {
+          name,
+          source: "Siparis",
+          totalOrders: 0,
+          lastOrderDate: "",
+          productGroups: new Set(),
+        };
+
+        existing.totalOrders += 1;
+        existing.lastOrderDate =
+          order.order_date ||
+          order.created_at?.split("T")[0] ||
+          existing.lastOrderDate;
+
+        if (order.product_name) existing.productGroups.add(order.product_name);
+
+        for (const item of order.items || []) {
+          const productName =
+            item.productName || item.product || item.urunAciklamasi;
+          if (productName) existing.productGroups.add(productName);
+        }
+
+        candidates.set(key, existing);
+      }
+
+      for (const report of reportsRes.data || []) {
+        const name = String(getReportSupplierName(report) || "").trim();
+        const key = normalizeSupplierName(name);
+
+        if (!key || knownNames.has(key)) continue;
+
+        const existing = candidates.get(key) || {
+          name,
+          source: "Rapor",
+          totalOrders: 0,
+          lastOrderDate: "",
+          productGroups: new Set(),
+        };
+
+        existing.source =
+          existing.source === "Siparis" ? "Siparis ve rapor" : existing.source;
+        candidates.set(key, existing);
+      }
+
+      setSuggestedSuppliers(
+        [...candidates.values()].map((candidate) => ({
+          ...candidate,
+          productGroups: [...candidate.productGroups].slice(0, 4).join(", "),
+        })),
+      );
+      setSuggestionsDismissed(false);
+    }
+
+    discoverSuppliersFromWorkflows();
   }, [suppliers]);
 
   const enrichedSuppliers = useMemo(() => {
@@ -603,6 +715,42 @@ export default function SuppliersPage() {
     });
   }
 
+  async function addSuggestedSupplier(candidate) {
+    await saveSupplier(
+      {
+        ...emptyForm,
+        name: candidate.name,
+        category: "Diger",
+        status: "Onay Bekliyor",
+        totalOrders: String(candidate.totalOrders || 0),
+        lastOrderDate: candidate.lastOrderDate || "",
+        productGroups: candidate.productGroups || "",
+        notes: `${candidate.source} kayitlarindan otomatik bulundu.`,
+      },
+      null,
+      false,
+    );
+
+    setSuggestedSuppliers((prev) =>
+      prev.filter(
+        (supplier) =>
+          normalizeSupplierName(supplier.name) !==
+          normalizeSupplierName(candidate.name),
+      ),
+    );
+  }
+
+  async function addAllSuggestedSuppliers() {
+    for (const candidate of suggestedSuppliers) {
+      await addSuggestedSupplier(candidate);
+    }
+
+    setMessage({
+      type: "success",
+      text: "Bulunan yeni tedarikciler eklendi.",
+    });
+  }
+
   function exportSuppliersCsv() {
     const headers = [
       "Firma",
@@ -726,6 +874,73 @@ export default function SuppliersPage() {
                 </button>
               </div>
             </div>
+          )}
+
+          {suggestedSuppliers.length > 0 && !suggestionsDismissed && (
+            <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5 shadow-sm">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <div className="text-sm font-black text-amber-900">
+                    Yeni tedarikciler bulundu
+                  </div>
+                  <p className="mt-1 text-sm leading-6 text-amber-800">
+                    Siparis ve rapor kayitlarinda olup tedarikci listesinde
+                    olmayan firmalar tespit edildi. Isterseniz listeye ekleyip
+                    performanslarini takip etmeye baslayabilirsiniz.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={addAllSuggestedSuppliers}
+                    className="rounded-xl bg-amber-600 px-4 py-2 text-sm font-black text-white hover:bg-amber-700"
+                  >
+                    Tumunu Ekle
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSuggestionsDismissed(true)}
+                    className="rounded-xl border border-amber-300 px-4 py-2 text-sm font-black text-amber-900 hover:bg-amber-100"
+                  >
+                    Simdilik Gizle
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {suggestedSuppliers.map((candidate) => (
+                  <div
+                    key={candidate.name}
+                    className="rounded-xl border border-amber-200 bg-white p-4"
+                  >
+                    <div className="font-black text-slate-950">
+                      {candidate.name}
+                    </div>
+                    <div className="mt-1 text-xs font-bold text-amber-700">
+                      Kaynak: {candidate.source}
+                    </div>
+                    <div className="mt-2 text-sm text-slate-600">
+                      {candidate.totalOrders || 0} siparis
+                      {candidate.lastOrderDate
+                        ? ` / son ${formatDate(candidate.lastOrderDate)}`
+                        : ""}
+                    </div>
+                    {candidate.productGroups && (
+                      <div className="mt-1 text-xs text-slate-500">
+                        {candidate.productGroups}
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => addSuggestedSupplier(candidate)}
+                      className="mt-3 rounded-lg border border-amber-300 px-3 py-2 text-xs font-black text-amber-900 hover:bg-amber-50"
+                    >
+                      Bu Firmayi Ekle
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </section>
           )}
 
           <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">

@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
 const statusFlow = [
@@ -22,6 +22,18 @@ const statusActions = [
   { status: "Kargolandı", label: "Kargoya Ver" },
   { status: "Teslim Edildi", label: "Tamamını Teslim Et" },
   { status: "İptal", label: "İptal Et", danger: true },
+];
+
+const editableStatusOptions = [
+  "Bekliyor",
+  "Firmaya Gönderildi",
+  "Onay Bekliyor",
+  "Üretimde",
+  "Kargolandı",
+  "Kısmi Teslim",
+  "Teslim Edildi",
+  "Gecikti",
+  "İptal",
 ];
 
 function getToday() {
@@ -77,7 +89,9 @@ function normalizeItems(items) {
 }
 
 function normalizeHistory(order) {
-  const savedHistory = Array.isArray(order.status_history) ? order.status_history : [];
+  const savedHistory = Array.isArray(order.status_history)
+    ? order.status_history
+    : [];
   const rows = [
     {
       type: "created",
@@ -88,7 +102,11 @@ function normalizeHistory(order) {
     ...savedHistory,
   ];
 
-  if (savedHistory.length === 0 && order.status && order.status !== "Bekliyor") {
+  if (
+    savedHistory.length === 0 &&
+    order.status &&
+    order.status !== "Bekliyor"
+  ) {
     rows.push({
       type: "status",
       title: `${order.status} durumuna alındı.`,
@@ -131,7 +149,7 @@ function getCurrentStep(status) {
 }
 
 function isActionDisabled(currentStatus, actionStatus) {
-  if (currentStatus === "Teslim Edildi" || currentStatus === "İptal") return true;
+  if (currentStatus === "İptal") return true;
   if (actionStatus === "İptal") return false;
 
   const currentIndex = getCurrentStep(currentStatus);
@@ -141,7 +159,9 @@ function isActionDisabled(currentStatus, actionStatus) {
 }
 
 function buildStatusHistory(order, entry) {
-  const currentHistory = Array.isArray(order.status_history) ? order.status_history : [];
+  const currentHistory = Array.isArray(order.status_history)
+    ? order.status_history
+    : [];
   return [
     ...currentHistory,
     {
@@ -160,7 +180,10 @@ export default function OrderDetailPage() {
   const [activeTab, setActiveTab] = useState("items");
   const [message, setMessage] = useState("");
   const [deliveryInputs, setDeliveryInputs] = useState({});
+  const [editableStatus, setEditableStatus] = useState("");
 
+  // Detail page reloads when the route id changes; loadOrder reads the active route state.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: route-scoped initial load
   useEffect(() => {
     loadOrder();
   }, [id]);
@@ -189,19 +212,30 @@ export default function OrderDetailPage() {
     }
 
     setOrder(data);
+    setEditableStatus(data.status || "Bekliyor");
+    setDeliveryInputs({});
   }
 
   const items = useMemo(() => normalizeItems(order?.items || []), [order]);
-  const historyRows = useMemo(() => (order ? normalizeHistory(order) : []), [order]);
+  const historyRows = useMemo(
+    () => (order ? normalizeHistory(order) : []),
+    [order],
+  );
   const totals = useMemo(() => {
     const totalQuantity = items.reduce((sum, item) => sum + item.quantity, 0);
-    const deliveredQuantity = items.reduce((sum, item) => sum + item.deliveredQuantity, 0);
+    const deliveredQuantity = items.reduce(
+      (sum, item) => sum + item.deliveredQuantity,
+      0,
+    );
 
     return {
       totalQuantity,
       deliveredQuantity,
       remainingQuantity: Math.max(totalQuantity - deliveredQuantity, 0),
-      progress: totalQuantity > 0 ? Math.round((deliveredQuantity / totalQuantity) * 100) : 0,
+      progress:
+        totalQuantity > 0
+          ? Math.round((deliveredQuantity / totalQuantity) * 100)
+          : 0,
     };
   }, [items]);
 
@@ -238,7 +272,9 @@ export default function OrderDetailPage() {
 
     const confirmed =
       nextStatus !== "İptal" ||
-      window.confirm("Bu sipariş iptal edilsin mi? Bu işlem durum tarihçesine kaydedilir.");
+      window.confirm(
+        "Bu sipariş iptal edilsin mi? Bu işlem durum tarihçesine kaydedilir.",
+      );
 
     if (!confirmed) return;
 
@@ -252,7 +288,8 @@ export default function OrderDetailPage() {
       nextStatus === "Teslim Edildi"
         ? items.map((item) => ({ ...item, deliveredQuantity: item.quantity }))
         : items;
-    const deliveryDate = nextStatus === "Teslim Edildi" ? getToday() : order.delivery_date;
+    const deliveryDate =
+      nextStatus === "Teslim Edildi" ? getToday() : order.delivery_date;
     const payload = {
       status: nextStatus,
       delivery_date: deliveryDate,
@@ -280,37 +317,51 @@ export default function OrderDetailPage() {
     if (!order) return;
 
     const nextItems = items.map((item, index) => {
-      const addition = Number(deliveryInputs[index] || 0);
-      const deliveredQuantity = Math.min(item.quantity, item.deliveredQuantity + addition);
+      const rawValue =
+        deliveryInputs[index] === undefined
+          ? item.deliveredQuantity
+          : deliveryInputs[index];
+      const deliveredQuantity = Math.min(
+        item.quantity,
+        Math.max(0, Number(rawValue || 0)),
+      );
       return { ...item, deliveredQuantity };
     });
 
-    const totalQuantity = nextItems.reduce((sum, item) => sum + item.quantity, 0);
-    const deliveredQuantity = nextItems.reduce((sum, item) => sum + item.deliveredQuantity, 0);
-    const nextStatus =
+    const totalQuantity = nextItems.reduce(
+      (sum, item) => sum + item.quantity,
+      0,
+    );
+    const deliveredQuantity = nextItems.reduce(
+      (sum, item) => sum + item.deliveredQuantity,
+      0,
+    );
+    const calculatedStatus =
       deliveredQuantity >= totalQuantity && totalQuantity > 0
         ? "Teslim Edildi"
         : deliveredQuantity > 0
           ? "Kısmi Teslim"
-          : order.status;
-
-    const deliveryAdded = nextItems.some((item, index) => item.deliveredQuantity > items[index].deliveredQuantity);
-
-    if (!deliveryAdded) {
-      setMessage("Teslimat miktarı girilmedi.");
-      return;
-    }
+          : "Bekliyor";
+    const nextStatus = editableStatus || calculatedStatus;
+    const deliveryChanged = nextItems.some(
+      (item, index) =>
+        item.deliveredQuantity !== items[index].deliveredQuantity,
+    );
+    const statusChanged = nextStatus !== order.status;
 
     const nextHistory = buildStatusHistory(order, {
-      type: "delivery",
+      type: deliveryChanged ? "delivery-adjustment" : "status",
       title:
-        nextStatus === "Teslim Edildi"
-          ? "Tüm ürünler teslim edildi."
-          : "Kısmi teslimat kaydedildi.",
+        deliveryChanged && statusChanged
+          ? "Teslimat adetleri ve durum güncellendi."
+          : deliveryChanged
+            ? "Teslimat adetleri düzeltildi."
+            : `${nextStatus} durumuna alındı.`,
       actor: "Kullanıcı",
       status: nextStatus,
     });
-    const deliveryDate = nextStatus === "Teslim Edildi" ? getToday() : order.delivery_date;
+    const deliveryDate =
+      nextStatus === "Teslim Edildi" ? order.delivery_date || getToday() : null;
     const payload = {
       items: nextItems,
       status: nextStatus,
@@ -331,7 +382,7 @@ export default function OrderDetailPage() {
     }
 
     setDeliveryInputs({});
-    setMessage("Teslimat bilgisi kaydedildi.");
+    setMessage("Teslimat ve durum bilgisi güncellendi.");
     await loadOrder();
   }
 
@@ -352,11 +403,18 @@ export default function OrderDetailPage() {
       <div className="mx-auto max-w-7xl space-y-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
-            <Link href="/dashboard/siparisler" className="text-sm font-bold text-blue-700">
+            <Link
+              href="/dashboard/siparisler"
+              className="text-sm font-bold text-blue-700"
+            >
               Siparişler
             </Link>
-            <h1 className="mt-2 text-3xl font-black text-slate-900">Sipariş Detayı</h1>
-            <p className="mt-1 text-sm text-slate-500">Sipariş No: {order.order_no}</p>
+            <h1 className="mt-2 text-3xl font-black text-slate-900">
+              Sipariş Detayı
+            </h1>
+            <p className="mt-1 text-sm text-slate-500">
+              Sipariş No: {order.order_no}
+            </p>
           </div>
 
           <div className="flex flex-wrap justify-start gap-2 lg:justify-end">
@@ -393,12 +451,16 @@ export default function OrderDetailPage() {
                 <div key={status} className="flex min-w-0 items-center gap-2">
                   <div
                     className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-black ${
-                      active ? "bg-blue-600 text-white" : "bg-slate-200 text-slate-500"
+                      active
+                        ? "bg-blue-600 text-white"
+                        : "bg-slate-200 text-slate-500"
                     } ${current ? "ring-4 ring-blue-100" : ""}`}
                   >
                     {index + 1}
                   </div>
-                  <div className="min-w-0 text-xs font-bold text-slate-700">{status}</div>
+                  <div className="min-w-0 text-xs font-bold text-slate-700">
+                    {status}
+                  </div>
                 </div>
               );
             })}
@@ -421,12 +483,17 @@ export default function OrderDetailPage() {
               <Info
                 label="Durum"
                 value={
-                  <span className={`rounded-full px-3 py-1 text-xs font-bold ${getStatusClass(order.status)}`}>
+                  <span
+                    className={`rounded-full px-3 py-1 text-xs font-bold ${getStatusClass(order.status)}`}
+                  >
                     {order.status}
                   </span>
                 }
               />
-              <Info label="Toplam Tutar" value={formatMoney(order.total_amount, order.currency)} />
+              <Info
+                label="Toplam Tutar"
+                value={formatMoney(order.total_amount, order.currency)}
+              />
             </div>
           </div>
 
@@ -465,12 +532,20 @@ export default function OrderDetailPage() {
           </div>
 
           <div className="p-5">
-            {activeTab === "items" && <ItemsTable items={items} currency={order.currency} />}
+            {activeTab === "items" && (
+              <ItemsTable
+                items={items}
+                currency={order.currency}
+                onEditDelivery={() => setActiveTab("delivery")}
+              />
+            )}
             {activeTab === "delivery" && (
               <DeliveryPanel
                 items={items}
                 inputs={deliveryInputs}
-                disabled={order.status === "Teslim Edildi" || order.status === "İptal"}
+                disabled={order.status === "İptal"}
+                status={editableStatus}
+                onStatusChange={setEditableStatus}
                 onInputChange={(index, value) =>
                   setDeliveryInputs((prev) => ({ ...prev, [index]: value }))
                 }
@@ -500,46 +575,112 @@ function Info({ label, value }) {
   );
 }
 
-function ItemsTable({ items, currency }) {
+function ItemsTable({ items, currency, onEditDelivery }) {
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-left text-sm">
-        <thead className="bg-slate-50 text-slate-500">
-          <tr>
-            <th className="p-3">Ürün</th>
-            <th className="p-3">Miktar</th>
-            <th className="p-3">Teslim Edilen</th>
-            <th className="p-3">Kalan</th>
-            <th className="p-3">Birim Fiyat</th>
-            <th className="p-3">Tutar</th>
-            <th className="p-3">Durum</th>
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((item, index) => (
-            <tr key={`${item.productName}-${index}`} className="border-t border-slate-100">
-              <td className="p-3 font-semibold">{item.productName || "-"}</td>
-              <td className="p-3">{item.quantity}</td>
-              <td className="p-3">{item.deliveredQuantity}</td>
-              <td className="p-3">{Math.max(item.quantity - item.deliveredQuantity, 0)}</td>
-              <td className="p-3">{formatMoney(item.unitPrice, currency)}</td>
-              <td className="p-3 font-bold">{formatMoney(item.total, currency)}</td>
-              <td className="p-3">
-                <span className={`rounded-full px-3 py-1 text-xs font-bold ${getStatusClass(item.status)}`}>
-                  {item.status}
-                </span>
-              </td>
+    <div className="space-y-4">
+      <div className="flex flex-col gap-3 rounded-xl border border-blue-100 bg-blue-50 p-4 md:flex-row md:items-center md:justify-between">
+        <div>
+          <div className="text-sm font-bold text-blue-950">
+            Teslim adetlerinde hata varsa buradan düzeltebilirsiniz.
+          </div>
+          <div className="mt-1 text-sm text-blue-800">
+            Düzenleme ekranı teslim edilen adetleri ve sipariş durumunu tekrar
+            kaydetmenizi sağlar.
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onEditDelivery}
+          className="rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white hover:bg-blue-700"
+        >
+          Teslimatları Düzenle
+        </button>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-sm">
+          <thead className="bg-slate-50 text-slate-500">
+            <tr>
+              <th className="p-3">Ürün</th>
+              <th className="p-3">Miktar</th>
+              <th className="p-3">Teslim Edilen</th>
+              <th className="p-3">Kalan</th>
+              <th className="p-3">Birim Fiyat</th>
+              <th className="p-3">Tutar</th>
+              <th className="p-3">Durum</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {items.map((item, index) => (
+              <tr
+                key={`${item.productName}-${index}`}
+                className="border-t border-slate-100"
+              >
+                <td className="p-3 font-semibold">{item.productName || "-"}</td>
+                <td className="p-3">{item.quantity}</td>
+                <td className="p-3">{item.deliveredQuantity}</td>
+                <td className="p-3">
+                  {Math.max(item.quantity - item.deliveredQuantity, 0)}
+                </td>
+                <td className="p-3">{formatMoney(item.unitPrice, currency)}</td>
+                <td className="p-3 font-bold">
+                  {formatMoney(item.total, currency)}
+                </td>
+                <td className="p-3">
+                  <span
+                    className={`rounded-full px-3 py-1 text-xs font-bold ${getStatusClass(item.status)}`}
+                  >
+                    {item.status}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
 
-function DeliveryPanel({ items, inputs, disabled, onInputChange, onSave, progress }) {
+function DeliveryPanel({
+  items,
+  inputs,
+  disabled,
+  status,
+  onStatusChange,
+  onInputChange,
+  onSave,
+  progress,
+}) {
   return (
     <div className="space-y-5">
+      <div className="grid grid-cols-1 gap-4 rounded-xl border border-blue-100 bg-blue-50 p-4 md:grid-cols-[1fr_260px] md:items-end">
+        <div>
+          <h3 className="text-base font-bold text-blue-950">
+            Teslimat düzeltme
+          </h3>
+          <p className="mt-1 text-sm text-blue-800">
+            Yanlış girilen teslim adetlerini veya sipariş durumunu sonradan
+            düzeltebilirsiniz.
+          </p>
+        </div>
+        <label className="block">
+          <span className="mb-2 block text-sm font-bold text-blue-950">
+            Sipariş Durumu
+          </span>
+          <select
+            value={status}
+            disabled={disabled}
+            onChange={(event) => onStatusChange(event.target.value)}
+            className="w-full rounded-xl border border-blue-200 bg-white p-3 text-sm font-bold text-slate-800 disabled:bg-slate-100"
+          >
+            {editableStatusOptions.map((option) => (
+              <option key={option}>{option}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+
       <div className="overflow-x-auto">
         <table className="w-full text-left text-sm">
           <thead className="bg-slate-50 text-slate-500">
@@ -547,13 +688,16 @@ function DeliveryPanel({ items, inputs, disabled, onInputChange, onSave, progres
               <th className="p-3">Ürün</th>
               <th className="p-3">Sipariş Miktarı</th>
               <th className="p-3">Teslim Edilen</th>
-              <th className="p-3">Yeni Teslimat</th>
+              <th className="p-3">Düzeltilmiş Teslim</th>
               <th className="p-3">Kalan</th>
             </tr>
           </thead>
           <tbody>
             {items.map((item, index) => (
-              <tr key={`${item.productName}-${index}`} className="border-t border-slate-100">
+              <tr
+                key={`${item.productName}-${index}`}
+                className="border-t border-slate-100"
+              >
                 <td className="p-3 font-semibold">{item.productName}</td>
                 <td className="p-3">{item.quantity}</td>
                 <td className="p-3">{item.deliveredQuantity}</td>
@@ -562,25 +706,47 @@ function DeliveryPanel({ items, inputs, disabled, onInputChange, onSave, progres
                     <input
                       type="number"
                       min="0"
-                      max={Math.max(item.quantity - item.deliveredQuantity, 0)}
-                      disabled={disabled || item.deliveredQuantity >= item.quantity}
-                      value={inputs[index] || ""}
-                      onChange={(event) => onInputChange(index, event.target.value)}
+                      max={item.quantity}
+                      disabled={disabled}
+                      value={
+                        inputs[index] === undefined
+                          ? item.deliveredQuantity
+                          : inputs[index]
+                      }
+                      onChange={(event) =>
+                        onInputChange(index, event.target.value)
+                      }
                       className="w-28 rounded border border-slate-300 px-2 py-1 disabled:bg-slate-100"
                     />
                     <button
                       type="button"
-                      disabled={disabled || item.deliveredQuantity >= item.quantity}
-                      onClick={() =>
-                        onInputChange(index, Math.max(item.quantity - item.deliveredQuantity, 0))
-                      }
+                      disabled={disabled}
+                      onClick={() => onInputChange(index, item.quantity)}
                       className="whitespace-nowrap rounded border border-green-200 bg-green-50 px-2 py-1 text-xs font-bold text-green-700 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
                     >
-                      Kalanı Gir
+                      Tamamı
+                    </button>
+                    <button
+                      type="button"
+                      disabled={disabled}
+                      onClick={() => onInputChange(index, 0)}
+                      className="whitespace-nowrap rounded border border-slate-200 bg-white px-2 py-1 text-xs font-bold text-slate-600 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+                    >
+                      Sıfırla
                     </button>
                   </div>
                 </td>
-                <td className="p-3">{Math.max(item.quantity - item.deliveredQuantity, 0)}</td>
+                <td className="p-3">
+                  {Math.max(
+                    item.quantity -
+                      Number(
+                        inputs[index] === undefined
+                          ? item.deliveredQuantity
+                          : inputs[index] || 0,
+                      ),
+                    0,
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -592,7 +758,10 @@ function DeliveryPanel({ items, inputs, disabled, onInputChange, onSave, progres
           <span>%{progress}</span>
         </div>
         <div className="h-3 rounded-full bg-slate-100">
-          <div className="h-3 rounded-full bg-green-500" style={{ width: `${progress}%` }} />
+          <div
+            className="h-3 rounded-full bg-green-500"
+            style={{ width: `${progress}%` }}
+          />
         </div>
       </div>
       <button
@@ -601,7 +770,7 @@ function DeliveryPanel({ items, inputs, disabled, onInputChange, onSave, progres
         onClick={onSave}
         className="rounded-xl bg-green-600 px-5 py-3 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300"
       >
-        Teslimat Ekle
+        Düzeltmeleri Kaydet
       </button>
     </div>
   );
@@ -611,7 +780,10 @@ function HistoryPanel({ rows }) {
   return (
     <div className="space-y-3">
       {rows.map((row, index) => (
-        <div key={`${row.title}-${row.date}-${index}`} className="flex gap-4 rounded-xl border border-slate-100 p-4">
+        <div
+          key={`${row.title}-${row.date}-${index}`}
+          className="flex gap-4 rounded-xl border border-slate-100 p-4"
+        >
           <div className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-100 text-xs font-black text-blue-700">
             {index + 1}
           </div>
