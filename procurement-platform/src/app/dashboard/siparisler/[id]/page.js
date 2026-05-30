@@ -1,0 +1,628 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useParams, useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabase";
+
+const statusFlow = [
+  "Bekliyor",
+  "Firmaya Gönderildi",
+  "Onay Bekliyor",
+  "Üretimde",
+  "Kargolandı",
+  "Kısmi Teslim",
+  "Teslim Edildi",
+];
+
+const statusActions = [
+  { status: "Firmaya Gönderildi", label: "Firmaya Gönder" },
+  { status: "Onay Bekliyor", label: "Onay Bekliyor" },
+  { status: "Üretimde", label: "Üretime Al" },
+  { status: "Kargolandı", label: "Kargoya Ver" },
+  { status: "Teslim Edildi", label: "Tamamını Teslim Et" },
+  { status: "İptal", label: "İptal Et", danger: true },
+];
+
+function getToday() {
+  return new Date().toISOString().split("T")[0];
+}
+
+function getNowStamp() {
+  return new Date().toISOString();
+}
+
+function formatMoney(value, currency = "TRY") {
+  return `${new Intl.NumberFormat("tr-TR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Number(value || 0))} ${currency}`;
+}
+
+function formatDateTime(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+
+  return new Intl.DateTimeFormat("tr-TR", {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(date);
+}
+
+function normalizeItems(items) {
+  return (items || []).map((item) => {
+    const quantity = Number(item.quantity || 0);
+    const deliveredQuantity = Number(item.deliveredQuantity || 0);
+    const unitPrice = Number(item.unitPrice || 0);
+    const total = Number(item.total || quantity * unitPrice);
+
+    return {
+      productCode: item.productCode || "",
+      productName: item.productName || item.product || "",
+      unit: item.unit || "adet",
+      quantity,
+      deliveredQuantity,
+      unitPrice,
+      total,
+      paymentTerm: item.paymentTerm || "",
+      status:
+        deliveredQuantity >= quantity && quantity > 0
+          ? "Teslim Edildi"
+          : deliveredQuantity > 0
+            ? "Kısmi Teslim"
+            : "Bekliyor",
+    };
+  });
+}
+
+function normalizeHistory(order) {
+  const savedHistory = Array.isArray(order.status_history) ? order.status_history : [];
+  const rows = [
+    {
+      type: "created",
+      title: "Sipariş oluşturuldu.",
+      actor: "Sistem",
+      date: order.created_at || order.order_date,
+    },
+    ...savedHistory,
+  ];
+
+  if (savedHistory.length === 0 && order.status && order.status !== "Bekliyor") {
+    rows.push({
+      type: "status",
+      title: `${order.status} durumuna alındı.`,
+      actor: "Sistem",
+      date: order.updated_at || order.order_date,
+    });
+  }
+
+  if (order.delivery_date) {
+    rows.push({
+      type: "delivery",
+      title: "Teslim tarihi kaydedildi.",
+      actor: "Sistem",
+      date: order.delivery_date,
+    });
+  }
+
+  return rows.sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
+}
+
+function getStatusClass(status) {
+  const classes = {
+    Bekliyor: "bg-yellow-100 text-yellow-700",
+    "Firmaya Gönderildi": "bg-blue-100 text-blue-700",
+    "Onay Bekliyor": "bg-orange-100 text-orange-700",
+    Üretimde: "bg-purple-100 text-purple-700",
+    Kargolandı: "bg-sky-100 text-sky-700",
+    "Kısmi Teslim": "bg-amber-100 text-amber-700",
+    "Teslim Edildi": "bg-green-100 text-green-700",
+    Gecikti: "bg-red-100 text-red-700",
+    İptal: "bg-slate-200 text-slate-700",
+  };
+
+  return classes[status] || "bg-slate-100 text-slate-700";
+}
+
+function getCurrentStep(status) {
+  if (status === "İptal") return -1;
+  return Math.max(statusFlow.indexOf(status), 0);
+}
+
+function isActionDisabled(currentStatus, actionStatus) {
+  if (currentStatus === "Teslim Edildi" || currentStatus === "İptal") return true;
+  if (actionStatus === "İptal") return false;
+
+  const currentIndex = getCurrentStep(currentStatus);
+  const actionIndex = statusFlow.indexOf(actionStatus);
+
+  return actionIndex <= currentIndex;
+}
+
+function buildStatusHistory(order, entry) {
+  const currentHistory = Array.isArray(order.status_history) ? order.status_history : [];
+  return [
+    ...currentHistory,
+    {
+      ...entry,
+      id: crypto.randomUUID(),
+      date: getNowStamp(),
+    },
+  ];
+}
+
+export default function OrderDetailPage() {
+  const params = useParams();
+  const router = useRouter();
+  const id = params.id;
+  const [order, setOrder] = useState(null);
+  const [activeTab, setActiveTab] = useState("items");
+  const [message, setMessage] = useState("");
+  const [deliveryInputs, setDeliveryInputs] = useState({});
+
+  useEffect(() => {
+    loadOrder();
+  }, [id]);
+
+  async function loadOrder() {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      router.push("/login");
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("orders")
+      .select("*")
+      .eq("id", id)
+      .eq("user_id", user.id)
+      .single();
+
+    if (error) {
+      console.error(error);
+      setMessage("Sipariş bulunamadı.");
+      return;
+    }
+
+    setOrder(data);
+  }
+
+  const items = useMemo(() => normalizeItems(order?.items || []), [order]);
+  const historyRows = useMemo(() => (order ? normalizeHistory(order) : []), [order]);
+  const totals = useMemo(() => {
+    const totalQuantity = items.reduce((sum, item) => sum + item.quantity, 0);
+    const deliveredQuantity = items.reduce((sum, item) => sum + item.deliveredQuantity, 0);
+
+    return {
+      totalQuantity,
+      deliveredQuantity,
+      remainingQuantity: Math.max(totalQuantity - deliveredQuantity, 0),
+      progress: totalQuantity > 0 ? Math.round((deliveredQuantity / totalQuantity) * 100) : 0,
+    };
+  }, [items]);
+
+  async function updateOrder(payload, fallbackPayload) {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user || !order) return { error: new Error("Oturum bulunamadı.") };
+
+    const response = await supabase
+      .from("orders")
+      .update(payload)
+      .eq("id", order.id)
+      .eq("user_id", user.id);
+
+    if (!response.error || !fallbackPayload) return response;
+
+    const missingHistoryColumn =
+      response.error.message?.includes("status_history") ||
+      response.error.code === "PGRST204";
+
+    if (!missingHistoryColumn) return response;
+
+    return supabase
+      .from("orders")
+      .update(fallbackPayload)
+      .eq("id", order.id)
+      .eq("user_id", user.id);
+  }
+
+  async function updateStatus(nextStatus) {
+    if (!order) return;
+
+    const confirmed =
+      nextStatus !== "İptal" ||
+      window.confirm("Bu sipariş iptal edilsin mi? Bu işlem durum tarihçesine kaydedilir.");
+
+    if (!confirmed) return;
+
+    const nextHistory = buildStatusHistory(order, {
+      type: nextStatus === "İptal" ? "cancelled" : "status",
+      title: `${nextStatus} durumuna alındı.`,
+      actor: "Kullanıcı",
+      status: nextStatus,
+    });
+    const completedItems =
+      nextStatus === "Teslim Edildi"
+        ? items.map((item) => ({ ...item, deliveredQuantity: item.quantity }))
+        : items;
+    const deliveryDate = nextStatus === "Teslim Edildi" ? getToday() : order.delivery_date;
+    const payload = {
+      status: nextStatus,
+      delivery_date: deliveryDate,
+      items: completedItems,
+      status_history: nextHistory,
+    };
+    const fallbackPayload = {
+      status: nextStatus,
+      delivery_date: deliveryDate,
+      items: completedItems,
+    };
+
+    const { error } = await updateOrder(payload, fallbackPayload);
+
+    if (error) {
+      setMessage("Durum güncellenemedi.");
+      return;
+    }
+
+    setMessage(`${nextStatus} durumu kaydedildi.`);
+    await loadOrder();
+  }
+
+  async function saveDelivery() {
+    if (!order) return;
+
+    const nextItems = items.map((item, index) => {
+      const addition = Number(deliveryInputs[index] || 0);
+      const deliveredQuantity = Math.min(item.quantity, item.deliveredQuantity + addition);
+      return { ...item, deliveredQuantity };
+    });
+
+    const totalQuantity = nextItems.reduce((sum, item) => sum + item.quantity, 0);
+    const deliveredQuantity = nextItems.reduce((sum, item) => sum + item.deliveredQuantity, 0);
+    const nextStatus =
+      deliveredQuantity >= totalQuantity && totalQuantity > 0
+        ? "Teslim Edildi"
+        : deliveredQuantity > 0
+          ? "Kısmi Teslim"
+          : order.status;
+
+    const deliveryAdded = nextItems.some((item, index) => item.deliveredQuantity > items[index].deliveredQuantity);
+
+    if (!deliveryAdded) {
+      setMessage("Teslimat miktarı girilmedi.");
+      return;
+    }
+
+    const nextHistory = buildStatusHistory(order, {
+      type: "delivery",
+      title:
+        nextStatus === "Teslim Edildi"
+          ? "Tüm ürünler teslim edildi."
+          : "Kısmi teslimat kaydedildi.",
+      actor: "Kullanıcı",
+      status: nextStatus,
+    });
+    const deliveryDate = nextStatus === "Teslim Edildi" ? getToday() : order.delivery_date;
+    const payload = {
+      items: nextItems,
+      status: nextStatus,
+      delivery_date: deliveryDate,
+      status_history: nextHistory,
+    };
+    const fallbackPayload = {
+      items: nextItems,
+      status: nextStatus,
+      delivery_date: deliveryDate,
+    };
+
+    const { error } = await updateOrder(payload, fallbackPayload);
+
+    if (error) {
+      setMessage("Teslimat kaydedilemedi.");
+      return;
+    }
+
+    setDeliveryInputs({});
+    setMessage("Teslimat bilgisi kaydedildi.");
+    await loadOrder();
+  }
+
+  if (!order) {
+    return (
+      <div className="min-h-screen bg-slate-100 p-8">
+        <div className="rounded-2xl bg-white p-6 text-sm text-slate-600 shadow-sm">
+          {message || "Sipariş yükleniyor..."}
+        </div>
+      </div>
+    );
+  }
+
+  const currentStep = getCurrentStep(order.status);
+
+  return (
+    <div className="min-h-screen bg-slate-100 p-6">
+      <div className="mx-auto max-w-7xl space-y-6">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <Link href="/dashboard/siparisler" className="text-sm font-bold text-blue-700">
+              Siparişler
+            </Link>
+            <h1 className="mt-2 text-3xl font-black text-slate-900">Sipariş Detayı</h1>
+            <p className="mt-1 text-sm text-slate-500">Sipariş No: {order.order_no}</p>
+          </div>
+
+          <div className="flex flex-wrap justify-start gap-2 lg:justify-end">
+            {statusActions.map((action) => (
+              <button
+                key={action.status}
+                type="button"
+                disabled={isActionDisabled(order.status, action.status)}
+                onClick={() => updateStatus(action.status)}
+                className={`rounded-xl px-4 py-2 text-sm font-bold transition ${
+                  action.danger
+                    ? "border border-red-200 bg-red-50 text-red-700 hover:bg-red-100"
+                    : "border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100"
+                } disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400`}
+              >
+                {action.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {message && (
+          <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm font-semibold text-blue-900">
+            {message}
+          </div>
+        )}
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-4 xl:grid-cols-7">
+            {statusFlow.map((status, index) => {
+              const active = currentStep >= index && order.status !== "İptal";
+              const current = order.status === status;
+              return (
+                <div key={status} className="flex min-w-0 items-center gap-2">
+                  <div
+                    className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-black ${
+                      active ? "bg-blue-600 text-white" : "bg-slate-200 text-slate-500"
+                    } ${current ? "ring-4 ring-blue-100" : ""}`}
+                  >
+                    {index + 1}
+                  </div>
+                  <div className="min-w-0 text-xs font-bold text-slate-700">{status}</div>
+                </div>
+              );
+            })}
+          </div>
+          {order.status === "İptal" && (
+            <div className="mt-4 rounded-xl bg-slate-100 p-3 text-sm font-semibold text-slate-700">
+              Bu sipariş iptal edildi.
+            </div>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm lg:col-span-2">
+            <h2 className="text-lg font-bold text-slate-900">Temel Bilgiler</h2>
+            <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+              <Info label="Firma" value={order.supplier_name} />
+              <Info label="Sipariş Tarihi" value={order.order_date || "-"} />
+              <Info label="Termin Tarihi" value={order.termin_date || "-"} />
+              <Info label="Ödeme Vadesi" value={items[0]?.paymentTerm || "-"} />
+              <Info
+                label="Durum"
+                value={
+                  <span className={`rounded-full px-3 py-1 text-xs font-bold ${getStatusClass(order.status)}`}>
+                    {order.status}
+                  </span>
+                }
+              />
+              <Info label="Toplam Tutar" value={formatMoney(order.total_amount, order.currency)} />
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 className="text-lg font-bold text-slate-900">Özet Bilgiler</h2>
+            <div className="mt-4 space-y-3 text-sm">
+              <Info label="Toplam Kalem" value={items.length} />
+              <Info label="Toplam Miktar" value={totals.totalQuantity} />
+              <Info label="Teslim Edilen" value={totals.deliveredQuantity} />
+              <Info label="Kalan" value={totals.remainingQuantity} />
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="flex flex-wrap gap-2 border-b border-slate-100 px-5 pt-4">
+            {[
+              ["items", "Ürün Kalemleri"],
+              ["delivery", "Teslimatlar"],
+              ["history", "Tarihçe"],
+              ["notes", "Notlar"],
+            ].map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setActiveTab(key)}
+                className={`border-b-2 px-4 py-3 text-sm font-bold ${
+                  activeTab === key
+                    ? "border-blue-600 text-blue-700"
+                    : "border-transparent text-slate-500"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          <div className="p-5">
+            {activeTab === "items" && <ItemsTable items={items} currency={order.currency} />}
+            {activeTab === "delivery" && (
+              <DeliveryPanel
+                items={items}
+                inputs={deliveryInputs}
+                disabled={order.status === "Teslim Edildi" || order.status === "İptal"}
+                onInputChange={(index, value) =>
+                  setDeliveryInputs((prev) => ({ ...prev, [index]: value }))
+                }
+                onSave={saveDelivery}
+                progress={totals.progress}
+              />
+            )}
+            {activeTab === "history" && <HistoryPanel rows={historyRows} />}
+            {activeTab === "notes" && (
+              <div className="rounded-xl bg-slate-50 p-4 text-sm text-slate-700">
+                {order.note || "Not bulunmuyor."}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Info({ label, value }) {
+  return (
+    <div className="rounded-xl bg-slate-50 p-4">
+      <div className="text-xs font-semibold text-slate-500">{label}</div>
+      <div className="mt-1 font-bold text-slate-900">{value || "-"}</div>
+    </div>
+  );
+}
+
+function ItemsTable({ items, currency }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-left text-sm">
+        <thead className="bg-slate-50 text-slate-500">
+          <tr>
+            <th className="p-3">Ürün</th>
+            <th className="p-3">Miktar</th>
+            <th className="p-3">Teslim Edilen</th>
+            <th className="p-3">Kalan</th>
+            <th className="p-3">Birim Fiyat</th>
+            <th className="p-3">Tutar</th>
+            <th className="p-3">Durum</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((item, index) => (
+            <tr key={`${item.productName}-${index}`} className="border-t border-slate-100">
+              <td className="p-3 font-semibold">{item.productName || "-"}</td>
+              <td className="p-3">{item.quantity}</td>
+              <td className="p-3">{item.deliveredQuantity}</td>
+              <td className="p-3">{Math.max(item.quantity - item.deliveredQuantity, 0)}</td>
+              <td className="p-3">{formatMoney(item.unitPrice, currency)}</td>
+              <td className="p-3 font-bold">{formatMoney(item.total, currency)}</td>
+              <td className="p-3">
+                <span className={`rounded-full px-3 py-1 text-xs font-bold ${getStatusClass(item.status)}`}>
+                  {item.status}
+                </span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function DeliveryPanel({ items, inputs, disabled, onInputChange, onSave, progress }) {
+  return (
+    <div className="space-y-5">
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-sm">
+          <thead className="bg-slate-50 text-slate-500">
+            <tr>
+              <th className="p-3">Ürün</th>
+              <th className="p-3">Sipariş Miktarı</th>
+              <th className="p-3">Teslim Edilen</th>
+              <th className="p-3">Yeni Teslimat</th>
+              <th className="p-3">Kalan</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((item, index) => (
+              <tr key={`${item.productName}-${index}`} className="border-t border-slate-100">
+                <td className="p-3 font-semibold">{item.productName}</td>
+                <td className="p-3">{item.quantity}</td>
+                <td className="p-3">{item.deliveredQuantity}</td>
+                <td className="p-3">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min="0"
+                      max={Math.max(item.quantity - item.deliveredQuantity, 0)}
+                      disabled={disabled || item.deliveredQuantity >= item.quantity}
+                      value={inputs[index] || ""}
+                      onChange={(event) => onInputChange(index, event.target.value)}
+                      className="w-28 rounded border border-slate-300 px-2 py-1 disabled:bg-slate-100"
+                    />
+                    <button
+                      type="button"
+                      disabled={disabled || item.deliveredQuantity >= item.quantity}
+                      onClick={() =>
+                        onInputChange(index, Math.max(item.quantity - item.deliveredQuantity, 0))
+                      }
+                      className="whitespace-nowrap rounded border border-green-200 bg-green-50 px-2 py-1 text-xs font-bold text-green-700 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+                    >
+                      Kalanı Gir
+                    </button>
+                  </div>
+                </td>
+                <td className="p-3">{Math.max(item.quantity - item.deliveredQuantity, 0)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div>
+        <div className="mb-2 flex justify-between text-sm text-slate-600">
+          <span>Genel Teslimat Durumu</span>
+          <span>%{progress}</span>
+        </div>
+        <div className="h-3 rounded-full bg-slate-100">
+          <div className="h-3 rounded-full bg-green-500" style={{ width: `${progress}%` }} />
+        </div>
+      </div>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={onSave}
+        className="rounded-xl bg-green-600 px-5 py-3 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300"
+      >
+        Teslimat Ekle
+      </button>
+    </div>
+  );
+}
+
+function HistoryPanel({ rows }) {
+  return (
+    <div className="space-y-3">
+      {rows.map((row, index) => (
+        <div key={`${row.title}-${row.date}-${index}`} className="flex gap-4 rounded-xl border border-slate-100 p-4">
+          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-100 text-xs font-black text-blue-700">
+            {index + 1}
+          </div>
+          <div className="flex-1">
+            <div className="font-bold text-slate-900">{row.title}</div>
+            <div className="mt-1 text-xs text-slate-500">
+              {formatDateTime(row.date)} - {row.actor || "Sistem"}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}

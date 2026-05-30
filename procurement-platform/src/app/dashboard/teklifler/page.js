@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
@@ -40,6 +40,14 @@ function StatCard({ icon, title, value, text }) {
 
 
 export default function TekliflerPage() {
+  return (
+    <Suspense fallback={<div className="p-6 text-sm text-slate-600">Yükleniyor...</div>}>
+      <TekliflerPageContent />
+    </Suspense>
+  );
+}
+
+function TekliflerPageContent() {
   const searchParams = useSearchParams();
   const requestIdFromUrl = searchParams.get("requestId");
   const [files, setFiles] = useState([]);
@@ -205,8 +213,20 @@ const loadRequests = async () => {
       const formData = new FormData();
 
       if (analysisMode === "withRequest" && selectedRequest) {
-        formData.append("request_report_path", selectedRequest.reportPath);
-        formData.append("request_file_name", selectedRequest.fileName);
+        formData.append(
+          "request_report_path",
+          selectedRequest.filepath ||
+            selectedRequest.fileName ||
+            selectedRequest.reportPath ||
+            ""
+        );
+        formData.append(
+          "request_file_name",
+          selectedRequest.fileName ||
+            selectedRequest.filepath ||
+            selectedRequest.ad ||
+            "Talep Listesi"
+        );
       } else {
         formData.append("request_report_path", "");
         formData.append("request_file_name", "Talep Olmadan Teklif Karşılaştırma");
@@ -234,6 +254,7 @@ const loadRequests = async () => {
       formData.append("quality_history", qualityHistory);
 
       formData.append("currency_risk", currencyRisk);
+      formData.append("exchange_rates_json", JSON.stringify(exchangeRates));
       const {
         data: { session },
       } = await supabase.auth.getSession();
@@ -283,18 +304,48 @@ const loadRequests = async () => {
     }
   };
 
-  const handleDownloadReport = () => {
+  const handleDownloadReport = async () => {
     if (!reportReady || !reportPath) {
       setMessage("İndirilecek rapor bulunamadı.");
       return;
     }
 
-    const link = document.createElement("a");
-    link.href = reportPath;
-    link.download = "mukayese_raporu.xlsx";
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    const token = session?.access_token;
+
+    if (!token) {
+      setMessage("Oturum bulunamadı. Lütfen tekrar giriş yapın.");
+      return;
+    }
+
+    try {
+      const response = await fetch(reportPath, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        setMessage("Rapor indirilemedi.");
+        return;
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "mukayese_raporu.xlsx";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error(error);
+      setMessage("Rapor indirme sırasında hata oluştu.");
+    }
   };
 
   return (

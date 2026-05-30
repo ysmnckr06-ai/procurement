@@ -25,12 +25,8 @@ export default function DashboardLayout({ children }) {
           </div>
 
           <div>
-            <div className="text-2xl font-black text-slate-950">
-              Satınalma
-            </div>
-            <div className="text-sm font-medium text-slate-500">
-              Yönetim Sistemi
-            </div>
+            <div className="text-2xl font-black text-slate-950">Satınalma</div>
+            <div className="text-sm font-medium text-slate-500">Yönetim Sistemi</div>
           </div>
         </div>
 

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
@@ -80,6 +80,51 @@ function getReportFirma(rapor) {
   );
 }
 
+function getReportPath(rapor) {
+  return rapor.reportpath || rapor.report_path || rapor.reportPath || "";
+}
+
+async function downloadReport(rapor) {
+  const path = getReportPath(rapor);
+
+  if (!path) {
+    alert("Rapor dosyası bulunamadı.");
+    return;
+  }
+
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  const token = session?.access_token;
+
+  if (!token) {
+    alert("Oturum bulunamadı. Lütfen tekrar giriş yapın.");
+    return;
+  }
+
+  const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}${path}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    alert("Rapor indirilemedi.");
+    return;
+  }
+
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "mukayese_raporu.xlsx";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
   const filtreliRaporlar = useMemo(() => {
     return raporlar.filter((rapor) => {
       const ad = String(getReportName(rapor)).toLowerCase();
@@ -95,14 +140,74 @@ function getReportFirma(rapor) {
   }, [raporlar, arama, durumFiltre]);
 
   const durumRenkleri = {
-    Tamamlandı: { arkaPlan: "#DCFCE7", yazi: "#166534" },
-    Bekliyor: { arkaPlan: "#FEF3C7", yazi: "#92400E" },
-    Gecikmiş: { arkaPlan: "#FEE2E2", yazi: "#991B1B" },
+    tamamlandi: { arkaPlan: "#DCFCE7", yazi: "#166534" },
+    bekliyor: { arkaPlan: "#FEF3C7", yazi: "#92400E" },
+    gecikmis: { arkaPlan: "#FEE2E2", yazi: "#991B1B" },
   };
+
+  function getDurumRengi(durum) {
+    if (durum === "Tamamlandı") {
+      return durumRenkleri.tamamlandi;
+    }
+
+    if (durum === "Gecikmiş") {
+      return durumRenkleri.gecikmis;
+    }
+
+    return durumRenkleri.bekliyor;
+  }
 
 async function createOrderFromReport(rapor) {
 
   console.log("SİPARİŞE AKTARILAN RAPOR:", rapor);
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    router.push("/login");
+    return;
+  }
+
+  const { data: existingOrder, error: existingError } = await supabase
+    .from("orders")
+    .select("id")
+    .eq("user_id", user.id)
+    .eq("report_id", rapor.id)
+    .limit(1);
+
+  if (existingError) {
+    alert("Sipariş kontrolü yapılamadı: " + existingError.message);
+    return;
+  }
+
+  if (existingOrder?.length > 0) {
+    router.push(`/dashboard/siparisler/${existingOrder[0].id}`);
+    return;
+  }
+
+  const reportItems =
+    rapor.items ||
+    rapor.products ||
+    rapor.rows ||
+    rapor.urunler ||
+    [];
+
+  const normalizedItems = reportItems.map((item) => ({
+    productCode: item.productCode || item.urunKodu || "",
+    productName: item.productName || item.urunAciklamasi || item.product || "",
+    unit: item.unit || item.birim || "adet",
+    quantity: Number(item.quantity || item.talepEdilenAdet || item.miktar || 0),
+    deliveredQuantity: 0,
+    unitPrice: Number(item.unitPrice || item.birimFiyat || 0),
+    discount: Number(item.discount || item.iskonto || 0),
+    netUnitPrice: Number(item.netUnitPrice || item.netBirimFiyat || item.unitPrice || item.birimFiyat || 0),
+    total: Number(item.total || item.netToplamTRY || item.netToplam || item.toplamTutar || 0),
+    paymentTerm: item.paymentTerm || item.vade || rapor.vade || rapor.payment_term || "",
+    deliveryTerm: item.deliveryTerm || item.termin || rapor.termin || "",
+    currency: item.currency || item.paraBirimi || rapor.currency || "TRY",
+  }));
 
   const orderData = {
     company:
@@ -114,9 +219,9 @@ async function createOrderFromReport(rapor) {
 
     reportName: getReportName(rapor),
 
-    orderNo: `SIP-${Date.now()}`,
+    orderNo: `SIP-${new Date().getFullYear()}-${String(Date.now()).slice(-5)}`,
 
-    orderDate: new Date().toISOString(),
+    orderDate: new Date().toISOString().split("T")[0],
 
     status: "Bekliyor",
 
@@ -131,16 +236,12 @@ async function createOrderFromReport(rapor) {
       "",
 
     totalAmount:
+      normalizedItems.reduce((sum, item) => sum + Number(item.total || 0), 0) ||
       rapor.toplamTutar ||
       rapor.total_amount ||
       0,
 
-    items:
-      rapor.items ||
-      rapor.products ||
-      rapor.rows ||
-      rapor.urunler ||
-      [],
+    items: normalizedItems,
   };
 
   localStorage.setItem(
@@ -191,7 +292,7 @@ async function deleteReport(reportId) {
   <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
     <div>
       <div className="mb-3 inline-flex rounded-full bg-white/10 px-4 py-2 text-sm font-semibold text-blue-100">
-        Procurement AI • Rapor Merkezi
+        Procurement AI - Rapor Merkezi
       </div>
 
       <h1 className="text-4xl font-black tracking-tight">
@@ -260,7 +361,7 @@ async function deleteReport(reportId) {
           )}
 
           {filtreliRaporlar.map((rapor, index) => {
-            const renk = durumRenkleri[rapor.durum] || durumRenkleri.Bekliyor;
+            const renk = getDurumRengi(rapor.durum);
 
             return (
               <div
@@ -295,23 +396,16 @@ async function deleteReport(reportId) {
 
                 <div style={{ marginTop: "16px", display: "flex", gap: "10px", flexWrap: "wrap" }}>
 
-                  <a
-                    href={
-                      rapor.reportpath
-                        ? `${process.env.NEXT_PUBLIC_API_URL}${rapor.reportpath}`
-                        : rapor.report_path
-                        ? `${process.env.NEXT_PUBLIC_API_URL}${rapor.report_path}`
-                        : rapor.reportPath
-                        ? `${process.env.NEXT_PUBLIC_API_URL}${rapor.reportPath}`
-                        : "#"
-                    }
-                    download
-                    onClick={(e) => e.stopPropagation()}
-                    style={{ background: "#2563eb", color: "#fff", textDecoration: "none", borderRadius: "10px", padding: "10px 14px", fontWeight: "600" }}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      downloadReport(rapor);
+                    }}
+                    style={{ background: "#2563eb", color: "#fff", border: "none", borderRadius: "10px", padding: "10px 14px", fontWeight: "600", cursor: "pointer" }}
                   >
-                    Raporu İndir
-                  </a>
-
+                    Raporu Indir
+                  </button>
                   <button
                     type="button"
                     disabled={rapor.durum === "Tamamlandı"}

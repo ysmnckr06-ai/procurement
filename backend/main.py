@@ -270,6 +270,7 @@ async def analyze_offers(
     quality_history: str = Form("unknown"),
 
     currency_risk: str = Form("medium"),
+    exchange_rates_json: str = Form(""),
 
 ):
     user = verify_user_token(authorization)
@@ -473,6 +474,17 @@ async def analyze_offers(
         "EUR": 42.8,
     }
 
+    if exchange_rates_json:
+        try:
+            submitted_rates = json.loads(exchange_rates_json)
+            for currency in ["USD", "EUR", "GBP"]:
+                rate = safe_float_form(submitted_rates.get(currency))
+                if rate and rate > 0:
+                    exchange_rates[currency] = rate
+        except Exception as e:
+            print("KUR BILGISI OKUNAMADI:", str(e))
+            warnings.append("Kur bilgisi okunamadı, varsayılan kurlar kullanıldı.")
+
     # --- ŞİRKET / KARAR MOTORU AYARLARI ---
     decision_config = {
         "annual_interest_rate": 45.0,
@@ -499,15 +511,48 @@ async def analyze_offers(
 
     print("ANALİZ EDİLEN GRUP SAYISI:", len(analyzed))
 
-    report_name = "mukayese_raporu.xlsx"
+    report_id = str(uuid.uuid4())
+    report_name = f"mukayese_raporu_{report_id}.xlsx"
     report_path = os.path.join(TEMP_DIR, report_name)
 
     build_excel_report(analyzed, report_path)
 
-    report_id = str(uuid.uuid4())
+    order_items = []
+
+    for group in analyzed:
+        best = (
+            group.get("best")
+            or group.get("bestOffer")
+            or group.get("onerilenTeklif")
+            or {}
+        )
+
+        request_item = (
+            group.get("requestItem")
+            or group.get("request")
+            or group.get("talep")
+            or {}
+        )
+
+        order_items.append({
+            "productCode": group.get("urunKodu") or request_item.get("urunKodu") or best.get("urunKodu") or "",
+            "productName": group.get("urunAciklamasi") or request_item.get("urunAciklamasi") or best.get("urunAciklamasi") or "",
+            "quantity": group.get("talepEdilenAdet") or request_item.get("talepEdilenAdet") or best.get("talepEdilenAdet") or 0,
+            "unit": group.get("birim") or request_item.get("birim") or best.get("birim") or "adet",
+            "selectedFirm": best.get("firmaAdi") or best.get("firma") or "",
+            "unitPrice": best.get("birimFiyat") or 0,
+            "discount": best.get("iskonto") or 0,
+            "netUnitPrice": best.get("netBirimFiyat") or 0,
+            "total": best.get("netToplam") or best.get("netToplamTRY") or best.get("toplamTutar") or 0,
+            "paymentTerm": best.get("vade") or "",
+            "deliveryTerm": best.get("termin") or "",
+        })
+        
+    print("ORDER ITEMS SAYISI:", len(order_items))
+    print("ORDER ITEMS:", order_items)
 
     report_record = {
-     "id": report_id,
+        "id": report_id,
         "user_id": user_id,
         "ad": request_file_name or "Teklif Mukayese Raporu",
         "tarih": datetime.now().strftime("%Y-%m-%d %H:%M"),
@@ -518,7 +563,9 @@ async def analyze_offers(
         "totalrows": len(filtered),
         "totalgroups": len(analyzed),
         "analysis": analyzed,
+        "items": order_items,
     }
+
     offer_groups = {}
 
     for row in filtered:
@@ -552,7 +599,7 @@ async def analyze_offers(
 
         supabase.table("offers").insert(offer_record).execute()
 
-        save_report_to_supabase(report_record)
+    save_report_to_supabase(report_record)    
 
     return {
     "success": True,
@@ -564,18 +611,33 @@ async def analyze_offers(
     }
 
 @app.get("/download-report/{file_name}")
-def download_report(file_name: str):
-    file_path = os.path.join(TEMP_DIR, file_name)
+def download_report(file_name: str, authorization: str = Header(None)):
+    user = verify_user_token(authorization)
+    user_id = user["id"]
+
+    safe_file_name = os.path.basename(file_name)
+    report_path_value = f"/download-report/{safe_file_name}"
+
+    response = (
+        supabase.table("reports")
+        .select("id")
+        .eq("user_id", user_id)
+        .eq("reportpath", report_path_value)
+        .limit(1)
+        .execute()
+    )
+
+    if not response.data:
+        raise HTTPException(status_code=403, detail="Bu raporu indirme yetkiniz yok.")
+
+    file_path = os.path.join(TEMP_DIR, safe_file_name)
 
     if not os.path.exists(file_path):
-        return {
-            "success": False,
-            "message": "Dosya bulunamadı."
-        }
+        raise HTTPException(status_code=404, detail="Dosya bulunamadı.")
 
     return FileResponse(
         path=file_path,
-        filename=file_name,
+        filename=safe_file_name,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
@@ -584,6 +646,9 @@ async def analyze_requests(
     files: list[UploadFile] = File(...),
     authorization: str = Header(None),
     ):
+    user = verify_user_token(authorization)
+    user_id = user["id"]
+
     all_rows = []
     warnings = []
 
@@ -709,14 +774,6 @@ async def analyze_requests(
                 "x-upsert": "true"
         }
     )
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Authorization header eksik veya geçersiz")
-    
-    token = authorization.replace("Bearer ", "").strip()
-
-    user_response = supabase.auth.get_user(token)
-    user_id = user_response.user.id 
-
     request_record = {
         "user_id": user_id,
         "ad": "Talep Listesi",
@@ -739,8 +796,24 @@ async def analyze_requests(
     }
 
 @app.get("/download-request-report/{file_name}")
-def download_request_report(file_name: str):
-    signed = supabase.storage.from_("request-reports").create_signed_url(file_name, 3600)
+def download_request_report(file_name: str, authorization: str = Header(None)):
+    user = verify_user_token(authorization)
+    user_id = user["id"]
+    safe_file_name = os.path.basename(file_name)
+
+    response = (
+        supabase.table("requests")
+        .select("id")
+        .eq("user_id", user_id)
+        .eq("filepath", safe_file_name)
+        .limit(1)
+        .execute()
+    )
+
+    if not response.data:
+        raise HTTPException(status_code=403, detail="Bu talep dosyasını indirme yetkiniz yok.")
+
+    signed = supabase.storage.from_("request-reports").create_signed_url(safe_file_name, 600)
     public_url = signed.get("signedURL") or signed.get("signedUrl") or signed.get("signed_url")
 
     return {
@@ -752,10 +825,7 @@ def download_request_report(file_name: str):
 def get_requests(authorization: str = Header(None)):
 
     user = verify_user_token(authorization)
-    token = user["access_token"]
-
-    user_response = supabase.auth.get_user(token)
-    user_id = user_response.user.id
+    user_id = user["id"]
 
     response = (
         supabase.table("requests")

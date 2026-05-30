@@ -150,7 +150,7 @@ export default function TaleplerPage() {
     setIsLoading(false);
   };
 
-const handleDownload = async () => {
+  const handleDownload = async () => {
   if (!reportPath) return;
 
   try {
@@ -160,6 +160,42 @@ const handleDownload = async () => {
     setMessage("Excel indirilemedi ❌");
   }
 };
+
+  const handleSavedRequestDownload = async (fileName) => {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    const token = session?.access_token;
+
+    if (!token) {
+      setMessage("Oturum bulunamadı. Lütfen tekrar giriş yapın.");
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `${API_URL}/download-request-report/${fileName}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok || !data.reportPath) {
+        setMessage(data.detail || "Excel indirilemedi.");
+        return;
+      }
+
+      window.open(data.reportPath, "_blank");
+    } catch (err) {
+      console.error(err);
+      setMessage("Excel indirilemedi.");
+    }
+  };
 
   const handleSendToOffers = () => {
     if (!reportPath) {
@@ -349,17 +385,7 @@ const handleDownload = async () => {
 
                     <div className="flex gap-2">
                       <button
-                        onClick={async () => {
-                          const response = await fetch(
-                            `${API_URL}/download-request-report/${req.filepath}`
-                          );
-
-                          const data = await response.json();
-
-                          if (data.reportPath) {
-                            window.open(data.reportPath, "_blank");
-                          }
-                        }}
+                        onClick={() => handleSavedRequestDownload(req.filepath)}
                         className="rounded-lg bg-green-600 px-3 py-2 text-sm font-semibold text-white"
                       >
                         Excel İndir
