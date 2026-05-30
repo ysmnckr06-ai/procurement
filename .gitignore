@@ -13,4 +13,5 @@ desktop.ini
 
 backend/**/__pycache__/
 backend/**/*.pyc
-backend/app/temp/
+backend/app/temp/*
+!backend/app/temp/.gitkeep
