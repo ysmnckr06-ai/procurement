@@ -24,7 +24,7 @@ supabase = create_client(
 
 from datetime import datetime
 
-from fastapi import FastAPI, UploadFile, File, Form, Header, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, Header, HTTPException, Body
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -98,6 +98,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMP_DIR = os.path.join(BASE_DIR, "app", "temp")
 REPORTS_FILE = os.path.join(TEMP_DIR, "reports.json")
 ORDERS_FILE = os.path.join(TEMP_DIR, "orders.json")
+SUPPLIERS_FILE = os.path.join(TEMP_DIR, "suppliers.json")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
 
@@ -182,6 +183,57 @@ def find_best_supplier(analyzed):
     return clean_supplier_name(max(counts, key=counts.get))
 
 os.makedirs(TEMP_DIR, exist_ok=True)
+
+def normalize_supplier_payload(payload: dict, supplier_id: str | None = None):
+    now = datetime.now().isoformat()
+    on_time_rate = safe_int_form(payload.get("onTimeRate")) or 0
+    delivery_score = safe_int_form(payload.get("deliveryScore")) or 4
+    quality_score = safe_int_form(payload.get("qualityScore")) or 4
+    price_score = safe_int_form(payload.get("priceScore")) or 4
+
+    return {
+        "id": supplier_id or payload.get("id") or str(uuid.uuid4()),
+        "name": str(payload.get("name") or "").strip(),
+        "category": payload.get("category") or "",
+        "contact": payload.get("contact") or "",
+        "phone": payload.get("phone") or "",
+        "email": payload.get("email") or "",
+        "city": payload.get("city") or "",
+        "taxNo": payload.get("taxNo") or "",
+        "address": payload.get("address") or "",
+        "website": payload.get("website") or "",
+        "paymentTerm": payload.get("paymentTerm") or "",
+        "lastOrderDate": payload.get("lastOrderDate") or "",
+        "totalOrders": safe_int_form(payload.get("totalOrders")) or 0,
+        "onTimeRate": max(0, min(100, on_time_rate)),
+        "productGroups": payload.get("productGroups") or "",
+        "deliveryScore": max(1, min(5, delivery_score)),
+        "qualityScore": max(1, min(5, quality_score)),
+        "priceScore": max(1, min(5, price_score)),
+        "status": payload.get("status") or "Aktif",
+        "notes": payload.get("notes") or "",
+        "createdAt": payload.get("createdAt") or now,
+        "updatedAt": now,
+    }
+
+def normalized_lookup(value):
+    return re.sub(r"\s+", " ", str(value or "").strip().lower())
+
+def ensure_unique_supplier(suppliers, supplier, supplier_id: str | None = None):
+    supplier_name = normalized_lookup(supplier.get("name"))
+    supplier_tax_no = normalized_lookup(supplier.get("taxNo"))
+
+    for existing in suppliers:
+        existing_id = str(existing.get("id"))
+
+        if supplier_id and existing_id == str(supplier_id):
+            continue
+
+        if supplier_name and normalized_lookup(existing.get("name")) == supplier_name:
+            raise HTTPException(status_code=409, detail="Bu tedarikci adi zaten kayitli")
+
+        if supplier_tax_no and normalized_lookup(existing.get("taxNo")) == supplier_tax_no:
+            raise HTTPException(status_code=409, detail="Bu vergi no zaten kayitli")
 
 def detect_file_type(filename: str) -> str:
     ext = filename.lower().split(".")[-1]
@@ -940,6 +992,71 @@ def list_orders():
     return {
         "success": True,
         "orders": load_json(ORDERS_FILE)
+    }
+
+@app.get("/suppliers")
+def list_suppliers():
+    return {
+        "success": True,
+        "suppliers": load_json(SUPPLIERS_FILE)
+    }
+
+@app.post("/suppliers")
+def create_supplier(payload: dict = Body(...)):
+    supplier = normalize_supplier_payload(payload)
+
+    if not supplier["name"]:
+        raise HTTPException(status_code=400, detail="Tedarikci adi zorunlu")
+
+    suppliers = load_json(SUPPLIERS_FILE)
+    ensure_unique_supplier(suppliers, supplier)
+    suppliers.insert(0, supplier)
+    save_json(SUPPLIERS_FILE, suppliers)
+
+    return {
+        "success": True,
+        "supplier": supplier
+    }
+
+@app.put("/suppliers/{supplier_id}")
+def update_supplier(supplier_id: str, payload: dict = Body(...)):
+    suppliers = load_json(SUPPLIERS_FILE)
+
+    for index, supplier in enumerate(suppliers):
+        if str(supplier.get("id")) == supplier_id:
+            updated = normalize_supplier_payload(
+                {**supplier, **payload},
+                supplier_id=supplier_id,
+            )
+
+            if not updated["name"]:
+                raise HTTPException(status_code=400, detail="Tedarikci adi zorunlu")
+
+            ensure_unique_supplier(suppliers, updated, supplier_id=supplier_id)
+            suppliers[index] = updated
+            save_json(SUPPLIERS_FILE, suppliers)
+
+            return {
+                "success": True,
+                "supplier": updated
+            }
+
+    raise HTTPException(status_code=404, detail="Tedarikci bulunamadi")
+
+@app.delete("/suppliers/{supplier_id}")
+def delete_supplier(supplier_id: str):
+    suppliers = load_json(SUPPLIERS_FILE)
+    next_suppliers = [
+        supplier for supplier in suppliers if str(supplier.get("id")) != supplier_id
+    ]
+
+    if len(next_suppliers) == len(suppliers):
+        raise HTTPException(status_code=404, detail="Tedarikci bulunamadi")
+
+    save_json(SUPPLIERS_FILE, next_suppliers)
+
+    return {
+        "success": True
     }
 
 from fastapi.responses import Response
