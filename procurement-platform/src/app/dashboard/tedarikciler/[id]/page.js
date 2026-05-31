@@ -120,26 +120,47 @@ export default function SupplierDetailPage() {
 
   const stats = useMemo(() => {
     const totalAmount = orders.reduce((sum, order) => sum + Number(order.total_amount || 0), 0);
-    const deliveredOrders = orders.filter((order) => order.status === "Teslim Edildi").length;
+    const deliveredOrders = orders.filter((order) => ["Teslim Edildi", "Tam Teslim"].includes(order.status)).length;
     const openOrders = orders.filter(
-      (order) => !["Teslim Edildi", "İptal"].includes(order.status)
+      (order) => !["Teslim Edildi", "Tam Teslim", "İptal"].includes(order.status)
     ).length;
     const delayedOrders = orders.filter((order) => {
-      if (["Teslim Edildi", "İptal"].includes(order.status)) return false;
+      if (["Teslim Edildi", "Tam Teslim", "İptal"].includes(order.status)) return false;
       if (order.status === "Gecikti") return true;
       return order.termin_date ? daysUntil(order.termin_date) < 0 : false;
     }).length;
+    const missingDeliveries = orders.filter((order) => order.receipt_status === "Eksik geldi").length;
+    const defectiveItems = orders.reduce((sum, order) => sum + Number(order.defective_total || 0), 0);
+    const deliveryDurations = orders
+      .map((order) => {
+        if (!order.order_date || !order.delivery_date) return null;
+        const start = new Date(order.order_date);
+        const end = new Date(order.delivery_date);
+        if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
+        return Math.max(0, Math.ceil((end - start) / 86400000));
+      })
+      .filter((value) => value !== null);
+    const averageDeliveryDays =
+      deliveryDurations.length > 0
+        ? Math.round(deliveryDurations.reduce((sum, value) => sum + value, 0) / deliveryDurations.length)
+        : 0;
     const completionRate = orders.length > 0 ? Math.round((deliveredOrders / orders.length) * 100) : 0;
-    const baseScore = Number(supplier?.score || 0);
+    const onTimeRate = orders.length > 0 ? Math.round(((orders.length - delayedOrders) / orders.length) * 100) : 0;
+    const baseScore = Number(supplier?.score || 100);
     const delayPenalty = Math.min(delayedOrders * 15, 45);
     const openPenalty = openOrders > 0 && completionRate < 50 ? 10 : 0;
-    const healthScore = Math.max(Math.min(baseScore - delayPenalty - openPenalty, 100), 0);
+    const issuePenalty = missingDeliveries * 10 + defectiveItems * 4;
+    const healthScore = Math.max(Math.min(baseScore - delayPenalty - openPenalty - issuePenalty, 100), 0);
 
     return {
       totalAmount,
       deliveredOrders,
       openOrders,
       delayedOrders,
+      missingDeliveries,
+      defectiveItems,
+      averageDeliveryDays,
+      onTimeRate,
       completionRate,
       healthScore,
     };
@@ -151,13 +172,13 @@ export default function SupplierDetailPage() {
     return orders.filter((order) => {
       const remainingDays = daysUntil(order.termin_date);
       const isDelayed =
-        !["Teslim Edildi", "İptal"].includes(order.status) &&
+        !["Teslim Edildi", "Tam Teslim", "İptal"].includes(order.status) &&
         remainingDays !== null &&
         remainingDays < 0;
 
-      if (orderFilter === "Açık") return !["Teslim Edildi", "İptal"].includes(order.status);
+      if (orderFilter === "Açık") return !["Teslim Edildi", "Tam Teslim", "İptal"].includes(order.status);
       if (orderFilter === "Geciken") return order.status === "Gecikti" || isDelayed;
-      if (orderFilter === "Teslim") return order.status === "Teslim Edildi";
+      if (orderFilter === "Teslim") return ["Teslim Edildi", "Tam Teslim"].includes(order.status);
       return true;
     });
   }, [orders, orderFilter]);
@@ -252,6 +273,13 @@ export default function SupplierDetailPage() {
           <StatCard title="Tutar" value={formatMoney(stats.totalAmount)} text="Toplam sipariş" />
         </div>
 
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+          <StatCard title="Zamanında Teslim" value={`%${stats.onTimeRate}`} text="Termin performansı" />
+          <StatCard title="Eksik Teslim" value={stats.missingDeliveries} text="Eksik gelen sipariş" />
+          <StatCard title="Hatalı Ürün" value={stats.defectiveItems} text="Kabul dışı miktar" />
+          <StatCard title="Ortalama Süre" value={`${stats.averageDeliveryDays} gün`} text="Teslim süresi" />
+        </div>
+
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm lg:col-span-2">
             <h2 className="text-lg font-bold text-slate-900">Firma Bilgileri</h2>
@@ -312,6 +340,15 @@ export default function SupplierDetailPage() {
                 Bu tedarikçide geciken sipariş var. Durumu Riskli olarak işaretlemek iyi olur.
               </div>
             )}
+            <div className="mt-4 rounded-xl bg-slate-50 p-4 text-sm text-slate-700">
+              <div className="font-black text-slate-900">Performans nedenleri</div>
+              <div className="mt-2 space-y-1">
+                <div>Termin gecikmesi: {stats.delayedOrders}</div>
+                <div>Eksik teslim: {stats.missingDeliveries}</div>
+                <div>Hatalı ürün: {stats.defectiveItems}</div>
+                <div>Ödeme / teslimat uyumu: {stats.healthScore >= 80 ? "Uyumlu" : "Kontrol edilmeli"}</div>
+              </div>
+            </div>
             <div className="mt-5 rounded-xl bg-slate-50 p-4 text-sm text-slate-700">
               {supplier.notes || "Not bulunmuyor."}
             </div>

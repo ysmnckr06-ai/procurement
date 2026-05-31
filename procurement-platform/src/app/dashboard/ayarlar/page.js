@@ -8,6 +8,11 @@ const defaultSettings = {
   company_name: "",
   tax_no: "",
   default_currency: "TRY",
+  base_currency: "TRY",
+  usd_rate: 39.2,
+  eur_rate: 42.8,
+  gbp_rate: 41.2,
+  exchange_rate_date: new Date().toISOString().slice(0, 10),
   annual_interest_rate: 45,
   max_file_size_mb: 10,
   max_offer_files: 15,
@@ -16,6 +21,16 @@ const defaultSettings = {
   approval_required: true,
   notify_email: "",
 };
+
+function StatCard({ title, value, text }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="text-sm font-semibold text-slate-500">{title}</div>
+      <div className="mt-2 text-2xl font-black text-slate-900">{value}</div>
+      <div className="mt-1 text-sm text-slate-500">{text}</div>
+    </div>
+  );
+}
 
 export default function SettingsPage() {
   const router = useRouter();
@@ -90,6 +105,11 @@ export default function SettingsPage() {
       company_name: settings.company_name.trim(),
       tax_no: settings.tax_no.trim(),
       default_currency: settings.default_currency,
+      base_currency: settings.base_currency || settings.default_currency || "TRY",
+      usd_rate: Number(settings.usd_rate || 1),
+      eur_rate: Number(settings.eur_rate || 1),
+      gbp_rate: Number(settings.gbp_rate || 1),
+      exchange_rate_date: settings.exchange_rate_date || new Date().toISOString().slice(0, 10),
       annual_interest_rate: Number(settings.annual_interest_rate || 0),
       max_file_size_mb: Number(settings.max_file_size_mb || 10),
       max_offer_files: Number(settings.max_offer_files || 15),
@@ -115,21 +135,38 @@ export default function SettingsPage() {
       setRecordId(data[0].id);
     }
 
-    setMessage("Ayarlar kaydedildi.");
+    setMessage("Ayarlar kaydedildi. Yeni teklif ve siparişlerde bu değerler kullanılacak.");
   }
 
   return (
     <div className="min-h-screen bg-slate-100">
       <main className="p-6">
-        <div className="mx-auto max-w-5xl space-y-6">
-          <div>
-            <div className="inline-flex rounded-full bg-slate-200 px-4 py-2 text-sm font-bold text-slate-700">
-              Sistem Ayarları
+        <div className="mx-auto max-w-6xl space-y-6">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <div className="inline-flex rounded-full bg-slate-200 px-4 py-2 text-sm font-bold text-slate-700">
+                Sistem Ayarları
+              </div>
+              <h1 className="mt-3 text-4xl font-bold text-slate-900">Ayarlar</h1>
+              <p className="mt-2 max-w-2xl text-sm text-slate-600">
+                Şirket bilgileri, varsayılan analiz değerleri ve satınalma kurallarını yönetin.
+              </p>
             </div>
-            <h1 className="mt-3 text-4xl font-bold text-slate-900">Ayarlar</h1>
-            <p className="mt-2 max-w-2xl text-sm text-slate-600">
-              Şirket bilgileri, varsayılan analiz değerleri ve satınalma kurallarını yönetin.
-            </p>
+            <button
+              type="button"
+              onClick={loadSettings}
+              className="rounded-xl border border-slate-300 bg-white px-5 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
+            >
+              Yenile
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-5">
+            <StatCard title="Para Birimi" value={settings.default_currency} text="Sipariş varsayılanı" />
+            <StatCard title="Ana Para" value={settings.base_currency || "TRY"} text="Finans raporu" />
+            <StatCard title="Finansman" value={`%${settings.annual_interest_rate || 0}`} text="Teklif analizi" />
+            <StatCard title="Teklif Limiti" value={settings.max_offer_files || 15} text="Maksimum dosya" />
+            <StatCard title="Onay" value={settings.approval_required ? "Açık" : "Kapalı"} text="Sipariş kuralı" />
           </div>
 
           {message && (
@@ -142,20 +179,13 @@ export default function SettingsPage() {
             onSubmit={handleSubmit}
             className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"
           >
-            <div className="mb-6">
-              <h2 className="text-xl font-bold text-slate-900">Şirket Bilgileri</h2>
-              <p className="mt-1 text-sm text-slate-500">
-                Rapor ve sipariş ekranlarında kullanılacak temel bilgiler.
-              </p>
-            </div>
+            <SectionTitle
+              title="Şirket Bilgileri"
+              text="Rapor ve sipariş ekranlarında kullanılacak temel bilgiler."
+            />
 
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <Input
-                label="Şirket Adı"
-                name="company_name"
-                value={settings.company_name}
-                onChange={handleChange}
-              />
+              <Input label="Şirket Adı" name="company_name" value={settings.company_name} onChange={handleChange} />
               <Input label="Vergi No" name="tax_no" value={settings.tax_no} onChange={handleChange} />
               <Input
                 label="Bildirim E-postası"
@@ -171,15 +201,35 @@ export default function SettingsPage() {
                 onChange={handleChange}
                 options={["TRY", "USD", "EUR", "GBP"]}
               />
+              <Select
+                label="Ana Para Birimi"
+                name="base_currency"
+                value={settings.base_currency}
+                onChange={handleChange}
+                options={["TRY", "USD", "EUR", "GBP"]}
+              />
             </div>
 
             <div className="mt-8 border-t border-slate-200 pt-6">
-              <h2 className="text-xl font-bold text-slate-900">Analiz Varsayılanları</h2>
-              <p className="mt-1 text-sm text-slate-500">
-                Teklif değerlendirme ve dosya yükleme sınırları için başlangıç değerleri.
-              </p>
+              <SectionTitle
+                title="Kur Bilgileri"
+                text="Kayıt anındaki kurla ana para karşılığı sabitlenir."
+              />
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+                <Input label="USD Kuru" name="usd_rate" type="number" value={settings.usd_rate} onChange={handleChange} />
+                <Input label="EUR Kuru" name="eur_rate" type="number" value={settings.eur_rate} onChange={handleChange} />
+                <Input label="GBP Kuru" name="gbp_rate" type="number" value={settings.gbp_rate} onChange={handleChange} />
+                <Input label="Kur Tarihi" name="exchange_rate_date" type="date" value={settings.exchange_rate_date} onChange={handleChange} />
+              </div>
+            </div>
 
-              <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div className="mt-8 border-t border-slate-200 pt-6">
+              <SectionTitle
+                title="Analiz Varsayılanları"
+                text="Teklif değerlendirme ve dosya yükleme sınırları için başlangıç değerleri."
+              />
+
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
                 <Input
                   label="Yıllık Finansman Oranı"
                   name="annual_interest_rate"
@@ -211,8 +261,12 @@ export default function SettingsPage() {
             </div>
 
             <div className="mt-8 border-t border-slate-200 pt-6">
-              <h2 className="text-xl font-bold text-slate-900">Onay ve Risk</h2>
-              <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
+              <SectionTitle
+                title="Onay ve Risk"
+                text="Siparişe dönüşüm ve risk değerlendirmesi için operasyon kuralları."
+              />
+
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <Select
                   label="Varsayılan Risk Seviyesi"
                   name="risk_level"
@@ -244,6 +298,15 @@ export default function SettingsPage() {
           </form>
         </div>
       </main>
+    </div>
+  );
+}
+
+function SectionTitle({ title, text }) {
+  return (
+    <div className="mb-5">
+      <h2 className="text-xl font-bold text-slate-900">{title}</h2>
+      <p className="mt-1 text-sm text-slate-500">{text}</p>
     </div>
   );
 }

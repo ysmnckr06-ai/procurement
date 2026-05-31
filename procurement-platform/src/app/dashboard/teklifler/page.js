@@ -1,10 +1,24 @@
-"use client";
+﻿"use client";
 
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL;
+
+const defaultCompanySettings = {
+  default_currency: "TRY",
+  base_currency: "TRY",
+  usd_rate: 39.2,
+  eur_rate: 42.8,
+  gbp_rate: 41.2,
+  annual_interest_rate: 45,
+  max_file_size_mb: 10,
+  max_offer_files: 15,
+  default_payment_term: "60 gün",
+  risk_level: "Orta",
+  approval_required: true,
+};
 
 function InfoBox({ title, text, tone = "blue" }) {
   const toneClasses = {
@@ -79,6 +93,7 @@ function TekliflerPageContent() {
   const [supplierTrust, setSupplierTrust] = useState("medium");
   const [qualityHistory, setQualityHistory] = useState("unknown");
   const [currencyRisk, setCurrencyRisk] = useState("medium");
+  const [companySettings, setCompanySettings] = useState(defaultCompanySettings);
 
   const [exchangeRates, setExchangeRates] = useState({
     TRY: 1,
@@ -89,7 +104,11 @@ function TekliflerPageContent() {
 
   useEffect(() => {
     loadRequests();
+    loadCompanySettings();
   }, []);
+
+  const maxOfferFiles = Number(companySettings.max_offer_files || 15);
+  const maxFileSizeMb = Number(companySettings.max_file_size_mb || 10);
 
 const loadRequests = async () => {
   try {
@@ -120,6 +139,40 @@ const loadRequests = async () => {
     } else if (data?.length > 0) {
       setSelectedRequestId(String(data[0].id));
     }
+  } catch (err) {
+    console.error(err);
+  }
+};
+
+const loadCompanySettings = async () => {
+  try {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) return;
+
+    const { data, error } = await supabase
+      .from("company_settings")
+      .select("*")
+      .eq("user_id", user.id)
+      .limit(1);
+
+    if (error || !data?.[0]) return;
+
+    const nextSettings = {
+      ...defaultCompanySettings,
+      ...data[0],
+    };
+
+    setCompanySettings(nextSettings);
+    setAnnualInterestRate(Number(nextSettings.annual_interest_rate || 45));
+    setExchangeRates({
+      TRY: 1,
+      USD: Number(nextSettings.usd_rate || 39.2),
+      EUR: Number(nextSettings.eur_rate || 42.8),
+      GBP: Number(nextSettings.gbp_rate || 41.2),
+    });
   } catch (err) {
     console.error(err);
   }
@@ -158,12 +211,20 @@ const loadRequests = async () => {
     const uploadedFiles = Array.from(e.target.files || []);
     if (uploadedFiles.length === 0) return;
 
+    const oversizedFile = uploadedFiles.find((file) => file.size > maxFileSizeMb * 1024 * 1024);
+
+    if (oversizedFile) {
+      setMessage(`${oversizedFile.name} dosyası ${maxFileSizeMb} MB sınırını aşıyor.`);
+      e.target.value = "";
+      return;
+    }
+
     const currentCount = files.length;
-    const remaining = Math.max(0, 15 - currentCount);
+    const remaining = Math.max(0, maxOfferFiles - currentCount);
     const allowedNewFiles = uploadedFiles.slice(0, remaining);
 
     if (allowedNewFiles.length === 0) {
-      setMessage("En fazla 15 dosya yükleyebilirsiniz.");
+      setMessage(`En fazla ${maxOfferFiles} dosya yükleyebilirsiniz.`);
       return;
     }
 
@@ -193,10 +254,10 @@ const loadRequests = async () => {
   if (paymentHabit === "60_90") score += 15;
   if (paymentHabit === "long") score += 20;
 
-  if (score <= 25) return 25;
-  if (score <= 45) return 35;
-  if (score <= 65) return 45;
-  return 60;
+  if (score <= 25) return Math.min(annualInterestRate, 25);
+  if (score <= 45) return Math.max(annualInterestRate - 10, 30);
+  if (score <= 65) return annualInterestRate;
+  return Math.max(annualInterestRate + 15, 60);
     };
 
   const handleAnalyze = async () => {
@@ -208,6 +269,8 @@ const loadRequests = async () => {
     setIsAnalyzing(true);
     setReportReady(false);
     setMessage("");
+
+    let timeoutId;
 
     try {
       const formData = new FormData();
@@ -272,6 +335,9 @@ const loadRequests = async () => {
       
       formData.append("request_id", selectedRequestId);
 
+      const controller = new AbortController();
+      timeoutId = window.setTimeout(() => controller.abort(), 120000);
+
       const response = await fetch(
         API_URL + "/analyze-offers",
         {
@@ -280,8 +346,10 @@ const loadRequests = async () => {
             Authorization: `Bearer ${token}`,
           },
           body: formData,
+          signal: controller.signal,
         }
       );;
+      window.clearTimeout(timeoutId);
 
       const data = await response.json();
 
@@ -298,8 +366,15 @@ const loadRequests = async () => {
       }
     } catch (error) {
       console.error(error);
-      setMessage("Teklif analizi sırasında hata oluştu.");
+      setMessage(
+        error?.name === "AbortError"
+          ? "Analiz çok uzun sürdü ve durduruldu. PDF dosyaları veya backend terminalindeki hata kontrol edilmeli."
+          : "Teklif analizi sırasında hata oluştu."
+      );
     } finally {
+      if (timeoutId) {
+        window.clearTimeout(timeoutId);
+      }
       setIsAnalyzing(false);
     }
   };
@@ -465,7 +540,7 @@ const loadRequests = async () => {
                     <option value="">Talep listesi seçin</option>
                     {requestLists.map((item, index) => (
                       <option key={item.id} value={item.id}>
-                        {`Talep #${index + 1} — ${
+                        {`Talep #${index + 1} - ${
                           item.created_at
                             ? new Date(item.created_at).toLocaleString("tr-TR")
                             : "Tarih yok"
@@ -919,3 +994,4 @@ const loadRequests = async () => {
   </div>
 );
 }
+

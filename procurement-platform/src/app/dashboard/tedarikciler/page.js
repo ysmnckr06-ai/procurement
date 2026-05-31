@@ -78,8 +78,8 @@ function getAverageScore(supplier) {
 }
 
 function getHealth(supplier) {
-  const score = getAverageScore(supplier);
-  const onTimeRate = Number(supplier.onTimeRate || 0);
+  const score = Number(supplier.performanceScore || getAverageScore(supplier));
+  const onTimeRate = Number(supplier.onTimeRate || supplier.onTimeDeliveryRate || 0);
 
   if (supplier.status === "Riskli" || score < 3 || onTimeRate < 60) {
     return {
@@ -102,6 +102,95 @@ function getHealth(supplier) {
     className: "bg-green-100 text-green-700",
     bar: "bg-green-500",
   };
+}
+
+function deliveryDays(order) {
+  if (!order.order_date || !order.delivery_date) return null;
+  const start = new Date(order.order_date);
+  const end = new Date(order.delivery_date);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
+  return Math.max(0, Math.ceil((end - start) / 86400000));
+}
+
+function buildSupplierPerformance(orders) {
+  const grouped = new Map();
+
+  for (const order of orders) {
+    const key = normalizeSupplierName(order.supplier_name);
+    if (!key) continue;
+
+    const item = grouped.get(key) || {
+      totalOrders: 0,
+      totalPurchase: 0,
+      deliveredOrders: 0,
+      delayedOrders: 0,
+      missingDeliveries: 0,
+      defectiveItems: 0,
+      deliveryDaySum: 0,
+      deliveryDayCount: 0,
+    };
+    const status = order.status || "";
+    const isDelivered = ["Teslim Edildi", "Tam Teslim"].includes(status);
+    const delayed =
+      status === "Gecikti" ||
+      (!isDelivered && order.termin_date && new Date(order.termin_date) < new Date());
+    const missing =
+      order.receipt_status === "Eksik geldi" ||
+      Number(order.received_total || 0) < Number(order.quantity || 0);
+    const defective = Number(order.defective_total || 0);
+    const days = deliveryDays(order);
+
+    item.totalOrders += 1;
+    item.totalPurchase += Number(order.total_amount || 0);
+    item.deliveredOrders += isDelivered ? 1 : 0;
+    item.delayedOrders += delayed ? 1 : 0;
+    item.missingDeliveries += missing ? 1 : 0;
+    item.defectiveItems += defective;
+    if (days !== null) {
+      item.deliveryDaySum += days;
+      item.deliveryDayCount += 1;
+    }
+
+    grouped.set(key, item);
+  }
+
+  return Object.fromEntries(
+    [...grouped.entries()].map(([key, item]) => {
+      const onTimeRate =
+        item.totalOrders > 0
+          ? Math.round(((item.totalOrders - item.delayedOrders) / item.totalOrders) * 100)
+          : 0;
+      const score = Math.max(
+        0,
+        Math.min(
+          100,
+          100 -
+            item.delayedOrders * 12 -
+            item.missingDeliveries * 10 -
+            item.defectiveItems * 4,
+        ),
+      );
+
+      return [
+        key,
+        {
+          ...item,
+          onTimeRate,
+          averageDeliveryDays:
+            item.deliveryDayCount > 0
+              ? Math.round(item.deliveryDaySum / item.deliveryDayCount)
+              : 0,
+          score,
+          risk:
+            score < 60 || item.defectiveItems > 0
+              ? "Riskli"
+              : score < 80 || item.delayedOrders > 0
+                ? "İzlemede"
+                : "Güvenilir",
+        },
+      ];
+    }),
+  );
 }
 
 function getStatusClass(status) {
@@ -127,6 +216,13 @@ function formatDate(value) {
     month: "short",
     year: "numeric",
   });
+}
+
+function formatMoney(value, currency = "TRY") {
+  return `${new Intl.NumberFormat("tr-TR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Number(value || 0))} ${currency}`;
 }
 
 function daysSince(value) {
@@ -301,6 +397,7 @@ export default function SuppliersPage() {
   const [message, setMessage] = useState(null);
   const [suggestedSuppliers, setSuggestedSuppliers] = useState([]);
   const [suggestionsDismissed, setSuggestionsDismissed] = useState(false);
+  const [supplierPerformance, setSupplierPerformance] = useState({});
 
   const loadSuppliers = useCallback(async () => {
     if (!API_URL) {
@@ -378,10 +475,12 @@ export default function SuppliersPage() {
       const [ordersRes, reportsRes] = await Promise.all([
         supabase
           .from("orders")
-          .select("supplier_name,product_name,order_date,created_at,items")
+          .select("*")
           .eq("user_id", user.id),
         supabase.from("reports").select("*").eq("user_id", user.id),
       ]);
+
+      setSupplierPerformance(buildSupplierPerformance(ordersRes.data || []));
 
       const knownNames = new Set(
         suppliers
@@ -453,12 +552,27 @@ export default function SuppliersPage() {
   }, [suppliers]);
 
   const enrichedSuppliers = useMemo(() => {
-    return suppliers.map((supplier) => ({
-      ...supplier,
-      averageScore: getAverageScore(supplier),
-      health: getHealth(supplier),
-    }));
-  }, [suppliers]);
+    return suppliers.map((supplier) => {
+      const performance = supplierPerformance[normalizeSupplierName(supplier.name)] || {};
+      const performanceScore =
+        performance.totalOrders > 0 ? performance.score : getAverageScore(supplier) * 20;
+
+      return {
+        ...supplier,
+        performance,
+        totalOrders: performance.totalOrders || supplier.totalOrders || 0,
+        totalPurchase: performance.totalPurchase || 0,
+        onTimeDeliveryRate: performance.onTimeRate ?? Number(supplier.onTimeRate || 0),
+        delayedOrders: performance.delayedOrders || 0,
+        missingDeliveries: performance.missingDeliveries || 0,
+        defectiveItems: performance.defectiveItems || 0,
+        averageDeliveryDays: performance.averageDeliveryDays || 0,
+        performanceScore,
+        averageScore: performanceScore / 20,
+        health: getHealth({ ...supplier, performanceScore, onTimeRate: performance.onTimeRate ?? supplier.onTimeRate }),
+      };
+    });
+  }, [suppliers, supplierPerformance]);
 
   const filteredSuppliers = useMemo(() => {
     const filtered = enrichedSuppliers.filter((supplier) => {
@@ -1241,7 +1355,10 @@ export default function SuppliersPage() {
                   <thead className="bg-slate-50 text-slate-500">
                     <tr>
                       <th className="p-4">Firma</th>
-                      <th className="p-4">Operasyon</th>
+                      <th className="p-4">Toplam Sipariş</th>
+                      <th className="p-4">Toplam Alış</th>
+                      <th className="p-4">Teslim</th>
+                      <th className="p-4">Sorunlar</th>
                       <th className="p-4">Performans</th>
                       <th className="p-4">Durum</th>
                       <th className="p-4">Islem</th>
@@ -1277,10 +1394,7 @@ export default function SuppliersPage() {
                           </td>
                           <td className="p-4">
                             <div className="font-bold text-slate-800">
-                              {supplier.paymentTerm || "Vade yok"}
-                            </div>
-                            <div className="mt-1 text-xs text-slate-500">
-                              {supplier.totalOrders || 0} siparis
+                              {supplier.totalOrders || 0}
                             </div>
                             <div className="mt-1 text-xs text-slate-500">
                               Son: {formatDate(supplier.lastOrderDate)}
@@ -1289,22 +1403,38 @@ export default function SuppliersPage() {
                                 : ""}
                             </div>
                           </td>
+                          <td className="p-4 font-bold text-slate-800">
+                            {formatMoney(supplier.totalPurchase || 0)}
+                          </td>
+                          <td className="p-4">
+                            <div className="font-bold text-slate-800">
+                              %{supplier.onTimeDeliveryRate || 0}
+                            </div>
+                            <div className="mt-1 text-xs text-slate-500">
+                              Ortalama {supplier.averageDeliveryDays || 0} gün
+                            </div>
+                          </td>
+                          <td className="p-4 text-xs text-slate-600">
+                            <div>Geciken: {supplier.delayedOrders || 0}</div>
+                            <div>Eksik: {supplier.missingDeliveries || 0}</div>
+                            <div>Hatalı: {supplier.defectiveItems || 0}</div>
+                          </td>
                           <td className="p-4">
                             <div className="flex items-center gap-3">
                               <div className="text-2xl font-black text-slate-950">
-                                {supplier.averageScore.toFixed(1)}
+                                {Math.round(supplier.performanceScore || 0)}
                               </div>
                               <div className="min-w-28 flex-1">
                                 <div className="h-2 overflow-hidden rounded-full bg-slate-100">
                                   <div
                                     className={`h-full rounded-full ${supplier.health.bar}`}
                                     style={{
-                                      width: `${supplier.averageScore * 20}%`,
+                                      width: `${Math.min(supplier.performanceScore || 0, 100)}%`,
                                     }}
                                   />
                                 </div>
                                 <div className="mt-1 text-xs text-slate-500">
-                                  Teslim %{supplier.onTimeRate || 0}
+                                  Risk: {supplier.performance?.risk || supplier.health.label}
                                 </div>
                               </div>
                             </div>
@@ -1356,7 +1486,7 @@ export default function SuppliersPage() {
                     {filteredSuppliers.length === 0 && (
                       <tr>
                         <td
-                          colSpan="5"
+                          colSpan="8"
                           className="p-10 text-center text-slate-500"
                         >
                           Kayit bulunamadi. Yeni tedarikci ekleyerek canli
@@ -1414,23 +1544,35 @@ export default function SuppliersPage() {
                       />
                       <Detail
                         label="Teslim Orani"
-                        value={`%${selectedSupplier.onTimeRate || 0}`}
+                        value={`%${selectedSupplier.onTimeDeliveryRate || 0}`}
+                      />
+                      <Detail
+                        label="Toplam Alış"
+                        value={formatMoney(selectedSupplier.totalPurchase || 0)}
+                      />
+                      <Detail
+                        label="Performans"
+                        value={Math.round(selectedSupplier.performanceScore || 0)}
                       />
                     </div>
 
+                    <div className="rounded-xl bg-slate-50 p-4">
+                      <div className="text-xs font-black uppercase tracking-wide text-slate-400">
+                        Performans Nedenleri
+                      </div>
+                      <div className="mt-3 grid grid-cols-1 gap-2 text-sm text-slate-700">
+                        <div>Termin gecikmesi: {selectedSupplier.delayedOrders || 0}</div>
+                        <div>Eksik teslim: {selectedSupplier.missingDeliveries || 0}</div>
+                        <div>Hatalı ürün: {selectedSupplier.defectiveItems || 0}</div>
+                        <div>Ortalama teslim süresi: {selectedSupplier.averageDeliveryDays || 0} gün</div>
+                        <div>Ödeme / teslimat uyumu: {selectedSupplier.performance?.risk || selectedSupplier.health.label}</div>
+                      </div>
+                    </div>
+
                     <div className="space-y-3">
-                      <ScoreBar
-                        label="Termin"
-                        value={selectedSupplier.deliveryScore || 0}
-                      />
-                      <ScoreBar
-                        label="Kalite"
-                        value={selectedSupplier.qualityScore || 0}
-                      />
-                      <ScoreBar
-                        label="Fiyat"
-                        value={selectedSupplier.priceScore || 0}
-                      />
+                      <ScoreBar label="Termin" value={(selectedSupplier.onTimeDeliveryRate || 0) / 20} />
+                      <ScoreBar label="Kalite" value={Math.max(0, 5 - (selectedSupplier.defectiveItems || 0))} />
+                      <ScoreBar label="Genel Puan" value={(selectedSupplier.performanceScore || 0) / 20} />
                     </div>
 
                     <div className="rounded-xl bg-slate-50 p-4">

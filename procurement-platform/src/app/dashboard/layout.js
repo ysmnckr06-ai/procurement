@@ -5,11 +5,14 @@ import { usePathname } from "next/navigation";
 
 const menu = [
   { name: "Dashboard", icon: "🏠", href: "/dashboard" },
+  { name: "Projeler", icon: "📁", href: "/dashboard/projeler" },
   { name: "Talepler", icon: "📚", href: "/dashboard/talepler" },
   { name: "Teklifler", icon: "📊", href: "/dashboard/teklifler" },
   { name: "Raporlar", icon: "📄", href: "/dashboard/raporlar" },
   { name: "Siparişler", icon: "🛒", href: "/dashboard/siparisler" },
   { name: "Tedarikçiler", icon: "🏢", href: "/dashboard/tedarikciler" },
+  { name: "Stok", icon: "📦", href: "/dashboard/stok" },
+  { name: "Finans", icon: "₺", href: "/dashboard/finans" },
   { name: "Ayarlar", icon: "⚙️", href: "/dashboard/ayarlar" },
 ];
 

@@ -4,34 +4,31 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { calculateBaseAmount, currencyOptions, getBaseCurrency, getExchangeRate } from "@/lib/currency";
 
 const statusFlow = [
-  "Bekliyor",
-  "Firmaya Gönderildi",
+  "Taslak",
   "Onay Bekliyor",
-  "Üretimde",
-  "Kargolandı",
+  "Sipariş Geçildi",
+  "Tedarikçiden Bekleniyor",
   "Kısmi Teslim",
-  "Teslim Edildi",
+  "Tam Teslim",
 ];
 
 const statusActions = [
-  { status: "Firmaya Gönderildi", label: "Firmaya Gönder" },
-  { status: "Onay Bekliyor", label: "Onay Bekliyor" },
-  { status: "Üretimde", label: "Üretime Al" },
-  { status: "Kargolandı", label: "Kargoya Ver" },
-  { status: "Teslim Edildi", label: "Tamamını Teslim Et" },
+  { status: "Onay Bekliyor", label: "Durumu Güncelle" },
+  { status: "Sipariş Geçildi", label: "Sipariş Geçildi" },
+  { status: "Tedarikçiden Bekleniyor", label: "Tedarikçiden Bekleniyor" },
   { status: "İptal", label: "İptal Et", danger: true },
 ];
 
 const editableStatusOptions = [
-  "Bekliyor",
-  "Firmaya Gönderildi",
+  "Taslak",
   "Onay Bekliyor",
-  "Üretimde",
-  "Kargolandı",
+  "Sipariş Geçildi",
+  "Tedarikçiden Bekleniyor",
   "Kısmi Teslim",
-  "Teslim Edildi",
+  "Tam Teslim",
   "Gecikti",
   "İptal",
 ];
@@ -80,10 +77,10 @@ function normalizeItems(items) {
       paymentTerm: item.paymentTerm || "",
       status:
         deliveredQuantity >= quantity && quantity > 0
-          ? "Teslim Edildi"
+          ? "Tam Teslim"
           : deliveredQuantity > 0
             ? "Kısmi Teslim"
-            : "Bekliyor",
+            : "Taslak",
     };
   });
 }
@@ -129,12 +126,12 @@ function normalizeHistory(order) {
 
 function getStatusClass(status) {
   const classes = {
-    Bekliyor: "bg-yellow-100 text-yellow-700",
-    "Firmaya Gönderildi": "bg-blue-100 text-blue-700",
+    Taslak: "bg-slate-100 text-slate-700",
     "Onay Bekliyor": "bg-orange-100 text-orange-700",
-    Üretimde: "bg-purple-100 text-purple-700",
-    Kargolandı: "bg-sky-100 text-sky-700",
+    "Sipariş Geçildi": "bg-blue-100 text-blue-700",
+    "Tedarikçiden Bekleniyor": "bg-sky-100 text-sky-700",
     "Kısmi Teslim": "bg-amber-100 text-amber-700",
+    "Tam Teslim": "bg-green-100 text-green-700",
     "Teslim Edildi": "bg-green-100 text-green-700",
     Gecikti: "bg-red-100 text-red-700",
     İptal: "bg-slate-200 text-slate-700",
@@ -180,6 +177,19 @@ export default function OrderDetailPage() {
   const [activeTab, setActiveTab] = useState("items");
   const [message, setMessage] = useState("");
   const [deliveryInputs, setDeliveryInputs] = useState({});
+  const [receiptInputs, setReceiptInputs] = useState({});
+  const [receipts, setReceipts] = useState([]);
+  const [payments, setPayments] = useState([]);
+  const [paymentForm, setPaymentForm] = useState({
+    amount: "",
+    currency: "TRY",
+    exchange_rate: 1,
+    payment_date: getToday(),
+    description: "",
+  });
+  const [companySettings, setCompanySettings] = useState({ default_currency: "TRY", base_currency: "TRY" });
+  const [project, setProject] = useState(null);
+  const [projectItems, setProjectItems] = useState([]);
   const [editableStatus, setEditableStatus] = useState("");
 
   // Detail page reloads when the route id changes; loadOrder reads the active route state.
@@ -212,8 +222,60 @@ export default function OrderDetailPage() {
     }
 
     setOrder(data);
-    setEditableStatus(data.status || "Bekliyor");
+    setPaymentForm((prev) => ({
+      ...prev,
+      currency: data.currency || "TRY",
+      exchange_rate: Number(data.exchange_rate || 1),
+    }));
+    setEditableStatus(data.status === "Teslim Edildi" ? "Tam Teslim" : data.status || "Taslak");
     setDeliveryInputs({});
+    setReceiptInputs({});
+
+    const { data: receiptRows } = await supabase
+      .from("order_receipts")
+      .select("*")
+      .eq("order_id", data.id)
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false });
+    setReceipts(receiptRows || []);
+
+    const { data: paymentRows } = await supabase
+      .from("order_payments")
+      .select("*")
+      .eq("order_id", data.id)
+      .eq("user_id", user.id)
+      .order("payment_date", { ascending: false });
+    setPayments(paymentRows || []);
+
+    const { data: settingsRows } = await supabase
+      .from("company_settings")
+      .select("*")
+      .eq("user_id", user.id)
+      .limit(1);
+    if (settingsRows?.[0]) setCompanySettings(settingsRows[0]);
+
+    if (data.project_id) {
+      const [{ data: projectData }, { data: projectItemRows }] = await Promise.all([
+        supabase
+          .from("projects")
+          .select("*")
+          .eq("id", data.project_id)
+          .eq("user_id", user.id)
+          .maybeSingle(),
+        supabase
+          .from("project_items")
+          .select("*")
+          .eq("project_id", data.project_id)
+          .eq("user_id", user.id)
+          .order("created_at", { ascending: true }),
+      ]);
+
+      setProject(projectData || null);
+      setProjectItems(projectItemRows || []);
+    } else {
+      setProject(null);
+      setProjectItems([]);
+    }
   }
 
   const items = useMemo(() => normalizeItems(order?.items || []), [order]);
@@ -238,6 +300,23 @@ export default function OrderDetailPage() {
           : 0,
     };
   }, [items]);
+  const paymentTotals = useMemo(() => {
+    const paidAmount =
+      payments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0) ||
+      Number(order?.paid_amount || 0);
+    const orderTotal = Number(order?.total_amount || 0);
+
+    return {
+      paidAmount,
+      remainingPayment: Math.max(orderTotal - paidAmount, 0),
+      paymentStatus:
+        paidAmount <= 0
+          ? "Ödenmedi"
+          : paidAmount >= orderTotal && orderTotal > 0
+            ? "Ödendi"
+            : "Kısmi ödendi",
+    };
+  }, [order, payments]);
 
   async function updateOrder(payload, fallbackPayload) {
     const {
@@ -267,6 +346,104 @@ export default function OrderDetailPage() {
       .eq("user_id", user.id);
   }
 
+  async function ensureProductForMovement(userId, item, addedQuantity) {
+    const productName = item.productName || item.productCode || "Ürün";
+    const productCode = String(item.productCode || "").trim().toUpperCase();
+    let productQuery = supabase
+      .from("products")
+      .select("*")
+      .eq("user_id", userId)
+      .limit(1);
+
+    if (productCode) {
+      productQuery = productQuery.eq("product_code", productCode).ilike("product_name", productName);
+    } else {
+      productQuery = productQuery.ilike("product_name", productName);
+    }
+
+    const { data: existingProducts } = await productQuery;
+
+    if (existingProducts?.[0]) {
+      const product = existingProducts[0];
+      await supabase
+        .from("products")
+        .update({
+          product_name: product.product_name || productName,
+          unit: item.unit || product.unit || "adet",
+          current_stock: Number(product.current_stock || 0) + Number(addedQuantity || 0),
+          last_supplier: order.supplier_name || "",
+          last_unit_price: Number(item.unitPrice || 0),
+          last_currency: order.currency || "TRY",
+          last_movement_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", product.id)
+        .eq("user_id", userId);
+
+      return product.id;
+    }
+
+    const { data: insertedProduct } = await supabase
+      .from("products")
+      .insert({
+        user_id: userId,
+        product_code: productCode,
+        product_name: productName,
+        unit: item.unit || "adet",
+        current_stock: Number(addedQuantity || 0),
+        last_supplier: order.supplier_name || "",
+        last_unit_price: Number(item.unitPrice || 0),
+        last_currency: order.currency || "TRY",
+        last_movement_at: new Date().toISOString(),
+        source: "Sipariş teslimatı",
+      })
+      .select("id")
+      .single();
+
+    return insertedProduct?.id || null;
+  }
+
+  async function writeStockMovements(userId, previousItems, nextItems) {
+    const movements = [];
+
+    for (const item of nextItems) {
+      const previousItem = previousItems.find(
+        (previous) =>
+          (item.productCode && previous.productCode === item.productCode) ||
+          previous.productName === item.productName,
+      );
+      const addedQuantity =
+        Number(item.deliveredQuantity || 0) -
+        Number(previousItem?.deliveredQuantity || 0);
+
+      if (addedQuantity <= 0 || !item.productName) continue;
+
+      const productId = await ensureProductForMovement(userId, item, addedQuantity);
+
+      movements.push({
+        user_id: userId,
+        product_id: productId,
+        product_code: item.productCode || "",
+        product_name: item.productName,
+        movement_type: "in",
+        quantity: addedQuantity,
+        unit: item.unit || "adet",
+        supplier_name: order.supplier_name || "",
+        order_id: order.id,
+        report_id: order.report_id || null,
+        unit_price: Number(item.unitPrice || 0),
+        currency: order.currency || "TRY",
+        movement_date: getToday(),
+        source: "Sipariş teslimatı",
+        notes: `${order.order_no || "Sipariş"} teslimatı`,
+      });
+    }
+
+    if (movements.length > 0) {
+      await supabase.from("stock_movements").insert(movements);
+    }
+  }
+
   async function updateStatus(nextStatus) {
     if (!order) return;
 
@@ -285,11 +462,11 @@ export default function OrderDetailPage() {
       status: nextStatus,
     });
     const completedItems =
-      nextStatus === "Teslim Edildi"
+      nextStatus === "Tam Teslim"
         ? items.map((item) => ({ ...item, deliveredQuantity: item.quantity }))
         : items;
     const deliveryDate =
-      nextStatus === "Teslim Edildi" ? getToday() : order.delivery_date;
+      nextStatus === "Tam Teslim" ? getToday() : order.delivery_date;
     const payload = {
       status: nextStatus,
       delivery_date: deliveryDate,
@@ -316,6 +493,15 @@ export default function OrderDetailPage() {
   async function saveDelivery() {
     if (!order) return;
 
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      router.push("/login");
+      return;
+    }
+
     const nextItems = items.map((item, index) => {
       const rawValue =
         deliveryInputs[index] === undefined
@@ -338,10 +524,10 @@ export default function OrderDetailPage() {
     );
     const calculatedStatus =
       deliveredQuantity >= totalQuantity && totalQuantity > 0
-        ? "Teslim Edildi"
+        ? "Tam Teslim"
         : deliveredQuantity > 0
           ? "Kısmi Teslim"
-          : "Bekliyor";
+          : "Taslak";
     const nextStatus = editableStatus || calculatedStatus;
     const deliveryChanged = nextItems.some(
       (item, index) =>
@@ -361,7 +547,7 @@ export default function OrderDetailPage() {
       status: nextStatus,
     });
     const deliveryDate =
-      nextStatus === "Teslim Edildi" ? order.delivery_date || getToday() : null;
+      nextStatus === "Tam Teslim" ? order.delivery_date || getToday() : null;
     const payload = {
       items: nextItems,
       status: nextStatus,
@@ -381,8 +567,256 @@ export default function OrderDetailPage() {
       return;
     }
 
+    await writeStockMovements(user.id, items, nextItems);
+
     setDeliveryInputs({});
     setMessage("Teslimat ve durum bilgisi güncellendi.");
+    await loadOrder();
+  }
+
+  function updateReceiptInput(index, field, value) {
+    setReceiptInputs((prev) => ({
+      ...prev,
+      [index]: {
+        ...(prev[index] || {}),
+        [field]: value,
+      },
+    }));
+  }
+
+  function calculateReceiptStatus(receivedQuantity, orderedQuantity, defectiveQuantity) {
+    if (Number(defectiveQuantity || 0) > 0) return "Hatalı / arızalı geldi";
+    if (Number(receivedQuantity || 0) < Number(orderedQuantity || 0)) return "Eksik geldi";
+    if (Number(receivedQuantity || 0) > Number(orderedQuantity || 0)) return "Fazla geldi";
+    return "Depoda";
+  }
+
+  async function saveReceipt(index) {
+    if (!order) return;
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      router.push("/login");
+      return;
+    }
+
+    const item = items[index];
+    const input = receiptInputs[index] || {};
+    const orderedQuantity = Number(item.quantity || 0);
+    const remainingQuantity = Math.max(orderedQuantity - Number(item.deliveredQuantity || 0), 0);
+    const receivedQuantity = Number(input.receivedQuantity ?? remainingQuantity);
+    const defectiveQuantity = Number(input.defectiveQuantity || 0);
+    const acceptedQuantity = Math.max(receivedQuantity - defectiveQuantity, 0);
+    const missingQuantity = Math.max(orderedQuantity - receivedQuantity, 0);
+    const excessQuantity = Math.max(receivedQuantity - orderedQuantity, 0);
+    const receiptStatus = calculateReceiptStatus(receivedQuantity, orderedQuantity, defectiveQuantity);
+    const selectedProjectItem =
+      projectItems.find((projectItem) => projectItem.id === input.projectItemId) || null;
+    const parentItemId =
+      selectedProjectItem?.parent_item_id || input.parentItemId || selectedProjectItem?.id || null;
+
+    if (receivedQuantity <= 0 && defectiveQuantity <= 0) {
+      setMessage("Teslim alınan miktar girilmelidir.");
+      return;
+    }
+
+    const receiptPayload = {
+      user_id: user.id,
+      order_id: order.id,
+      project_id: order.project_id || null,
+      project_item_id: selectedProjectItem?.id || null,
+      parent_item_id: parentItemId,
+      order_no: order.order_no || "",
+      supplier_name: order.supplier_name || "",
+      product_code: item.productCode || "",
+      product_name: item.productName,
+      unit: item.unit || "adet",
+      ordered_quantity: orderedQuantity,
+      received_quantity: receivedQuantity,
+      accepted_quantity: acceptedQuantity,
+      missing_quantity: missingQuantity,
+      excess_quantity: excessQuantity,
+      defective_quantity: defectiveQuantity,
+      receipt_status: receiptStatus,
+      received_by: input.receivedBy || "",
+      receipt_date: input.receiptDate || getToday(),
+      note: input.note || "",
+    };
+
+    const { data: receiptData, error: receiptError } = await supabase
+      .from("order_receipts")
+      .insert(receiptPayload)
+      .select("*")
+      .single();
+
+    if (receiptError) {
+      console.error(receiptError);
+      setMessage("Teslim alma kaydedilemedi. Supabase SQL tarafında order_receipts tablosu çalıştırılmalı.");
+      return;
+    }
+
+    if (acceptedQuantity > 0) {
+      const productId = await ensureProductForMovement(user.id, item, acceptedQuantity);
+      const { error: movementError } = await supabase.from("stock_movements").insert({
+        user_id: user.id,
+        product_id: productId,
+        product_code: item.productCode || "",
+        product_name: item.productName,
+        movement_type: "in",
+        quantity: acceptedQuantity,
+        unit: item.unit || "adet",
+        supplier_name: order.supplier_name || "",
+        order_id: order.id,
+        report_id: order.report_id || null,
+        project_id: order.project_id || null,
+        project_item_id: selectedProjectItem?.id || null,
+        parent_item_id: parentItemId,
+        receipt_id: receiptData.id,
+        unit_price: Number(item.unitPrice || 0),
+        currency: order.currency || "TRY",
+        movement_date: receiptPayload.receipt_date,
+        source: "Depo teslim alma",
+        notes: `${order.order_no || "Sipariş"} - ${receiptStatus}`,
+      });
+
+      if (movementError) {
+        console.error(movementError);
+        setMessage("Teslim kaydı oluştu fakat stok hareketi işlenemedi. SQL şemasındaki yeni stok alanlarını kontrol edin.");
+      }
+    }
+
+    if (selectedProjectItem) {
+      await supabase
+        .from("project_items")
+        .update({
+          status: receiptStatus,
+          received_quantity: Number(selectedProjectItem.received_quantity || 0) + acceptedQuantity,
+          defective_quantity: Number(selectedProjectItem.defective_quantity || 0) + defectiveQuantity,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", selectedProjectItem.id)
+        .eq("user_id", user.id);
+    }
+
+    const nextItems = items.map((row, rowIndex) => {
+      if (rowIndex !== index) return row;
+      return {
+        ...row,
+        deliveredQuantity: Math.min(
+          Number(row.quantity || 0),
+          Number(row.deliveredQuantity || 0) + acceptedQuantity,
+        ),
+      };
+    });
+    const nextDeliveredQuantity = nextItems.reduce(
+      (sum, row) => sum + Number(row.deliveredQuantity || 0),
+      0,
+    );
+    const nextTotalQuantity = nextItems.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
+    const nextStatus =
+      nextDeliveredQuantity >= nextTotalQuantity && nextTotalQuantity > 0
+        ? "Tam Teslim"
+        : nextDeliveredQuantity > 0
+          ? "Kısmi Teslim"
+          : order.status;
+    const nextHistory = buildStatusHistory(order, {
+      type: "warehouse-receipt",
+      title: `${item.productName} teslim alındı: ${receivedQuantity} ${item.unit || "adet"} (${receiptStatus}).`,
+      actor: receiptPayload.received_by || "Depo",
+      status: receiptStatus,
+    });
+
+    await updateOrder(
+      {
+        items: nextItems,
+        status: nextStatus,
+        delivery_date: nextStatus === "Tam Teslim" ? getToday() : order.delivery_date,
+        receipt_status: receiptStatus,
+        received_total: nextDeliveredQuantity,
+        defective_total: Number(order.defective_total || 0) + defectiveQuantity,
+        status_history: nextHistory,
+      },
+      {
+        items: nextItems,
+        status: nextStatus,
+        delivery_date: nextStatus === "Tam Teslim" ? getToday() : order.delivery_date,
+      },
+    );
+
+    setReceiptInputs((prev) => ({ ...prev, [index]: {} }));
+    setMessage("Depo teslim alma kaydedildi ve stok girişine işlendi.");
+    await loadOrder();
+  }
+
+  async function savePayment(event) {
+    event.preventDefault();
+    if (!order) return;
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      router.push("/login");
+      return;
+    }
+
+    const amount = Number(paymentForm.amount || 0);
+    if (amount <= 0) {
+      setMessage("Ödeme tutarı sıfırdan büyük olmalıdır.");
+      return;
+    }
+
+    const baseCurrency = getBaseCurrency(companySettings);
+    const exchangeRate = Number(paymentForm.exchange_rate || getExchangeRate(paymentForm.currency, companySettings));
+    const baseAmount = calculateBaseAmount(amount, paymentForm.currency, companySettings, exchangeRate);
+    const { error } = await supabase.from("order_payments").insert({
+      user_id: user.id,
+      order_id: order.id,
+      project_id: order.project_id || null,
+      supplier_name: order.supplier_name || "",
+      payment_date: paymentForm.payment_date || getToday(),
+      amount,
+      original_amount: amount,
+      currency: paymentForm.currency || order.currency || baseCurrency,
+      exchange_rate: exchangeRate,
+      exchange_rate_date: paymentForm.payment_date || getToday(),
+      base_currency: baseCurrency,
+      base_amount: baseAmount,
+      description: paymentForm.description || "",
+    });
+
+    if (error) {
+      console.error(error);
+      setMessage("Ödeme kaydedilemedi. Supabase SQL tarafında order_payments tablosu çalıştırılmalı.");
+      return;
+    }
+
+    const nextPaidAmount = paymentTotals.paidAmount + amount;
+    const nextPaymentStatus =
+      nextPaidAmount >= Number(order.total_amount || 0) && Number(order.total_amount || 0) > 0
+        ? "Ödendi"
+        : "Kısmi ödendi";
+
+    await supabase
+      .from("orders")
+      .update({
+        paid_amount: nextPaidAmount,
+        paid_amount_base: Number(order.paid_amount_base || 0) + baseAmount,
+        remaining_amount: Math.max(Number(order.total_amount || 0) - nextPaidAmount, 0),
+        remaining_amount_base: Math.max(Number(order.order_total_base || order.base_amount || 0) - (Number(order.paid_amount_base || 0) + baseAmount), 0),
+        payment_status: nextPaymentStatus,
+        payment_note: paymentForm.description || order.payment_note || "",
+        last_payment_date: paymentForm.payment_date || getToday(),
+      })
+      .eq("id", order.id)
+      .eq("user_id", user.id);
+
+    setPaymentForm({ amount: "", currency: order.currency || "TRY", exchange_rate: Number(order.exchange_rate || 1), payment_date: getToday(), description: "" });
+    setMessage("Sipariş ödemesi kaydedildi.");
     await loadOrder();
   }
 
@@ -418,6 +852,35 @@ export default function OrderDetailPage() {
           </div>
 
           <div className="flex flex-wrap justify-start gap-2 lg:justify-end">
+            {project && (
+              <Link
+                href={`/dashboard/projeler/${project.id}`}
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
+              >
+                Projeye Git
+              </Link>
+            )}
+            <button
+              type="button"
+              onClick={() => setActiveTab("payment")}
+              className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-bold text-emerald-700 hover:bg-emerald-100"
+            >
+              Ödeme Ekle
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("receiving")}
+              className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-bold text-blue-700 hover:bg-blue-100"
+            >
+              Teslim Al
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("receiving")}
+              className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-bold text-amber-700 hover:bg-amber-100"
+            >
+              Kısmi Teslim Al
+            </button>
             {statusActions.map((action) => (
               <button
                 key={action.status}
@@ -494,6 +957,14 @@ export default function OrderDetailPage() {
                 label="Toplam Tutar"
                 value={formatMoney(order.total_amount, order.currency)}
               />
+              <Info
+                label="Ödenen Tutar"
+                value={formatMoney(paymentTotals.paidAmount, order.currency)}
+              />
+              <Info
+                label="Kalan Ödeme"
+                value={formatMoney(paymentTotals.remainingPayment, order.currency)}
+              />
             </div>
           </div>
 
@@ -513,6 +984,8 @@ export default function OrderDetailPage() {
             {[
               ["items", "Ürün Kalemleri"],
               ["delivery", "Teslimatlar"],
+              ["receiving", "Depo Teslim Alma"],
+              ["payment", "Ödemeler"],
               ["history", "Tarihçe"],
               ["notes", "Notlar"],
             ].map(([key, label]) => (
@@ -551,6 +1024,29 @@ export default function OrderDetailPage() {
                 }
                 onSave={saveDelivery}
                 progress={totals.progress}
+              />
+            )}
+            {activeTab === "receiving" && (
+              <ReceivingPanel
+                items={items}
+                order={order}
+                project={project}
+                projectItems={projectItems}
+                receipts={receipts}
+                inputs={receiptInputs}
+                disabled={order.status === "İptal"}
+                onInputChange={updateReceiptInput}
+                onSave={saveReceipt}
+              />
+            )}
+            {activeTab === "payment" && (
+              <PaymentPanel
+                order={order}
+                payments={payments}
+                totals={paymentTotals}
+                form={paymentForm}
+                onFormChange={setPaymentForm}
+                onSave={savePayment}
               />
             )}
             {activeTab === "history" && <HistoryPanel rows={historyRows} />}
@@ -772,6 +1268,320 @@ function DeliveryPanel({
       >
         Düzeltmeleri Kaydet
       </button>
+    </div>
+  );
+}
+
+function ReceivingPanel({
+  items,
+  order,
+  project,
+  projectItems,
+  receipts,
+  inputs,
+  disabled,
+  onInputChange,
+  onSave,
+}) {
+  const parentItems = projectItems.filter((item) => !item.parent_item_id);
+  const itemLabel = (projectItem) => {
+    const parent = parentItems.find((item) => item.id === projectItem.parent_item_id);
+    return `${parent ? `${parent.product_name} / ` : ""}${projectItem.product_name}`;
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-4">
+        <h3 className="text-base font-bold text-emerald-950">
+          Depo teslim alma
+        </h3>
+        <p className="mt-1 text-sm text-emerald-800">
+          Gelen miktar stok girişine işlenir; eksik, fazla ve hatalı gelenler
+          ayrı teslim kaydı olarak saklanır.
+        </p>
+        <div className="mt-3 grid grid-cols-1 gap-3 text-sm md:grid-cols-3">
+          <div className="rounded-lg bg-white p-3">
+            <div className="text-xs font-bold text-slate-500">Sipariş No</div>
+            <div className="mt-1 font-black text-slate-900">{order.order_no || "-"}</div>
+          </div>
+          <div className="rounded-lg bg-white p-3">
+            <div className="text-xs font-bold text-slate-500">Proje</div>
+            <div className="mt-1 font-black text-slate-900">
+              {project ? `${project.project_code} - ${project.project_name}` : "Proje bağlantısı yok"}
+            </div>
+          </div>
+          <div className="rounded-lg bg-white p-3">
+            <div className="text-xs font-bold text-slate-500">Tedarikçi</div>
+            <div className="mt-1 font-black text-slate-900">{order.supplier_name || "-"}</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        {items.map((item, index) => {
+          const input = inputs[index] || {};
+          const remaining = Math.max(Number(item.quantity || 0) - Number(item.deliveredQuantity || 0), 0);
+          const received = Number(input.receivedQuantity ?? remaining);
+          const defective = Number(input.defectiveQuantity || 0);
+          const missing = Math.max(Number(item.quantity || 0) - received, 0);
+          const excess = Math.max(received - Number(item.quantity || 0), 0);
+
+          return (
+            <div key={`${item.productCode}-${item.productName}-${index}`} className="rounded-2xl border border-slate-200 p-4">
+              <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1.3fr_repeat(4,110px)] lg:items-center">
+                <div>
+                  <div className="font-black text-slate-900">{item.productName}</div>
+                  <div className="mt-1 text-xs text-slate-500">
+                    {item.productCode || "-"} · Sipariş: {item.quantity} {item.unit || "adet"} · Önceki teslim: {item.deliveredQuantity}
+                  </div>
+                </div>
+                <NumberInput
+                  label="Gelen"
+                  value={input.receivedQuantity ?? remaining}
+                  disabled={disabled}
+                  onChange={(value) => onInputChange(index, "receivedQuantity", value)}
+                />
+                <NumberInput
+                  label="Eksik"
+                  value={missing}
+                  disabled
+                  onChange={() => {}}
+                />
+                <NumberInput
+                  label="Fazla"
+                  value={excess}
+                  disabled
+                  onChange={() => {}}
+                />
+                <NumberInput
+                  label="Hatalı"
+                  value={input.defectiveQuantity || ""}
+                  disabled={disabled}
+                  onChange={(value) => onInputChange(index, "defectiveQuantity", value)}
+                />
+              </div>
+
+              <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <label className="block">
+                  <span className="mb-1 block text-xs font-bold text-slate-500">Ana ürün / pano</span>
+                  <select
+                    value={input.parentItemId || ""}
+                    disabled={disabled || !project}
+                    onChange={(event) => onInputChange(index, "parentItemId", event.target.value)}
+                    className="w-full rounded-xl border border-slate-300 p-3 text-sm disabled:bg-slate-100"
+                  >
+                    <option value="">Seçilmedi</option>
+                    {parentItems.map((projectItem) => (
+                      <option key={projectItem.id} value={projectItem.id}>
+                        {projectItem.product_name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-xs font-bold text-slate-500">Proje malzemesi</span>
+                  <select
+                    value={input.projectItemId || ""}
+                    disabled={disabled || !project}
+                    onChange={(event) => onInputChange(index, "projectItemId", event.target.value)}
+                    className="w-full rounded-xl border border-slate-300 p-3 text-sm disabled:bg-slate-100"
+                  >
+                    <option value="">Otomatik eşleşme yok</option>
+                    {projectItems.map((projectItem) => (
+                      <option key={projectItem.id} value={projectItem.id}>
+                        {itemLabel(projectItem)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-xs font-bold text-slate-500">Teslim alan</span>
+                  <input
+                    value={input.receivedBy || ""}
+                    disabled={disabled}
+                    onChange={(event) => onInputChange(index, "receivedBy", event.target.value)}
+                    className="w-full rounded-xl border border-slate-300 p-3 text-sm disabled:bg-slate-100"
+                    placeholder="Depo sorumlusu"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-xs font-bold text-slate-500">Teslim tarihi</span>
+                  <input
+                    type="date"
+                    value={input.receiptDate || getToday()}
+                    disabled={disabled}
+                    onChange={(event) => onInputChange(index, "receiptDate", event.target.value)}
+                    className="w-full rounded-xl border border-slate-300 p-3 text-sm disabled:bg-slate-100"
+                  />
+                </label>
+              </div>
+
+              <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-[1fr_auto] md:items-end">
+                <label className="block">
+                  <span className="mb-1 block text-xs font-bold text-slate-500">Açıklama</span>
+                  <input
+                    value={input.note || ""}
+                    disabled={disabled}
+                    onChange={(event) => onInputChange(index, "note", event.target.value)}
+                    className="w-full rounded-xl border border-slate-300 p-3 text-sm disabled:bg-slate-100"
+                    placeholder="Eksik, fazla veya hasar notu"
+                  />
+                </label>
+                <button
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => onSave(index)}
+                  className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white hover:bg-emerald-700 disabled:bg-slate-300"
+                >
+                  Teslim Al
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="rounded-2xl border border-slate-200 p-4">
+        <h3 className="font-black text-slate-900">Teslim alma geçmişi</h3>
+        <div className="mt-3 space-y-2">
+          {receipts.map((receipt) => (
+            <div key={receipt.id} className="grid grid-cols-1 gap-2 rounded-xl bg-slate-50 p-3 text-sm md:grid-cols-[1fr_auto_auto] md:items-center">
+              <div>
+                <div className="font-bold text-slate-900">{receipt.product_name}</div>
+                <div className="text-xs text-slate-500">
+                  {receipt.receipt_date} · {receipt.received_by || "Depo"} · {receipt.note || "-"}
+                </div>
+              </div>
+              <div className="font-bold text-slate-700">
+                Gelen: {receipt.received_quantity} / Kabul: {receipt.accepted_quantity}
+              </div>
+              <span className={`rounded-full px-3 py-1 text-xs font-bold ${getStatusClass(receipt.receipt_status)}`}>
+                {receipt.receipt_status}
+              </span>
+            </div>
+          ))}
+          {receipts.length === 0 && (
+            <div className="rounded-xl bg-slate-50 p-4 text-sm text-slate-500">
+              Henüz teslim alma kaydı yok.
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function NumberInput({ label, value, disabled, onChange }) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-xs font-bold text-slate-500">{label}</span>
+      <input
+        type="number"
+        min="0"
+        value={value}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.value)}
+        className="w-full rounded-xl border border-slate-300 p-3 text-sm font-bold disabled:bg-slate-100"
+      />
+    </label>
+  );
+}
+
+function PaymentPanel({ order, payments, totals, form, onFormChange, onSave }) {
+  return (
+    <div className="grid grid-cols-1 gap-6 lg:grid-cols-[0.9fr_1.2fr]">
+      <form onSubmit={onSave} className="rounded-2xl border border-slate-200 p-5">
+        <h3 className="text-lg font-black text-slate-900">Ödeme Ekle</h3>
+        <div className="mt-4 grid grid-cols-1 gap-4">
+          <label className="block">
+            <span className="mb-1 block text-xs font-bold text-slate-500">Ödeme tutarı</span>
+            <input
+              type="number"
+              min="0"
+              value={form.amount}
+              onChange={(event) => onFormChange((prev) => ({ ...prev, amount: event.target.value }))}
+              className="w-full rounded-xl border border-slate-300 p-3 text-sm"
+              placeholder="0"
+            />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs font-bold text-slate-500">Ödeme tarihi</span>
+            <input
+              type="date"
+              value={form.payment_date}
+              onChange={(event) => onFormChange((prev) => ({ ...prev, payment_date: event.target.value }))}
+              className="w-full rounded-xl border border-slate-300 p-3 text-sm"
+            />
+          </label>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block">
+              <span className="mb-1 block text-xs font-bold text-slate-500">Para birimi</span>
+              <select
+                value={form.currency}
+                onChange={(event) => onFormChange((prev) => ({ ...prev, currency: event.target.value }))}
+                className="w-full rounded-xl border border-slate-300 p-3 text-sm"
+              >
+                {currencyOptions.map((currency) => <option key={currency}>{currency}</option>)}
+              </select>
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs font-bold text-slate-500">Kur</span>
+              <input
+                type="number"
+                min="0"
+                value={form.exchange_rate}
+                onChange={(event) => onFormChange((prev) => ({ ...prev, exchange_rate: event.target.value }))}
+                className="w-full rounded-xl border border-slate-300 p-3 text-sm"
+              />
+            </label>
+          </div>
+          <label className="block">
+            <span className="mb-1 block text-xs font-bold text-slate-500">Açıklama</span>
+            <textarea
+              rows={3}
+              value={form.description}
+              onChange={(event) => onFormChange((prev) => ({ ...prev, description: event.target.value }))}
+              className="w-full rounded-xl border border-slate-300 p-3 text-sm"
+              placeholder="Dekont, vade veya ödeme notu"
+            />
+          </label>
+          <button
+            type="submit"
+            className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white hover:bg-emerald-700"
+          >
+            Ödemeyi Kaydet
+          </button>
+        </div>
+      </form>
+
+      <div className="rounded-2xl border border-slate-200 p-5">
+        <h3 className="text-lg font-black text-slate-900">Ödeme Özeti</h3>
+        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+          <Info label="Sipariş Tutarı" value={formatMoney(order.total_amount, order.currency)} />
+          <Info label="Ödenen" value={formatMoney(totals.paidAmount, order.currency)} />
+          <Info label="Kalan" value={formatMoney(totals.remainingPayment, order.currency)} />
+        </div>
+        <div className="mt-5 space-y-2">
+          {payments.map((payment) => (
+            <div key={payment.id} className="rounded-xl bg-slate-50 p-4 text-sm">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <div className="font-bold text-slate-900">{payment.payment_date || "-"}</div>
+                  <div className="text-xs text-slate-500">{payment.description || "-"}</div>
+                </div>
+                <div className="font-black text-emerald-700">
+                  {formatMoney(payment.amount, order.currency)}
+                </div>
+              </div>
+            </div>
+          ))}
+          {payments.length === 0 && (
+            <div className="rounded-xl bg-slate-50 p-4 text-sm text-slate-500">
+              Henüz ödeme kaydı yok.
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

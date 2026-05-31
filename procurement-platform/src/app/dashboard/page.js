@@ -1,32 +1,126 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
-function StatCard({ icon, title, value, text, href }) {
+const closedOrderStatuses = ["Teslim Edildi", "Tam Teslim", "İptal"];
+const activeProjectStatuses = ["Onaylandı", "Devam Ediyor"];
+
+function todayStart() {
+  const date = new Date();
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+function daysUntil(value) {
+  if (!value) return null;
+  const due = new Date(value);
+  if (Number.isNaN(due.getTime())) return null;
+  due.setHours(0, 0, 0, 0);
+  return Math.ceil((due - todayStart()) / 86400000);
+}
+
+function formatMoney(value) {
+  return `${new Intl.NumberFormat("tr-TR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Number(value || 0))} TRY`;
+}
+
+function orderPaidAmount(order) {
+  return Number(
+    order.paid_amount ||
+      order.paid_total ||
+      order.payment_amount ||
+      order.total_paid ||
+      0,
+  );
+}
+
+function orderRemainingPayment(order) {
+  return Math.max(Number(order.total_amount || 0) - orderPaidAmount(order), 0);
+}
+
+function projectPaidAmount(project, payments) {
+  return payments
+    .filter((payment) => payment.project_id === project.id)
+    .reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+}
+
+function StatCard({ icon, title, value, text, href, tone = "blue" }) {
+  const tones = {
+    blue: "bg-blue-50 text-blue-700 border-blue-100",
+    red: "bg-red-50 text-red-700 border-red-100",
+    orange: "bg-orange-50 text-orange-700 border-orange-100",
+    green: "bg-emerald-50 text-emerald-700 border-emerald-100",
+    slate: "bg-slate-50 text-slate-700 border-slate-100",
+  };
+
   return (
     <Link
       href={href}
-      aria-label={`${title} sayfasina git`}
       className="group block rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-md focus:outline-none focus:ring-4 focus:ring-blue-100"
     >
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100 text-2xl">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div
+            className={`mb-4 inline-flex h-12 w-12 items-center justify-center rounded-2xl border text-xl ${tones[tone]}`}
+          >
             {icon}
           </div>
-          <div>
-            <div className="text-sm text-slate-500">{title}</div>
-            <div className="mt-1 text-3xl font-bold text-slate-900">
-              {value}
-            </div>
-            <div className="text-sm text-slate-500">{text}</div>
+          <div className="text-sm font-semibold text-slate-500">{title}</div>
+          <div className="mt-1 text-3xl font-black text-slate-900">
+            {value}
           </div>
+          <div className="mt-1 text-sm text-slate-500">{text}</div>
         </div>
-        <span className="text-xl text-slate-400">→</span>
+        <span className="text-lg text-slate-400 transition group-hover:translate-x-1">
+          →
+        </span>
       </div>
     </Link>
+  );
+}
+
+function WorkItemCard({ item }) {
+  const tones = {
+    red: "border-red-200 bg-red-50 text-red-900",
+    orange: "border-orange-200 bg-orange-50 text-orange-900",
+    green: "border-emerald-200 bg-emerald-50 text-emerald-900",
+    blue: "border-blue-200 bg-blue-50 text-blue-900",
+  };
+
+  const buttonTones = {
+    red: "bg-red-600 hover:bg-red-700",
+    orange: "bg-orange-600 hover:bg-orange-700",
+    green: "bg-emerald-600 hover:bg-emerald-700",
+    blue: "bg-blue-600 hover:bg-blue-700",
+  };
+
+  return (
+    <div className={`rounded-2xl border p-4 ${tones[item.tone]}`}>
+      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+        <div className="min-w-0">
+          <div className="text-sm font-black">{item.title}</div>
+          <div className="mt-2 text-lg font-black text-slate-950">
+            {item.subject}
+          </div>
+          <div className="mt-1 text-sm font-semibold opacity-80">
+            {item.projectName || "Proje bağlantısı yok"}
+          </div>
+          <p className="mt-3 text-sm leading-6 text-slate-700">
+            {item.description}
+          </p>
+        </div>
+        <Link
+          href={item.href}
+          className={`shrink-0 rounded-xl px-4 py-2 text-center text-sm font-bold text-white ${buttonTones[item.tone]}`}
+        >
+          Detaya git
+        </Link>
+      </div>
+    </div>
   );
 }
 
@@ -47,12 +141,10 @@ function ModuleCard({ icon, title, text, href, button, tone = "blue" }) {
           >
             {icon}
           </div>
-
           <h2 className="text-2xl font-bold text-slate-900">{title}</h2>
           <p className="mt-3 max-w-md text-sm leading-6 text-slate-600">
             {text}
           </p>
-
           <Link
             href={href}
             className={`mt-5 inline-flex rounded-xl border px-5 py-3 text-sm font-bold transition-all hover:scale-[1.02] ${styles[tone]}`}
@@ -60,46 +152,24 @@ function ModuleCard({ icon, title, text, href, button, tone = "blue" }) {
             {button} →
           </Link>
         </div>
-
         <div className="hidden text-7xl opacity-20 md:block">{icon}</div>
       </div>
     </div>
   );
 }
 
-function ActivityEmpty() {
-  return (
-    <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4 text-sm font-medium text-slate-500">
-      Henüz aktivite bulunmuyor.
-    </div>
-  );
-}
-
-function Tip({ text, tone }) {
-  const styles = {
-    blue: "border-blue-200 bg-blue-50 text-blue-900",
-    orange: "border-orange-200 bg-orange-50 text-orange-900",
-    green: "border-green-200 bg-green-50 text-green-900",
-  };
-
-  return (
-    <div
-      className={`rounded-xl border p-4 text-sm font-medium ${styles[tone]}`}
-    >
-      ✅ {text}
-    </div>
-  );
-}
-
 export default function DashboardPage() {
   const [currentTime, setCurrentTime] = useState("--:--");
-
-  const [stats, setStats] = useState({
-    talepler: 0,
-    teklifler: 0,
-    raporlar: 0,
-    siparisler: 0,
+  const [dashboardData, setDashboardData] = useState({
+    requests: [],
+    reports: [],
+    orders: [],
+    products: [],
+    projects: [],
+    projectPayments: [],
+    projectItems: [],
   });
+
   useEffect(() => {
     const updateClock = () => {
       setCurrentTime(
@@ -112,12 +182,11 @@ export default function DashboardPage() {
 
     updateClock();
     const interval = setInterval(updateClock, 1000);
-
     return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
-    const loadDashboardCounts = async () => {
+    const loadDashboard = async () => {
       const {
         data: { user },
       } = await supabase.auth.getUser();
@@ -127,113 +196,325 @@ export default function DashboardPage() {
         return;
       }
 
-      const [taleplerRes, tekliflerRes, raporlarRes, siparislerRes] =
-        await Promise.all([
-          supabase
-            .from("requests")
-            .select("*", { count: "exact", head: true })
-            .eq("user_id", user.id),
+      const [
+        requestsRes,
+        reportsRes,
+        ordersRes,
+        productsRes,
+        projectsRes,
+        paymentsRes,
+        projectItemsRes,
+      ] = await Promise.all([
+        supabase.from("requests").select("*").eq("user_id", user.id),
+        supabase.from("reports").select("*").eq("user_id", user.id),
+        supabase.from("orders").select("*").eq("user_id", user.id),
+        supabase.from("products").select("*").eq("user_id", user.id),
+        supabase.from("projects").select("*").eq("user_id", user.id),
+        supabase.from("project_payments").select("*").eq("user_id", user.id),
+        supabase.from("project_items").select("*").eq("user_id", user.id),
+      ]);
 
-          supabase
-            .from("teklifler")
-            .select("*", { count: "exact", head: true })
-            .eq("user_id", user.id),
-
-          supabase
-            .from("reports")
-            .select("*", { count: "exact", head: true })
-            .eq("user_id", user.id),
-
-          supabase
-            .from("orders")
-            .select("*", { count: "exact", head: true })
-            .eq("user_id", user.id)
-            .eq("status", "Bekliyor"),
-        ]);
-
-      setStats({
-        talepler: taleplerRes.count || 0,
-        teklifler: tekliflerRes.count || 0,
-        raporlar: raporlarRes.count || 0,
-        siparisler: siparislerRes.count || 0,
+      setDashboardData({
+        requests: requestsRes.data || [],
+        reports: reportsRes.data || [],
+        orders: ordersRes.data || [],
+        products: productsRes.data || [],
+        projects: projectsRes.data || [],
+        projectPayments: paymentsRes.data || [],
+        projectItems: projectItemsRes.data || [],
       });
     };
 
-    loadDashboardCounts();
+    loadDashboard();
   }, []);
+
+  const projectById = useMemo(() => {
+    return Object.fromEntries(
+      dashboardData.projects.map((project) => [project.id, project]),
+    );
+  }, [dashboardData.projects]);
+
+  const intelligence = useMemo(() => {
+    const orders = dashboardData.orders;
+    const projects = dashboardData.projects;
+    const products = dashboardData.products;
+    const projectItems = dashboardData.projectItems;
+    const payments = dashboardData.projectPayments;
+
+    const openOrders = orders.filter(
+      (order) => !closedOrderStatuses.includes(order.status),
+    );
+    const delayedOrders = openOrders.filter((order) => {
+      const remainingDays = daysUntil(order.termin_date);
+      return order.status === "Gecikti" || (remainingDays !== null && remainingDays < 0);
+    });
+    const weekDeliveries = openOrders.filter((order) => {
+      const remainingDays = daysUntil(order.termin_date);
+      return remainingDays !== null && remainingDays >= 0 && remainingDays <= 7;
+    });
+    const pendingApprovals = orders.filter((order) =>
+      ["Onay Bekliyor", "Bekliyor", "Taslak"].includes(order.status),
+    );
+    const paymentPendingOrders = orders.filter(
+      (order) => orderRemainingPayment(order) > 0 && Number(order.total_amount || 0) > 0,
+    );
+    const paidButNotReceivedOrders = orders.filter(
+      (order) =>
+        orderPaidAmount(order) > 0 &&
+        !closedOrderStatuses.includes(order.status) &&
+        Number(order.received_total || 0) <= 0,
+    );
+    const criticalProducts = products.filter(
+      (product) =>
+        Number(product.min_stock || 0) > 0 &&
+        Number(product.current_stock || 0) <= Number(product.min_stock || 0),
+    );
+    const activeProjects = projects.filter((project) =>
+      activeProjectStatuses.includes(project.status),
+    );
+    const overBudgetProjects = projects.filter(
+      (project) =>
+        Number(project.estimated_budget || 0) > 0 &&
+        Number(project.actual_cost || 0) > Number(project.estimated_budget || 0),
+    );
+    const delayedCollections = projects.filter((project) => {
+      const paid = projectPaidAmount(project, payments);
+      const remainingCollection = Number(project.contract_amount || 0) - paid;
+      const remainingDays = daysUntil(project.planned_end_date);
+      return remainingCollection > 0 && remainingDays !== null && remainingDays < 0;
+    });
+    const productionOpenPanels = projectItems.filter((item) =>
+      ["Üretime verildi", "Üretimde", "Montajda"].includes(item.status),
+    );
+    const readyToShipPanels = projectItems.filter((item) =>
+      ["Sevke Hazır", "Sevk edildi"].includes(item.panel_status || item.status),
+    );
+
+    const workItems = [
+      ...delayedOrders.slice(0, 4).map((order) => ({
+        tone: "red",
+        title: "Geciken sipariş",
+        subject: order.order_no || order.supplier_name || "Sipariş",
+        projectName: projectById[order.project_id]?.project_name,
+        description: `${order.supplier_name || "Tedarikçi"} teslim tarihi geçti. Termin: ${order.termin_date || "-"}.`,
+        href: `/dashboard/siparisler/${order.id}`,
+      })),
+      ...criticalProducts.slice(0, 3).map((product) => ({
+        tone: "red",
+        title: "Kritik stok",
+        subject: product.product_name || "Ürün",
+        projectName: "",
+        description: `Mevcut stok ${Number(product.current_stock || 0)} ${product.unit || "adet"}, kritik seviye ${Number(product.min_stock || 0)}.`,
+        href: "/dashboard/stok",
+      })),
+      ...weekDeliveries.slice(0, 4).map((order) => ({
+        tone: "orange",
+        title: "Bu hafta teslim",
+        subject: order.order_no || order.supplier_name || "Sipariş",
+        projectName: projectById[order.project_id]?.project_name,
+        description: `${daysUntil(order.termin_date)} gün içinde teslim bekleniyor. Tedarikçi: ${order.supplier_name || "-"}.`,
+        href: `/dashboard/siparisler/${order.id}`,
+      })),
+      ...overBudgetProjects.slice(0, 3).map((project) => ({
+        tone: "orange",
+        title: "Bütçeyi aşan proje",
+        subject: project.project_name,
+        projectName: project.project_code,
+        description: `Gerçekleşen maliyet ${formatMoney(project.actual_cost)}, tahmini bütçe ${formatMoney(project.estimated_budget)}.`,
+        href: `/dashboard/projeler/${project.id}`,
+      })),
+      ...pendingApprovals.slice(0, 3).map((order) => ({
+        tone: "green",
+        title: "Onay bekleyen sipariş",
+        subject: order.order_no || order.supplier_name || "Sipariş",
+        projectName: projectById[order.project_id]?.project_name,
+        description: "Sipariş durumu onay veya takip bekliyor.",
+        href: `/dashboard/siparisler/${order.id}`,
+      })),
+      ...paidButNotReceivedOrders.slice(0, 3).map((order) => ({
+        tone: "blue",
+        title: "Ödendi ama ürün gelmedi",
+        subject: order.order_no || order.supplier_name || "Sipariş",
+        projectName: projectById[order.project_id]?.project_name,
+        description: `${formatMoney(orderPaidAmount(order))} ödeme var, teslim kaydı henüz tamamlanmamış.`,
+        href: `/dashboard/siparisler/${order.id}`,
+      })),
+      ...productionOpenPanels.slice(0, 3).map((item) => ({
+        tone: "blue",
+        title: "Üretimde açık pano",
+        subject: item.product_name || "Pano",
+        projectName: projectById[item.project_id]?.project_name,
+        description: `Durum: ${item.status}. Üretim tamamlanma takibi gerekiyor.`,
+        href: `/dashboard/projeler/${item.project_id}`,
+      })),
+      ...readyToShipPanels.slice(0, 3).map((item) => ({
+        tone: "green",
+        title: "Sevke hazır pano",
+        subject: item.product_name || "Pano",
+        projectName: projectById[item.project_id]?.project_name,
+        description: "Sevk veya kapanış işlemi için kontrol edilebilir.",
+        href: `/dashboard/projeler/${item.project_id}`,
+      })),
+      ...delayedCollections.slice(0, 3).map((project) => ({
+        tone: "orange",
+        title: "Tahsilatı geciken proje",
+        subject: project.project_name,
+        projectName: project.project_code,
+        description: `Bekleyen tahsilat: ${formatMoney(Number(project.contract_amount || 0) - projectPaidAmount(project, payments))}.`,
+        href: `/dashboard/projeler/${project.id}`,
+      })),
+    ].slice(0, 12);
+
+    return {
+      activeProjects,
+      delayedOrders,
+      weekDeliveries,
+      pendingApprovals,
+      paymentPendingOrders,
+      criticalProducts,
+      overBudgetProjects,
+      workItems,
+    };
+  }, [dashboardData, projectById]);
 
   return (
     <div className="flex min-h-screen bg-slate-100">
       <main className="flex-1 p-6">
         <div className="mx-auto max-w-7xl space-y-6">
-          <section className="relative overflow-hidden rounded-3xl border border-slate-200 bg-white p-8 shadow-sm">
-            <div className="relative z-10 flex items-start justify-between gap-6">
+          <section className="rounded-3xl border border-slate-200 bg-white p-8 shadow-sm">
+            <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
               <div>
                 <h1 className="text-4xl font-bold text-slate-900">
-                  Satınalma Yönetim Paneli 👋
+                  Satınalma Yönetim Paneli
                 </h1>
-
-                <p className="mt-3 max-w-2xl text-sm text-slate-600">
-                  Satınalma süreçlerinizi tek yerden yönetin, teklifleri analiz
-                  edin ve en doğru kararları raporlarla destekleyin.
+                <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">
+                  Bugünkü takip işleri, proje riskleri, sipariş teslimleri ve stok
+                  uyarıları tek ekranda toplanır.
                 </p>
-
-                <div className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-3">
-                  <div className="rounded-2xl bg-slate-50 p-4">
-                    <div className="text-sm text-slate-500">Bugün</div>
-                    <div className="mt-1 font-bold text-slate-900">
-                      {new Date().toLocaleDateString("tr-TR", {
-                        day: "2-digit",
-                        month: "long",
-                        year: "numeric",
-                      })}
-                    </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-3">
+                <div className="rounded-2xl bg-slate-50 p-4">
+                  <div className="text-slate-500">Bugün</div>
+                  <div className="mt-1 font-bold text-slate-900">
+                    {new Date().toLocaleDateString("tr-TR", {
+                      day: "2-digit",
+                      month: "long",
+                      year: "numeric",
+                    })}
                   </div>
-
-                  <div className="rounded-2xl bg-slate-50 p-4">
-                    <div className="text-sm text-slate-500">Saat</div>
-                    <div className="mt-1 font-bold text-slate-900">
-                      {currentTime}
-                    </div>
+                </div>
+                <div className="rounded-2xl bg-slate-50 p-4">
+                  <div className="text-slate-500">Saat</div>
+                  <div className="mt-1 font-bold text-slate-900">
+                    {currentTime}
                   </div>
-
-                  <div className="rounded-2xl bg-slate-50 p-4">
-                    <div className="text-sm text-slate-500">Bildirim</div>
-                    <div className="mt-1 font-bold text-slate-900">
-                      0 yeni bildirim
-                    </div>
+                </div>
+                <div className="rounded-2xl bg-slate-50 p-4">
+                  <div className="text-slate-500">İş Merkezi</div>
+                  <div className="mt-1 font-bold text-slate-900">
+                    {intelligence.workItems.length} açık iş
                   </div>
                 </div>
               </div>
             </div>
-
-            <div className="absolute right-12 top-8 hidden text-9xl opacity-10 lg:block">
-              📋
-            </div>
           </section>
 
-          <section className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-7">
             <StatCard
-              icon="📚"
-              title="Toplam Talep Listesi"
-              value={stats.talepler}
-              text="Aktif talepler"
-              href="/dashboard/talepler"
+              icon="📁"
+              title="Aktif Projeler"
+              value={intelligence.activeProjects.length}
+              text="Onaylı/devam eden"
+              href="/dashboard/projeler"
+              tone="blue"
             />
             <StatCard
-              icon="📊"
-              title="Oluşturulan Rapor"
-              value={stats.raporlar}
-              text="Toplam rapor"
-              href="/dashboard/raporlar"
-            />
-            <StatCard
-              icon="🛒"
-              title="Bekleyen Sipariş"
-              value={stats.siparisler}
-              text="Onay bekleyen"
+              icon="⏰"
+              title="Geciken Siparişler"
+              value={intelligence.delayedOrders.length}
+              text="Termin aşımı"
               href="/dashboard/siparisler"
+              tone="red"
             />
+            <StatCard
+              icon="📦"
+              title="Kritik Stok"
+              value={intelligence.criticalProducts.length}
+              text="Minimum altında"
+              href="/dashboard/stok"
+              tone="orange"
+            />
+            <StatCard
+              icon="🚚"
+              title="Bu Hafta Teslimatlar"
+              value={intelligence.weekDeliveries.length}
+              text="7 gün içinde"
+              href="/dashboard/siparisler"
+              tone="green"
+            />
+            <StatCard
+              icon="✅"
+              title="Onay Bekleyenler"
+              value={intelligence.pendingApprovals.length}
+              text="Takip bekliyor"
+              href="/dashboard/siparisler"
+              tone="blue"
+            />
+            <StatCard
+              icon="₺"
+              title="Ödeme Bekleyen"
+              value={intelligence.paymentPendingOrders.length}
+              text="Kalan ödeme var"
+              href="/dashboard/siparisler"
+              tone="orange"
+            />
+            <StatCard
+              icon="📉"
+              title="Bütçeyi Aşan"
+              value={intelligence.overBudgetProjects.length}
+              text="Proje riski"
+              href="/dashboard/projeler"
+              tone="red"
+            />
+          </section>
+
+          <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+              <div>
+                <h2 className="text-2xl font-black text-slate-900">
+                  İş Merkezi
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Bugün bakılması gereken sipariş, stok, proje ve üretim
+                  aksiyonları.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2 text-xs font-bold">
+                <span className="rounded-full bg-red-100 px-3 py-1 text-red-700">
+                  Acil
+                </span>
+                <span className="rounded-full bg-orange-100 px-3 py-1 text-orange-700">
+                  Risk
+                </span>
+                <span className="rounded-full bg-emerald-100 px-3 py-1 text-emerald-700">
+                  Tamamlanabilir
+                </span>
+                <span className="rounded-full bg-blue-100 px-3 py-1 text-blue-700">
+                  Bilgi
+                </span>
+              </div>
+            </div>
+
+            <div className="mt-5 grid grid-cols-1 gap-4 xl:grid-cols-2">
+              {intelligence.workItems.map((item, index) => (
+                <WorkItemCard key={`${item.title}-${item.subject}-${index}`} item={item} />
+              ))}
+              {intelligence.workItems.length === 0 && (
+                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 text-sm font-bold text-emerald-900 xl:col-span-2">
+                  Bugün müdahale gerektiren kritik iş görünmüyor.
+                </div>
+              )}
+            </div>
           </section>
 
           <section className="grid grid-cols-1 gap-5 xl:grid-cols-2">
@@ -245,7 +526,6 @@ export default function DashboardPage() {
               button="Talepleri Yönet"
               tone="purple"
             />
-
             <ModuleCard
               icon="📊"
               title="Teklifler"
@@ -254,7 +534,6 @@ export default function DashboardPage() {
               button="Teklifleri Yönet"
               tone="blue"
             />
-
             <ModuleCard
               icon="🛒"
               title="Siparişler"
@@ -263,7 +542,6 @@ export default function DashboardPage() {
               button="Siparişleri Yönet"
               tone="green"
             />
-
             <ModuleCard
               icon="📄"
               title="Raporlar"
@@ -272,41 +550,6 @@ export default function DashboardPage() {
               button="Raporları Görüntüle"
               tone="orange"
             />
-          </section>
-
-          <section className="grid grid-cols-1 gap-5 xl:grid-cols-2">
-            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-              <div className="flex items-center justify-between">
-                <h2 className="text-xl font-bold text-slate-900">
-                  Son Aktiviteler
-                </h2>
-              </div>
-
-              <div className="mt-5 space-y-4">
-                <ActivityEmpty />
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-              <h2 className="text-xl font-bold text-slate-900">
-                Hızlı İpuçları
-              </h2>
-
-              <div className="mt-5 space-y-3">
-                <Tip
-                  tone="blue"
-                  text="Talep listesi oluşturmadan teklif analizi yapabilirsiniz."
-                />
-                <Tip
-                  tone="orange"
-                  text="Dövizli teklifler için kur bilgilerini güncel tutmayı unutmayın."
-                />
-                <Tip
-                  tone="green"
-                  text="Raporlar sayfasından geçmiş tüm raporlarınıza ulaşabilirsiniz."
-                />
-              </div>
-            </div>
           </section>
         </div>
       </main>

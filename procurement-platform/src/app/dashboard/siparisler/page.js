@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { calculateBaseAmount, currencyOptions, getBaseCurrency, getExchangeRate } from "@/lib/currency";
 
 const emptyForm = {
   orderNo: "",
@@ -11,25 +12,40 @@ const emptyForm = {
   orderDate: "",
   dueDate: "",
   deliveryDate: "",
-  status: "Bekliyor",
+  status: "Taslak",
+  projectId: "",
   items: [],
   totalAmount: 0,
   note: "",
   currency: "TRY",
+  exchangeRate: 1,
   reportId: null,
 };
 
+const defaultCompanySettings = {
+  default_currency: "TRY",
+  base_currency: "TRY",
+  usd_rate: 1,
+  eur_rate: 1,
+  gbp_rate: 1,
+  exchange_rate_date: new Date().toISOString().slice(0, 10),
+  default_payment_term: "60 gün",
+  approval_required: true,
+};
+
 const statusOptions = [
-  "Bekliyor",
-  "Firmaya Gönderildi",
+  "Tümü",
+  "Taslak",
   "Onay Bekliyor",
-  "Üretimde",
-  "Kargolandı",
+  "Sipariş Geçildi",
+  "Tedarikçiden Bekleniyor",
   "Kısmi Teslim",
-  "Teslim Edildi",
+  "Tam Teslim",
   "Gecikti",
   "İptal",
 ];
+
+const editableStatusOptions = statusOptions.filter((status) => status !== "Tümü");
 
 function getToday() {
   return new Date().toISOString().split("T")[0];
@@ -118,13 +134,14 @@ function calculateItemCounts(order) {
 }
 
 function getSmartStatus(order) {
-  const status = order.status || "Bekliyor";
+  const status = order.status || "Taslak";
   if (
+    status === "Tam Teslim" ||
     status === "Teslim Edildi" ||
     status === "İptal" ||
     status === "Kısmi Teslim"
   ) {
-    return status;
+    return status === "Teslim Edildi" ? "Tam Teslim" : status;
   }
 
   if (
@@ -140,12 +157,12 @@ function getSmartStatus(order) {
 
 function getStatusClass(status) {
   const classes = {
-    Bekliyor: "bg-yellow-100 text-yellow-700",
-    "Firmaya Gönderildi": "bg-blue-100 text-blue-700",
+    Taslak: "bg-slate-100 text-slate-700",
     "Onay Bekliyor": "bg-orange-100 text-orange-700",
-    Üretimde: "bg-purple-100 text-purple-700",
-    Kargolandı: "bg-sky-100 text-sky-700",
+    "Sipariş Geçildi": "bg-blue-100 text-blue-700",
+    "Tedarikçiden Bekleniyor": "bg-sky-100 text-sky-700",
     "Kısmi Teslim": "bg-amber-100 text-amber-700",
+    "Tam Teslim": "bg-green-100 text-green-700",
     "Teslim Edildi": "bg-green-100 text-green-700",
     Gecikti: "bg-red-100 text-red-700",
     İptal: "bg-slate-200 text-slate-700",
@@ -188,12 +205,14 @@ export default function OrdersPage() {
   const isSubmittingRef = useRef(false);
   const [orders, setOrders] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
+  const [projects, setProjects] = useState([]);
   const [formData, setFormData] = useState(emptyForm);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("Tümü");
   const [message, setMessage] = useState("");
+  const [companySettings, setCompanySettings] = useState(defaultCompanySettings);
 
   // Initial load should run once; these functions intentionally read current mount state.
   // biome-ignore lint/correctness/useExhaustiveDependencies: initial page hydration only
@@ -230,8 +249,27 @@ export default function OrdersPage() {
       .eq("user_id", user.id)
       .order("name", { ascending: true });
 
+    const { data: projectData } = await supabase
+      .from("projects")
+      .select("id,project_code,project_name,status")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false });
+
+    const { data: settingsData } = await supabase
+      .from("company_settings")
+      .select("*")
+      .eq("user_id", user.id)
+      .limit(1);
+
     setOrders(data || []);
     setSuppliers(supplierData || []);
+    setProjects(projectData || []);
+    if (settingsData?.[0]) {
+      setCompanySettings({
+        ...defaultCompanySettings,
+        ...settingsData[0],
+      });
+    }
   }
 
   function hydratePendingOrder() {
@@ -248,10 +286,13 @@ export default function OrdersPage() {
       product: parsedOrder.reportName || "Karşılaştırma Raporu",
       orderDate: parsedOrder.orderDate || getToday(),
       dueDate: parsedOrder.dueDate || "",
-      status: "Bekliyor",
+      status: "Taslak",
+      projectId: parsedOrder.projectId || "",
       reportId: parsedOrder.reportId || null,
       items,
       totalAmount: calculateOrderTotal(items),
+      currency: parsedOrder.currency || companySettings.default_currency || "TRY",
+      exchangeRate: getExchangeRate(parsedOrder.currency || companySettings.default_currency || "TRY", companySettings),
       note: parsedOrder.paymentTerm
         ? `Ödeme vadesi: ${parsedOrder.paymentTerm}`
         : "",
@@ -265,13 +306,17 @@ export default function OrdersPage() {
   }
 
   const enrichedOrders = useMemo(() => {
+    const projectMap = Object.fromEntries(projects.map((project) => [project.id, project]));
     return orders.map((order) => ({
       ...order,
       status: getSmartStatus(order),
       delayDays: calculateDelayDays(order),
+      project: projectMap[order.project_id] || null,
+      paidAmount: Number(order.paid_amount || 0),
+      remainingPayment: Math.max(Number(order.total_amount || 0) - Number(order.paid_amount || 0), 0),
       ...calculateItemCounts(order),
     }));
-  }, [orders]);
+  }, [orders, projects]);
 
   const filteredOrders = useMemo(() => {
     const needle = search.trim().toLowerCase();
@@ -293,10 +338,10 @@ export default function OrdersPage() {
     0,
   );
   const waitingCount = enrichedOrders.filter(
-    (order) => order.status === "Bekliyor",
+    (order) => order.status === "Taslak" || order.status === "Onay Bekliyor",
   ).length;
   const deliveredCount = enrichedOrders.filter(
-    (order) => order.status === "Teslim Edildi",
+    (order) => order.status === "Tam Teslim" || order.status === "Teslim Edildi",
   ).length;
   const delayedCount = enrichedOrders.filter(
     (order) => order.status === "Gecikti",
@@ -304,7 +349,13 @@ export default function OrdersPage() {
 
   function handleChange(event) {
     const { name, value } = event.target;
-    setFormData((prev) => ({ ...prev, [name]: value }));
+    setFormData((prev) => ({
+      ...prev,
+      [name]: value,
+      ...(name === "currency"
+        ? { exchangeRate: getExchangeRate(value, companySettings) }
+        : {}),
+    }));
   }
 
   function handleSupplierChange(event) {
@@ -391,6 +442,11 @@ export default function OrdersPage() {
       ...emptyForm,
       orderNo: createOrderNo(orders.length),
       orderDate: getToday(),
+      currency: companySettings.default_currency || "TRY",
+      exchangeRate: getExchangeRate(companySettings.default_currency || "TRY", companySettings),
+      note: companySettings.default_payment_term
+        ? `Ödeme vadesi: ${companySettings.default_payment_term}`
+        : "",
     });
     setShowForm(true);
     setMessage("");
@@ -405,12 +461,14 @@ export default function OrdersPage() {
       orderDate: order.order_date || "",
       dueDate: order.termin_date || "",
       deliveryDate: order.delivery_date || "",
-      status: order.status || "Bekliyor",
+      status: order.status || "Taslak",
+      projectId: order.project_id || "",
       reportId: order.report_id || null,
       items: normalizeItems(order.items || []),
       totalAmount: Number(order.total_amount || 0),
       note: order.note || "",
       currency: order.currency || "TRY",
+      exchangeRate: Number(order.exchange_rate || 1),
     });
     setEditingId(order.id);
     setShowForm(true);
@@ -443,6 +501,9 @@ export default function OrdersPage() {
     }
 
     const items = normalizeItems(formData.items);
+    const orderTotal = Number(formData.totalAmount || calculateOrderTotal(items));
+    const baseCurrency = getBaseCurrency(companySettings);
+    const baseAmount = calculateBaseAmount(orderTotal, formData.currency, companySettings, formData.exchangeRate);
     const payload = {
       user_id: user.id,
       order_no: formData.orderNo,
@@ -453,9 +514,19 @@ export default function OrdersPage() {
       termin_date: formData.dueDate || null,
       delivery_date: formData.deliveryDate || null,
       status: formData.status,
+      project_id: formData.projectId || null,
       report_id: formData.reportId || null,
       items,
-      total_amount: Number(formData.totalAmount || calculateOrderTotal(items)),
+      total_amount: orderTotal,
+      original_amount: orderTotal,
+      order_total: orderTotal,
+      exchange_rate: Number(formData.exchangeRate || getExchangeRate(formData.currency, companySettings)),
+      exchange_rate_date: companySettings.exchange_rate_date || getToday(),
+      base_currency: baseCurrency,
+      base_amount: baseAmount,
+      order_total_base: baseAmount,
+      remaining_amount: Math.max(orderTotal - Number(formData.paidAmount || 0), 0),
+      remaining_amount_base: calculateBaseAmount(Math.max(orderTotal - Number(formData.paidAmount || 0), 0), formData.currency, companySettings, formData.exchangeRate),
       note: formData.note || "",
       currency: formData.currency || "TRY",
     };
@@ -469,7 +540,7 @@ export default function OrdersPage() {
       0,
     );
     if (deliveredQuantity >= totalQuantity && totalQuantity > 0) {
-      payload.status = "Teslim Edildi";
+      payload.status = "Tam Teslim";
       payload.delivery_date = payload.delivery_date || getToday();
     } else if (deliveredQuantity > 0) {
       payload.status = "Kısmi Teslim";
@@ -595,6 +666,7 @@ export default function OrdersPage() {
             <OrderForm
               formData={formData}
               suppliers={suppliers}
+              projects={projects}
               editingId={editingId}
               onChange={handleChange}
               onSupplierChange={handleSupplierChange}
@@ -619,7 +691,6 @@ export default function OrdersPage() {
                 onChange={(event) => setStatusFilter(event.target.value)}
                 className="rounded-xl border border-slate-300 p-3 text-sm"
               >
-                <option>Tümü</option>
                 {statusOptions.map((status) => (
                   <option key={status}>{status}</option>
                 ))}
@@ -651,6 +722,7 @@ export default function OrdersPage() {
 function OrderForm({
   formData,
   suppliers,
+  projects,
   editingId,
   onChange,
   onSupplierChange,
@@ -711,7 +783,20 @@ function OrderForm({
           name="status"
           value={formData.status}
           onChange={onChange}
-          options={statusOptions}
+          options={editableStatusOptions}
+        />
+        <Select
+          label="Proje"
+          name="projectId"
+          value={formData.projectId}
+          onChange={onChange}
+          options={[
+            { label: "Proje yok", value: "" },
+            ...projects.map((project) => ({
+              label: `${project.project_code || ""} ${project.project_name || ""}`.trim(),
+              value: project.id,
+            })),
+          ]}
         />
         <Input
           label="Sipariş Tarihi"
@@ -739,7 +824,14 @@ function OrderForm({
           name="currency"
           value={formData.currency}
           onChange={onChange}
-          options={["TRY", "USD", "EUR", "GBP"]}
+          options={currencyOptions}
+        />
+        <Input
+          label="Kur"
+          name="exchangeRate"
+          type="number"
+          value={formData.exchangeRate}
+          onChange={onChange}
         />
       </div>
 
@@ -952,10 +1044,15 @@ function OrdersTable({ orders, onView, onEdit, onDelete }) {
           <thead className="bg-slate-50 text-slate-500">
             <tr>
               <th className="p-4">Sipariş No</th>
-              <th className="p-4">Firma</th>
-              <th className="p-4">Tarih</th>
+              <th className="p-4">Proje</th>
+              <th className="p-4">Ana ürün / pano</th>
+              <th className="p-4">Tedarikçi</th>
+              <th className="p-4">Sipariş Tarihi</th>
               <th className="p-4">Termin</th>
               <th className="p-4">Toplam Tutar</th>
+              <th className="p-4">Ödenen</th>
+              <th className="p-4">Kalan Ödeme</th>
+              <th className="p-4">Teslim</th>
               <th className="p-4">Durum</th>
               <th className="p-4">İşlem</th>
             </tr>
@@ -966,11 +1063,26 @@ function OrdersTable({ orders, onView, onEdit, onDelete }) {
                 <td className="p-4 font-bold text-slate-900">
                   {order.order_no}
                 </td>
+                <td className="p-4">
+                  {order.project
+                    ? `${order.project.project_code || ""} ${order.project.project_name || ""}`.trim()
+                    : "-"}
+                </td>
+                <td className="p-4">{order.product_name || "-"}</td>
                 <td className="p-4">{order.supplier_name}</td>
                 <td className="p-4">{order.order_date || "-"}</td>
                 <td className="p-4">{order.termin_date || "-"}</td>
                 <td className="p-4 font-semibold">
                   {formatMoney(order.total_amount, order.currency || "TRY")}
+                </td>
+                <td className="p-4 font-semibold text-emerald-700">
+                  {formatMoney(order.paidAmount, order.currency || "TRY")}
+                </td>
+                <td className="p-4 font-semibold text-orange-700">
+                  {formatMoney(order.remainingPayment, order.currency || "TRY")}
+                </td>
+                <td className="p-4">
+                  {order.deliveredQuantity}/{order.totalQuantity || 0}
                 </td>
                 <td className="p-4">
                   <span
@@ -1008,7 +1120,7 @@ function OrdersTable({ orders, onView, onEdit, onDelete }) {
             ))}
             {orders.length === 0 && (
               <tr>
-                <td colSpan="7" className="p-8 text-center text-slate-500">
+                <td colSpan="11" className="p-8 text-center text-slate-500">
                   Henüz sipariş kaydı yok.
                 </td>
               </tr>
@@ -1023,7 +1135,7 @@ function OrdersTable({ orders, onView, onEdit, onDelete }) {
 function TerminTable({ orders }) {
   const dueOrders = [...orders]
     .filter(
-      (order) => order.status !== "Teslim Edildi" && order.status !== "İptal",
+      (order) => !["Teslim Edildi", "Tam Teslim", "İptal"].includes(order.status),
     )
     .sort(
       (a, b) =>
@@ -1113,9 +1225,17 @@ function Select({ label, name, value, onChange, options }) {
         onChange={onChange}
         className="w-full rounded-xl border border-slate-300 p-3 text-sm"
       >
-        {options.map((option) => (
-          <option key={option}>{option}</option>
-        ))}
+        {options.map((option) => {
+          const item =
+            typeof option === "string"
+              ? { label: option, value: option }
+              : option;
+          return (
+            <option key={item.value} value={item.value}>
+              {item.label}
+            </option>
+          );
+        })}
       </select>
     </label>
   );

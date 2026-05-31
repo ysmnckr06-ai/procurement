@@ -377,19 +377,26 @@ export default function TaleplerPage() {
                     </div>
 
                     <div>
-                      <div className="text-xs font-semibold text-slate-500">Oluşturulma Tarihi</div>
+                      <div className="text-xs font-semibold text-slate-500">Talep</div>
+                      <div className="mt-1 font-bold text-slate-900">{req.ad || "Talep Listesi"}</div>
+                      <div className="mt-1 text-xs font-semibold text-slate-500">
+                        {req.durum || "Oluşturuldu"} · {req.totalitems || 0} kalem
+                      </div>
+                      <div className="mt-2 text-xs font-semibold text-slate-500">Oluşturulma Tarihi</div>
                       <div className="mt-1 font-semibold text-slate-900">
                         {formatDateTime(req.created_at || req.tarih)}
                       </div>
                     </div>
 
                     <div className="flex gap-2">
-                      <button
-                        onClick={() => handleSavedRequestDownload(req.filepath)}
-                        className="rounded-lg bg-green-600 px-3 py-2 text-sm font-semibold text-white"
-                      >
-                        Excel İndir
-                      </button>
+                      {req.filepath && (
+                        <button
+                          onClick={() => handleSavedRequestDownload(req.filepath)}
+                          className="rounded-lg bg-green-600 px-3 py-2 text-sm font-semibold text-white"
+                        >
+                          Excel İndir
+                        </button>
+                      )}
 
                       <button
                         onClick={() => router.push(`/dashboard/teklifler?requestId=${req.id}`)}
