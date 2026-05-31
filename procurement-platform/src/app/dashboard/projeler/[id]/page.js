@@ -202,10 +202,35 @@ export default function ProjectDetailPage() {
   const [selectedPurchaseItemIds, setSelectedPurchaseItemIds] = useState([]);
   const [createdRequestId, setCreatedRequestId] = useState("");
   const [previewRows, setPreviewRows] = useState([]);
+  const [previewWarnings, setPreviewWarnings] = useState([]);
+  const [previewBlocked, setPreviewBlocked] = useState(false);
+  const [previewSections, setPreviewSections] = useState([]);
   const [previewParentId, setPreviewParentId] = useState("");
   const [isParsing, setIsParsing] = useState(false);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(true);
+  const visiblePreviewSections = useMemo(() => {
+    const seen = new Set();
+
+    return previewSections.filter((section) => {
+      const name = String(section.section_name || "").trim().toUpperCase();
+      const compactName = name.replace(/[^A-Z0-9ÇĞİÖŞÜ]/g, "");
+      const total = Number(section.section_total || 0);
+
+      if (!compactName || ["TL", "TRY", "EUR", "USD"].includes(compactName) || total <= 0) {
+        return false;
+      }
+
+      const key = `${compactName}-${total.toFixed(2)}`;
+
+      if (seen.has(key)) {
+        return false;
+      }
+
+      seen.add(key);
+      return true;
+    });
+  }, [previewSections]);
 
   useEffect(() => {
     loadProject();
@@ -541,6 +566,9 @@ export default function ProjectDetailPage() {
 
     setIsParsing(true);
     setMessage("");
+    setPreviewWarnings([]);
+    setPreviewBlocked(false);
+    setPreviewSections([]);
 
     try {
       const {
@@ -556,7 +584,9 @@ export default function ProjectDetailPage() {
       }
 
       const formData = new FormData();
-      files.forEach((file) => formData.append("files", file));
+      files.forEach((file) => {
+        formData.append("files", file);
+      });
 
       const response = await fetch(`${API_URL}/parse-project-items`, {
         method: "POST",
@@ -565,13 +595,20 @@ export default function ProjectDetailPage() {
       });
 
       const data = await response.json();
+      const warnings = data.warnings || [];
 
-      if (!data.success) {
-        setMessage(data.warnings?.join(" | ") || "Dosyadan ürün okunamadı.");
-        setPreviewRows([]);
+      if (!response.ok || !data.success) {
+        setPreviewWarnings(warnings.length > 0 ? warnings : [data.detail || "Dosyadan ürün okunamadı."]);
+        setPreviewBlocked(true);
+        setPreviewSections(data.sections || []);
+        setMessage("Dosya kontrol edildi ama güvenli aktarım için kilitlendi.");
+        setPreviewRows(data.rows || []);
       } else {
         setPreviewRows(data.rows || []);
-        setMessage(data.warnings?.join(" | ") || `${data.totalRows} satır okundu.`);
+        setPreviewWarnings(warnings);
+        setPreviewBlocked(false);
+        setPreviewSections(data.sections || []);
+        setMessage(`${data.totalRows} satır okundu. Aktarmadan önce önizlemeyi kontrol edin.`);
       }
     } catch (error) {
       console.error(error);
@@ -1001,6 +1038,33 @@ export default function ProjectDetailPage() {
                   onChange={parseProjectItemFiles}
                   className="mt-5 w-full rounded-xl border border-dashed border-blue-300 bg-blue-50 p-4 text-sm"
                 />
+                {previewWarnings.length > 0 && (
+                  <div className={`mt-4 rounded-xl border p-4 text-sm ${previewBlocked ? "border-red-200 bg-red-50 text-red-800" : "border-amber-200 bg-amber-50 text-amber-900"}`}>
+                    <div className="font-bold">{previewBlocked ? "Aktarım kilitlendi" : "Fiyatlandırma notu"}</div>
+                    <ul className="mt-2 list-disc space-y-1 pl-5">
+                      {previewWarnings.slice(0, 6).map((warning) => (
+                        <li key={warning}>{warning}</li>
+                      ))}
+                    </ul>
+                    {previewWarnings.length > 6 && (
+                      <div className="mt-2 text-xs font-bold">
+                        +{previewWarnings.length - 6} ek kontrol uyarısı var.
+                      </div>
+                    )}
+                  </div>
+                )}
+                {visiblePreviewSections.length > 0 && (
+                  <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                    <div className="font-bold">Kategori toplamları ürün olarak aktarılmayacak</div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {visiblePreviewSections.map((section) => (
+                        <span key={`${section.section_name}-${section.section_total}`} className="rounded-full bg-white px-3 py-1 text-xs font-bold">
+                          {section.section_name}: {formatMoney(section.section_total)}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <div className="mt-4 flex flex-col gap-3 md:flex-row md:items-center">
                   <select className="rounded-xl border border-slate-300 p-3 text-sm" value={previewParentId} onChange={(e) => setPreviewParentId(e.target.value)}>
                     <option value="">Aktarırken ana ürün olarak ekle</option>
@@ -1010,11 +1074,11 @@ export default function ProjectDetailPage() {
                   </select>
                   <button
                     type="button"
-                    disabled={previewRows.length === 0 || isParsing}
+                    disabled={previewRows.length === 0 || isParsing || previewBlocked}
                     onClick={importPreviewRows}
                     className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-bold text-white hover:bg-slate-800 disabled:bg-slate-300"
                   >
-                    {isParsing ? "Okunuyor..." : "Projeye Aktar"}
+                    {isParsing ? "Okunuyor..." : previewBlocked ? "Kontrol Gerekli" : "Projeye Aktar"}
                   </button>
                 </div>
                 {previewRows.length > 0 && (
@@ -1034,10 +1098,21 @@ export default function ProjectDetailPage() {
                             <td className="p-3">
                               <div className="font-bold text-slate-900">{row.product_name}</div>
                               <div className="text-slate-500">{row.product_code || "-"}</div>
+                              {row.section_name && (
+                                <div className="mt-1 text-[11px] font-bold text-amber-700">
+                                  {row.section_name}
+                                </div>
+                              )}
                             </td>
                             <td className="p-3">{row.estimated_quantity} {row.unit || "adet"}</td>
-                            <td className="p-3">{formatMoney(row.estimated_unit_price)}</td>
-                            <td className="p-3 font-bold">{formatMoney(row.estimated_total)}</td>
+                            <td className="p-3">
+                              {row.price_status === "section_total_only" ? (
+                                <span className="text-xs font-bold text-amber-700">Kategori toplamında</span>
+                              ) : formatMoney(row.estimated_unit_price)}
+                            </td>
+                            <td className="p-3 font-bold">
+                              {row.price_status === "section_total_only" ? "-" : formatMoney(row.estimated_total)}
+                            </td>
                           </tr>
                         ))}
                       </tbody>

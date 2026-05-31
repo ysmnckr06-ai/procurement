@@ -28,8 +28,8 @@ from fastapi import FastAPI, UploadFile, File, Form, Header, HTTPException, Body
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.parsers.excel_parser import parse_excel
-from app.parsers.pdf_parser import parse_pdf
+from app.parsers.excel_parser import parse_excel, parse_excel_with_audit
+from app.parsers.pdf_parser import parse_pdf, parse_pdf_with_audit
 from app.parsers.image_parser import parse_image
 from app.parsers.request_parser import parse_request_file
 
@@ -56,6 +56,36 @@ def safe_int_form(val):
     except:
         return None
     
+
+def normalize_project_sections(raw_sections):
+    normalized = []
+    seen = set()
+
+    for section in raw_sections:
+        name = str(section.get("section_name") or "").strip().upper()
+        total = safe_float_form(section.get("section_total")) or 0
+        compact_name = re.sub(r"[^A-Z0-9ÇĞİÖŞÜ]", "", name)
+
+        if not compact_name or compact_name in ["TL", "TRY", "EUR", "USD"]:
+            continue
+
+        if total <= 0:
+            continue
+
+        key = (compact_name, round(total, 2))
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+        normalized.append({
+            "section_name": name,
+            "section_total": total,
+        })
+
+    return normalized
+
+
 app = FastAPI()
 
 app.add_middleware(
@@ -295,6 +325,167 @@ def find_merge_key(merged: dict, kod_key: str, aciklama_key: str, birim_key: str
 @app.get("/")
 def root():
     return {"status": "ok", "message": "Procurement backend is running"}
+
+@app.post("/parse-project-items")
+async def parse_project_items(
+    files: list[UploadFile] = File(...),
+    authorization: str = Header(None),
+):
+    verify_user_token(authorization)
+
+    if len(files) > 15:
+        return {
+            "success": False,
+            "warnings": ["En fazla 15 dosya yukleyebilirsiniz."],
+            "rows": [],
+            "totalRows": 0,
+        }
+
+    max_file_size = 10 * 1024 * 1024
+    allowed_extensions = [".pdf", ".xlsx", ".xls", ".png", ".jpg", ".jpeg", ".webp"]
+    all_rows = []
+    sections = []
+    warnings = []
+    blocking_errors = []
+
+    for upload in files:
+        original_name = os.path.basename(upload.filename or "dosya")
+
+        if not any(original_name.lower().endswith(ext) for ext in allowed_extensions):
+            warnings.append(f"Desteklenmeyen dosya: {original_name}")
+            continue
+
+        contents = await upload.read()
+
+        if len(contents) > max_file_size:
+            warnings.append(f"{original_name} dosyasi 10 MB sinirini asiyor.")
+            continue
+
+        save_path = os.path.join(TEMP_DIR, f"{uuid.uuid4()}_{original_name}")
+
+        with open(save_path, "wb") as buffer:
+            buffer.write(contents)
+
+        try:
+            file_type = detect_file_type(original_name)
+            fallback_name = os.path.splitext(original_name)[0].replace("_", " ").replace("-", " ").title()
+
+            if file_type == "excel":
+                audit = parse_excel_with_audit(save_path, fallback_name, original_name)
+                rows = audit["rows"]
+                sections.extend(audit.get("sections", []))
+                blocking_errors.extend(audit.get("errors", []))
+                warnings.extend(audit.get("warnings", []))
+            elif file_type == "pdf":
+                audit = parse_pdf_with_audit(save_path, fallback_name, original_name)
+                rows = audit["rows"]
+                sections.extend(audit.get("sections", []))
+                blocking_errors.extend(audit.get("errors", []))
+                warnings.extend(audit.get("warnings", []))
+            elif file_type == "image":
+                rows = parse_image(save_path, fallback_name, original_name)
+            else:
+                rows = []
+
+            if not rows and file_type != "pdf":
+                rows = parse_request_file(save_path, original_name)
+
+            print("OKUNAN PROJE MALZEME DOSYASI:", original_name)
+            print("OKUNAN PROJE MALZEME SATIR SAYISI:", len(rows))
+            print("OKUNAN PROJE MALZEME ILK SATIRLAR:", rows[:5])
+
+            if not rows:
+                warnings.append(f"Veri okunamadi: {original_name}")
+
+            all_rows.extend(rows)
+        except Exception as e:
+            print("PROJE MALZEME DOSYASI HATASI:", original_name, str(e))
+            warnings.append(f"Hata ({original_name}): {str(e)}")
+
+    auto_code_counter = 1
+    result_rows = []
+
+    for row in all_rows:
+        code = str(row.get("urunKodu") or "").strip().upper()
+        name = str(row.get("urunAciklamasi") or "").strip()
+        unit = str(row.get("birim") or "adet").strip().lower() or "adet"
+
+        quantity = safe_float_form(row.get("firmaAdedi"))
+        if quantity is None:
+            quantity = safe_float_form(row.get("talepEdilenAdet")) or 0
+
+        unit_price = (
+            safe_float_form(row.get("netBirimFiyat"))
+            or safe_float_form(row.get("netBirimFiyatDosyadan"))
+            or safe_float_form(row.get("birimFiyat"))
+            or 0
+        )
+
+        row_total = (
+            safe_float_form(row.get("netToplam"))
+            or safe_float_form(row.get("satirToplamDosyadan"))
+            or 0
+        )
+        price_status = row.get("price_status") or "line_priced"
+
+        if price_status != "line_priced" or row.get("section_name"):
+            price_status = "section_total_only"
+            unit_price = 0
+            row_total = 0
+
+        if row_total > 0 and quantity > 0 and unit_price <= 0:
+            unit_price = row_total / quantity
+
+        if not name or quantity <= 0:
+            continue
+
+        if not code:
+            code = f"PRJ-{auto_code_counter:04d}"
+            auto_code_counter += 1
+
+        result_rows.append({
+            "product_code": code,
+            "product_name": name,
+            "unit": unit,
+            "estimated_quantity": quantity,
+            "estimated_unit_price": unit_price,
+            "estimated_total": row_total if row_total > 0 else quantity * unit_price,
+            "status": "Bekliyor",
+            "note": row.get("firmaAdi") or row.get("firma") or "",
+            "source_file": row.get("kaynakDosya") or "",
+            "source_type": row.get("kaynakTipi") or "",
+            "section_name": row.get("section_name") or "",
+            "section_total": row.get("section_total") or 0,
+            "price_status": price_status,
+        })
+
+    sections = normalize_project_sections(sections)
+
+    if not result_rows:
+        return {
+            "success": False,
+            "warnings": warnings + ["Dosyalardan projeye aktarilabilir urun bulunamadi."],
+            "rows": [],
+            "sections": sections,
+            "totalRows": 0,
+        }
+
+    if blocking_errors:
+        return {
+            "success": False,
+            "warnings": ["Dosya aktarima kilitlendi."] + blocking_errors,
+            "rows": result_rows,
+            "sections": sections,
+            "totalRows": len(result_rows),
+        }
+
+    return {
+        "success": True,
+        "warnings": warnings,
+        "rows": result_rows,
+        "sections": sections,
+        "totalRows": len(result_rows),
+    }
 
 @app.post("/analyze-offers")
 async def analyze_offers(
