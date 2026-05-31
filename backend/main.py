@@ -570,8 +570,6 @@ async def analyze_offers(
     build_excel_report(analyzed, report_path)
 
     order_items = []
-<<<<<<< HEAD:backend/main.py
-
     for group in analyzed:
         best = (
             group.get("best")
@@ -620,57 +618,6 @@ async def analyze_offers(
     }
 
     offer_groups = {}
-=======
-
-    for group in analyzed:
-        best = (
-            group.get("best")
-            or group.get("bestOffer")
-            or group.get("onerilenTeklif")
-            or {}
-        )
-
-        request_item = (
-            group.get("requestItem")
-            or group.get("request")
-            or group.get("talep")
-            or {}
-        )
-
-        order_items.append({
-            "productCode": group.get("urunKodu") or request_item.get("urunKodu") or best.get("urunKodu") or "",
-            "productName": group.get("urunAciklamasi") or request_item.get("urunAciklamasi") or best.get("urunAciklamasi") or "",
-            "quantity": group.get("talepEdilenAdet") or request_item.get("talepEdilenAdet") or best.get("talepEdilenAdet") or 0,
-            "unit": group.get("birim") or request_item.get("birim") or best.get("birim") or "adet",
-            "selectedFirm": best.get("firmaAdi") or best.get("firma") or "",
-            "unitPrice": best.get("birimFiyat") or 0,
-            "discount": best.get("iskonto") or 0,
-            "netUnitPrice": best.get("netBirimFiyat") or 0,
-            "total": best.get("netToplam") or best.get("netToplamTRY") or best.get("toplamTutar") or 0,
-            "paymentTerm": best.get("vade") or "",
-            "deliveryTerm": best.get("termin") or "",
-        })
-        
-        print("ORDER ITEMS SAYISI:", len(order_items))
-        print("ORDER ITEMS:", order_items)
-
-        report_record = {
-            "id": report_id,
-            "user_id": user_id,
-            "ad": request_file_name or "Teklif Mukayes e Raporu",
-            "tarih": datetime.now().strftime("%Y-%m-%d %H:%M"),
-            "tur": "Mukayese",
-            "durum": "Bekliyor",
-            "onerilenfirma": find_best_supplier(analyzed),
-            "reportpath": f"/download-report/{report_name}",
-            "totalrows": len(filtered),
-            "totalgroups": len(analyzed),
-            "analysis": analyzed,
-            "items": order_items,
-        }
-
-        offer_groups = {}
->>>>>>> 26cec89 (Siparis guncelleme ve orders entegrasyonu):main.py
 
     for row in filtered:
         dosya_adi = row.get("kaynakDosya") or row.get("dosyaAdi") or "Bilinmeyen dosya"
