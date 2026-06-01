@@ -3,14 +3,16 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import * as XLSX from "xlsx";
 import { supabase } from "@/lib/supabase";
 import { calculateBaseAmount, currencyOptions, getBaseCurrency, getExchangeRate } from "@/lib/currency";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL;
+const IS_DEMO_MODE = process.env.NODE_ENV !== "production";
 
 const tabs = [
   "Genel Özet",
-  "Tahmini Ürün/Malzeme Listesi",
+  "Malzeme Listesi",
   "Talepler",
   "Teklifler",
   "Siparişler",
@@ -20,17 +22,17 @@ const tabs = [
 ];
 
 const itemStatuses = [
-  "SatÄ±nalma gerekli",
-  "Talep oluÅŸturuldu",
+  "Satınalma gerekli",
+  "Talep oluşturuldu",
   "Teklif bekleniyor",
-  "SipariÅŸ verildi",
-  "TedarikÃ§iden bekleniyor",
-  "KÄ±smi geldi",
+  "Sipariş verildi",
+  "Tedarikçiden bekleniyor",
+  "Kısmi geldi",
   "Eksik geldi",
   "Fazla geldi",
-  "HatalÄ± / arÄ±zalÄ± geldi",
+  "Hatalı / arızalı geldi",
   "Projeye rezerve edildi",
-  "Ãœretime verildi",
+  "Üretime verildi",
   "Sevk edildi",
   "Bekliyor",
   "Satınalma gerekli",
@@ -83,6 +85,17 @@ const emptyPayment = {
   description: "",
 };
 
+const expenseTypes = ["İşçilik", "Nakliye", "Montaj", "Elektrik / su / ofis gideri", "Diğer"];
+
+const emptyExpense = {
+  expense_type: "İşçilik",
+  amount: "",
+  currency: "TRY",
+  exchange_rate: 1,
+  expense_date: new Date().toISOString().slice(0, 10),
+  description: "",
+};
+
 function formatMoney(value) {
   return `${new Intl.NumberFormat("tr-TR", {
     minimumFractionDigits: 2,
@@ -105,6 +118,12 @@ function normalizeText(value) {
     .replaceAll("ş", "s")
     .replaceAll("ö", "o")
     .replaceAll("ç", "c")
+    .replaceAll("ı", "i")
+    .replaceAll("ğ", "g")
+    .replaceAll("ü", "u")
+    .replaceAll("ş", "s")
+    .replaceAll("ö", "o")
+    .replaceAll("ç", "c")
     .replace(/\s+/g, " ");
 }
 
@@ -112,13 +131,40 @@ function normalizeCode(value) {
   return String(value || "").trim().toUpperCase().replace(/\s+/g, "");
 }
 
+function textTokens(value) {
+  return normalizeText(value)
+    .split(/[^a-z0-9]+/i)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 2);
+}
+
+function textSimilarity(left, right) {
+  const leftText = normalizeText(left);
+  const rightText = normalizeText(right);
+  if (!leftText || !rightText) return 0;
+  if (leftText === rightText) return 1;
+  if (leftText.length >= 8 && rightText.length >= 8 && (leftText.includes(rightText) || rightText.includes(leftText))) return 0.9;
+
+  const leftTokens = new Set(textTokens(leftText));
+  const rightTokens = new Set(textTokens(rightText));
+  if (leftTokens.size === 0 || rightTokens.size === 0) return 0;
+
+  let intersection = 0;
+  leftTokens.forEach((token) => {
+    if (rightTokens.has(token)) intersection += 1;
+  });
+
+  const union = new Set([...leftTokens, ...rightTokens]).size;
+  return union > 0 ? intersection / union : 0;
+}
+
 function statusClass(status) {
   const classes = {
     Taslak: "bg-slate-100 text-slate-700",
-    Onaylandı: "bg-blue-100 text-blue-700",
+    "Onayland\u0131": "bg-blue-100 text-blue-700",
     "Devam Ediyor": "bg-emerald-100 text-emerald-700",
-    Tamamlandı: "bg-green-100 text-green-700",
-    İptal: "bg-red-100 text-red-700",
+    "Tamamland\u0131": "bg-green-100 text-green-700",
+    "\u0130ptal": "bg-red-100 text-red-700",
   };
 
   return classes[status] || "bg-slate-100 text-slate-700";
@@ -143,22 +189,22 @@ function itemStatusClass(status) {
     Montajda: "bg-orange-100 text-orange-700",
     "Sevk edildi": "bg-slate-900 text-white",
     "Tamamland\u0131": "bg-green-100 text-green-700",
-    "Talep oluÅŸturuldu": "bg-blue-100 text-blue-700",
+    "Talep oluşturuldu": "bg-blue-100 text-blue-700",
     "Teklif bekleniyor": "bg-indigo-100 text-indigo-700",
-    "TedarikÃ§iden bekleniyor": "bg-sky-100 text-sky-700",
-    "KÄ±smi geldi": "bg-amber-100 text-amber-700",
+    "Tedarikçiden bekleniyor": "bg-sky-100 text-sky-700",
+    "Kısmi geldi": "bg-amber-100 text-amber-700",
     "Eksik geldi": "bg-yellow-100 text-yellow-800",
     "Fazla geldi": "bg-cyan-100 text-cyan-700",
-    "HatalÄ± / arÄ±zalÄ± geldi": "bg-red-100 text-red-700",
+    "Hatalı / arızalı geldi": "bg-red-100 text-red-700",
     "Projeye rezerve edildi": "bg-teal-100 text-teal-700",
-    "Ãœretime verildi": "bg-violet-100 text-violet-700",
+    "Üretime verildi": "bg-violet-100 text-violet-700",
     "Sevk edildi": "bg-slate-900 text-white",
     "Satınalma gerekli": "bg-red-100 text-red-700",
     "Sipariş verildi": "bg-blue-100 text-blue-700",
     Depoda: "bg-emerald-100 text-emerald-700",
     Üretimde: "bg-purple-100 text-purple-700",
     Montajda: "bg-orange-100 text-orange-700",
-    Tamamlandı: "bg-green-100 text-green-700",
+    "Tamamland\u0131": "bg-green-100 text-green-700",
   };
 
   return classes[status] || "bg-slate-100 text-slate-700";
@@ -189,22 +235,41 @@ export default function ProjectDetailPage() {
   const [project, setProject] = useState(null);
   const [items, setItems] = useState([]);
   const [payments, setPayments] = useState([]);
+  const [expenses, setExpenses] = useState([]);
   const [products, setProducts] = useState([]);
   const [projectRequests, setProjectRequests] = useState([]);
   const [projectOrders, setProjectOrders] = useState([]);
+  const [allOrders, setAllOrders] = useState([]);
   const [stockMovements, setStockMovements] = useState([]);
   const [companySettings, setCompanySettings] = useState({ default_currency: "TRY", base_currency: "TRY" });
   const [activeTab, setActiveTab] = useState("Genel Özet");
   const [itemForm, setItemForm] = useState(emptyItem);
   const [paymentForm, setPaymentForm] = useState(emptyPayment);
+  const [expenseForm, setExpenseForm] = useState(emptyExpense);
   const [editingPaymentId, setEditingPaymentId] = useState(null);
   const [expandedItems, setExpandedItems] = useState({});
+  const [expandedRequestIds, setExpandedRequestIds] = useState([]);
+  const [addingItemParentId, setAddingItemParentId] = useState("");
   const [selectedPurchaseItemIds, setSelectedPurchaseItemIds] = useState([]);
+  const [selectedProjectItemIds, setSelectedProjectItemIds] = useState([]);
+  const [itemStockFilter, setItemStockFilter] = useState("all");
   const [createdRequestId, setCreatedRequestId] = useState("");
   const [previewRows, setPreviewRows] = useState([]);
+  const [selectedPreviewRowIds, setSelectedPreviewRowIds] = useState([]);
+  const [previewSearch, setPreviewSearch] = useState("");
+  const [previewCategoryFilter, setPreviewCategoryFilter] = useState("");
+  const [editingPreviewRowId, setEditingPreviewRowId] = useState("");
+  const [rawItems, setRawItems] = useState([]);
+  const [mainProductCandidates, setMainProductCandidates] = useState([]);
+  const [selectedCandidateIds, setSelectedCandidateIds] = useState([]);
+  const [suggestedHierarchyGroups, setSuggestedHierarchyGroups] = useState([]);
+  const [isSuggestingHierarchy, setIsSuggestingHierarchy] = useState(false);
+  const [selectedMainRawIds, setSelectedMainRawIds] = useState([]);
+  const [hierarchyGroups, setHierarchyGroups] = useState([]);
   const [previewWarnings, setPreviewWarnings] = useState([]);
   const [previewBlocked, setPreviewBlocked] = useState(false);
   const [previewSections, setPreviewSections] = useState([]);
+  const [storedSectionTotals, setStoredSectionTotals] = useState([]);
   const [previewParentId, setPreviewParentId] = useState("");
   const [isParsing, setIsParsing] = useState(false);
   const [message, setMessage] = useState("");
@@ -214,7 +279,7 @@ export default function ProjectDetailPage() {
 
     return previewSections.filter((section) => {
       const name = String(section.section_name || "").trim().toUpperCase();
-      const compactName = name.replace(/[^A-Z0-9ÇĞİÖŞÜ]/g, "");
+      const compactName = name.replace(/[^A-Z0-9\u00c7\u011e\u0130\u00d6\u015e\u00dc]/g, "");
       const total = Number(section.section_total || 0);
 
       if (!compactName || ["TL", "TRY", "EUR", "USD"].includes(compactName) || total <= 0) {
@@ -232,7 +297,57 @@ export default function ProjectDetailPage() {
     });
   }, [previewSections]);
 
+  function normalizeGroupName(value) {
+    return String(value || "")
+      .trim()
+      .toLocaleUpperCase("tr-TR")
+      .replace(/[^A-Z0-9\u00c7\u011e\u0130\u00d6\u015e\u00dc]/g, "");
+  }
+
+  function mergedSectionTotals() {
+    return [...visiblePreviewSections, ...storedSectionTotals];
+  }
+
+  function sectionQuoteTotalFor(name, fallbackTotal = 0) {
+    const fallback = Number(fallbackTotal || 0) || 0;
+    const target = normalizeGroupName(name);
+
+    if (!target) {
+      return fallback;
+    }
+
+    const match = mergedSectionTotals().find((section) =>
+      normalizeGroupName(section.section_name) === target && Number(section.section_total || 0) > 0
+    );
+
+    return Number(match?.section_total || 0) || fallback;
+  }
+
+  function rememberSectionTotals(sections) {
+    const cleanSections = (sections || []).filter((section) => Number(section.section_total || 0) > 0);
+    setStoredSectionTotals(cleanSections);
+
+    if (typeof window !== "undefined" && projectId) {
+      window.localStorage.setItem(`project-section-totals-${projectId}`, JSON.stringify(cleanSections));
+    }
+  }
+
+  function rowQuoteTotal(row, title = "") {
+    return sectionQuoteTotalFor(
+      row?.section_name || row?.category || row?.parent_name || title || row?.product_name,
+      Number(row?.quote_total || row?.section_total || row?.estimated_total || row?.total || 0) || 0,
+    );
+  }
+
   useEffect(() => {
+    if (typeof window !== "undefined" && projectId) {
+      try {
+        setStoredSectionTotals(JSON.parse(window.localStorage.getItem(`project-section-totals-${projectId}`) || "[]"));
+      } catch (error) {
+        setStoredSectionTotals([]);
+      }
+    }
+
     loadProject();
   }, [projectId]);
 
@@ -254,7 +369,7 @@ export default function ProjectDetailPage() {
     const user = await getUserOrRedirect();
     if (!user) return;
 
-    const [projectRes, itemRes, paymentRes, productRes, requestRes, orderRes, movementRes, settingsRes] = await Promise.all([
+    const [projectRes, itemRes, paymentRes, expenseRes, productRes, requestRes, orderRes, allOrderRes, movementRes, settingsRes] = await Promise.all([
       supabase
         .from("projects")
         .select("*")
@@ -274,6 +389,12 @@ export default function ProjectDetailPage() {
         .eq("user_id", user.id)
         .order("payment_date", { ascending: false }),
       supabase
+        .from("project_expenses")
+        .select("*")
+        .eq("project_id", projectId)
+        .eq("user_id", user.id)
+        .order("expense_date", { ascending: false }),
+      supabase
         .from("products")
         .select("*")
         .eq("user_id", user.id),
@@ -287,6 +408,11 @@ export default function ProjectDetailPage() {
         .from("orders")
         .select("*")
         .eq("project_id", projectId)
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("orders")
+        .select("*")
         .eq("user_id", user.id)
         .order("created_at", { ascending: false }),
       supabase
@@ -311,12 +437,65 @@ export default function ProjectDetailPage() {
     setProject(projectRes.data);
     setItems(itemRes.data || []);
     setPayments(paymentRes.data || []);
+    setExpenses(expenseRes.data || []);
     setProducts(productRes.data || []);
-    setProjectRequests(requestRes.data || []);
+    let nextProjectRequests = requestRes.data || [];
+    if (projectRes.data?.project_code) {
+      const { data: fallbackRequests, error: fallbackRequestError } = await supabase
+        .from("requests")
+        .select("*")
+        .eq("user_id", user.id)
+        .ilike("ad", `${projectRes.data.project_code}%`)
+        .order("created_at", { ascending: false });
+
+      if (fallbackRequestError) {
+        console.warn("Proje talepleri yedek listeleme uyarisi:", fallbackRequestError);
+      } else {
+        const seenRequestIds = new Set(nextProjectRequests.map((request) => request.id));
+        nextProjectRequests = [
+          ...nextProjectRequests,
+          ...(fallbackRequests || []).filter((request) => !seenRequestIds.has(request.id)),
+        ];
+      }
+    } else if (requestRes.error) {
+      console.warn("Proje talepleri listelenemedi:", requestRes.error);
+    }
+    setProjectRequests(nextProjectRequests);
     setProjectOrders(orderRes.data || []);
+    setAllOrders(allOrderRes.data || orderRes.data || []);
     setStockMovements(movementRes.data || []);
     if (settingsRes.data?.[0]) setCompanySettings(settingsRes.data[0]);
     setLoading(false);
+  }
+
+  async function loadProjectItems() {
+    setLoading(true);
+    const user = await getUserOrRedirect();
+    if (!user) {
+      setLoading(false);
+      return items;
+    }
+
+    const { data, error } = await supabase
+      .from("project_items")
+      .select("*")
+      .eq("project_id", projectId)
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: true });
+
+    if (error) {
+      console.error("Proje malzeme listesi yenilenemedi:", error);
+      setMessage(error.message || "Malzeme listesi yenilenemedi.");
+      setLoading(false);
+      return items;
+    }
+
+    const freshItems = data || [];
+    setItems(freshItems);
+    setSelectedProjectItemIds((prev) => prev.filter((id) => freshItems.some((item) => item.id === id)));
+    setSelectedPurchaseItemIds((prev) => prev.filter((id) => freshItems.some((item) => item.id === id)));
+    setLoading(false);
+    return freshItems;
   }
 
   function stockForItem(item) {
@@ -335,9 +514,45 @@ export default function ProjectDetailPage() {
     return matched.reduce((sum, product) => sum + Number(product.current_stock || 0), 0);
   }
 
+  function stockInfoForItem(item) {
+    const code = normalizeCode(item.product_code);
+    const name = normalizeText(item.product_name);
+
+    const matched = products.filter((product) => {
+      const productCode = normalizeCode(product.product_code);
+      const productName = normalizeText(product.product_name);
+
+      if (code && productCode && code === productCode && name === productName) return true;
+      if (!code && name && name === productName) return true;
+      return false;
+    });
+
+    const stockQuantity = matched.reduce((sum, product) => sum + Number(product.current_stock || 0), 0);
+    const criticalLevels = matched
+      .map((product) => Number(product.minimum_stock ?? product.critical_stock ?? product.min_stock ?? 0))
+      .filter((value) => value > 0);
+    const criticalStock = criticalLevels.length > 0 ? Math.max(...criticalLevels) : 0;
+    const estimatedQuantity = Number(item.estimated_quantity || 0);
+    const requiredQuantity = Math.max(0, estimatedQuantity - stockQuantity);
+    const isMainItem = item.item_type === "main" || (!item.parent_item_id && (childItemsByParent[item.id] || []).length > 0);
+    const needsPurchase = !isMainItem && requiredQuantity > 0;
+    const isCritical = !isMainItem && (criticalStock > 0 ? stockQuantity < criticalStock : requiredQuantity > 0);
+
+    return {
+      stockQuantity,
+      criticalStock,
+      estimatedQuantity,
+      requiredQuantity,
+      needsPurchase,
+      isCritical,
+      isMainItem,
+    };
+  }
+
   function stockWarning(item) {
     const required = Number(item.estimated_quantity || 0);
-    const available = stockForItem(item);
+    const info = stockInfoForItem(item);
+    const available = info.stockQuantity;
 
     if (required <= 0) return { available, text: "Miktar girilmedi", tone: "slate" };
     if (available >= required) return { available, text: "Stok yeterli", tone: "green" };
@@ -345,12 +560,567 @@ export default function ProjectDetailPage() {
     return { available, text: "Satınalma gerekli", tone: "red" };
   }
 
+  function productCardLabel(item) {
+    if (item.item_type === "main") return "";
+    if (item.productCardStatus) return item.productCardStatus;
+    return item.product_id ? "Ürün kartına bağlı" : "Ürün kartı yok";
+  }
+
+  function productCardLabelClass(item) {
+    if (item.productCardStatus === "Ürün kartı oluşturuldu") return "bg-emerald-100 text-emerald-700";
+    if (item.product_id) return "bg-blue-100 text-blue-700";
+    return "bg-slate-100 text-slate-600";
+  }
+
+  function readFirstValue(source, keys) {
+    for (const key of keys) {
+      const value = source?.[key];
+      if (value !== undefined && value !== null && String(value).trim() !== "") return value;
+    }
+    return "";
+  }
+
+  function normalizeOrderItems(order) {
+    return (order?.items || []).map((line) => {
+      const quantity = Number(readFirstValue(line, ["quantity", "miktar", "talepEdilenAdet", "adet", "estimated_quantity"]) || 0) || 0;
+      const unitPrice = Number(readFirstValue(line, ["netUnitPrice", "unitPrice", "birimFiyat", "net_unit_price", "unit_price", "price", "fiyat"]) || 0) || 0;
+      const total = Number(readFirstValue(line, ["total", "netTotal", "net_total", "toplam", "estimated_total"]) || 0) || quantity * unitPrice;
+
+      return {
+        orderId: order.id,
+        projectId: order.project_id,
+        createdAt: order.created_at || order.order_date || order.date || order.delivery_date,
+        productCode: readFirstValue(line, ["productCode", "urunKodu", "product_code", "code", "kod"]),
+        productName: readFirstValue(line, ["productName", "urunAciklamasi", "product_name", "description", "urunAdi", "name", "aciklama"]),
+        quantity,
+        unitPrice,
+        total,
+      };
+    });
+  }
+
+  function projectItemMatchScore(item, line) {
+    const itemCode = normalizeCode(item.product_code);
+    const lineCode = normalizeCode(line.productCode || line.product_code);
+    if (itemCode && lineCode && itemCode === lineCode) return 1;
+
+    const itemName = item.product_name || item.description || "";
+    const lineName = line.productName || line.product_name || line.description || "";
+    return textSimilarity(itemName, lineName);
+  }
+
+  function projectItemMatchesLine(item, line) {
+    return projectItemMatchScore(item, line) >= 0.55;
+  }
+
+  function productMatchesProjectItem(product, item) {
+    const itemCode = normalizeCode(item.product_code);
+    const productCode = normalizeCode(product.product_code);
+    if (itemCode && productCode && itemCode === productCode) return true;
+
+    if (itemCode || productCode) return false;
+
+    const unitMatches = normalizeText(product.unit || "adet") === normalizeText(item.unit || "adet");
+    const nameScore = textSimilarity(product.product_name, item.product_name);
+    const brandScore = item.brand || product.brand ? textSimilarity(product.brand, item.brand) : 1;
+    return unitMatches && nameScore >= 0.7 && brandScore >= 0.5;
+  }
+
+  async function ensureProductCardsForProjectItems(projectItems, userId) {
+    const subItems = (projectItems || []).filter((item) =>
+      item?.id && !item.product_id && item.item_type !== "main" && item.product_name
+    );
+
+    if (subItems.length === 0) return projectItems || [];
+
+    const createdProducts = [];
+    const linkedItems = [];
+
+    for (const item of subItems) {
+      const searchableProducts = [...products, ...createdProducts];
+      let product = searchableProducts.find((candidate) => productMatchesProjectItem(candidate, item));
+      let productCardStatus = "Ürün kartına bağlı";
+
+      if (!product) {
+        const { data: insertedProduct, error: productError } = await supabase
+          .from("products")
+          .insert({
+            user_id: userId,
+            product_code: item.product_code || "",
+            brand: item.brand || "",
+            product_name: item.product_name,
+            unit: item.unit || "adet",
+            current_stock: 0,
+            min_stock: 0,
+            critical_stock: 0,
+            last_unit_price: 0,
+            manual_unit_price: 0,
+            category: "Genel",
+            source: "Proje malzeme listesi",
+          })
+          .select("*")
+          .single();
+
+        if (productError) {
+          console.error("Ürün kartı oluşturulamadı:", productError);
+          continue;
+        }
+
+        product = insertedProduct;
+        createdProducts.push(insertedProduct);
+        productCardStatus = "Ürün kartı oluşturuldu";
+      }
+
+      if (!product?.id) continue;
+
+      const { error: itemError } = await supabase
+        .from("project_items")
+        .update({ product_id: product.id, updated_at: new Date().toISOString() })
+        .eq("id", item.id)
+        .eq("project_id", projectId)
+        .eq("user_id", userId);
+
+      if (itemError) {
+        console.error("Proje malzemesi ürün kartına bağlanamadı:", itemError);
+        continue;
+      }
+
+      linkedItems.push({ ...item, product_id: product.id, productCardStatus });
+    }
+
+    if (createdProducts.length > 0) {
+      setProducts((prev) => [...prev, ...createdProducts]);
+    }
+
+    if (linkedItems.length === 0) return projectItems || [];
+
+    const linkedById = new Map(linkedItems.map((item) => [item.id, item]));
+    return (projectItems || []).map((item) => linkedById.get(item.id) || item);
+  }
+
+  function bestPurchaseLineForItem(item, lines) {
+    const candidates = lines
+      .filter((line) => Number(line.unitPrice || 0) > 0)
+      .map((line) => ({ ...line, matchScore: projectItemMatchScore(item, line) }))
+      .filter((line) => line.matchScore >= 0.55)
+      .sort((a, b) => {
+        if (b.matchScore !== a.matchScore) return b.matchScore - a.matchScore;
+        return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+      });
+
+    return candidates[0];
+  }
+
+  function newestByDate(rows) {
+    return [...rows].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))[0];
+  }
+
+  function priceSourceClass(source) {
+    const classes = {
+      "Proje al\u0131m\u0131ndan": "bg-blue-100 text-blue-700",
+      "Son genel al\u0131mdan": "bg-purple-100 text-purple-700",
+      Tekliften: "bg-emerald-100 text-emerald-700",
+      "\u00dcr\u00fcn kart\u0131ndan": "bg-slate-100 text-slate-700",
+      "Fiyat bulunamad\u0131": "bg-red-100 text-red-700",
+    };
+
+    return classes[source] || classes["Fiyat bulunamad\u0131"];
+  }
+
+  function resolveProjectItemPrice(item, projectOrderRows = projectOrders, allOrderRows = allOrders, movementRows = stockMovements) {
+    const quantity = Number(item.estimated_quantity || 0) || 0;
+    const projectOrderLines = projectOrderRows.flatMap(normalizeOrderItems);
+    const allOrderLines = allOrderRows.flatMap(normalizeOrderItems);
+
+    const projectOrderMatch = bestPurchaseLineForItem(item, projectOrderLines);
+    if (projectOrderMatch) {
+      const unitPrice = Number(projectOrderMatch.unitPrice || 0);
+      return { unitPrice, total: quantity * unitPrice, source: "Proje al\u0131m\u0131ndan", orderId: projectOrderMatch.orderId, sourceDate: projectOrderMatch.createdAt };
+    }
+
+    const movementMatch = (movementRows || [])
+      .filter((movement) => Number(movement.unit_price || 0) > 0)
+      .map((movement) => ({
+        unitPrice: Number(movement.unit_price || 0),
+        orderId: movement.order_id,
+        createdAt: movement.created_at || movement.movement_date,
+        matchScore: projectItemMatchScore(item, { productCode: movement.product_code, productName: movement.product_name }),
+      }))
+      .filter((movement) => movement.matchScore >= 0.55)
+      .sort((a, b) => {
+        if (b.matchScore !== a.matchScore) return b.matchScore - a.matchScore;
+        return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+      })[0];
+    if (movementMatch) {
+      const unitPrice = Number(movementMatch.unitPrice || 0);
+      return { unitPrice, total: quantity * unitPrice, source: "Proje al\u0131m\u0131ndan", orderId: movementMatch.orderId, sourceDate: movementMatch.createdAt };
+    }
+
+    const generalOrderMatch = bestPurchaseLineForItem(item, allOrderLines);
+    if (generalOrderMatch) {
+      const unitPrice = Number(generalOrderMatch.unitPrice || 0);
+      return { unitPrice, total: quantity * unitPrice, source: "Son genel al\u0131mdan", orderId: generalOrderMatch.orderId, sourceDate: generalOrderMatch.createdAt };
+    }
+
+    const quoteUnitPrice = Number(item.quote_unit_price || item.estimated_unit_price || 0);
+    const quoteTotal = sectionQuoteTotalFor(item.product_name, Number(item.quote_total || item.estimated_total || 0) || 0);
+    if (quoteUnitPrice > 0 || quoteTotal > 0) {
+      const unitPrice = quoteUnitPrice || (quantity > 0 ? quoteTotal / quantity : quoteTotal);
+      return { unitPrice, total: quantity > 0 ? quantity * unitPrice : quoteTotal, source: "Tekliften", orderId: null, sourceDate: item.updated_at || item.created_at };
+    }
+
+    const productMatch = [...products]
+      .filter((product) => Number(product.last_unit_price || 0) > 0)
+      .map((product) => ({
+        ...product,
+        matchScore: projectItemMatchScore(item, { productCode: product.product_code, productName: product.product_name }),
+      }))
+      .filter((product) => product.matchScore >= 0.55)
+      .sort((a, b) => {
+        if (b.matchScore !== a.matchScore) return b.matchScore - a.matchScore;
+        return new Date(b.last_movement_at || b.updated_at || b.created_at || 0) - new Date(a.last_movement_at || a.updated_at || a.created_at || 0);
+      })[0];
+    if (productMatch) {
+      const unitPrice = Number(productMatch.last_unit_price || 0);
+      return { unitPrice, total: quantity * unitPrice, source: "\u00dcr\u00fcn kart\u0131ndan", orderId: null, sourceDate: productMatch.updated_at || productMatch.created_at };
+    }
+
+    return { unitPrice: 0, total: 0, source: "Fiyat bulunamad\u0131", orderId: null, sourceDate: null };
+  }
   function updateItemForm(field, value) {
     setItemForm((prev) => ({ ...prev, [field]: value }));
   }
 
   function updatePaymentForm(field, value) {
     setPaymentForm((prev) => ({ ...prev, [field]: value }));
+  }
+
+  function updateExpenseForm(field, value) {
+    setExpenseForm((prev) => ({ ...prev, [field]: value }));
+  }
+
+  function toggleMainProductCandidate(candidateId) {
+    setSelectedCandidateIds((prev) =>
+      prev.includes(candidateId)
+        ? prev.filter((id) => id !== candidateId)
+        : [...prev, candidateId],
+    );
+  }
+
+  async function loadMainProductCandidates(nextRawItems, token) {
+    if (!nextRawItems || nextRawItems.length === 0 || !token || !API_URL) {
+      setMainProductCandidates([]);
+      setSelectedCandidateIds([]);
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/suggest-main-products`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ raw_items: nextRawItems }),
+      });
+
+      const data = await response.json();
+      const candidates = data.success ? data.main_product_candidates || [] : [];
+      setMainProductCandidates(candidates);
+      setSelectedCandidateIds(candidates.filter((candidate) => candidate.selected).map((candidate) => candidate.id));
+    } catch (error) {
+      console.error(error);
+      setMainProductCandidates([]);
+      setSelectedCandidateIds([]);
+    }
+  }
+
+  async function suggestProductHierarchy() {
+    if (selectedCandidateIds.length === 0) {
+      setMessage("Alt ürün önerisi için önce en az bir ana ürün adayı seçin.");
+      return;
+    }
+
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    const token = session?.access_token;
+
+    if (!token || !API_URL) {
+      setMessage("Alt ürün önerisi için oturum veya API adresi bulunamadı.");
+      return;
+    }
+
+    const selectedMainProducts = mainProductCandidates
+      .filter((candidate) => selectedCandidateIds.includes(candidate.id))
+      .map((candidate) => ({
+        id: candidate.id,
+        raw_item_id: candidate.raw_item_id,
+        title: candidate.title,
+        estimated_total: candidate.estimated_total,
+      }));
+
+    setIsSuggestingHierarchy(true);
+    setMessage("");
+
+    try {
+      const response = await fetch(`${API_URL}/suggest-product-hierarchy`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          raw_items: rawItems,
+          selected_main_products: selectedMainProducts,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        setSuggestedHierarchyGroups([]);
+        setMessage(data.warnings?.join(" | ") || "Alt ürün önerisi oluşturulamadı.");
+        return;
+      }
+
+      setSuggestedHierarchyGroups(data.hierarchy_groups || []);
+      setMessage("Alt ürün eşleştirme önerisi oluşturuldu. Bu aşamada sadece görüntülenir.");
+    } catch (error) {
+      console.error(error);
+      setSuggestedHierarchyGroups([]);
+      setMessage("Alt ürün önerisi sırasında hata oluştu.");
+    } finally {
+      setIsSuggestingHierarchy(false);
+    }
+  }
+
+  function removeSuggestedGroup(groupId) {
+    setSuggestedHierarchyGroups((prev) => prev.filter((group) => group.id !== groupId));
+  }
+
+  function removeSuggestedSubItem(groupId, rawItemId) {
+    setSuggestedHierarchyGroups((prev) =>
+      prev.map((group) =>
+        group.id === groupId
+          ? { ...group, sub_items: (group.sub_items || []).filter((item) => item.raw_item_id !== rawItemId) }
+          : group,
+      ),
+    );
+  }
+
+  function moveSuggestedSubItem(fromGroupId, rawItemId, targetGroupId) {
+    if (fromGroupId === targetGroupId) return;
+
+    setSuggestedHierarchyGroups((prev) => {
+      let movingItem = null;
+      const withoutItem = prev.map((group) => ({
+        ...group,
+        sub_items: (group.sub_items || []).filter((item) => {
+          if (group.id === fromGroupId && item.raw_item_id === rawItemId) {
+            movingItem = item;
+            return false;
+          }
+          return true;
+        }),
+      }));
+
+      if (!movingItem) return prev;
+
+      return withoutItem.map((group) =>
+        group.id === targetGroupId
+          ? { ...group, sub_items: [...(group.sub_items || []), movingItem] }
+          : group,
+      );
+    });
+  }
+
+  function rawItemToSuggestedSubItem(rawItem) {
+    return {
+      raw_item_id: rawItem.id,
+      title: rawItem.description || rawItem.product_code || "-",
+      product_code: rawItem.product_code || "",
+      brand: rawItem.brand || "",
+      quantity: Number(rawItem.quantity || 0),
+      unit: rawItem.unit || "",
+      unit_price: Number(rawItem.unit_price || 0),
+      total: Number(rawItem.total || 0),
+      currency: rawItem.currency || "TRY",
+      suggestion_score: 0,
+      reasons: ["kullanıcı manuel ekledi"],
+    };
+  }
+
+  function addRawItemToSuggestedGroup(groupId, rawItemId) {
+    const rawItem = rawItems.find((item) => item.id === rawItemId);
+    if (!rawItem) return;
+
+    setSuggestedHierarchyGroups((prev) =>
+      prev.map((group) => {
+        if (group.id !== groupId) return group;
+        const exists = (group.sub_items || []).some((item) => item.raw_item_id === rawItemId);
+        if (exists) return group;
+        return { ...group, sub_items: [...(group.sub_items || []), rawItemToSuggestedSubItem(rawItem)] };
+      }),
+    );
+  }
+
+  function promoteSuggestedSubItem(groupId, rawItemId) {
+    setSuggestedHierarchyGroups((prev) => {
+      let promoted = null;
+      const groups = prev.map((group) => ({
+        ...group,
+        sub_items: (group.sub_items || []).filter((item) => {
+          if (group.id === groupId && item.raw_item_id === rawItemId) {
+            promoted = item;
+            return false;
+          }
+          return true;
+        }),
+      }));
+
+      if (!promoted) return prev;
+
+      return [
+        ...groups,
+        {
+          id: `manual-group-${promoted.raw_item_id}`,
+          main_product: {
+            raw_item_id: promoted.raw_item_id,
+            title: promoted.title,
+            estimated_total: promoted.total || 0,
+          },
+          sub_items: [],
+          suggestion_score: 0,
+          user_confirmed: false,
+        },
+      ];
+    });
+  }
+
+  function rawItemById(rawItemId) {
+    return rawItems.find((item) => item.id === rawItemId) || {};
+  }
+
+  function suggestedMainPayload(group, userId) {
+    const raw = rawItemById(group.main_product?.raw_item_id);
+    const title = group.main_product?.title || raw.description || raw.product_code || "Ana ürün";
+    const quoteTotal = sectionQuoteTotalFor(
+      raw.section_name || title,
+      Number(group.main_product?.estimated_total || raw.section_total || raw.total || 0) || 0,
+    );
+
+    return {
+      user_id: userId,
+      project_id: projectId,
+      parent_item_id: null,
+      product_code: raw.product_code || "",
+      brand: raw.brand || "",
+      product_name: title,
+      unit: raw.unit || "adet",
+      estimated_quantity: Number(raw.quantity || 1) || 1,
+      estimated_unit_price: quoteTotal,
+      quote_unit_price: quoteTotal,
+      currency: raw.currency || "TRY",
+      estimated_total: quoteTotal,
+      quote_total: quoteTotal,
+      status: "Bekliyor",
+      source_file: raw.source_file || "",
+      source_type: raw.source_type || "",
+      raw_item_id: group.main_product?.raw_item_id || "",
+      item_type: "main",
+      note: "Hiyerarşik teklif aktarımı",
+      updated_at: new Date().toISOString(),
+    };
+  }
+
+  function suggestedSubPayload(item, parentId, userId) {
+    const raw = rawItemById(item.raw_item_id);
+
+    return {
+      user_id: userId,
+      project_id: projectId,
+      parent_item_id: parentId,
+      product_code: item.product_code || raw.product_code || "",
+      brand: item.brand || raw.brand || "",
+      product_name: item.title || raw.description || raw.product_code || "Alt ürün",
+      unit: item.unit || raw.unit || "adet",
+      estimated_quantity: Number(item.quantity || raw.quantity || 0),
+      estimated_unit_price: Number(item.unit_price || raw.unit_price || 0),
+      currency: item.currency || raw.currency || "TRY",
+      estimated_total: Number(item.total || raw.total || 0),
+      status: "Bekliyor",
+      source_file: raw.source_file || "",
+      source_type: raw.source_type || "",
+      raw_item_id: item.raw_item_id || raw.id || "",
+      item_type: "sub",
+      note: (item.reasons || []).join(", "),
+      updated_at: new Date().toISOString(),
+    };
+  }
+
+  async function saveSuggestedHierarchyToProject() {
+    const validGroups = suggestedHierarchyGroups.filter((group) => group.main_product?.raw_item_id);
+
+    if (validGroups.length === 0) {
+      setMessage("Kaydedilecek hiyerarşi grubu yok.");
+      return;
+    }
+
+    const user = await getUserOrRedirect();
+    if (!user) return;
+
+    setMessage("");
+
+    const parentPayload = validGroups.map((group) => suggestedMainPayload(group, user.id));
+
+    const { data: insertedParents, error: parentError } = await supabase
+      .from("project_items")
+      .insert(parentPayload)
+      .select("*");
+
+    if (parentError) {
+      setMessage("Hiyerarşik kayıt yapılamadı. Supabase'de project_items için brand, source_file, source_type, raw_item_id ve item_type alanları çalıştırılmış olmalı.");
+      return;
+    }
+
+    const childPayload = [];
+    validGroups.forEach((group, index) => {
+      const parent = insertedParents?.[index];
+      if (!parent) return;
+
+      (group.sub_items || []).forEach((item) => {
+        childPayload.push(suggestedSubPayload(item, parent.id, user.id));
+      });
+    });
+
+    let insertedChildren = [];
+    if (childPayload.length > 0) {
+      const { data, error } = await supabase
+        .from("project_items")
+        .insert(childPayload)
+        .select("*");
+
+      if (error) {
+        setMessage("Ana ürünler kaydedildi ama alt ürünler kaydedilemedi.");
+        await loadProject();
+        return;
+      }
+
+      insertedChildren = data || [];
+    }
+
+    const nextItems = await ensureProductCardsForProjectItems([...items, ...(insertedParents || []), ...insertedChildren], user.id);
+    setItems(nextItems);
+    setSuggestedHierarchyGroups([]);
+    setMainProductCandidates([]);
+    setSelectedCandidateIds([]);
+    setRawItems([]);
+    setPreviewRows([]);
+    setPreviewParentId("");
+    await refreshProjectBudget(nextItems);
+    await loadProject();
+    setMessage("Hiyerarşi proje malzeme listesine ana ürün ve alt ürün olarak kaydedildi.");
   }
 
   async function refreshProjectBudget(nextItems) {
@@ -394,6 +1164,7 @@ export default function ProjectDetailPage() {
       estimated_total: total,
       status: itemForm.status,
       note: itemForm.note.trim(),
+      item_type: itemForm.parent_item_id ? "sub" : "main",
       updated_at: new Date().toISOString(),
     };
 
@@ -408,9 +1179,10 @@ export default function ProjectDetailPage() {
       return;
     }
 
-    const nextItems = [...items, data];
+    const nextItems = await ensureProductCardsForProjectItems([...items, data], user.id);
     setItems(nextItems);
     setItemForm(emptyItem);
+    setAddingItemParentId("");
     await refreshProjectBudget(nextItems);
     await loadProject();
   }
@@ -430,6 +1202,18 @@ export default function ProjectDetailPage() {
     setItems((prev) => prev.map((item) => (item.id === itemId ? { ...item, status } : item)));
   }
 
+  function startAddingChildItem(parentItem) {
+    const willClose = addingItemParentId === parentItem.id;
+    setAddingItemParentId(willClose ? "" : parentItem.id);
+    setExpandedItems((prev) => ({ ...prev, [parentItem.id]: !willClose }));
+    setItemForm({
+      ...emptyItem,
+      parent_item_id: willClose ? "" : parentItem.id,
+      unit: "adet",
+      status: "Bekliyor",
+    });
+  }
+
   async function deleteProjectItem(itemId) {
     const approved = window.confirm("Bu tahmini malzeme satırı silinsin mi?");
     if (!approved) return;
@@ -445,10 +1229,108 @@ export default function ProjectDetailPage() {
       return;
     }
 
-    const nextItems = items.filter((item) => item.id !== itemId && item.parent_item_id !== itemId);
+    const removedIds = new Set([itemId, ...items.filter((item) => item.parent_item_id === itemId).map((item) => item.id)]);
+    const nextItems = items.filter((item) => !removedIds.has(item.id));
+    setSelectedProjectItemIds((prev) => prev.filter((id) => !removedIds.has(id)));
+    setSelectedPurchaseItemIds((prev) => prev.filter((id) => !removedIds.has(id)));
     setItems(nextItems);
     await refreshProjectBudget(nextItems);
-    await loadProject();
+    const freshItems = await loadProjectItems();
+    await refreshProjectBudget(freshItems);
+  }
+
+  function expandProjectItemSelection(selectedIds) {
+    const deleteIds = new Set(selectedIds);
+    items.forEach((item) => {
+      if (item.parent_item_id && deleteIds.has(item.parent_item_id)) {
+        deleteIds.add(item.id);
+      }
+    });
+    return Array.from(deleteIds);
+  }
+
+  function toggleProjectItemSelection(itemId) {
+    setSelectedProjectItemIds((prev) => {
+      if (prev.includes(itemId)) {
+        return prev.filter((id) => id !== itemId);
+      }
+      return [...prev, itemId];
+    });
+  }
+
+  function toggleAllProjectItemsSelection() {
+    setSelectedProjectItemIds((prev) => {
+      if (allProjectItemsSelected) {
+        return [];
+      }
+      return items.map((item) => item.id);
+    });
+  }
+
+  async function deleteSelectedProjectItems() {
+    const knownItemIds = new Set(items.map((item) => item.id).filter(Boolean));
+    const selectedIds = Array.from(new Set(selectedProjectItemIds)).filter((id) => knownItemIds.has(id));
+    if (selectedIds.length === 0) return;
+
+    const approved = window.confirm("Seçili ürünleri silmek istediğine emin misin?");
+    if (!approved) return;
+
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    const token = session?.access_token;
+
+    if (!token || !API_URL) {
+      setMessage("Toplu silme i\u00e7in API ba\u011flant\u0131s\u0131 veya oturum bulunamad\u0131.");
+      return;
+    }
+
+    try {
+      console.log("Toplu silme secilen id sayisi:", selectedIds.length);
+      const response = await fetch(`${API_URL}/project-items/bulk-delete`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          project_id: projectId,
+          selected_ids: selectedIds,
+          batch_size: 50,
+        }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok || !data.success) {
+        console.error("Toplu silme backend hatası:", data);
+        setMessage(data.detail || data.message || "Seçili ürünler silinemedi.");
+        return;
+      }
+
+      const deletedIds = data.deleted_ids || [];
+      console.log("Toplu silme alt urun sayisi:", data.child_count || 0);
+      console.log("Toplu silme batch sonuclari:", data.batch_logs || []);
+      console.log("Toplu silme kalan kayit sayisi:", data.remaining_count || 0);
+      const optimisticDeletedIds = data.remaining_count > 0
+        ? deletedIds
+        : Array.from(new Set([...deletedIds, ...selectedProjectItemDeleteIds, ...selectedIds]));
+      const nextItems = items.filter((item) => !optimisticDeletedIds.includes(item.id));
+      setSelectedProjectItemIds([]);
+      setSelectedPurchaseItemIds((prev) => prev.filter((id) => !optimisticDeletedIds.includes(id)));
+      setItems(nextItems);
+      await refreshProjectBudget(nextItems);
+      const freshItems = await loadProjectItems();
+      await refreshProjectBudget(freshItems);
+      if (data.remaining_count > 0) {
+        setMessage(`${data.remaining_count} kayıt silinemedi. ${data.deleted_count || deletedIds.length} kayıt silindi.`);
+      } else {
+        setMessage(`${data.deleted_count || deletedIds.length} ürün silindi.`);
+      }
+    } catch (error) {
+      console.error("Toplu silme ba\u011flant\u0131 hatas\u0131:", error);
+      setMessage(error.message || "Seçili ürünler silinemedi.");
+    }
   }
 
   async function savePayment(event) {
@@ -510,7 +1392,7 @@ export default function ProjectDetailPage() {
     );
     setPaymentForm(emptyPayment);
     setEditingPaymentId(null);
-    setMessage(editingPaymentId ? "Ã–deme kaydÄ± gÃ¼ncellendi." : "Ã–deme kaydÄ± eklendi.");
+    setMessage(editingPaymentId ? "\u00d6deme kayd\u0131 g\u00fcncellendi." : "\u00d6deme kayd\u0131 eklendi.");
   }
 
   function editPayment(payment) {
@@ -523,7 +1405,7 @@ export default function ProjectDetailPage() {
       payment_type: payment.payment_type || "Avans",
       description: payment.description || "",
     });
-    setMessage("Ã–deme kaydÄ± dÃ¼zenleniyor. DeÄŸiÅŸiklikleri formdan kaydedebilirsiniz.");
+    setMessage("\u00d6deme kayd\u0131 d\u00fczenleniyor. De\u011fi\u015fiklikleri formdan kaydedebilirsiniz.");
   }
 
   function cancelPaymentEdit() {
@@ -533,7 +1415,7 @@ export default function ProjectDetailPage() {
   }
 
   async function deletePayment(payment) {
-    const approved = window.confirm("Bu Ã¶deme kaydÄ±nÄ± silmek istediÄŸinize emin misiniz?");
+    const approved = window.confirm("Bu \u00f6deme kayd\u0131n\u0131 silmek istedi\u011finize emin misiniz?");
     if (!approved) return;
 
     setMessage("");
@@ -548,7 +1430,7 @@ export default function ProjectDetailPage() {
       .eq("user_id", user.id);
 
     if (error) {
-      setMessage("Ã–deme kaydÄ± silinemedi.");
+      setMessage("?deme kayd? silinemedi.");
       return;
     }
 
@@ -557,7 +1439,467 @@ export default function ProjectDetailPage() {
       setEditingPaymentId(null);
       setPaymentForm(emptyPayment);
     }
-    setMessage("Ã–deme kaydÄ± silindi. Finans Ã¶zetleri yeniden hesaplandÄ±.");
+    setMessage("?deme kayd? silindi. Finans ?zetleri yeniden hesapland?.");
+  }
+
+  async function addExpense(event) {
+    event.preventDefault();
+    setMessage("");
+
+    const user = await getUserOrRedirect();
+    if (!user) return;
+
+    const amount = Number(expenseForm.amount || 0);
+    if (amount <= 0) {
+      setMessage("Ek gider tutarı sıfırdan büyük olmalı.");
+      return;
+    }
+
+    const currency = expenseForm.currency || getBaseCurrency(companySettings);
+    const exchangeRate = Number(expenseForm.exchange_rate || getExchangeRate(currency, companySettings));
+    const payload = {
+      user_id: user.id,
+      project_id: projectId,
+      expense_type: expenseForm.expense_type || "Diğer",
+      amount,
+      currency,
+      exchange_rate: exchangeRate,
+      base_currency: getBaseCurrency(companySettings),
+      base_amount: calculateBaseAmount(amount, currency, companySettings, exchangeRate),
+      expense_date: expenseForm.expense_date || new Date().toISOString().slice(0, 10),
+      description: String(expenseForm.description || "").trim(),
+    };
+
+    const { data, error } = await supabase
+      .from("project_expenses")
+      .insert(payload)
+      .select("*")
+      .single();
+
+    if (error) {
+      console.error("Ek gider kaydedilemedi:", error);
+      setMessage(error.message || "Ek gider kaydedilemedi.");
+      return;
+    }
+
+    setExpenses((prev) => [data, ...prev]);
+    setExpenseForm(emptyExpense);
+    setMessage("Ek gider eklendi. Proje maliyeti yeniden hesaplandı.");
+  }
+
+  async function deleteExpense(expense) {
+    const approved = window.confirm("Bu ek gider kaydını silmek istediğinize emin misiniz?");
+    if (!approved) return;
+
+    setMessage("");
+    const user = await getUserOrRedirect();
+    if (!user) return;
+
+    const { error } = await supabase
+      .from("project_expenses")
+      .delete()
+      .eq("id", expense.id)
+      .eq("project_id", projectId)
+      .eq("user_id", user.id);
+
+    if (error) {
+      console.error("Ek gider silinemedi:", error);
+      setMessage(error.message || "Ek gider silinemedi.");
+      return;
+    }
+
+    setExpenses((prev) => prev.filter((item) => item.id !== expense.id));
+    setMessage("Ek gider silindi. Proje maliyeti yeniden hesaplandı.");
+  }
+
+  async function createDemoPurchaseData() {
+    if (!IS_DEMO_MODE) return;
+
+    setMessage("");
+    const user = await getUserOrRedirect();
+    if (!user) return;
+
+    const demoItems = items
+      .filter((item) => item.parent_item_id && item.item_type !== "main")
+      .slice(0, 5);
+
+    if (demoItems.length === 0) {
+      setMessage("Demo alım verisi için önce malzeme listesinde alt ürün olmalı.");
+      return;
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    const demoMovements = demoItems.map((item, index) => {
+      const quantity = Number(item.estimated_quantity || 1) || 1;
+      const existingPrice = Number(item.quote_unit_price || item.estimated_unit_price || 0);
+      const unitPrice = existingPrice > 0
+        ? Math.max(1, Math.round(existingPrice * (0.85 + index * 0.07) * 100) / 100)
+        : 75 + index * 45;
+
+      return {
+        user_id: user.id,
+        project_id: projectId,
+        project_item_id: item.id,
+        parent_item_id: item.parent_item_id || null,
+        product_code: item.product_code || "",
+        product_name: item.product_name || "Demo ürün",
+        movement_type: "in",
+        quantity,
+        unit: item.unit || "adet",
+        supplier_name: "Demo Tedarikçi",
+        unit_price: unitPrice,
+        currency: "TRY",
+        movement_date: today,
+        source: "Demo alım verisi",
+        notes: "Geliştirme/test amacıyla oluşturuldu.",
+      };
+    });
+
+    const { data, error } = await supabase
+      .from("stock_movements")
+      .insert(demoMovements)
+      .select("*");
+
+    if (error) {
+      console.error("Demo alım verisi oluşturulamadı:", error);
+      setMessage(error.message || "Demo alım verisi oluşturulamadı.");
+      return;
+    }
+
+    setStockMovements((prev) => [...(data || []), ...prev]);
+    setMessage(`${data?.length || demoMovements.length} demo alım hareketi oluşturuldu. Fiyat kaynakları ve maliyetler güncellendi.`);
+  }
+
+  function rawToProjectRow(row, fallbackStatus = "Bekliyor") {
+    return {
+      product_code: String(row.product_code || "").trim().toUpperCase(),
+      product_name: String(row.product_name || "").trim(),
+      unit: row.unit || "adet",
+      estimated_quantity: Number(row.estimated_quantity || 0) || 1,
+      estimated_unit_price: Number(row.estimated_unit_price || 0),
+      quote_unit_price: Number(row.quote_unit_price || row.estimated_unit_price || 0),
+      estimated_total: Number(row.estimated_total || 0),
+      quote_total: rowQuoteTotal(row),
+      status: row.status || fallbackStatus,
+      note: row.note || row.source_file || row.candidate_reason || "",
+      source_file: row.source_file || "",
+    };
+  }
+
+  function toggleMainRawItem(rowId) {
+    setSelectedMainRawIds((prev) =>
+      prev.includes(rowId)
+        ? prev.filter((id) => id !== rowId)
+        : [...prev, rowId],
+    );
+  }
+
+  function buildHierarchyFromRaw() {
+    const selectedIds = new Set(selectedMainRawIds);
+    const mainRows = rawItems.filter((row) => selectedIds.has(row.id));
+
+    if (mainRows.length === 0) {
+      setMessage("Ana ürün oluşturmak için en az bir satır seçin.");
+      return;
+    }
+
+    const groups = mainRows.map((row) => ({
+      id: row.id,
+      main: rawToProjectRow(row),
+      source_index: Number(row.source_index ?? 0),
+      source_file: row.source_file || "",
+      section_name: row.section_name || "",
+      subItems: [],
+    }));
+
+    rawItems.forEach((row) => {
+      if (selectedIds.has(row.id)) return;
+
+      const rowIndex = Number(row.source_index ?? 0);
+      const scoredGroups = groups.map((group, index) => {
+        const distance = Math.abs(rowIndex - Number(group.source_index ?? 0));
+        let score = 0;
+
+        if (row.source_file && group.source_file && row.source_file === group.source_file) score += 4;
+        if (row.section_name && group.section_name && row.section_name === group.section_name) score += 3;
+        if (Number(group.source_index ?? 0) < rowIndex) score += 2;
+        if (distance <= 5) score += 2;
+        if (distance <= 12) score += 1;
+
+        return { index, score, distance };
+      });
+
+      scoredGroups.sort((left, right) => right.score - left.score || left.distance - right.distance);
+      const targetIndex = scoredGroups[0]?.index ?? 0;
+
+      groups[targetIndex].subItems.push({
+        id: row.id,
+        ...rawToProjectRow(row),
+      });
+    });
+
+    setHierarchyGroups(groups);
+    setMessage("Ana ürünler oluşturuldu. Alt ürünleri kontrol edip projeye aktarabilirsiniz.");
+  }
+
+  function removeMainGroup(groupId) {
+    setHierarchyGroups((prev) => {
+      const removedGroup = prev.find((group) => group.id === groupId);
+      const remaining = prev.filter((group) => group.id !== groupId);
+
+      if (!removedGroup || remaining.length === 0) return remaining;
+
+      return remaining.map((group, index) =>
+        index === 0
+          ? { ...group, subItems: [...group.subItems, ...removedGroup.subItems] }
+          : group,
+      );
+    });
+  }
+
+  function moveSubItem(subItemId, targetGroupId) {
+    setHierarchyGroups((prev) => {
+      let movingItem = null;
+      const withoutItem = prev.map((group) => ({
+        ...group,
+        subItems: group.subItems.filter((item) => {
+          if (item.id === subItemId) {
+            movingItem = item;
+            return false;
+          }
+          return true;
+        }),
+      }));
+
+      if (!movingItem) return prev;
+
+      return withoutItem.map((group) =>
+        group.id === targetGroupId
+          ? { ...group, subItems: [...group.subItems, movingItem] }
+          : group,
+      );
+    });
+  }
+
+  function removeSubItem(subItemId) {
+    setHierarchyGroups((prev) =>
+      prev.map((group) => ({
+        ...group,
+        subItems: group.subItems.filter((item) => item.id !== subItemId),
+      })),
+    );
+  }
+
+  function promoteSubItem(subItemId) {
+    setHierarchyGroups((prev) => {
+      let promoted = null;
+      const groups = prev.map((group) => ({
+        ...group,
+        subItems: group.subItems.filter((item) => {
+          if (item.id === subItemId) {
+            promoted = item;
+            return false;
+          }
+          return true;
+        }),
+      }));
+
+      if (!promoted) return prev;
+
+      return [
+        ...groups,
+        {
+          id: `main-${promoted.id}`,
+          main: { ...promoted, status: "Bekliyor" },
+          subItems: [],
+        },
+      ];
+    });
+  }
+
+  async function importHierarchyGroups() {
+    if (hierarchyGroups.length === 0) {
+      setMessage("Aktarılacak ana ürün hiyerarşisi yok.");
+      return;
+    }
+
+    const user = await getUserOrRedirect();
+    if (!user) return;
+
+    const parentPayload = hierarchyGroups.map((group) => {
+      const quoteTotal = sectionQuoteTotalFor(group.section_name || group.main.product_name, Number(group.main.quote_total || group.main.estimated_total || 0));
+      return {
+      user_id: user.id,
+      project_id: projectId,
+      parent_item_id: null,
+      product_code: group.main.product_code,
+      product_name: group.main.product_name,
+      unit: group.main.unit || "adet",
+      estimated_quantity: Number(group.main.estimated_quantity || 1),
+      estimated_unit_price: quoteTotal,
+      quote_unit_price: quoteTotal,
+      estimated_total: quoteTotal,
+      quote_total: quoteTotal,
+      status: group.main.status || "Bekliyor",
+      note: group.main.note || "Ana ürün",
+      item_type: "main",
+      updated_at: new Date().toISOString(),
+      };
+    });
+
+    const { data: insertedParents, error: parentError } = await supabase
+      .from("project_items")
+      .insert(parentPayload)
+      .select("*");
+
+    if (parentError) {
+      setMessage("Ana ürünler projeye aktarılamadı.");
+      return;
+    }
+
+    const childPayload = [];
+    hierarchyGroups.forEach((group, index) => {
+      const parent = insertedParents?.[index];
+      if (!parent) return;
+
+      group.subItems.forEach((item) => {
+        if (!item.product_name) return;
+        childPayload.push({
+          user_id: user.id,
+          project_id: projectId,
+          parent_item_id: parent.id,
+          product_code: item.product_code,
+          product_name: item.product_name,
+          unit: item.unit || "adet",
+          estimated_quantity: Number(item.estimated_quantity || 0),
+          estimated_unit_price: Number(item.estimated_unit_price || 0),
+          estimated_total: Number(item.estimated_total || 0),
+          status: item.status || "Bekliyor",
+          note: item.note || item.source_file || "",
+          brand: item.brand || "",
+          item_type: "sub",
+          updated_at: new Date().toISOString(),
+        });
+      });
+    });
+
+    let insertedChildren = [];
+    if (childPayload.length > 0) {
+      const { data, error } = await supabase
+        .from("project_items")
+        .insert(childPayload)
+        .select("*");
+
+      if (error) {
+        setMessage("Ana ürünler aktarıldı ama alt ürünler aktarılamadı.");
+        await loadProject();
+        return;
+      }
+      insertedChildren = data || [];
+    }
+
+    const nextItems = await ensureProductCardsForProjectItems([...items, ...(insertedParents || []), ...insertedChildren], user.id);
+    setItems(nextItems);
+    setRawItems([]);
+    setSelectedMainRawIds([]);
+    setHierarchyGroups([]);
+    setPreviewRows([]);
+    setPreviewParentId("");
+    await refreshProjectBudget(nextItems);
+    await loadProject();
+    setMessage("Ana ürün ve alt ürün hiyerarşisi proje malzeme listesine aktarıldı.");
+  }
+
+  function preparePreviewRows(rows) {
+    return (rows || []).map((row, index) => ({
+      ...row,
+      preview_id: row.preview_id || `preview-${index + 1}`,
+    }));
+  }
+
+  function previewRowCategory(row) {
+    return row.section_name || row.category || row.parent_name || "Kategorisiz Ürünler";
+  }
+
+  function previewRowMatchesSearch(row) {
+    const search = previewSearch.trim().toLowerCase();
+    if (!search) return true;
+
+    return [
+      row.product_name,
+      row.product_code,
+      row.brand,
+      row.unit,
+      row.note,
+      previewRowCategory(row),
+    ].some((value) => String(value || "").toLowerCase().includes(search));
+  }
+
+  function togglePreviewRow(rowId) {
+    setSelectedPreviewRowIds((prev) =>
+      prev.includes(rowId)
+        ? prev.filter((id) => id !== rowId)
+        : [...prev, rowId],
+    );
+  }
+
+  function updatePreviewRow(rowId, field, value) {
+    setPreviewRows((prev) =>
+      prev.map((row) => {
+        if (row.preview_id !== rowId) return row;
+
+        const nextRow = { ...row, [field]: value };
+        if (field === "estimated_quantity" || field === "estimated_unit_price") {
+          const quantity = Number(field === "estimated_quantity" ? value : nextRow.estimated_quantity || 0);
+          const unitPrice = Number(field === "estimated_unit_price" ? value : nextRow.estimated_unit_price || 0);
+          nextRow.estimated_total = quantity * unitPrice;
+        }
+        return nextRow;
+      }),
+    );
+  }
+
+  function deletePreviewRow(rowId) {
+    setPreviewRows((prev) => prev.filter((row) => row.preview_id !== rowId));
+    setSelectedPreviewRowIds((prev) => prev.filter((id) => id !== rowId));
+  }
+
+  function deleteSelectedPreviewRows() {
+    if (selectedPreviewRowIds.length === 0) return;
+    setPreviewRows((prev) => prev.filter((row) => !selectedPreviewRowIds.includes(row.preview_id)));
+    setSelectedPreviewRowIds([]);
+  }
+
+  function toggleAllFilteredPreviewRows() {
+    const filteredIds = filteredPreviewRows.map((row) => row.preview_id);
+    setSelectedPreviewRowIds((prev) => {
+      const allSelected = filteredIds.length > 0 && filteredIds.every((id) => prev.includes(id));
+      if (allSelected) {
+        return prev.filter((id) => !filteredIds.includes(id));
+      }
+      return Array.from(new Set([...prev, ...filteredIds]));
+    });
+  }
+
+  function previewRowPayload(row, userId, parentId = null) {
+    return {
+      user_id: userId,
+      project_id: projectId,
+      parent_item_id: parentId || previewParentId || null,
+      product_code: String(row.product_code || "").trim().toUpperCase(),
+      brand: row.brand || "",
+      product_name: String(row.product_name || "").trim(),
+      unit: row.unit || "adet",
+      estimated_quantity: Number(row.estimated_quantity || 0),
+      estimated_unit_price: Number(row.estimated_unit_price || 0),
+      estimated_total: Number(row.estimated_total || 0),
+      status: row.status || "Bekliyor",
+      note: row.note || row.source_file || previewRowCategory(row),
+      source_file: row.source_file || "",
+      source_type: row.source_type || "",
+      item_type: parentId ? "sub" : "sub",
+      updated_at: new Date().toISOString(),
+    };
   }
 
   async function parseProjectItemFiles(event) {
@@ -569,6 +1911,16 @@ export default function ProjectDetailPage() {
     setPreviewWarnings([]);
     setPreviewBlocked(false);
     setPreviewSections([]);
+    setRawItems([]);
+    setMainProductCandidates([]);
+    setSelectedCandidateIds([]);
+    setSuggestedHierarchyGroups([]);
+    setSelectedMainRawIds([]);
+    setHierarchyGroups([]);
+    setSelectedPreviewRowIds([]);
+    setPreviewSearch("");
+    setPreviewCategoryFilter("");
+    setEditingPreviewRowId("");
 
     try {
       const {
@@ -601,13 +1953,25 @@ export default function ProjectDetailPage() {
         setPreviewWarnings(warnings.length > 0 ? warnings : [data.detail || "Dosyadan ürün okunamadı."]);
         setPreviewBlocked(true);
         setPreviewSections(data.sections || []);
+        rememberSectionTotals(data.sections || []);
+        const nextRawItems = data.raw_items || data.rawItems || [];
+        setRawItems(nextRawItems);
+        await loadMainProductCandidates(nextRawItems, token);
         setMessage("Dosya kontrol edildi ama güvenli aktarım için kilitlendi.");
-        setPreviewRows(data.rows || []);
+        const nextPreviewRows = preparePreviewRows(data.rows || []);
+        setPreviewRows(nextPreviewRows);
+        setSelectedPreviewRowIds(nextPreviewRows.map((row) => row.preview_id));
       } else {
-        setPreviewRows(data.rows || []);
+        const nextPreviewRows = preparePreviewRows(data.rows || []);
+        setPreviewRows(nextPreviewRows);
+        setSelectedPreviewRowIds(nextPreviewRows.map((row) => row.preview_id));
         setPreviewWarnings(warnings);
         setPreviewBlocked(false);
         setPreviewSections(data.sections || []);
+        rememberSectionTotals(data.sections || []);
+        const nextRawItems = data.raw_items || data.rawItems || [];
+        setRawItems(nextRawItems);
+        await loadMainProductCandidates(nextRawItems, token);
         setMessage(`${data.totalRows} satır okundu. Aktarmadan önce önizlemeyi kontrol edin.`);
       }
     } catch (error) {
@@ -620,25 +1984,13 @@ export default function ProjectDetailPage() {
   }
 
   async function importPreviewRows() {
-    if (previewRows.length === 0) return;
+    const rowsToImport = selectedPreviewRows.length > 0 ? selectedPreviewRows : previewRows;
+    if (rowsToImport.length === 0) return;
 
     const user = await getUserOrRedirect();
     if (!user) return;
 
-    const payload = previewRows.map((row) => ({
-      user_id: user.id,
-      project_id: projectId,
-      parent_item_id: previewParentId || null,
-      product_code: String(row.product_code || "").trim().toUpperCase(),
-      product_name: String(row.product_name || "").trim(),
-      unit: row.unit || "adet",
-      estimated_quantity: Number(row.estimated_quantity || 0),
-      estimated_unit_price: Number(row.estimated_unit_price || 0),
-      estimated_total: Number(row.estimated_total || 0),
-      status: row.status || "Bekliyor",
-      note: row.note || row.source_file || "",
-      updated_at: new Date().toISOString(),
-    }));
+    const payload = rowsToImport.map((row) => previewRowPayload(row, user.id));
 
     const { data, error } = await supabase
       .from("project_items")
@@ -650,13 +2002,101 @@ export default function ProjectDetailPage() {
       return;
     }
 
-    const nextItems = [...items, ...(data || [])];
+    const nextItems = await ensureProductCardsForProjectItems([...items, ...(data || [])], user.id);
     setItems(nextItems);
-    setPreviewRows([]);
+    const importedIds = new Set(rowsToImport.map((row) => row.preview_id));
+    setPreviewRows((prev) => prev.filter((row) => !importedIds.has(row.preview_id)));
+    setSelectedPreviewRowIds([]);
+    setRawItems([]);
+    setSelectedMainRawIds([]);
+    setHierarchyGroups([]);
     setPreviewParentId("");
     await refreshProjectBudget(nextItems);
     await loadProject();
     setMessage("Dosyadan okunan ürünler projeye aktarıldı.");
+  }
+
+  async function importGroupedPreviewRows() {
+    const rowsToImport = selectedPreviewRows.length > 0 ? selectedPreviewRows : previewRows;
+    if (rowsToImport.length === 0) return;
+
+    const user = await getUserOrRedirect();
+    if (!user) return;
+
+    const rowsByCategory = rowsToImport.reduce((groups, row) => {
+      const category = previewRowCategory(row);
+      groups[category] = [...(groups[category] || []), row];
+      return groups;
+    }, {});
+
+    const parentPayload = Object.entries(rowsByCategory).map(([category, rows]) => {
+      const quoteTotal = sectionQuoteTotalFor(category, rows.reduce((sum, row) => sum + Number(row.estimated_total || 0), 0));
+      return {
+      user_id: user.id,
+      project_id: projectId,
+      parent_item_id: null,
+      product_code: "",
+      product_name: category,
+      unit: "adet",
+      estimated_quantity: 1,
+      estimated_unit_price: quoteTotal,
+      quote_unit_price: quoteTotal,
+      estimated_total: quoteTotal,
+      quote_total: quoteTotal,
+      status: "Bekliyor",
+      note: "Dosya onizleme kategori grubu",
+      item_type: "main",
+      updated_at: new Date().toISOString(),
+      };
+    });
+
+    const { data: insertedParents, error: parentError } = await supabase
+      .from("project_items")
+      .insert(parentPayload)
+      .select("*");
+
+    if (parentError) {
+      setMessage(parentError.message || "Hiyerarşik aktarım yapılamadı.");
+      return;
+    }
+
+    const childPayload = [];
+    Object.entries(rowsByCategory).forEach(([, rows], index) => {
+      const parent = insertedParents?.[index];
+      if (!parent) return;
+      rows.forEach((row) => {
+        childPayload.push(previewRowPayload(row, user.id, parent.id));
+      });
+    });
+
+    let insertedChildren = [];
+    if (childPayload.length > 0) {
+      const { data, error } = await supabase
+        .from("project_items")
+        .insert(childPayload)
+        .select("*");
+
+      if (error) {
+        setMessage(error.message || "Ana ürünler aktarıldı ama alt ürünler aktarılamadı.");
+        await loadProject();
+        return;
+      }
+
+      insertedChildren = data || [];
+    }
+
+    const importedIds = new Set(rowsToImport.map((row) => row.preview_id));
+    const nextItems = await ensureProductCardsForProjectItems([...items, ...(insertedParents || []), ...insertedChildren], user.id);
+    setItems(nextItems);
+    setPreviewRows((prev) => prev.filter((row) => !importedIds.has(row.preview_id)));
+    setSelectedPreviewRowIds([]);
+    setRawItems([]);
+    setSelectedMainRawIds([]);
+    setHierarchyGroups([]);
+    setPreviewParentId("");
+    await refreshProjectBudget(nextItems);
+    await loadProject();
+    setMessage("Kategori bazlı hiyerarşik aktarım tamamlandı.");
   }
 
   function togglePurchaseItem(itemId) {
@@ -667,16 +2107,207 @@ export default function ProjectDetailPage() {
     );
   }
 
-  function mapItemToRequestLine(item) {
+  function mapItemToRequestLine(item, quantityOverride = null) {
+    const quantity = quantityOverride ?? Number(item.estimated_quantity || 0);
+
     return {
       urunKodu: item.product_code || "",
       urunAciklamasi: item.product_name || "",
       birim: item.unit || "adet",
-      talepEdilenAdet: Number(item.estimated_quantity || 0),
+      talepEdilenAdet: quantity,
+      birimFiyat: Number(item.estimated_unit_price || 0),
+      toplam: Number(item.estimated_total || 0),
+      paraBirimi: item.currency || "TRY",
       not: item.note || "",
       projectItemId: item.id,
       parentItemId: item.parent_item_id || null,
     };
+  }
+
+  function summarizeRequestItems(lines) {
+    const grouped = new Map();
+
+    (lines || []).forEach((line) => {
+      const code = String(line.urunKodu || line.product_code || "").trim();
+      const description = String(line.urunAciklamasi || line.product_name || line.description || "").trim();
+      const unit = String(line.birim || line.unit || "adet").trim() || "adet";
+      const key = `${code || description}`.toLocaleLowerCase("tr-TR");
+      if (!key) return;
+
+      const quantity = Number(line.talepEdilenAdet ?? line.quantity ?? line.estimated_quantity ?? 0) || 0;
+      const unitPrice = Number(line.birimFiyat ?? line.unit_price ?? line.estimated_unit_price ?? 0) || 0;
+      const total = Number(line.toplam ?? line.total ?? line.estimated_total ?? 0) || unitPrice * quantity;
+      const note = line.not || line.note || "";
+
+      if (!grouped.has(key)) {
+        grouped.set(key, {
+          urunKodu: code,
+          urunAciklamasi: description,
+          birim: unit,
+          talepEdilenAdet: quantity,
+          birimFiyat: unitPrice,
+          toplam: total,
+          paraBirimi: line.paraBirimi || line.currency || "TRY",
+          not: note,
+          projectItemIds: line.projectItemIds || (line.projectItemId ? [line.projectItemId] : []),
+          parentItemIds: line.parentItemIds || (line.parentItemId ? [line.parentItemId] : []),
+          sourceLineCount: 1,
+        });
+        return;
+      }
+
+      const existing = grouped.get(key);
+      const notes = new Set(String(existing.not || "").split(" | ").filter(Boolean));
+      if (note) notes.add(note);
+      grouped.set(key, {
+        ...existing,
+        urunKodu: existing.urunKodu || code,
+        urunAciklamasi: existing.urunAciklamasi || description,
+        talepEdilenAdet: Number(existing.talepEdilenAdet || 0) + quantity,
+        birimFiyat: existing.birimFiyat || unitPrice,
+        toplam: Number(existing.toplam || 0) + total,
+        paraBirimi: existing.paraBirimi || line.paraBirimi || line.currency || "TRY",
+        not: Array.from(notes).join(" | "),
+        projectItemIds: Array.from(new Set([...(existing.projectItemIds || []), ...(line.projectItemIds || []), line.projectItemId].filter(Boolean))),
+        parentItemIds: Array.from(new Set([...(existing.parentItemIds || []), ...(line.parentItemIds || []), line.parentItemId].filter(Boolean))),
+        sourceLineCount: Number(existing.sourceLineCount || 1) + 1,
+      });
+    });
+
+    return Array.from(grouped.values()).sort((a, b) => {
+      const codeCompare = String(a.urunKodu || "").localeCompare(String(b.urunKodu || ""), "tr");
+      if (codeCompare !== 0) return codeCompare;
+      return String(a.urunAciklamasi || "").localeCompare(String(b.urunAciklamasi || ""), "tr");
+    });
+  }
+
+  function parseRequestItems(request) {
+    if (Array.isArray(request.items)) return summarizeRequestItems(request.items);
+    if (typeof request.items === "string" && request.items.trim()) {
+      try {
+        const parsed = JSON.parse(request.items);
+        return Array.isArray(parsed) ? summarizeRequestItems(parsed) : [];
+      } catch (error) {
+        console.warn("Talep kalemleri okunamadi:", error);
+      }
+    }
+
+    const fallbackItems = items
+      .filter((item) => item.status === "Talep oluşturuldu" && !stockInfoForItem(item).isMainItem)
+      .map((item) => mapItemToRequestLine(item, stockInfoForItem(item).requiredQuantity || Number(item.estimated_quantity || 0)));
+
+    return summarizeRequestItems(fallbackItems);
+  }
+
+  function toggleProjectRequest(requestId) {
+    setExpandedRequestIds((prev) =>
+      prev.includes(requestId)
+        ? prev.filter((id) => id !== requestId)
+        : [...prev, requestId],
+    );
+  }
+
+  function safeFileName(value) {
+    return String(value || "dosya")
+      .replace(/[\\/:*?"<>|]/g, "-")
+      .replace(/\s+/g, "-")
+      .slice(0, 90);
+  }
+
+  function projectItemExportRows(parentItem, childRows) {
+    return (childRows || []).map((item, index) => ({
+      "Sıra": index + 1,
+      "Ana Ürün": parentItem.product_name || "",
+      "Ürün Kodu": item.product_code || "",
+      "Ürün / Açıklama": item.product_name || "",
+      "Miktar": Number(item.estimated_quantity || 0),
+      "Birim": item.unit || "adet",
+      "Birim Fiyat": Number(item.estimated_unit_price || 0),
+      "Toplam": Number(item.estimated_total || 0),
+      "Para Birimi": item.currency || "TRY",
+      "Durum": item.status || "Bekliyor",
+      "Not": item.note || "",
+    }));
+  }
+
+  function requestExportRows(requestItems) {
+    return (requestItems || []).map((item, index) => ({
+      "Sıra": index + 1,
+      "Ürün Kodu": item.urunKodu || item.product_code || "",
+      "Ürün / Açıklama": item.urunAciklamasi || item.product_name || item.description || "",
+      "Miktar": Number(item.talepEdilenAdet || item.quantity || item.estimated_quantity || 0),
+      "Birim": item.birim || item.unit || "adet",
+      "Birim Fiyat": Number(item.birimFiyat || item.unit_price || item.estimated_unit_price || 0),
+      "Toplam": Number(item.toplam || item.total || item.estimated_total || 0),
+      "Para Birimi": item.paraBirimi || item.currency || "TRY",
+      "Birleşen Satır": Number(item.sourceLineCount || 1),
+      "Not": item.not || item.note || "",
+    }));
+  }
+
+  function downloadRowsAsExcel(rows, fileName, sheetName = "Liste") {
+    if (!rows || rows.length === 0) {
+      setMessage("İndirilecek kalem bulunamadı.");
+      return;
+    }
+
+    const workbook = XLSX.utils.book_new();
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    XLSX.utils.book_append_sheet(workbook, worksheet, sheetName.slice(0, 31));
+    XLSX.writeFile(workbook, `${safeFileName(fileName)}.xlsx`);
+  }
+
+  async function downloadRowsAsPdf(rows, title, fileName) {
+    if (!rows || rows.length === 0) {
+      setMessage("İndirilecek kalem bulunamadı.");
+      return;
+    }
+
+    const [{ default: jsPDF }, autoTableModule] = await Promise.all([
+      import("jspdf"),
+      import("jspdf-autotable"),
+    ]);
+    const autoTable = autoTableModule.default || autoTableModule.autoTable;
+    const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+    const columns = Object.keys(rows[0]);
+
+    doc.setFontSize(13);
+    doc.text(title, 40, 36);
+    autoTable(doc, {
+      startY: 52,
+      head: [columns],
+      body: rows.map((row) => columns.map((column) => row[column] ?? "")),
+      styles: { fontSize: 7, cellPadding: 4 },
+      headStyles: { fillColor: [37, 99, 235] },
+    });
+    doc.save(`${safeFileName(fileName)}.pdf`);
+  }
+
+  function downloadProjectItemChildren(parentItem, format) {
+    const childRows = childItemsByParent[parentItem.id] || [];
+    const rows = projectItemExportRows(parentItem, childRows);
+    const fileName = `${project?.project_code || "proje"}-${parentItem.product_code || parentItem.product_name}-alt-malzemeler`;
+    const title = `${parentItem.product_name || "Ana Ürün"} Alt Malzemeleri`;
+
+    if (format === "pdf") {
+      downloadRowsAsPdf(rows, title, fileName);
+      return;
+    }
+
+    downloadRowsAsExcel(rows, fileName, "Alt Malzemeler");
+  }
+
+  function downloadRequestItems(request, format) {
+    const rows = requestExportRows(parseRequestItems(request));
+    const fileName = `${project?.project_code || "proje"}-${request.ad || "talep"}-icmal`;
+    const title = `${request.ad || "Proje Talebi"} İcmal Listesi`;
+
+    if (format === "pdf") {
+      downloadRowsAsPdf(rows, title, fileName);
+      return;
+    }
+
+    downloadRowsAsExcel(rows, fileName, "Talep İcmali");
   }
 
   async function createRequestFromSelectedItems() {
@@ -686,14 +2317,14 @@ export default function ProjectDetailPage() {
     const user = await getUserOrRedirect();
     if (!user) return;
 
-    const selectedItems = items.filter((item) => selectedPurchaseItemIds.includes(item.id));
+    const selectedItems = items.filter((item) => selectedPurchaseItemIds.includes(item.id) && !stockInfoForItem(item).isMainItem);
 
     if (selectedItems.length === 0) {
       setMessage("Talep oluşturmak için en az bir ürün seçin.");
       return;
     }
 
-    const requestItems = selectedItems.map(mapItemToRequestLine);
+    const requestItems = summarizeRequestItems(selectedItems.map(mapItemToRequestLine));
     const title = `${project.project_code || "PRJ"} - Satınalma Talebi`;
 
     const { data, error } = await supabase
@@ -726,6 +2357,122 @@ export default function ProjectDetailPage() {
     setMessage("Proje satınalma talebi oluşturuldu.");
   }
 
+  async function createRequestFromNeededItems() {
+    setMessage("");
+    setCreatedRequestId("");
+
+    const user = await getUserOrRedirect();
+    if (!user) return;
+
+    const neededItems = items
+      .map((item) => ({ item, stock: stockInfoForItem(item) }))
+      .filter(({ stock }) => !stock.isMainItem && stock.requiredQuantity > 0);
+
+    if (neededItems.length === 0) {
+      setMessage("Satınalma gereken ürün bulunamadı.");
+      return;
+    }
+
+    const requestItems = summarizeRequestItems(neededItems.map(({ item, stock }) => mapItemToRequestLine(item, stock.requiredQuantity)));
+    const title = `${project.project_code || "PRJ"} - Satınalma Gerekenler`;
+    const fullPayload = {
+      user_id: user.id,
+      project_id: projectId,
+      ad: title,
+      durum: "Proje Talebi",
+      filepath: null,
+      totalitems: requestItems.length,
+      items: requestItems,
+    };
+
+    console.log("Otomatik talep payload:", fullPayload);
+    let localRequestPayload = fullPayload;
+
+    let { data, error } = await supabase
+      .from("requests")
+      .insert(fullPayload)
+      .select("*")
+      .single();
+
+    if (error) {
+      console.warn("Otomatik talep tam payload insert uyarısı:", error);
+
+      const projectLinkedPayload = {
+        user_id: user.id,
+        project_id: projectId,
+        ad: title,
+        durum: "Proje Talebi",
+        filepath: null,
+        totalitems: requestItems.length,
+      };
+
+      console.log("Otomatik talep proje ba\u011flant\u0131l\u0131 fallback payload:", projectLinkedPayload);
+
+      const projectLinkedResult = await supabase
+        .from("requests")
+        .insert(projectLinkedPayload)
+        .select("*")
+        .single();
+
+      if (!projectLinkedResult.error) {
+        data = projectLinkedResult.data;
+        localRequestPayload = { ...projectLinkedPayload, items: requestItems };
+      } else {
+        console.warn("Otomatik talep proje ba\u011flant\u0131l\u0131 fallback uyar\u0131s\u0131:", projectLinkedResult.error);
+
+        const fallbackPayload = {
+          user_id: user.id,
+          ad: title,
+          durum: "Proje Talebi",
+          filepath: null,
+          totalitems: requestItems.length,
+        };
+
+        console.log("Otomatik talep fallback payload:", fallbackPayload);
+
+        const fallbackResult = await supabase
+          .from("requests")
+          .insert(fallbackPayload)
+          .select("*")
+          .single();
+
+        if (fallbackResult.error) {
+          console.error("Otomatik talep fallback insert hatası:", fallbackResult.error);
+          setMessage(fallbackResult.error.message || projectLinkedResult.error.message || error.message || "Satınalma gerekenlerden talep oluşturulamadı.");
+          return;
+        }
+
+        data = fallbackResult.data;
+        localRequestPayload = { ...fallbackPayload, project_id: projectId, items: requestItems };
+      }
+    }
+
+    if (!data?.id) {
+      setMessage("Talep oluşturuldu ama kayıt id bilgisi alınamadı.");
+      return;
+    }
+
+    await supabase
+      .from("project_items")
+      .update({ status: "Talep oluşturuldu", updated_at: new Date().toISOString() })
+      .in("id", neededItems.map(({ item }) => item.id));
+
+    const localRequest = {
+      ...localRequestPayload,
+      ...data,
+      project_id: data.project_id || projectId,
+      items: data.items || requestItems,
+      totalitems: data.totalitems || requestItems.length,
+      ad: data.ad || title,
+      durum: data.durum || "Proje Talebi",
+    };
+
+    setProjectRequests((prev) => [localRequest, ...prev.filter((request) => request.id !== localRequest.id)]);
+    setCreatedRequestId(localRequest.id);
+    setActiveTab("Talepler");
+    setMessage("Talep başarıyla oluşturuldu. Proje taleplerinde listelendi.");
+    await loadProjectItems();
+  }
   const parentItems = useMemo(() => items.filter((item) => !item.parent_item_id), [items]);
 
   const childItemsByParent = useMemo(() => {
@@ -738,37 +2485,139 @@ export default function ProjectDetailPage() {
   }, [items]);
 
   const purchaseRequiredItems = useMemo(() => {
-    return items.filter((item) => item.status === "Satınalma gerekli");
-  }, [items]);
+    return items.filter((item) => stockInfoForItem(item).needsPurchase);
+  }, [items, products, childItemsByParent]);
+
+  const criticalStockItems = useMemo(() => {
+    return items.filter((item) => stockInfoForItem(item).isCritical);
+  }, [items, products, childItemsByParent]);
+
+  function itemMatchesFilter(item, filter = itemStockFilter) {
+    const info = stockInfoForItem(item);
+    if (filter === "purchase") return info.needsPurchase;
+    if (filter === "critical") return info.isCritical;
+    return true;
+  }
+
+  function itemMatchesStockFilter(item) {
+    return itemMatchesFilter(item, itemStockFilter);
+  }
+
+  const visibleParentItems = useMemo(() => {
+    if (itemStockFilter === "all") return parentItems;
+
+    return parentItems.filter((item) => {
+      const children = childItemsByParent[item.id] || [];
+      return itemMatchesStockFilter(item) || children.some(itemMatchesStockFilter);
+    });
+  }, [parentItems, childItemsByParent, itemStockFilter, products]);
+
+  const activeStockFilterCount = itemStockFilter === "purchase"
+    ? purchaseRequiredItems.length
+    : itemStockFilter === "critical"
+      ? criticalStockItems.length
+      : items.length;
+
+  function applyItemStockFilter(nextFilter) {
+    const resolvedFilter = itemStockFilter === nextFilter ? "all" : nextFilter;
+    setItemStockFilter(resolvedFilter);
+
+    if (resolvedFilter === "all") {
+      setMessage("Malzeme listesi tum kayitlari gosterecek sekilde acildi.");
+      return;
+    }
+
+    const matchedParentIds = parentItems
+      .filter((parent) => {
+        const children = childItemsByParent[parent.id] || [];
+        return itemMatchesFilter(parent, resolvedFilter) || children.some((child) => itemMatchesFilter(child, resolvedFilter));
+      })
+      .map((parent) => parent.id);
+
+    setExpandedItems((prev) => ({
+      ...prev,
+      ...Object.fromEntries(matchedParentIds.map((id) => [id, true])),
+    }));
+
+    const count = resolvedFilter === "purchase" ? purchaseRequiredItems.length : criticalStockItems.length;
+    const label = resolvedFilter === "purchase" ? "Satinalma gereken" : "Kritik stok";
+    setMessage(`${label} filtresi uygulandi. ${count} kalem, ${matchedParentIds.length} ana urun altinda gosteriliyor.`);
+  }
+
+  const previewCategories = useMemo(() => {
+    return Array.from(new Set(previewRows.map((row) => previewRowCategory(row)))).filter(Boolean);
+  }, [previewRows]);
+
+  const filteredPreviewRows = useMemo(() => {
+    return previewRows.filter((row) => {
+      const categoryMatch = !previewCategoryFilter || previewRowCategory(row) === previewCategoryFilter;
+      return categoryMatch && previewRowMatchesSearch(row);
+    });
+  }, [previewRows, previewCategoryFilter, previewSearch]);
+
+  const groupedPreviewRows = useMemo(() => {
+    return filteredPreviewRows.reduce((groups, row) => {
+      const category = previewRowCategory(row);
+      groups[category] = [...(groups[category] || []), row];
+      return groups;
+    }, {});
+  }, [filteredPreviewRows]);
+
+  const selectedPreviewRows = useMemo(() => {
+    const selected = new Set(selectedPreviewRowIds);
+    return previewRows.filter((row) => selected.has(row.preview_id));
+  }, [previewRows, selectedPreviewRowIds]);
+
+  const allFilteredPreviewRowsSelected = useMemo(() => {
+    return filteredPreviewRows.length > 0 && filteredPreviewRows.every((row) => selectedPreviewRowIds.includes(row.preview_id));
+  }, [filteredPreviewRows, selectedPreviewRowIds]);
+
+  const allProjectItemsSelected = useMemo(() => {
+    return items.length > 0 && items.every((item) => selectedProjectItemIds.includes(item.id));
+  }, [items, selectedProjectItemIds]);
+
+  const selectedProjectItemDeleteIds = useMemo(() => {
+    return expandProjectItemSelection(selectedProjectItemIds);
+  }, [items, selectedProjectItemIds]);
 
   const totals = useMemo(() => {
     const itemEstimate = items.reduce((sum, item) => sum + Number(item.estimated_total || 0), 0);
-    const orderTotal = projectOrders.reduce((sum, order) => sum + Number(order.total_amount || 0), 0);
+    const materialCost = items
+      .filter((item) => item.parent_item_id)
+      .reduce((sum, item) => sum + Number(resolveProjectItemPrice(item).total || 0), 0);
+    const orderTotal = projectOrders.reduce((sum, order) => sum + Number(order.total_amount || order.order_total || order.total || 0), 0);
     const stockCost = stockMovements.reduce(
       (sum, movement) => sum + Number(movement.quantity || 0) * Number(movement.unit_price || 0),
       0,
     );
-    const actualCost = Number(project?.actual_cost || 0) || orderTotal + stockCost;
+    const expenseTotal = expenses.reduce((sum, expense) => sum + Number(expense.base_amount || expense.amount || 0), 0);
+    const totalCost = materialCost + orderTotal + stockCost + expenseTotal;
+    const actualCost = totalCost || Number(project?.actual_cost || 0) || 0;
     const contract = Number(project?.contract_amount || 0);
     const estimatedBudget = itemEstimate || Number(project?.estimated_budget || 0);
     const remainingBudget = estimatedBudget - actualCost;
     const budgetVariance = actualCost - estimatedBudget;
     const paidTotal = payments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
     const remainingCollection = contract - paidTotal;
+    const netProfitLoss = contract - totalCost;
 
     return {
       itemEstimate,
+      materialCost,
       actualCost,
       orderTotal,
       stockCost,
+      expenseTotal,
+      totalCost,
       contract,
       estimatedBudget,
       remainingBudget,
       budgetVariance,
       paidTotal,
       remainingCollection,
+      netProfitLoss,
     };
-  }, [items, payments, project, projectOrders, stockMovements]);
+  }, [items, payments, expenses, project, projectOrders, allOrders, stockMovements, products, visiblePreviewSections, storedSectionTotals]);
 
   const projectKpis = useMemo(() => {
     const mainItems = items.filter((item) => !item.parent_item_id);
@@ -789,7 +2638,7 @@ export default function ProjectDetailPage() {
       items.length > 0 ? Math.round((completedItems / items.length) * 100) : 0;
     const collection =
       totals.contract > 0 ? Math.round((totals.paidTotal / totals.contract) * 100) : 0;
-    const profitLoss = totals.contract - totals.actualCost;
+    const profitLoss = totals.netProfitLoss;
 
     return {
       mainItems,
@@ -823,7 +2672,66 @@ export default function ProjectDetailPage() {
     return { total: children.length, missing, production, completion };
   }
 
-  if (loading) {
+
+  const recentProjectOrders = useMemo(() => {
+    return [...projectOrders]
+      .sort((a, b) => new Date(b.created_at || b.order_date || 0) - new Date(a.created_at || a.order_date || 0))
+      .slice(0, 5);
+  }, [projectOrders]);
+
+  const overviewWarnings = useMemo(() => {
+    const warnings = [];
+
+    if (projectKpis.openOrders > 0) {
+      warnings.push({ tone: "red", text: `${projectKpis.openOrders} adet acik siparis bulunmaktadir.` });
+    }
+    if (criticalStockItems.length > 0) {
+      warnings.push({ tone: "orange", text: `${criticalStockItems.length} adet kritik stok seviyesi uyarisi.` });
+    }
+    if (totals.budgetVariance > 0) {
+      warnings.push({ tone: "amber", text: `${formatMoney(totals.budgetVariance)} butce asimi riski tespit edildi.` });
+    }
+
+    const delayedOrders = projectOrders.filter((order) => {
+      const dueDate = order.due_date || order.delivery_date || order.termin_date;
+      if (!dueDate) return false;
+      const isClosed = ["Tam Teslim", "Teslim Edildi", "Iptal", "İptal"].includes(order.status);
+      return !isClosed && new Date(dueDate) < new Date();
+    }).length;
+
+    if (delayedOrders > 0) {
+      warnings.push({ tone: "blue", text: `${delayedOrders} adet geciken teslimat bulunmaktadir.` });
+    }
+
+    if (warnings.length === 0) {
+      warnings.push({ tone: "green", text: "Bu proje icin acil uyari bulunmuyor." });
+    }
+
+    return warnings;
+  }, [criticalStockItems.length, projectKpis.openOrders, projectOrders, totals.budgetVariance]);
+
+  function overviewWarningClass(tone) {
+    const classes = {
+      red: "border-red-100 bg-red-50 text-red-700",
+      orange: "border-orange-100 bg-orange-50 text-orange-700",
+      amber: "border-amber-100 bg-amber-50 text-amber-700",
+      blue: "border-blue-100 bg-blue-50 text-blue-700",
+      green: "border-emerald-100 bg-emerald-50 text-emerald-700",
+    };
+
+    return classes[tone] || classes.blue;
+  }
+
+  function overviewStatusForPanel(stats) {
+    if (stats.completion >= 100) return { text: "Tamamlandi", className: "bg-emerald-100 text-emerald-700" };
+    if (stats.missing > 3) return { text: "Riskli", className: "bg-red-100 text-red-700" };
+    if (stats.missing > 0) return { text: "Devam Ediyor", className: "bg-blue-100 text-blue-700" };
+    return { text: "Iyi", className: "bg-green-100 text-green-700" };
+  }
+
+  function overviewOrderAmount(order) {
+    return Number(order.total_amount || order.order_total || order.total || 0);
+  }  if (loading) {
     return <div className="p-6 text-sm text-slate-500">Proje yükleniyor...</div>;
   }
 
@@ -837,7 +2745,7 @@ export default function ProjectDetailPage() {
 
   return (
     <div className="min-h-screen bg-slate-100">
-      <main className="mx-auto max-w-7xl space-y-6">
+      <main className="mx-auto max-w-[1280px] space-y-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <Link href="/dashboard/projeler" className="text-sm font-bold text-blue-700 hover:underline">
@@ -853,13 +2761,24 @@ export default function ProjectDetailPage() {
               {project.project_code} · {project.customer_name || "Müşteri belirtilmedi"}
             </p>
           </div>
-          <button
-            type="button"
-            className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-bold text-white hover:bg-slate-800"
-            onClick={() => window.print()}
-          >
-            Proje Raporu
-          </button>
+          <div className="flex flex-wrap gap-2">
+            {IS_DEMO_MODE && (
+              <button
+                type="button"
+                className="rounded-xl bg-amber-100 px-5 py-3 text-sm font-bold text-amber-800 hover:bg-amber-200"
+                onClick={createDemoPurchaseData}
+              >
+                Demo Alım Verisi Oluştur
+              </button>
+            )}
+            <button
+              type="button"
+              className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-bold text-white hover:bg-slate-800"
+              onClick={() => window.print()}
+            >
+              Proje Raporu
+            </button>
+          </div>
         </div>
 
         {message && (
@@ -878,30 +2797,40 @@ export default function ProjectDetailPage() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-6">
-          <SummaryCard title="Sözleşme Bedeli" value={formatMoney(totals.contract)} text="Proje geliri" tone="blue" />
-          <SummaryCard title="Tahsil Edilen" value={formatMoney(totals.paidTotal)} text="Ödeme toplamı" tone="green" />
-          <SummaryCard title="Kalan Tahsilat" value={formatMoney(totals.remainingCollection)} text="Sözleşme - tahsilat" tone={totals.remainingCollection < 0 ? "red" : "blue"} />
-          <SummaryCard title="Tahmini Maliyet" value={formatMoney(totals.estimatedBudget)} text="Malzeme listesi" />
-          <SummaryCard title="Gerçekleşen Maliyet" value={formatMoney(totals.actualCost)} text="Satınalma bağlantıları eklenecek" />
-          <SummaryCard title="Kalan Bütçe" value={formatMoney(totals.remainingBudget)} text="Tahmini - gerçekleşen" tone={totals.remainingBudget < 0 ? "red" : "green"} />
-        </div>
-
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-5">
-          <SummaryCard title="Tamamlanma" value={`%${projectKpis.completion}`} text="Kalem bazlı" tone="blue" />
-          <SummaryCard title="Malzeme Tamamlama" value={`%${projectKpis.materialCompletion}`} text="Gelen/depoda" tone="green" />
-          <SummaryCard title="Tahsilat" value={`%${projectKpis.collection}`} text="Tahsil edilen" tone="green" />
-          <SummaryCard title="Toplam Sipariş" value={projectKpis.totalOrders} text={`${projectKpis.openOrders} açık sipariş`} />
-          <SummaryCard title="Eksik Malzeme" value={projectKpis.missingItems} text={`${projectKpis.receivedItems} gelen kalem`} tone={projectKpis.missingItems > 0 ? "red" : "green"} />
-        </div>
-
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-          <SummaryCard title="Gerçekleşen Maliyet" value={formatMoney(projectKpis.actualCost)} text="Sipariş + stok" />
-          <SummaryCard title="Kâr / Zarar" value={formatMoney(projectKpis.profitLoss)} text="Sözleşme - maliyet" tone={projectKpis.profitLoss < 0 ? "red" : "green"} />
-          <SummaryCard title="Bütçe Sapması" value={formatMoney(projectKpis.budgetVariance)} text="Gerçekleşen - tahmini" tone={projectKpis.budgetVariance > 0 ? "red" : "green"} />
-          <SummaryCard title="Açık Sipariş" value={projectKpis.openOrders} text="Tamamlanmamış" tone={projectKpis.openOrders > 0 ? "blue" : "green"} />
-        </div>
-
+        {activeTab === "Genel Özet" && (
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-5">
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-xl bg-blue-600 text-xl font-black text-white">TL</div>
+              <div className="text-sm font-bold text-slate-600">Sözleşme Bedeli</div>
+              <div className="mt-3 text-2xl font-black text-slate-950">{formatMoney(totals.contract)}</div>
+              <div className="mt-2 text-sm text-slate-500">Toplam bedel</div>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-xl bg-emerald-600 text-xl font-black text-white">OK</div>
+              <div className="text-sm font-bold text-slate-600">Tahsilat</div>
+              <div className="mt-3 text-2xl font-black text-slate-950">{formatMoney(totals.paidTotal)}</div>
+              <div className="mt-2 text-sm text-slate-500">Tahsil edilen</div>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-xl bg-violet-600 text-xl font-black text-white">#</div>
+              <div className="text-sm font-bold text-slate-600">Sipariş</div>
+              <div className="mt-3 text-2xl font-black text-slate-950">{projectKpis.totalOrders}</div>
+              <div className="mt-2 text-sm text-slate-500">Toplam sipariş</div>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-xl bg-amber-500 text-xl font-black text-white">%</div>
+              <div className="text-sm font-bold text-slate-600">Tamamlanma</div>
+              <div className="mt-3 text-2xl font-black text-slate-950">%{projectKpis.completion}</div>
+              <div className="mt-2 text-sm text-slate-500">Genel ilerleme</div>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-xl bg-emerald-600 text-xl font-black text-white">TL</div>
+              <div className="text-sm font-bold text-slate-600">Bütçe Durumu</div>
+              <div className={`mt-3 text-2xl font-black ${totals.budgetVariance > 0 ? "text-red-600" : "text-emerald-700"}`}>{formatMoney(totals.budgetVariance)}</div>
+              <div className="mt-2 text-sm text-slate-500">Bütçe sapması</div>
+            </div>
+          </div>
+        )}
         <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
           <div className="flex min-w-max gap-2">
             {tabs.map((tab) => (
@@ -921,113 +2850,293 @@ export default function ProjectDetailPage() {
 
         {activeTab === "Genel Özet" && (
           <section className="space-y-6">
-            <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
-              <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm xl:col-span-2">
-              <h2 className="text-xl font-bold text-slate-900">Proje Bilgileri</h2>
-              <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
-                <div className="rounded-xl bg-slate-50 p-4">
-                  <div className="text-xs font-bold text-slate-500">Proje Sorumlusu</div>
-                  <div className="mt-1 font-bold text-slate-900">{project.project_owner || "-"}</div>
-                </div>
-                <div className="rounded-xl bg-slate-50 p-4">
-                  <div className="text-xs font-bold text-slate-500">Tarih Aralığı</div>
-                  <div className="mt-1 font-bold text-slate-900">
-                    {formatDate(project.start_date)} - {formatDate(project.planned_end_date)}
+            <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.1fr_1.1fr_0.8fr]">
+              <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                <h2 className="text-xl font-black text-slate-900">Proje İlerleme Durumu</h2>
+                <div className="mt-8 space-y-8">
+                  {[
+                    ["Proje Tamamlanma", projectKpis.completion],
+                    ["Malzeme Temini", projectKpis.materialCompletion],
+                    ["Tahsilat Gerçekleşme", projectKpis.collection],
+                  ].map(([label, value]) => (
+                    <div key={label}>
+                      <div className="mb-3 flex items-center justify-between text-sm font-bold text-slate-700">
+                        <span>{label}</span>
+                        <span>%{value}</span>
+                      </div>
+                      <div className="h-3 overflow-hidden rounded-full bg-slate-100">
+                        <div className="h-full rounded-full bg-blue-600" style={{ width: `${Math.min(100, Math.max(0, value))}%` }} />
+                      </div>
+                    </div>
+                  ))}
+                  <div className="rounded-xl bg-blue-50 p-4 text-sm text-blue-800">
+                    Proje ilerleme oranları, tamamlanan malzeme, sipariş ve tahsilat verilerine göre hesaplanır.
                   </div>
                 </div>
-                <div className="rounded-xl bg-slate-50 p-4 md:col-span-2">
-                  <div className="text-xs font-bold text-slate-500">Açıklama</div>
-                  <div className="mt-1 text-sm leading-6 text-slate-700">{project.description || "-"}</div>
-                </div>
-              </div>
               </div>
 
               <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-              <h2 className="text-xl font-bold text-slate-900">Tahsilat Özeti</h2>
-              <div className="mt-5 space-y-3">
-                <SummaryCard title="Sözleşme" value={formatMoney(totals.contract)} text="Toplam bedel" />
-                <SummaryCard title="Tahsil Edilen" value={formatMoney(totals.paidTotal)} text="Project payments toplamı" tone="green" />
-                <SummaryCard title="Kalan Tahsilat" value={formatMoney(totals.remainingCollection)} text="Sözleşme - tahsil edilen" tone={totals.remainingCollection < 0 ? "red" : "blue"} />
+                <h2 className="text-xl font-black text-slate-900">Kritik Uyarılar</h2>
+                <div className="mt-6 space-y-3">
+                  {overviewWarnings.map((warning, index) => (
+                    <div key={`${warning.text}-${index}`} className={`flex items-center justify-between rounded-xl border p-4 text-sm font-bold ${overviewWarningClass(warning.tone)}`}>
+                      <span>{warning.text}</span>
+                      <span>›</span>
+                    </div>
+                  ))}
+                </div>
+                <button type="button" className="mt-6 text-sm font-bold text-blue-700 hover:underline" onClick={() => setActiveTab("Malzeme Listesi")}>Tüm uyarıları gör</button>
               </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                <h2 className="text-xl font-black text-slate-900">Finans Özeti</h2>
+                <div className="mt-6 overflow-hidden rounded-xl border border-slate-100">
+                  <div className="border-b border-slate-100 p-4">
+                    <div className="text-xs font-bold text-slate-500">Sözleşme Bedeli</div>
+                    <div className="mt-1 text-xl font-black text-slate-950">{formatMoney(totals.contract)}</div>
+                  </div>
+                  <div className="border-b border-slate-100 p-4">
+                    <div className="text-xs font-bold text-slate-500">Tahsil Edilen</div>
+                    <div className="mt-1 text-xl font-black text-emerald-700">{formatMoney(totals.paidTotal)}</div>
+                  </div>
+                  <div className="border-b border-slate-100 p-4">
+                    <div className="text-xs font-bold text-slate-500">Kalan Tahsilat</div>
+                    <div className="mt-1 text-xl font-black text-blue-700">{formatMoney(totals.remainingCollection)}</div>
+                  </div>
+                  <div className="border-b border-slate-100 p-4">
+                    <div className="text-xs font-bold text-slate-500">Malzeme Maliyeti</div>
+                    <div className="mt-1 text-xl font-black text-slate-950">{formatMoney(totals.materialCost)}</div>
+                  </div>
+                  <div className="border-b border-slate-100 p-4">
+                    <div className="text-xs font-bold text-slate-500">Ek Giderler</div>
+                    <div className="mt-1 text-xl font-black text-slate-950">{formatMoney(totals.expenseTotal)}</div>
+                  </div>
+                  <div className="border-b border-slate-100 p-4">
+                    <div className="text-xs font-bold text-slate-500">Toplam Maliyet</div>
+                    <div className="mt-1 text-xl font-black text-slate-950">{formatMoney(totals.totalCost)}</div>
+                  </div>
+                  <div className="border-b border-slate-100 p-4">
+                    <div className="text-xs font-bold text-slate-500">Net Kâr / Zarar</div>
+                    <div className={`mt-1 text-xl font-black ${totals.netProfitLoss >= 0 ? "text-emerald-700" : "text-red-600"}`}>{formatMoney(totals.netProfitLoss)}</div>
+                  </div>
+                  <div className="p-4">
+                    <div className="text-xs font-bold text-slate-500">Bütçe Sapması</div>
+                    <div className={`mt-1 text-xl font-black ${totals.budgetVariance > 0 ? "text-red-600" : "text-emerald-700"}`}>{formatMoney(totals.budgetVariance)}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+              <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                <h2 className="text-xl font-black text-slate-900">Ek Gider Ekle</h2>
+                <form onSubmit={addExpense} className="mt-5 space-y-4">
+                  <select
+                    value={expenseForm.expense_type}
+                    onChange={(event) => updateExpenseForm("expense_type", event.target.value)}
+                    className="w-full rounded-xl border border-slate-200 p-3 text-sm font-semibold"
+                  >
+                    {expenseTypes.map((type) => (
+                      <option key={type} value={type}>{type}</option>
+                    ))}
+                  </select>
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={expenseForm.amount}
+                      onChange={(event) => updateExpenseForm("amount", event.target.value)}
+                      placeholder="Tutar"
+                      className="rounded-xl border border-slate-200 p-3 text-sm font-semibold"
+                    />
+                    <select
+                      value={expenseForm.currency}
+                      onChange={(event) => {
+                        const currency = event.target.value;
+                        updateExpenseForm("currency", currency);
+                        updateExpenseForm("exchange_rate", getExchangeRate(currency, companySettings));
+                      }}
+                      className="rounded-xl border border-slate-200 p-3 text-sm font-semibold"
+                    >
+                      {currencyOptions.map((currency) => (
+                        <option key={currency} value={currency}>{currency}</option>
+                      ))}
+                    </select>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.0001"
+                      value={expenseForm.exchange_rate}
+                      onChange={(event) => updateExpenseForm("exchange_rate", event.target.value)}
+                      placeholder="Kur"
+                      className="rounded-xl border border-slate-200 p-3 text-sm font-semibold"
+                    />
+                  </div>
+                  <input
+                    type="date"
+                    value={expenseForm.expense_date}
+                    onChange={(event) => updateExpenseForm("expense_date", event.target.value)}
+                    className="w-full rounded-xl border border-slate-200 p-3 text-sm font-semibold"
+                  />
+                  <textarea
+                    value={expenseForm.description}
+                    onChange={(event) => updateExpenseForm("description", event.target.value)}
+                    placeholder="Açıklama"
+                    rows={3}
+                    className="w-full rounded-xl border border-slate-200 p-3 text-sm font-semibold"
+                  />
+                  <button type="submit" className="w-full rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white hover:bg-blue-700">
+                    Ek Gider Ekle
+                  </button>
+                </form>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-xl font-black text-slate-900">Ek Giderler</h2>
+                    <p className="mt-1 text-sm text-slate-500">Toplam: {formatMoney(totals.expenseTotal)}</p>
+                  </div>
+                  <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">{expenses.length} kayıt</span>
+                </div>
+                <div className="mt-5 space-y-3">
+                  {expenses.map((expense) => (
+                    <div key={expense.id} className="grid grid-cols-1 gap-3 rounded-xl border border-slate-100 p-4 md:grid-cols-[1fr_auto] md:items-center">
+                      <div>
+                        <div className="font-black text-slate-900">{expense.expense_type || "Diğer"}</div>
+                        <div className="mt-1 text-xs font-semibold text-slate-500">
+                          {formatDate(expense.expense_date)} · {expense.description || "Açıklama yok"}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <div className="text-right">
+                          <div className="font-black text-slate-950">{formatMoney(expense.base_amount || expense.amount)}</div>
+                          <div className="text-xs font-semibold text-slate-500">
+                            {Number(expense.amount || 0).toLocaleString("tr-TR")} {expense.currency || "TRY"}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => deleteExpense(expense)}
+                          className="rounded-lg bg-red-50 px-3 py-2 text-xs font-bold text-red-700 hover:bg-red-100"
+                        >
+                          Sil
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  {expenses.length === 0 && (
+                    <div className="rounded-xl bg-slate-50 p-4 text-sm font-semibold text-slate-500">
+                      Bu proje için ek gider kaydı yok.
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+              <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <h2 className="text-xl font-black text-slate-900">Son Siparişler</h2>
+                  <button type="button" onClick={() => setActiveTab("Siparişler")} className="text-sm font-bold text-blue-700 hover:underline">Tümünü gör</button>
+                </div>
+                <div className="mt-5 overflow-x-auto rounded-xl border border-slate-100">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-slate-50 text-xs font-bold text-slate-500">
+                      <tr>
+                        <th className="p-3">Sipariş No</th>
+                        <th className="p-3">Tedarikçi</th>
+                        <th className="p-3">Tutar</th>
+                        <th className="p-3">Durum</th>
+                        <th className="p-3">Tarih</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {recentProjectOrders.map((order) => (
+                        <tr key={order.id} className="border-t border-slate-100">
+                          <td className="p-3 font-bold text-slate-900">{order.order_no || order.siparis_no || order.id?.slice?.(0, 8) || "-"}</td>
+                          <td className="p-3 text-slate-700">{order.supplier_name || order.supplier || order.firma || "-"}</td>
+                          <td className="p-3 font-bold text-slate-900">{formatMoney(overviewOrderAmount(order))}</td>
+                          <td className="p-3"><span className="rounded-full bg-blue-50 px-2 py-1 text-xs font-bold text-blue-700">{order.status || "Bekliyor"}</span></td>
+                          <td className="p-3 text-slate-600">{formatDate(order.created_at || order.order_date)}</td>
+                        </tr>
+                      ))}
+                      {recentProjectOrders.length === 0 && (
+                        <tr><td colSpan={5} className="p-4 text-center text-sm text-slate-500">Henüz sipariş yok.</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                <h2 className="text-xl font-black text-slate-900">Tahsilat Özeti</h2>
+                <div className="mt-8 flex flex-col items-center gap-6 md:flex-row md:justify-center">
+                  <div className="flex h-44 w-44 items-center justify-center rounded-full" style={{ background: `conic-gradient(#2563eb ${Math.min(100, Math.max(0, projectKpis.collection))}%, #e8eefc 0)` }}>
+                    <div className="flex h-28 w-28 flex-col items-center justify-center rounded-full bg-white shadow-sm">
+                      <div className="text-3xl font-black text-slate-950">%{projectKpis.collection}</div>
+                      <div className="text-xs font-bold text-slate-500">Tahsilat Oranı</div>
+                    </div>
+                  </div>
+                  <div className="space-y-4 text-sm">
+                    <div><span className="mr-2 inline-block h-2 w-2 rounded-full bg-emerald-500" />Tahsil Edilen <div className="ml-5 font-black text-slate-900">{formatMoney(totals.paidTotal)}</div></div>
+                    <div><span className="mr-2 inline-block h-2 w-2 rounded-full bg-blue-600" />Kalan Tahsilat <div className="ml-5 font-black text-slate-900">{formatMoney(totals.remainingCollection)}</div></div>
+                  </div>
+                </div>
+                <div className="mt-6 rounded-xl bg-slate-50 p-4 text-sm text-slate-500">Tahsilat planına göre ilerleme oranı %{projectKpis.collection}.</div>
               </div>
             </div>
 
             <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-              <h2 className="text-xl font-bold text-slate-900">Ana Ürün / Pano Durum Takibi</h2>
-              <div className="mt-5 grid grid-cols-1 gap-4 xl:grid-cols-2">
-                {parentItems.map((item) => {
-                  const stats = panelStats(item);
-                  return (
-                    <div key={item.id} className="rounded-2xl border border-slate-100 p-4">
-                      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                        <div>
-                          <div className="font-black text-slate-900">{item.product_name}</div>
-                          <div className="mt-1 text-xs text-slate-500">{item.product_code || "-"} · {item.panel_status || item.status || "Bekliyor"}</div>
-                        </div>
-                        <span className={`w-max rounded-full px-3 py-1 text-xs font-bold ${itemStatusClass(item.panel_status || item.status || "Bekliyor")}`}>
-                          {item.panel_status || item.status || "Bekliyor"}
-                        </span>
-                      </div>
-                      <div className="mt-4 grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
-                        <div className="rounded-xl bg-slate-50 p-3">
-                          <div className="text-xs font-bold text-slate-500">Alt malzeme</div>
-                          <div className="mt-1 font-black text-slate-900">{stats.total}</div>
-                        </div>
-                        <div className="rounded-xl bg-red-50 p-3">
-                          <div className="text-xs font-bold text-red-600">Eksik</div>
-                          <div className="mt-1 font-black text-red-700">{stats.missing}</div>
-                        </div>
-                        <div className="rounded-xl bg-purple-50 p-3">
-                          <div className="text-xs font-bold text-purple-600">Üretime verilen</div>
-                          <div className="mt-1 font-black text-purple-700">{stats.production}</div>
-                        </div>
-                        <div className="rounded-xl bg-emerald-50 p-3">
-                          <div className="text-xs font-bold text-emerald-600">Tamamlanma</div>
-                          <div className="mt-1 font-black text-emerald-700">%{stats.completion}</div>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-                {parentItems.length === 0 && (
-                  <div className="rounded-xl bg-slate-50 p-6 text-sm text-slate-500">
-                    Ana ürün veya pano henüz eklenmemiş.
-                  </div>
-                )}
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="text-xl font-black text-slate-900">Pano Durum Takibi</h2>
+                <button type="button" onClick={() => setActiveTab("Malzeme Listesi")} className="text-sm font-bold text-blue-700 hover:underline">Tümünü gör</button>
+              </div>
+              <div className="mt-5 overflow-x-auto rounded-xl border border-slate-100">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-slate-50 text-xs font-bold text-slate-500">
+                    <tr>
+                      <th className="p-3">Pano Kodu</th>
+                      <th className="p-3">Pano Adı</th>
+                      <th className="p-3">Tamamlanma</th>
+                      <th className="p-3">Eksik Malzeme</th>
+                      <th className="p-3">Üretime Verilen</th>
+                      <th className="p-3">Durum</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {parentItems.map((item) => {
+                      const stats = panelStats(item);
+                      const status = overviewStatusForPanel(stats);
+                      return (
+                        <tr key={item.id} className="border-t border-slate-100">
+                          <td className="p-3 font-black text-slate-900">{item.product_code || "-"}</td>
+                          <td className="p-3 font-bold text-slate-800">{item.product_name}</td>
+                          <td className="p-3">
+                            <div className="flex items-center gap-3">
+                              <div className="h-2 w-32 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-blue-600" style={{ width: `${stats.completion}%` }} /></div>
+                              <span className="text-xs font-bold text-slate-600">%{stats.completion}</span>
+                            </div>
+                          </td>
+                          <td className="p-3 font-bold text-slate-900">{stats.missing}</td>
+                          <td className="p-3 font-bold text-slate-900">{stats.production}</td>
+                          <td className="p-3"><span className={`rounded-full px-3 py-1 text-xs font-bold ${status.className}`}>{status.text}</span></td>
+                        </tr>
+                      );
+                    })}
+                    {parentItems.length === 0 && (
+                      <tr><td colSpan={6} className="p-4 text-center text-sm text-slate-500">Henüz pano/ana ürün yok.</td></tr>
+                    )}
+                  </tbody>
+                </table>
               </div>
             </div>
           </section>
         )}
-
-        {activeTab === "Tahmini Ürün/Malzeme Listesi" && (
+        {activeTab === "Malzeme Listesi" && (
           <section className="space-y-6">
-            <div className="grid grid-cols-1 gap-6 xl:grid-cols-[0.9fr_1.2fr]">
-              <form onSubmit={addProjectItem} className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                <h2 className="text-xl font-bold text-slate-900">Malzeme Ekle</h2>
-                <div className="mt-5 space-y-4">
-                  <select className="w-full rounded-xl border border-slate-300 p-3" value={itemForm.parent_item_id} onChange={(e) => updateItemForm("parent_item_id", e.target.value)}>
-                    <option value="">Ana ürün olarak ekle</option>
-                    {parentItems.map((item) => (
-                      <option key={item.id} value={item.id}>{item.product_name}</option>
-                    ))}
-                  </select>
-                  <input className="w-full rounded-xl border border-slate-300 p-3" placeholder="Ürün kodu" value={itemForm.product_code} onChange={(e) => updateItemForm("product_code", e.target.value)} />
-                  <input className="w-full rounded-xl border border-slate-300 p-3" placeholder="Ürün adı" value={itemForm.product_name} onChange={(e) => updateItemForm("product_name", e.target.value)} />
-                  <div className="grid grid-cols-3 gap-3">
-                    <input className="rounded-xl border border-slate-300 p-3" placeholder="Birim" value={itemForm.unit} onChange={(e) => updateItemForm("unit", e.target.value)} />
-                    <input type="number" className="rounded-xl border border-slate-300 p-3" placeholder="Miktar" value={itemForm.estimated_quantity} onChange={(e) => updateItemForm("estimated_quantity", e.target.value)} />
-                    <input type="number" className="rounded-xl border border-slate-300 p-3" placeholder="Birim fiyat" value={itemForm.estimated_unit_price} onChange={(e) => updateItemForm("estimated_unit_price", e.target.value)} />
-                  </div>
-                  <select className="w-full rounded-xl border border-slate-300 p-3" value={itemForm.status} onChange={(e) => updateItemForm("status", e.target.value)}>
-                    {lifecycleItemStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
-                  </select>
-                  <textarea className="w-full rounded-xl border border-slate-300 p-3" rows={3} placeholder="Not" value={itemForm.note} onChange={(e) => updateItemForm("note", e.target.value)} />
-                  <button type="submit" className="w-full rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white hover:bg-blue-700">
-                    Malzeme Ekle
-                  </button>
-                </div>
-              </form>
-
+            <div className="grid grid-cols-1 gap-6 xl:grid-cols-1">
               <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
                 <h2 className="text-xl font-bold text-slate-900">Excel / PDF / Görselden Ürünleri Yükle</h2>
                 <p className="mt-2 text-sm text-slate-500">Dosyadan okunan satırlar önce önizlemeye alınır, kontrol ettikten sonra projeye aktarılır.</p>
@@ -1065,6 +3174,521 @@ export default function ProjectDetailPage() {
                     </div>
                   </div>
                 )}
+                {previewRows.length > 0 && (
+                  <div className="mt-5 rounded-2xl border border-slate-200 bg-white p-4">
+                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                      <div>
+                        <h3 className="text-lg font-black text-slate-900">Okunan Ürünleri Kontrol Et</h3>
+                        <p className="mt-1 text-sm text-slate-500">Ürünler kategori/ana ürün bilgisine göre gruplandı. Kontrol edip seçili satırları projeye aktarabilirsiniz.</p>
+                      </div>
+                      <div className="rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">
+                        {selectedPreviewRows.length} / {previewRows.length} seçili
+                      </div>
+                    </div>
+
+                    <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-[1fr_220px_auto_auto_auto] md:items-center">
+                      <input
+                        value={previewSearch}
+                        onChange={(event) => setPreviewSearch(event.target.value)}
+                        placeholder="Ürün, kod, marka veya kategori ara..."
+                        className="rounded-xl border border-slate-300 p-3 text-sm"
+                      />
+                      <select
+                        value={previewCategoryFilter}
+                        onChange={(event) => setPreviewCategoryFilter(event.target.value)}
+                        className="rounded-xl border border-slate-300 p-3 text-sm"
+                      >
+                        <option value="">Tüm kategoriler</option>
+                        {previewCategories.map((category) => (
+                          <option key={category} value={category}>{category}</option>
+                        ))}
+                      </select>
+                      <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-700">
+                        <input
+                          type="checkbox"
+                          checked={allFilteredPreviewRowsSelected}
+                          onChange={toggleAllFilteredPreviewRows}
+                          className="h-4 w-4"
+                        />
+                        Tümünü seç
+                      </label>
+                      <button
+                        type="button"
+                        disabled={selectedPreviewRows.length === 0 || previewBlocked}
+                        onClick={importPreviewRows}
+                        className="rounded-xl bg-slate-900 px-4 py-3 text-sm font-bold text-white hover:bg-slate-800 disabled:bg-slate-300"
+                      >
+                        Seçilenleri Projeye Aktar
+                      </button>
+                      <button
+                        type="button"
+                        disabled={selectedPreviewRows.length === 0}
+                        onClick={deleteSelectedPreviewRows}
+                        className="rounded-xl bg-red-50 px-4 py-3 text-sm font-bold text-red-700 hover:bg-red-100 disabled:bg-slate-100 disabled:text-slate-400"
+                      >
+                        Seçilenleri Sil
+                      </button>
+                    </div>
+
+                    <div className="mt-4 flex justify-end">
+                      <button
+                        type="button"
+                        disabled={selectedPreviewRows.length === 0 || previewBlocked}
+                        onClick={importGroupedPreviewRows}
+                        className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white hover:bg-emerald-700 disabled:bg-slate-300"
+                      >
+                        Hiyerarşik Aktar
+                      </button>
+                    </div>
+
+                    <div className="mt-5 space-y-4">
+                      {Object.entries(groupedPreviewRows).map(([category, rows]) => (
+                        <div key={category} className="rounded-2xl border border-slate-200">
+                          <div className="flex items-center justify-between rounded-t-2xl bg-slate-50 px-4 py-3">
+                            <div className="font-black text-slate-900">{category}</div>
+                            <div className="text-xs font-bold text-slate-500">{rows.length} ürün</div>
+                          </div>
+                          <div className="divide-y divide-slate-100">
+                            {rows.map((row) => {
+                              const isEditing = editingPreviewRowId === row.preview_id;
+                              return (
+                                <div key={row.preview_id} className="grid grid-cols-1 gap-3 p-4 text-sm md:grid-cols-[auto_1fr_auto_auto_auto] md:items-center">
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedPreviewRowIds.includes(row.preview_id)}
+                                    onChange={() => togglePreviewRow(row.preview_id)}
+                                    className="h-4 w-4"
+                                  />
+                                  <div className="min-w-0">
+                                    {isEditing ? (
+                                      <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                                        <input className="rounded-lg border border-slate-200 p-2" value={row.product_name || ""} onChange={(event) => updatePreviewRow(row.preview_id, "product_name", event.target.value)} />
+                                        <input className="rounded-lg border border-slate-200 p-2" value={row.product_code || ""} onChange={(event) => updatePreviewRow(row.preview_id, "product_code", event.target.value)} />
+                                        <input className="rounded-lg border border-slate-200 p-2" value={row.brand || ""} onChange={(event) => updatePreviewRow(row.preview_id, "brand", event.target.value)} placeholder="Marka" />
+                                        <input className="rounded-lg border border-slate-200 p-2" value={row.unit || ""} onChange={(event) => updatePreviewRow(row.preview_id, "unit", event.target.value)} placeholder="Birim" />
+                                      </div>
+                                    ) : (
+                                      <>
+                                        <div className="font-black text-slate-900">{row.product_name}</div>
+                                        <div className="mt-1 flex flex-wrap gap-2 text-xs text-slate-500">
+                                          <span>Kod: {row.product_code || "-"}</span>
+                                          {row.brand && <span>Marka: {row.brand}</span>}
+                                          <span className="rounded-full bg-amber-50 px-2 py-0.5 font-bold text-amber-700">{category}</span>
+                                        </div>
+                                      </>
+                                    )}
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2 text-xs md:w-44">
+                                    <input type="number" disabled={!isEditing} className="rounded-lg border border-slate-200 p-2 disabled:bg-transparent" value={row.estimated_quantity || ""} onChange={(event) => updatePreviewRow(row.preview_id, "estimated_quantity", event.target.value)} />
+                                    <input disabled={!isEditing} className="rounded-lg border border-slate-200 p-2 disabled:bg-transparent" value={row.unit || "adet"} onChange={(event) => updatePreviewRow(row.preview_id, "unit", event.target.value)} />
+                                  </div>
+                                  <div className="text-xs font-bold text-slate-700 md:w-32">
+                                    {isEditing ? (
+                                      <input
+                                        type="number"
+                                        className="mb-2 w-full rounded-lg border border-slate-200 p-2"
+                                        value={row.estimated_unit_price || ""}
+                                        onChange={(event) => updatePreviewRow(row.preview_id, "estimated_unit_price", event.target.value)}
+                                      />
+                                    ) : (
+                                      <div>{formatMoney(row.estimated_unit_price)}</div>
+                                    )}
+                                    <div className="text-slate-500">{formatMoney(row.estimated_total)}</div>
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <button type="button" onClick={() => setEditingPreviewRowId(isEditing ? "" : row.preview_id)} className="rounded-lg bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700">
+                                      {isEditing ? "Tamam" : "Düzenle"}
+                                    </button>
+                                    <button type="button" onClick={() => deletePreviewRow(row.preview_id)} className="rounded-lg bg-red-50 px-3 py-2 text-xs font-bold text-red-700">
+                                      Sil
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                      {filteredPreviewRows.length === 0 && (
+                        <div className="rounded-xl bg-slate-50 p-6 text-center text-sm text-slate-500">Filtreye uygun ürün yok.</div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {(rawItems.length > 0 || mainProductCandidates.length > 0 || suggestedHierarchyGroups.length > 0) && (
+                  <details className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <summary className="cursor-pointer text-sm font-black text-slate-700">Gelişmiş teknik detaylar</summary>
+                    <div className="mt-4">
+                {rawItems.length > 0 && (
+                  <div className="mt-5 rounded-2xl border border-blue-100 bg-blue-50 p-4">
+                    <div>
+                      <h3 className="text-lg font-black text-slate-900">Ham Verilerin Okunması</h3>
+                      <p className="mt-1 text-sm text-slate-600">
+                        Dosyadan okunan standart raw_items satırları. Bu tablo sadece kontrol içindir; mevcut projeye aktarma akışı aşağıdaki önizleme tablosuyla aynı şekilde devam eder.
+                      </p>
+                    </div>
+
+                    <div className="mt-4 max-h-80 overflow-auto rounded-xl border border-blue-100 bg-white">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-slate-50 text-slate-500">
+                          <tr>
+                            <th className="p-3">Satır</th>
+                            <th className="p-3">Dosya</th>
+                            <th className="p-3">Tip</th>
+                            <th className="p-3">Kod</th>
+                            <th className="p-3">Marka</th>
+                            <th className="p-3">Açıklama</th>
+                            <th className="p-3">Miktar</th>
+                            <th className="p-3">Birim</th>
+                            <th className="p-3">Birim Fiyat</th>
+                            <th className="p-3">Tutar</th>
+                            <th className="p-3">Para</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rawItems.map((row, index) => (
+                            <tr key={row.id || index} className="border-t border-slate-100">
+                              <td className="p-3 font-bold text-slate-700">#{row.row_index || index + 1}</td>
+                              <td className="p-3 text-slate-500">{row.source_file || "-"}</td>
+                              <td className="p-3 text-slate-500">{row.source_type || "-"}</td>
+                              <td className="p-3 font-semibold text-slate-700">{row.product_code || "-"}</td>
+                              <td className="p-3 text-slate-600">{row.brand || "-"}</td>
+                              <td className="p-3 font-bold text-slate-900">{row.description || "-"}</td>
+                              <td className="p-3">{row.quantity || "-"}</td>
+                              <td className="p-3">{row.unit || "-"}</td>
+                              <td className="p-3">{formatMoney(row.unit_price)}</td>
+                              <td className="p-3 font-bold">{formatMoney(row.total)}</td>
+                              <td className="p-3">{row.currency || "TRY"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+                {mainProductCandidates.length > 0 && (
+                  <div className="mt-5 rounded-2xl border border-slate-200 bg-white p-4">
+                    <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                      <div>
+                        <h3 className="text-lg font-black text-slate-900">Ana Ürün Adayları</h3>
+                        <p className="mt-1 text-sm text-slate-500">
+                          Bunlar sistemin raw_items \u00fczerinden \u00fcretti\u011fi sekt\u00f6r ba\u011f\u0131ms\u0131z \u00f6nerilerdir. \u015eimdilik sadece se\u00e7im yap\u0131l\u0131r, kay\u0131t/hiyerar\u015fi olu\u015fturulmaz.
+                        </p>
+                      </div>
+                      <div className="rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">
+                        {selectedCandidateIds.length} seçildi
+                      </div>
+                    </div>
+
+                    <div className="mt-4 flex justify-end">
+                      <button
+                        type="button"
+                        disabled={selectedCandidateIds.length === 0 || isSuggestingHierarchy}
+                        onClick={suggestProductHierarchy}
+                        className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-bold text-white hover:bg-slate-800 disabled:bg-slate-300"
+                      >
+                        {isSuggestingHierarchy ? "Öneri hazırlanıyor..." : "Alt Ürünleri Öner"}
+                      </button>
+                    </div>
+
+                    <div className="mt-4 space-y-3">
+                      {mainProductCandidates.map((candidate) => (
+                        <label key={candidate.id} className="flex cursor-pointer gap-3 rounded-xl border border-slate-100 bg-slate-50 p-4 hover:bg-blue-50">
+                          <input
+                            type="checkbox"
+                            checked={selectedCandidateIds.includes(candidate.id)}
+                            onChange={() => toggleMainProductCandidate(candidate.id)}
+                            className="mt-1 h-4 w-4"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                              <div>
+                                <div className="font-black text-slate-900">{candidate.title}</div>
+                                <div className="mt-1 text-xs text-slate-500">Raw satır: {candidate.raw_item_id}</div>
+                              </div>
+                              <div className="text-sm font-bold text-slate-700">
+                                {formatMoney(candidate.estimated_total)}
+                              </div>
+                            </div>
+                            <div className="mt-3 flex items-center gap-3">
+                              <div className="h-2 flex-1 rounded-full bg-slate-200">
+                                <div
+                                  className="h-2 rounded-full bg-blue-600"
+                                  style={{ width: `${Math.min(100, Math.max(0, candidate.confidence_score || 0))}%` }}
+                                />
+                              </div>
+                              <div className="w-16 text-right text-xs font-black text-blue-700">
+                                %{candidate.confidence_score || 0}
+                              </div>
+                            </div>
+                            {candidate.reasons?.length > 0 && (
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                {candidate.reasons.map((reason) => (
+                                  <span key={reason} className="rounded-full bg-white px-3 py-1 text-[11px] font-bold text-slate-600">
+                                    {reason}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {suggestedHierarchyGroups.length > 0 && (
+                  <div className="mt-5 rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
+                    <div>
+                      <h3 className="text-lg font-black text-slate-900">Alt Ürün Eşleştirme Önerisi</h3>
+                      <p className="mt-1 text-sm text-slate-600">
+                        Bu liste sistem önerisidir. Alt ürünleri taşıyabilir, çıkarabilir veya yeni ana ürün yapabilirsiniz. Henüz Supabase kaydı yapılmaz.
+                      </p>
+                    </div>
+                    <div className="mt-4 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={saveSuggestedHierarchyToProject}
+                        className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white hover:bg-emerald-700"
+                      >
+                        Hiyerarşiyi Projeye Kaydet
+                      </button>
+                    </div>
+                    <div className="mt-4 space-y-4">
+                      {suggestedHierarchyGroups.map((group) => (
+                        <div key={group.id} className="rounded-xl border border-emerald-100 bg-white p-4">
+                          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                            <div>
+                              <div className="font-black text-slate-900">{group.main_product?.title || "Ana ürün"}</div>
+                              <div className="mt-1 text-xs text-slate-500">
+                                Raw: {group.main_product?.raw_item_id || "-"} · {group.sub_items?.length || 0} önerilen alt ürün
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <div className="font-bold text-emerald-700">{formatMoney(group.main_product?.estimated_total)}</div>
+                              <div className="text-xs font-black text-blue-700">Öneri skoru %{group.suggestion_score || 0}</div>
+                              <button
+                                type="button"
+                                onClick={() => removeSuggestedGroup(group.id)}
+                                className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-xs font-bold text-red-700 hover:bg-red-100"
+                              >
+                                Ana grubu sil
+                              </button>
+                            </div>
+                          </div>
+                          <div className="mt-3 flex flex-col gap-2 rounded-xl bg-emerald-50 p-3 md:flex-row md:items-center">
+                            <select
+                              className="flex-1 rounded-lg border border-emerald-100 bg-white p-2 text-xs font-semibold"
+                              defaultValue=""
+                              onChange={(event) => {
+                                addRawItemToSuggestedGroup(group.id, event.target.value);
+                                event.target.value = "";
+                              }}
+                            >
+                              <option value="">Raw satırdan alt ürün ekle</option>
+                              {rawItems.map((rawItem) => (
+                                <option key={`${group.id}-raw-${rawItem.id}`} value={rawItem.id}>
+                                  #{rawItem.row_index || rawItem.id} - {rawItem.description || rawItem.product_code || "-"}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="mt-3 max-h-72 overflow-auto rounded-xl border border-slate-100">
+                            <table className="w-full text-left text-xs">
+                              <thead className="bg-slate-50 text-slate-500">
+                                <tr>
+                                  <th className="p-3">Alt Ürün</th>
+                                  <th className="p-3">Miktar</th>
+                                  <th className="p-3">Tutar</th>
+                                  <th className="p-3">Skor</th>
+                                  <th className="p-3">Sebep</th>
+                                  <th className="p-3">İşlem</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {(group.sub_items || []).map((item) => (
+                                  <tr key={`${group.id}-${item.raw_item_id}`} className="border-t border-slate-100">
+                                    <td className="p-3">
+                                      <div className="font-bold text-slate-900">{item.title}</div>
+                                      <div className="text-slate-500">{item.product_code || "-"} · {item.brand || "-"}</div>
+                                    </td>
+                                    <td className="p-3">{item.quantity || "-"} {item.unit || ""}</td>
+                                    <td className="p-3 font-bold">{formatMoney(item.total)} {item.currency || "TRY"}</td>
+                                    <td className="p-3 font-black text-blue-700">%{item.suggestion_score || 0}</td>
+                                    <td className="p-3 text-slate-500">{(item.reasons || []).join(", ") || "-"}</td>
+                                    <td className="p-3">
+                                      <div className="flex flex-col gap-2">
+                                        <select
+                                          value={group.id}
+                                          onChange={(event) => moveSuggestedSubItem(group.id, item.raw_item_id, event.target.value)}
+                                          className="rounded-lg border border-slate-200 p-2 text-xs"
+                                        >
+                                          {suggestedHierarchyGroups.map((targetGroup) => (
+                                            <option key={`${item.raw_item_id}-${targetGroup.id}`} value={targetGroup.id}>
+                                              {targetGroup.main_product?.title || "Ana ürün"}
+                                            </option>
+                                          ))}
+                                        </select>
+                                        <div className="flex gap-2">
+                                          <button
+                                            type="button"
+                                            onClick={() => promoteSuggestedSubItem(group.id, item.raw_item_id)}
+                                            className="rounded-lg bg-blue-50 px-2 py-1 text-xs font-bold text-blue-700"
+                                          >
+                                            Ana yap
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => removeSuggestedSubItem(group.id, item.raw_item_id)}
+                                            className="rounded-lg bg-red-50 px-2 py-1 text-xs font-bold text-red-700"
+                                          >
+                                            Çıkar
+                                          </button>
+                                        </div>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                ))}
+                                {(group.sub_items || []).length === 0 && (
+                                  <tr>
+                                    <td colSpan={6} className="p-4 text-sm text-slate-500">Bu ana ürün için önerilen alt ürün yok.</td>
+                                  </tr>
+                                )}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                    </div>
+                  </details>
+                )}
+                {false && rawItems.length > 0 && (
+                  <div className="mt-5 rounded-2xl border border-blue-100 bg-blue-50 p-4">
+                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                      <div>
+                        <h3 className="text-lg font-black text-slate-900">Ana ürünleri seçiniz</h3>
+                        <p className="mt-1 text-sm text-slate-600">
+                          Sistem sadece \u00f6neri \u00fcretir; toplam fiyat, grup ba\u015fl\u0131\u011f\u0131 g\u00f6r\u00fcn\u00fcm\u00fc, k\u0131sa a\u00e7\u0131klama, d\u00fc\u015f\u00fck adet ve \u00e7evresindeki \u00fcr\u00fcn yo\u011funlu\u011fu gibi genel sinyalleri kullan\u0131r. Son karar\u0131 siz verirsiniz.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={selectedMainRawIds.length === 0}
+                        onClick={buildHierarchyFromRaw}
+                        className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white hover:bg-blue-700 disabled:bg-slate-300"
+                      >
+                        Ana Ürünleri Onayla ({selectedMainRawIds.length})
+                      </button>
+                    </div>
+
+                    <div className="mt-4 max-h-72 overflow-auto rounded-xl border border-blue-100 bg-white">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-slate-50 text-slate-500">
+                          <tr>
+                            <th className="p-3">Ana</th>
+                            <th className="p-3">Satır</th>
+                            <th className="p-3">Ürün</th>
+                            <th className="p-3">Miktar</th>
+                            <th className="p-3">Toplam</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rawItems.map((row, index) => (
+                            <tr key={row.id || index} className="border-t border-slate-100">
+                              <td className="p-3">
+                                <input
+                                  type="checkbox"
+                                  checked={selectedMainRawIds.includes(row.id)}
+                                  onChange={() => toggleMainRawItem(row.id)}
+                                  className="h-4 w-4"
+                                />
+                              </td>
+                              <td className="p-3 text-slate-500">#{index + 1}</td>
+                              <td className="p-3">
+                                <div className="font-bold text-slate-900">{row.product_name || "-"}</div>
+                                <div className="text-slate-500">
+                                  {row.product_code || "-"} {row.main_product_candidate ? `· aday puanı ${row.candidate_score || 0}` : ""}
+                                </div>
+                                {row.candidate_reasons?.length > 0 && (
+                                  <div className="mt-1 text-[11px] font-semibold text-blue-700">
+                                    {row.candidate_reasons.join(", ")}
+                                  </div>
+                                )}
+                              </td>
+                              <td className="p-3">{row.estimated_quantity || "-"} {row.unit || ""}</td>
+                              <td className="p-3 font-bold">{formatMoney(row.estimated_total)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+                {false && hierarchyGroups.length > 0 && (
+                  <div className="mt-5 rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
+                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                      <div>
+                        <h3 className="text-lg font-black text-slate-900">Ana ürün + alt ürün hiyerarşisi</h3>
+                        <p className="mt-1 text-sm text-slate-600">Alt ürünleri başka ana ürüne taşıyabilir, silebilir veya yeni ana ürün yapabilirsiniz.</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={importHierarchyGroups}
+                        className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white hover:bg-emerald-700"
+                      >
+                        Hiyerarşiyi Projeye Aktar
+                      </button>
+                    </div>
+                    <div className="mt-4 space-y-4">
+                      {hierarchyGroups.map((group) => (
+                        <div key={group.id} className="rounded-xl border border-emerald-100 bg-white p-4">
+                          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                            <div>
+                              <div className="font-black text-slate-900">{group.main.product_name}</div>
+                              <div className="text-xs text-slate-500">{group.main.product_code || "-"} · {group.subItems.length} alt ürün</div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <div className="font-bold text-emerald-700">{formatMoney(group.main.estimated_total)}</div>
+                              <button type="button" onClick={() => removeMainGroup(group.id)} className="rounded-lg bg-red-50 px-3 py-2 text-xs font-bold text-red-700">
+                                Ana ürünü sil
+                              </button>
+                            </div>
+                          </div>
+                          <div className="mt-3 space-y-2">
+                            {group.subItems.map((item) => (
+                              <div key={item.id} className="grid grid-cols-1 gap-2 rounded-lg bg-slate-50 p-3 text-xs md:grid-cols-[1fr_auto_auto_auto] md:items-center">
+                                <div>
+                                  <div className="font-bold text-slate-900">{item.product_name}</div>
+                                  <div className="text-slate-500">{item.product_code || "-"} · {item.estimated_quantity} {item.unit || "adet"}</div>
+                                </div>
+                                <select
+                                  value={group.id}
+                                  onChange={(e) => moveSubItem(item.id, e.target.value)}
+                                  className="rounded-lg border border-slate-200 p-2"
+                                >
+                                  {hierarchyGroups.map((target) => (
+                                    <option key={target.id} value={target.id}>{target.main.product_name}</option>
+                                  ))}
+                                </select>
+                                <button type="button" onClick={() => promoteSubItem(item.id)} className="rounded-lg bg-blue-50 px-3 py-2 font-bold text-blue-700">
+                                  Ana ürün yap
+                                </button>
+                                <button type="button" onClick={() => removeSubItem(item.id)} className="rounded-lg bg-red-50 px-3 py-2 font-bold text-red-700">
+                                  Sil
+                                </button>
+                              </div>
+                            ))}
+                            {group.subItems.length === 0 && <div className="rounded-lg bg-slate-50 p-3 text-xs text-slate-500">Alt ürün yok.</div>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {false && (
                 <div className="mt-4 flex flex-col gap-3 md:flex-row md:items-center">
                   <select className="rounded-xl border border-slate-300 p-3 text-sm" value={previewParentId} onChange={(e) => setPreviewParentId(e.target.value)}>
                     <option value="">Aktarırken ana ürün olarak ekle</option>
@@ -1078,10 +3702,11 @@ export default function ProjectDetailPage() {
                     onClick={importPreviewRows}
                     className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-bold text-white hover:bg-slate-800 disabled:bg-slate-300"
                   >
-                    {isParsing ? "Okunuyor..." : previewBlocked ? "Kontrol Gerekli" : "Projeye Aktar"}
+                    {isParsing ? "Okunuyor..." : previewBlocked ? "Kontrol Gerekli" : hierarchyGroups.length > 0 ? "Hiyerarşi Bekliyor" : "Düz Liste Olarak Aktar"}
                   </button>
                 </div>
-                {previewRows.length > 0 && (
+                )}
+                {false && previewRows.length > 0 && (
                   <div className="mt-5 max-h-80 overflow-auto rounded-xl border border-slate-200">
                     <table className="w-full text-left text-xs">
                       <thead className="bg-slate-50 text-slate-500">
@@ -1125,10 +3750,55 @@ export default function ProjectDetailPage() {
             <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                 <div>
-                  <h2 className="text-xl font-bold text-slate-900">Tahmini Liste</h2>
+                  <h2 className="text-xl font-bold text-slate-900">Malzeme Listesi</h2>
                   <p className="mt-1 text-sm text-slate-500">
-                    Toplam: {formatMoney(totals.itemEstimate)} · Satınalma gerekli: {purchaseRequiredItems.length}
+                    Toplam: {formatMoney(totals.itemEstimate)} · Satınalma gerekli: {purchaseRequiredItems.length} · Kritik stok: {criticalStockItems.length}
                   </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => applyItemStockFilter("purchase")}
+                    className={`rounded-xl px-4 py-3 text-sm font-bold ${itemStockFilter === "purchase" ? "bg-red-600 text-white" : "bg-red-50 text-red-700 hover:bg-red-100"}`}
+                  >
+                    {itemStockFilter === "purchase" ? "Tum Listeyi Goster" : "Satinalma Gerekenleri Goster"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyItemStockFilter("critical")}
+                    className={`rounded-xl px-4 py-3 text-sm font-bold ${itemStockFilter === "critical" ? "bg-amber-500 text-white" : "bg-amber-50 text-amber-700 hover:bg-amber-100"}`}
+                  >
+                    {itemStockFilter === "critical" ? "Tum Listeyi Goster" : "Kritik Stoklari Goster"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={purchaseRequiredItems.length === 0}
+                    onClick={createRequestFromNeededItems}
+                    className="rounded-xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700 disabled:bg-slate-300"
+                  >
+                    Satınalma Gerekenlerden Talep Oluştur
+                  </button>
+                  <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={allProjectItemsSelected}
+                      disabled={items.length === 0}
+                      onChange={toggleAllProjectItemsSelection}
+                      className="h-4 w-4"
+                    />
+                    Tümünü Seç
+                  </label>
+                  <span className="rounded-xl bg-blue-50 px-4 py-3 text-sm font-bold text-blue-700">
+                    {selectedProjectItemDeleteIds.length} seçili
+                  </span>
+                  <button
+                    type="button"
+                    disabled={selectedProjectItemDeleteIds.length === 0}
+                    onClick={deleteSelectedProjectItems}
+                    className="rounded-xl bg-red-600 px-5 py-3 text-sm font-bold text-white hover:bg-red-700 disabled:bg-slate-300"
+                  >
+                    Seçilenleri Sil
+                  </button>
                 </div>
                 <button
                   type="button"
@@ -1140,16 +3810,51 @@ export default function ProjectDetailPage() {
                 </button>
               </div>
 
+              {itemStockFilter !== "all" && (
+                <div className="mt-4 flex flex-col gap-3 rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm text-blue-900 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <div className="font-black">
+                      {itemStockFilter === "purchase" ? "Satinalma gerekenler filtresi aktif" : "Kritik stok filtresi aktif"}
+                    </div>
+                    <div className="mt-1 text-xs font-semibold">
+                      {activeStockFilterCount} kalem, {visibleParentItems.length} ana urun altinda gosteriliyor. Eslesen ana urunlerin alt malzemeleri otomatik acildi.
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => applyItemStockFilter(itemStockFilter)}
+                    className="rounded-lg bg-white px-4 py-2 text-xs font-bold text-blue-700 shadow-sm hover:bg-blue-100"
+                  >
+                    Filtreyi temizle
+                  </button>
+                </div>
+              )}
+
               <div className="mt-5 space-y-3">
-                {parentItems.map((item) => {
-                  const children = childItemsByParent[item.id] || [];
+                {visibleParentItems.map((item) => {
+                  const allChildren = childItemsByParent[item.id] || [];
+                  const children = itemStockFilter === "all"
+                    ? allChildren
+                    : allChildren.filter(itemMatchesStockFilter);
                   const stock = stockWarning(item);
+                  const stockInfo = stockInfoForItem(item);
+                  const itemPrice = resolveProjectItemPrice(item);
+                  const quoteTotal = sectionQuoteTotalFor(item.product_name, Number(item.quote_total || item.estimated_total || 0) || 0);
+                  const childResolvedTotal = allChildren.reduce((sum, child) => sum + resolveProjectItemPrice(child).total, 0);
+                  const itemDifference = quoteTotal - childResolvedTotal;
 
                   return (
                     <div key={item.id} className="rounded-2xl border border-slate-200">
                       <div className="grid grid-cols-1 gap-3 p-4 md:grid-cols-[1fr_auto_auto_auto] md:items-center">
                         <div className="flex items-start gap-3">
-                          {item.status === "Satınalma gerekli" && (
+                          <input
+                            type="checkbox"
+                            checked={selectedProjectItemIds.includes(item.id)}
+                            onChange={() => toggleProjectItemSelection(item.id)}
+                            title="Silmek için seç"
+                            className="mt-1 h-4 w-4"
+                          />
+                          {item.status === "Satınalma gerekli" && !stockInfo.isMainItem && (
                             <input
                               type="checkbox"
                               checked={selectedPurchaseItemIds.includes(item.id)}
@@ -1160,6 +3865,18 @@ export default function ProjectDetailPage() {
                           <div>
                             <div className="font-black text-slate-900">{item.product_name}</div>
                             <div className="text-xs text-slate-500">{item.product_code || "-"} · {Number(item.estimated_quantity || 0)} {item.unit || "adet"}</div>
+                            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs font-bold">
+                              {productCardLabel(item) && (
+                                <span className={`rounded-full px-2 py-1 ${productCardLabelClass(item)}`}>{productCardLabel(item)}</span>
+                              )}
+                              <span className="text-emerald-700">Teklif bedeli: {formatMoney(quoteTotal)}</span>
+                              <span className="text-blue-700">Alt malzeme toplamı: {formatMoney(childResolvedTotal)}</span>
+                              <span className={itemDifference >= 0 ? "text-emerald-700" : "text-red-700"}>Fark: {formatMoney(itemDifference)}</span>
+                              <span className={`rounded-full px-2 py-1 ${priceSourceClass(itemPrice.source)}`}>{itemPrice.source}</span>
+                            </div>
+                            <div className="mt-1 text-xs font-bold text-slate-600">
+                              Tahmini: {stockInfo.estimatedQuantity} {item.unit || "adet"} · Stok: {stockInfo.stockQuantity} {item.unit || "adet"} · Satınalma gerekli: {stockInfo.requiredQuantity} {item.unit || "adet"}
+                            </div>
                           </div>
                         </div>
                         <span className={`rounded-full px-3 py-1 text-xs font-bold ${itemStatusClass(item.status)}`}>{item.status || "Bekliyor"}</span>
@@ -1171,9 +3888,18 @@ export default function ProjectDetailPage() {
                         }`}>
                           Stok: {stock.available} · {stock.text}
                         </span>
-                        <div className="flex gap-2">
+                        <div className="flex flex-wrap gap-2">
                           <button type="button" onClick={() => setExpandedItems((prev) => ({ ...prev, [item.id]: !prev[item.id] }))} className="rounded-lg bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700 hover:bg-blue-100">
                             Alt Malzemeleri Gör / Ekle
+                          </button>
+                          <button type="button" onClick={() => downloadProjectItemChildren(item, "xlsx")} className="rounded-lg bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700 hover:bg-emerald-100">
+                            Excel indir
+                          </button>
+                          <button type="button" onClick={() => downloadProjectItemChildren(item, "pdf")} className="rounded-lg bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100">
+                            PDF indir
+                          </button>
+                          <button type="button" onClick={() => startAddingChildItem(item)} className="rounded-lg bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-100">
+                            Malzeme ekle
                           </button>
                           <button type="button" onClick={() => deleteProjectItem(item.id)} className="rounded-lg bg-red-50 px-3 py-2 text-xs font-bold text-red-700 hover:bg-red-100">
                             Sil
@@ -1186,9 +3912,18 @@ export default function ProjectDetailPage() {
                           <div className="space-y-2">
                             {children.map((child) => {
                               const childStock = stockWarning(child);
+                              const childStockInfo = stockInfoForItem(child);
+                              const childPrice = resolveProjectItemPrice(child);
                               return (
                                 <div key={child.id} className="grid grid-cols-1 gap-3 rounded-xl bg-white p-3 text-sm md:grid-cols-[1fr_auto_auto_auto] md:items-center">
                                   <div className="flex items-start gap-3">
+                                    <input
+                                      type="checkbox"
+                                      checked={selectedProjectItemIds.includes(child.id)}
+                                      onChange={() => toggleProjectItemSelection(child.id)}
+                                      title="Silmek için seç"
+                                      className="mt-1 h-4 w-4"
+                                    />
                                     {child.status === "Satınalma gerekli" && (
                                       <input
                                         type="checkbox"
@@ -1200,6 +3935,15 @@ export default function ProjectDetailPage() {
                                     <div>
                                       <div className="font-bold text-slate-900">{child.product_name}</div>
                                       <div className="text-xs text-slate-500">{child.product_code || "-"} · {Number(child.estimated_quantity || 0)} {child.unit || "adet"}</div>
+                                      <div className="mt-1 flex flex-wrap items-center gap-2 text-xs font-bold">
+                                        <span className={`rounded-full px-2 py-1 ${productCardLabelClass(child)}`}>{productCardLabel(child)}</span>
+                                        <span className="text-emerald-700">Birim fiyat: {formatMoney(childPrice.unitPrice)}</span>
+                                        <span className="text-blue-700">Toplam: {formatMoney(childPrice.total)}</span>
+                                        <span className={`rounded-full px-2 py-1 ${priceSourceClass(childPrice.source)}`}>{childPrice.source}</span>
+                                      </div>
+                                      <div className="mt-1 text-xs font-bold text-slate-600">
+                                        Tahmini: {childStockInfo.estimatedQuantity} {child.unit || "adet"} · Stok: {childStockInfo.stockQuantity} {child.unit || "adet"} · Satınalma gerekli: {childStockInfo.requiredQuantity} {child.unit || "adet"}
+                                      </div>
                                     </div>
                                   </div>
                                   <select className="rounded-lg border border-slate-200 p-2 text-xs font-bold" value={child.status || "Bekliyor"} onChange={(e) => updateItemStatus(child.id, e.target.value)}>
@@ -1220,6 +3964,40 @@ export default function ProjectDetailPage() {
                               );
                             })}
                           </div>
+                          {addingItemParentId === item.id && (
+                            <form onSubmit={addProjectItem} className="mt-4 rounded-xl border border-indigo-100 bg-white p-4">
+                              <div className="mb-3 flex items-center justify-between gap-3">
+                                <div>
+                                  <div className="text-sm font-black text-slate-900">Bu ana ürüne malzeme ekle</div>
+                                  <div className="text-xs text-slate-500">{item.product_name}</div>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setAddingItemParentId("");
+                                    setItemForm(emptyItem);
+                                  }}
+                                  className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-200"
+                                >
+                                  Vazgeç
+                                </button>
+                              </div>
+                              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                                <input className="rounded-xl border border-slate-300 p-3" placeholder="Ürün kodu" value={itemForm.product_code} onChange={(e) => updateItemForm("product_code", e.target.value)} />
+                                <input className="rounded-xl border border-slate-300 p-3" placeholder="Ürün adı" value={itemForm.product_name} onChange={(e) => updateItemForm("product_name", e.target.value)} />
+                                <input className="rounded-xl border border-slate-300 p-3" placeholder="Birim" value={itemForm.unit} onChange={(e) => updateItemForm("unit", e.target.value)} />
+                                <input type="number" className="rounded-xl border border-slate-300 p-3" placeholder="Miktar" value={itemForm.estimated_quantity} onChange={(e) => updateItemForm("estimated_quantity", e.target.value)} />
+                                <input type="number" className="rounded-xl border border-slate-300 p-3" placeholder="Birim fiyat" value={itemForm.estimated_unit_price} onChange={(e) => updateItemForm("estimated_unit_price", e.target.value)} />
+                                <select className="rounded-xl border border-slate-300 p-3" value={itemForm.status} onChange={(e) => updateItemForm("status", e.target.value)}>
+                                  {lifecycleItemStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
+                                </select>
+                                <textarea className="rounded-xl border border-slate-300 p-3 md:col-span-2" rows={2} placeholder="Not" value={itemForm.note} onChange={(e) => updateItemForm("note", e.target.value)} />
+                              </div>
+                              <button type="submit" className="mt-3 rounded-xl bg-indigo-600 px-5 py-3 text-sm font-bold text-white hover:bg-indigo-700">
+                                Malzemeyi Kaydet
+                              </button>
+                            </form>
+                          )}
                         </div>
                       )}
                     </div>
@@ -1339,27 +4117,118 @@ export default function ProjectDetailPage() {
                 href="/dashboard/talepler"
                 className="rounded-xl bg-blue-600 px-5 py-3 text-center text-sm font-bold text-white hover:bg-blue-700"
               >
-                Talepler Sayfasına Git
+                Talepler Sayfasina Git
               </Link>
             </div>
 
             <div className="mt-5 space-y-3">
-              {projectRequests.map((request) => (
-                <div key={request.id} className="rounded-xl border border-slate-100 p-4">
-                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                    <div>
-                      <div className="font-black text-slate-900">{request.ad || "Proje Talebi"}</div>
-                      <div className="mt-1 text-xs text-slate-500">
-                        {formatDate(request.created_at)} · {request.totalitems || request.items?.length || 0} kalem
+              {projectRequests.map((request) => {
+                const requestItems = parseRequestItems(request);
+                const isExpanded = expandedRequestIds.includes(request.id);
+
+                return (
+                  <div key={request.id} className="overflow-hidden rounded-xl border border-slate-100">
+                    <button
+                      type="button"
+                      onClick={() => toggleProjectRequest(request.id)}
+                      className="flex w-full flex-col gap-3 p-4 text-left hover:bg-slate-50 md:flex-row md:items-center md:justify-between"
+                    >
+                      <div>
+                        <div className="font-black text-slate-900">{request.ad || "Proje Talebi"}</div>
+                        <div className="mt-1 text-xs text-slate-500">
+                          {formatDate(request.created_at)} · {requestItems.length || request.totalitems || 0} icmal kalemi · Detayı görmek için tıkla
+                        </div>
                       </div>
-                    </div>
-                    <span className="rounded-full bg-purple-100 px-3 py-1 text-xs font-bold text-purple-700">
-                      {request.durum || "Proje Talebi"}
-                    </span>
+                      <div className="flex items-center gap-3">
+                        <span className="rounded-full bg-purple-100 px-3 py-1 text-xs font-bold text-purple-700">
+                          {request.durum || "Proje Talebi"}
+                        </span>
+                        <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">
+                          {isExpanded ? "Kapat" : "Aç"}
+                        </span>
+                      </div>
+                    </button>
+
+                    {isExpanded && (
+                      <div className="border-t border-slate-100 bg-slate-50 p-4">
+                        <div className="mb-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                          <div>
+                            <div className="text-sm font-black text-slate-900">Talep Kalemleri</div>
+                            <div className="text-xs text-slate-500">{requestItems.length} icmal kalemi listeleniyor. Aynı kodlar tek satırda toplandı.</div>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <Link
+                              href="/dashboard/talepler"
+                              className="rounded-lg bg-white px-3 py-2 text-xs font-bold text-blue-700 shadow-sm hover:bg-blue-50"
+                            >
+                              Talepler Sayfasinda Ac
+                            </Link>
+                            <button
+                              type="button"
+                              onClick={() => downloadRequestItems(request, "xlsx")}
+                              className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white shadow-sm hover:bg-emerald-700"
+                            >
+                              Excel indir
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => downloadRequestItems(request, "pdf")}
+                              className="rounded-lg bg-slate-800 px-3 py-2 text-xs font-bold text-white shadow-sm hover:bg-slate-900"
+                            >
+                              PDF indir
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="max-h-96 overflow-auto rounded-xl border border-slate-200 bg-white">
+                          <table className="w-full text-left text-xs">
+                            <thead className="sticky top-0 bg-slate-100 text-slate-600">
+                              <tr>
+                                <th className="p-3">#</th>
+                                <th className="p-3">Ürün Kodu</th>
+                                <th className="p-3">Ürün / Açıklama</th>
+                                <th className="p-3">Miktar</th>
+                                <th className="p-3">Birim</th>
+                                <th className="p-3">Birim Fiyat</th>
+                                <th className="p-3">Toplam</th>
+                                <th className="p-3">Not</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {requestItems.map((item, index) => (
+                                <tr key={`${request.id}-${item.projectItemId || item.urunKodu || index}`} className="border-t border-slate-100">
+                                  <td className="p-3 font-bold text-slate-500">{index + 1}</td>
+                                  <td className="p-3 font-bold text-slate-900">{item.urunKodu || item.product_code || "-"}</td>
+                                  <td className="p-3 font-semibold text-slate-900">
+                                    <div>{item.urunAciklamasi || item.product_name || item.description || "-"}</div>
+                                    {Number(item.sourceLineCount || 0) > 1 && (
+                                      <div className="mt-1 text-[11px] font-bold text-emerald-700">
+                                        {item.sourceLineCount} satır birleştirildi
+                                      </div>
+                                    )}
+                                  </td>
+                                  <td className="p-3 font-black text-blue-700">{item.talepEdilenAdet || item.quantity || item.estimated_quantity || 0}</td>
+                                  <td className="p-3 text-slate-600">{item.birim || item.unit || "adet"}</td>
+                                  <td className="p-3 font-bold text-emerald-700">{formatMoney(item.birimFiyat || item.unit_price || item.estimated_unit_price)} {item.paraBirimi || item.currency || "TRY"}</td>
+                                  <td className="p-3 font-bold text-slate-900">{formatMoney(item.toplam || item.total || item.estimated_total)} {item.paraBirimi || item.currency || "TRY"}</td>
+                                  <td className="p-3 text-slate-500">{item.not || item.note || "-"}</td>
+                                </tr>
+                              ))}
+                              {requestItems.length === 0 && (
+                                <tr>
+                                  <td colSpan={8} className="p-4 text-center text-sm text-slate-500">
+                                    Bu talep için kalem detayı bulunamadı.
+                                  </td>
+                                </tr>
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                </div>
-              ))}
-              {projectRequests.length === 0 && (
+                );
+              })}              {projectRequests.length === 0 && (
                 <div className="rounded-xl bg-slate-50 p-6 text-center text-sm text-slate-500">
                   Bu proje için henüz talep oluşturulmadı.
                 </div>
@@ -1368,11 +4237,11 @@ export default function ProjectDetailPage() {
           </section>
         )}
 
-        {!["Genel Özet", "Tahmini Ürün/Malzeme Listesi", "Ödemeler", "Talepler"].includes(activeTab) && (
+        {!["Genel Özet", "Malzeme Listesi", "Ödemeler", "Talepler"].includes(activeTab) && (
           <section className="rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm">
             <h2 className="text-2xl font-bold text-slate-900">{activeTab}</h2>
             <p className="mx-auto mt-3 max-w-2xl text-sm leading-6 text-slate-500">
-              Bu sekme bir sonraki adımda mevcut modüllere proje bağlantısı eklenince otomatik dolacak.
+              Bu sekme bir sonraki ad\u0131mda mevcut mod\u00fcllere proje ba\u011flant\u0131s\u0131 eklenince otomatik dolacak.
             </p>
           </section>
         )}

@@ -86,6 +86,258 @@ def normalize_project_sections(raw_sections):
     return normalized
 
 
+def normalize_offer_keyword(value):
+    text = str(value or "").upper()
+    replacements = {
+        "İ": "I",
+        "İ": "I",
+        "Ğ": "G",
+        "Ü": "U",
+        "Ş": "S",
+        "Ö": "O",
+        "Ç": "C",
+    }
+
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+
+    return re.sub(r"[^A-Z0-9]+", " ", text).strip()
+
+
+def main_product_candidate_signal(row, code, name, unit_price, row_total, all_rows=None, index=0):
+    text = normalize_offer_keyword(f"{code} {name} {row.get('section_name') or ''}")
+    word_count = len([part for part in text.split(" ") if part])
+    short_description = word_count <= 4 or len(text) <= 42
+    has_total = row_total > 0 or safe_float_form(row.get("section_total")) > 0
+    unit_price_empty = unit_price <= 0
+    section_total_only = row.get("price_status") == "section_total_only" or bool(row.get("section_name"))
+    quantity = safe_float_form(row.get("firmaAdedi")) or safe_float_form(row.get("talepEdilenAdet")) or 0
+    low_quantity = 0 < quantity <= 2
+    description_only = bool(text) and not code and unit_price_empty
+    neighbors = (all_rows or [])[max(0, index - 3):index] + (all_rows or [])[index + 1:index + 4]
+    priced_neighbors = 0
+
+    for neighbor in neighbors:
+        neighbor_price = (
+            safe_float_form(neighbor.get("netBirimFiyat"))
+            or safe_float_form(neighbor.get("netBirimFiyatDosyadan"))
+            or safe_float_form(neighbor.get("birimFiyat"))
+            or 0
+        )
+        neighbor_total = (
+            safe_float_form(neighbor.get("netToplam"))
+            or safe_float_form(neighbor.get("satirToplamDosyadan"))
+            or 0
+        )
+
+        if neighbor_price > 0 or neighbor_total > 0:
+            priced_neighbors += 1
+
+    score = 0
+    reasons = []
+
+    if has_total:
+        score += 2
+        reasons.append("toplam fiyat içeriyor")
+    if section_total_only:
+        score += 3
+        reasons.append("grup başlığı gibi görünüyor")
+    if short_description:
+        score += 1
+        reasons.append("açıklama kısa")
+    if unit_price_empty:
+        score += 1
+        reasons.append("birim fiyat boş veya 0")
+    if low_quantity:
+        score += 1
+        reasons.append("adet düşük")
+    if description_only:
+        score += 1
+        reasons.append("kod/fiyat yerine başlık metni gibi")
+    if priced_neighbors >= 2:
+        score += 1
+        reasons.append("çevresinde ürün satırları var")
+
+    return {
+        "is_candidate": score >= 3,
+        "score": score,
+        "reasons": reasons,
+    }
+
+
+def safe_number_from_raw(value):
+    parsed = safe_float_form(value)
+    return parsed if parsed is not None else 0
+
+
+def raw_item_text(raw_item):
+    return normalize_offer_keyword(
+        f"{raw_item.get('product_code') or ''} {raw_item.get('brand') or ''} {raw_item.get('description') or ''}"
+    )
+
+
+def raw_item_looks_like_material(raw_item):
+    text = raw_item_text(raw_item)
+    quantity = safe_number_from_raw(raw_item.get("quantity"))
+    unit_price = safe_number_from_raw(raw_item.get("unit_price"))
+    total = safe_number_from_raw(raw_item.get("total")) or safe_number_from_raw(raw_item.get("section_total"))
+    price_status = raw_item.get("price_status") or ""
+
+    if price_status == "section_total_only" or raw_item.get("section_name"):
+        return False
+
+    return bool(text and (quantity > 0 or unit_price > 0 or total > 0))
+
+
+def score_main_product_candidate(raw_item, raw_items, index):
+    text = raw_item_text(raw_item)
+    words = [part for part in text.split(" ") if part]
+    quantity = safe_number_from_raw(raw_item.get("quantity"))
+    unit_price = safe_number_from_raw(raw_item.get("unit_price"))
+    total = safe_number_from_raw(raw_item.get("total")) or safe_number_from_raw(raw_item.get("section_total"))
+    section_total = safe_number_from_raw(raw_item.get("section_total"))
+    price_status = raw_item.get("price_status") or ""
+    raw_cells_text = normalize_offer_keyword(" ".join(str(cell) for cell in raw_item.get("raw_cells") or []))
+    short_description = 0 < len(words) <= 5 or (0 < len(text) <= 48)
+    unit_price_empty = unit_price <= 0
+    has_total = total > 0
+    quantity_one = quantity == 1 or (quantity <= 0 and (price_status == "section_total_only" or section_total > 0))
+    code = str(raw_item.get("product_code") or "").strip()
+    code_empty_or_short = len(normalize_offer_keyword(code).split()) <= 1 and len(code) <= 8
+    description_only = bool(text) and not code and unit_price_empty
+    section_total_like = price_status == "section_total_only" or bool(raw_item.get("section_name")) or section_total > 0
+    raw_cells_total_like = bool(raw_cells_text and len(raw_cells_text.split()) <= 8 and has_total and unit_price_empty)
+    neighbors = raw_items[max(0, index - 4):index] + raw_items[index + 1:index + 5]
+    material_neighbors = sum(1 for item in neighbors if raw_item_looks_like_material(item))
+    nearby_totals = [
+        safe_number_from_raw(item.get("total")) or safe_number_from_raw(item.get("section_total"))
+        for item in raw_items[index + 1:index + 9]
+        if (safe_number_from_raw(item.get("total")) or safe_number_from_raw(item.get("section_total"))) > 0
+    ]
+    nearby_sum = sum(nearby_totals)
+    group_total_like = has_total and len(nearby_totals) >= 2 and total >= nearby_sum * 0.75
+
+    score = 0
+    reasons = []
+
+    if section_total_like:
+        score += 6
+        reasons.append("kategori / grup toplam satiri gibi")
+    if has_total:
+        score += 3
+        reasons.append("satirda toplam fiyat var")
+    if short_description:
+        score += 2
+        reasons.append("aciklama kisa / baslik gibi")
+    if quantity_one:
+        score += 2
+        reasons.append("adet 1")
+    if unit_price_empty:
+        score += 3
+        reasons.append("birim fiyat bos veya 0")
+    if code_empty_or_short:
+        score += 1
+        reasons.append("kod bos veya kisa")
+    if material_neighbors >= 3:
+        score += 2
+        reasons.append("cevresinde urun/malzeme satirlari var")
+    elif material_neighbors >= 2:
+        score += 1
+        reasons.append("yakininda urun/malzeme satirlari var")
+    if group_total_like:
+        score += 2
+        reasons.append("diger satirlara gore grup toplami gibi")
+    if description_only:
+        score += 1
+        reasons.append("kod/fiyat yerine baslik metni gibi")
+    if raw_cells_total_like:
+        score += 1
+        reasons.append("ham satir toplam/grup bilgisi tasiyor")
+
+    if not section_total_like and unit_price > 0 and quantity > 1 and len(words) > 3:
+        score -= 3
+        reasons.append("normal malzeme satirina benziyor")
+
+    confidence = min(98, max(25, int(round((score / 15) * 100))))
+
+    return {
+        "is_candidate": bool(text and score >= 4),
+        "score": score,
+        "confidence_score": confidence,
+        "reasons": reasons,
+    }
+
+
+def token_similarity(left, right):
+    left_tokens = set(raw_item_text(left).split())
+    right_tokens = set(raw_item_text(right).split())
+
+    if not left_tokens or not right_tokens:
+        return 0
+
+    return len(left_tokens & right_tokens) / max(len(left_tokens | right_tokens), 1)
+
+
+def score_sub_item_for_main(raw_item, main_raw_item, raw_items, selected_raw_ids):
+    raw_id = raw_item.get("id")
+
+    if raw_id in selected_raw_ids:
+        return None
+
+    if not raw_item_looks_like_material(raw_item):
+        return None
+
+    row_index = safe_number_from_raw(raw_item.get("row_index"))
+    main_index = safe_number_from_raw(main_raw_item.get("row_index"))
+    distance = abs(row_index - main_index)
+    score = 0
+    reasons = []
+
+    if raw_item.get("source_file") and raw_item.get("source_file") == main_raw_item.get("source_file"):
+        score += 4
+        reasons.append("aynı kaynak dosyada")
+
+    if distance <= 4:
+        score += 3
+        reasons.append("ana ürüne yakın satırda")
+    elif distance <= 10:
+        score += 2
+        reasons.append("ana ürüne orta yakınlıkta")
+    elif distance <= 20:
+        score += 1
+        reasons.append("aynı bölgede olabilir")
+
+    if row_index > main_index:
+        score += 1
+        reasons.append("ana üründen sonraki satır")
+
+    raw_total = safe_number_from_raw(raw_item.get("total"))
+    main_total = safe_number_from_raw(main_raw_item.get("total"))
+
+    if raw_total > 0 and (safe_number_from_raw(raw_item.get("quantity")) > 0 or safe_number_from_raw(raw_item.get("unit_price")) > 0):
+        score += 2
+        reasons.append("ürün/malzeme satırı gibi")
+
+    if main_total > 0 and raw_total > 0 and raw_total < main_total:
+        score += 1
+        reasons.append("ana ürün toplamından küçük tutar")
+
+    similarity = token_similarity(raw_item, main_raw_item)
+
+    if similarity >= 0.3:
+        score += 1
+        reasons.append("açıklama benzerliği var")
+
+    confidence = min(95, max(25, int(round((score / 12) * 100))))
+
+    return {
+        "score": score,
+        "confidence_score": confidence,
+        "reasons": reasons,
+        "distance": distance,
+    }
+
+
 app = FastAPI()
 
 app.add_middleware(
@@ -326,6 +578,314 @@ def find_merge_key(merged: dict, kod_key: str, aciklama_key: str, birim_key: str
 def root():
     return {"status": "ok", "message": "Procurement backend is running"}
 
+
+@app.post("/suggest-main-products")
+async def suggest_main_products(
+    payload: dict = Body(...),
+    authorization: str = Header(None),
+):
+    verify_user_token(authorization)
+
+    raw_items = payload.get("raw_items") or payload.get("rawItems") or []
+
+    if not isinstance(raw_items, list):
+        return {
+            "success": False,
+            "warnings": ["raw_items listesi bekleniyor."],
+            "main_product_candidates": [],
+        }
+
+    candidates = []
+
+    for index, raw_item in enumerate(raw_items):
+        if not isinstance(raw_item, dict):
+            continue
+
+        signal = score_main_product_candidate(raw_item, raw_items, index)
+
+        if not signal["is_candidate"]:
+            continue
+
+        title = (
+            str(raw_item.get("description") or "").strip()
+            or str(raw_item.get("product_code") or "").strip()
+            or f"Satır {raw_item.get('row_index') or index + 1}"
+        )
+
+        candidates.append({
+            "id": f"candidate-{len(candidates) + 1}",
+            "raw_item_id": raw_item.get("id") or f"raw-{index + 1}",
+            "title": title,
+            "estimated_total": safe_number_from_raw(raw_item.get("total")) or safe_number_from_raw(raw_item.get("section_total")),
+            "confidence_score": signal["confidence_score"],
+            "score": signal.get("score", 0),
+            "reasons": signal["reasons"],
+            "selected": False,
+            "row_index": raw_item.get("row_index") or index + 1,
+            "source_file": raw_item.get("source_file") or "",
+            "price_status": raw_item.get("price_status") or "",
+        })
+
+    candidates.sort(key=lambda item: (-item.get("confidence_score", 0), -safe_number_from_raw(item.get("estimated_total")), item.get("row_index") or 0))
+
+    return {
+        "success": True,
+        "warnings": [],
+        "main_product_candidates": candidates,
+        "totalCandidates": len(candidates),
+    }
+
+
+@app.post("/suggest-product-hierarchy")
+async def suggest_product_hierarchy(
+    payload: dict = Body(...),
+    authorization: str = Header(None),
+):
+    verify_user_token(authorization)
+
+    raw_items = payload.get("raw_items") or payload.get("rawItems") or []
+    selected_main_products = payload.get("selected_main_products") or payload.get("selectedMainProducts") or []
+
+    if not isinstance(raw_items, list) or not isinstance(selected_main_products, list):
+        return {
+            "success": False,
+            "warnings": ["raw_items ve selected_main_products listesi bekleniyor."],
+            "hierarchy_groups": [],
+        }
+
+    raw_by_id = {
+        str(item.get("id")): item
+        for item in raw_items
+        if isinstance(item, dict) and item.get("id")
+    }
+    selected_raw_ids = set()
+    main_items = []
+
+    for selected in selected_main_products:
+        raw_item_id = selected.get("raw_item_id") if isinstance(selected, dict) else selected
+        raw_item = raw_by_id.get(str(raw_item_id))
+
+        if raw_item:
+            selected_raw_ids.add(str(raw_item.get("id")))
+            main_items.append(raw_item)
+
+    hierarchy_groups = []
+
+    for main_index, main_item in enumerate(main_items):
+        scored_sub_items = []
+
+        for raw_item in raw_items:
+            if not isinstance(raw_item, dict):
+                continue
+
+            signal = score_sub_item_for_main(raw_item, main_item, raw_items, selected_raw_ids)
+
+            if not signal or signal["score"] < 4:
+                continue
+
+            scored_sub_items.append({
+                "raw_item_id": raw_item.get("id"),
+                "title": raw_item.get("description") or raw_item.get("product_code") or "-",
+                "product_code": raw_item.get("product_code") or "",
+                "brand": raw_item.get("brand") or "",
+                "quantity": safe_number_from_raw(raw_item.get("quantity")),
+                "unit": raw_item.get("unit") or "",
+                "unit_price": safe_number_from_raw(raw_item.get("unit_price")),
+                "total": safe_number_from_raw(raw_item.get("total")),
+                "currency": raw_item.get("currency") or "TRY",
+                "suggestion_score": signal["confidence_score"],
+                "reasons": signal["reasons"],
+                "_distance": signal["distance"],
+            })
+
+        scored_sub_items.sort(key=lambda item: (-item["suggestion_score"], item["_distance"]))
+        cleaned_sub_items = [
+            {key: value for key, value in item.items() if key != "_distance"}
+            for item in scored_sub_items[:50]
+        ]
+        average_score = (
+            int(round(sum(item["suggestion_score"] for item in cleaned_sub_items) / len(cleaned_sub_items)))
+            if cleaned_sub_items
+            else 0
+        )
+
+        hierarchy_groups.append({
+            "id": f"group-{main_index + 1}",
+            "main_product": {
+                "raw_item_id": main_item.get("id"),
+                "title": main_item.get("description") or main_item.get("product_code") or f"Ana Ürün {main_index + 1}",
+                "estimated_total": safe_number_from_raw(main_item.get("total")),
+            },
+            "sub_items": cleaned_sub_items,
+            "suggestion_score": average_score,
+            "user_confirmed": False,
+        })
+
+    return {
+        "success": True,
+        "warnings": [],
+        "hierarchy_groups": hierarchy_groups,
+    }
+
+
+@app.post("/project-items/bulk-delete")
+async def bulk_delete_project_items(
+    payload: dict = Body(...),
+    authorization: str = Header(None),
+):
+    user = verify_user_token(authorization)
+    user_id = user.get("id")
+    project_id = str(payload.get("project_id") or "").strip()
+    selected_ids = [str(item_id).strip() for item_id in payload.get("selected_ids") or [] if str(item_id or "").strip()]
+    batch_size = int(payload.get("batch_size") or 50)
+    batch_size = max(1, min(batch_size, 100))
+
+    if not project_id:
+        raise HTTPException(status_code=400, detail="project_id eksik")
+
+    if not selected_ids:
+        raise HTTPException(status_code=400, detail="Silinecek urun secilmedi")
+
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        raise HTTPException(status_code=500, detail="Supabase servis ayarlari eksik")
+
+    headers = {
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    def chunks(values, size):
+        for start in range(0, len(values), size):
+            yield values[start:start + size]
+
+    def unique(values):
+        result = []
+        seen = set()
+        for value in values:
+            if value and value not in seen:
+                seen.add(value)
+                result.append(value)
+        return result
+
+    def select_project_items(extra_params=None):
+        params = {
+            "project_id": f"eq.{project_id}",
+            "user_id": f"eq.{user_id}",
+            "select": "id,parent_item_id",
+        }
+        if extra_params:
+            params.update(extra_params)
+
+        response = requests.get(
+            f"{SUPABASE_URL}/rest/v1/project_items",
+            headers=headers,
+            params=params,
+            timeout=30,
+        )
+
+        if response.status_code >= 400:
+            print("PROJECT ITEM SELECT ERROR:", response.status_code, response.text)
+            raise HTTPException(status_code=400, detail=response.text or "Proje urunleri okunamadi")
+
+        return response.json() or []
+
+    project_items = select_project_items()
+    known_ids = {str(item.get("id")) for item in project_items if item.get("id")}
+    selected_ids = unique([item_id for item_id in selected_ids if item_id in known_ids])
+
+    print("BULK DELETE selected id count:", len(selected_ids))
+
+    if not selected_ids:
+        raise HTTPException(status_code=400, detail="Secili urunler proje listesinde bulunamadi")
+
+    children_by_parent = {}
+    for item in project_items:
+        parent_id = item.get("parent_item_id")
+        item_id = item.get("id")
+        if parent_id and item_id:
+            children_by_parent.setdefault(str(parent_id), []).append(str(item_id))
+
+    descendant_ids = []
+    visited_ids = set()
+
+    def collect_descendants(parent_id):
+        for child_id in children_by_parent.get(parent_id, []):
+            if child_id in visited_ids:
+                continue
+            visited_ids.add(child_id)
+            collect_descendants(child_id)
+            descendant_ids.append(child_id)
+
+    for item_id in selected_ids:
+        collect_descendants(item_id)
+
+    descendant_ids = unique([item_id for item_id in descendant_ids if item_id in known_ids])
+    selected_remaining_ids = unique([item_id for item_id in selected_ids if item_id not in set(descendant_ids)])
+
+    print("BULK DELETE child id count:", len(descendant_ids))
+
+    deleted_ids = []
+    batch_logs = []
+
+    def delete_batch(label, ids):
+        nonlocal deleted_ids
+        if not ids:
+            return
+
+        for batch_index, batch_ids in enumerate(chunks(ids, batch_size), start=1):
+            response = requests.delete(
+                f"{SUPABASE_URL}/rest/v1/project_items",
+                headers={**headers, "Prefer": "return=representation"},
+                params={
+                    "project_id": f"eq.{project_id}",
+                    "user_id": f"eq.{user_id}",
+                    "id": f"in.({','.join(batch_ids)})",
+                    "select": "id",
+                },
+                timeout=30,
+            )
+
+            if response.status_code >= 400:
+                print("BULK DELETE batch error:", label, batch_index, response.status_code, response.text)
+                raise HTTPException(status_code=400, detail=response.text or f"{label} batch silinemedi")
+
+            deleted_rows = response.json() if response.text else []
+            deleted_batch_ids = [row.get("id") for row in deleted_rows if row.get("id")]
+            deleted_ids.extend(deleted_batch_ids)
+            log = {
+                "label": label,
+                "batch": batch_index,
+                "attempted": len(batch_ids),
+                "deleted": len(deleted_batch_ids),
+            }
+            batch_logs.append(log)
+            print("BULK DELETE batch result:", log)
+
+    delete_batch("children", descendant_ids)
+    delete_batch("selected", selected_remaining_ids)
+
+    attempted_ids = unique([*descendant_ids, *selected_ids])
+    remaining_items = []
+    for batch_ids in chunks(attempted_ids, batch_size):
+        remaining_items.extend(select_project_items({"id": f"in.({','.join(batch_ids)})"}))
+
+    remaining_ids = [item.get("id") for item in remaining_items if item.get("id")]
+    print("BULK DELETE remaining count:", len(remaining_ids))
+
+    return {
+        "success": True,
+        "deleted_ids": unique(deleted_ids),
+        "deleted_count": len(unique(deleted_ids)),
+        "attempted_count": len(attempted_ids),
+        "selected_count": len(selected_ids),
+        "child_count": len(descendant_ids),
+        "remaining_ids": remaining_ids,
+        "remaining_count": len(remaining_ids),
+        "batch_logs": batch_logs,
+    }
+
+
 @app.post("/parse-project-items")
 async def parse_project_items(
     files: list[UploadFile] = File(...),
@@ -404,8 +964,9 @@ async def parse_project_items(
 
     auto_code_counter = 1
     result_rows = []
+    raw_items = []
 
-    for row in all_rows:
+    for index, row in enumerate(all_rows):
         code = str(row.get("urunKodu") or "").strip().upper()
         name = str(row.get("urunAciklamasi") or "").strip()
         unit = str(row.get("birim") or "adet").strip().lower() or "adet"
@@ -420,6 +981,7 @@ async def parse_project_items(
             or safe_float_form(row.get("birimFiyat"))
             or 0
         )
+        original_unit_price = unit_price
 
         row_total = (
             safe_float_form(row.get("netToplam"))
@@ -435,6 +997,38 @@ async def parse_project_items(
 
         if row_total > 0 and quantity > 0 and unit_price <= 0:
             unit_price = row_total / quantity
+
+        raw_cells = row.get("raw_cells") or row.get("rawCells") or row.get("cells")
+
+        if not raw_cells:
+            raw_cells = [value for value in row.values() if value not in [None, ""]]
+
+        section_total = safe_float_form(row.get("section_total")) or 0
+        raw_quantity = quantity
+        raw_total = row_total if row_total > 0 else quantity * unit_price
+
+        if price_status == "section_total_only":
+            raw_quantity = quantity if quantity > 0 else 1
+            raw_total = section_total or safe_float_form(row.get("satirToplamDosyadan")) or safe_float_form(row.get("netToplam")) or raw_total
+
+        raw_items.append({
+            "id": f"raw-{index + 1}",
+            "source_file": row.get("kaynakDosya") or "",
+            "source_type": row.get("kaynakTipi") or "",
+            "row_index": index + 1,
+            "raw_cells": raw_cells,
+            "product_code": code,
+            "brand": row.get("marka") or row.get("brand") or "",
+            "description": name,
+            "quantity": raw_quantity,
+            "unit": unit,
+            "unit_price": unit_price,
+            "total": raw_total,
+            "currency": row.get("paraBirimi") or row.get("currency") or "TRY",
+            "section_name": row.get("section_name") or "",
+            "section_total": section_total,
+            "price_status": price_status,
+        })
 
         if not name or quantity <= 0:
             continue
@@ -466,6 +1060,8 @@ async def parse_project_items(
             "success": False,
             "warnings": warnings + ["Dosyalardan projeye aktarilabilir urun bulunamadi."],
             "rows": [],
+            "raw_items": raw_items,
+            "rawItems": raw_items,
             "sections": sections,
             "totalRows": 0,
         }
@@ -475,6 +1071,8 @@ async def parse_project_items(
             "success": False,
             "warnings": ["Dosya aktarima kilitlendi."] + blocking_errors,
             "rows": result_rows,
+            "raw_items": raw_items,
+            "rawItems": raw_items,
             "sections": sections,
             "totalRows": len(result_rows),
         }
@@ -483,6 +1081,8 @@ async def parse_project_items(
         "success": True,
         "warnings": warnings,
         "rows": result_rows,
+        "raw_items": raw_items,
+        "rawItems": raw_items,
         "sections": sections,
         "totalRows": len(result_rows),
     }
