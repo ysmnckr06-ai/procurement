@@ -10,8 +10,8 @@ export default async function SonAlimPage({ params }) {
   const sonAlim = gecmisAlimlar[0];
 
   const enDusukGecmisFiyat = gecmisAlimlar.reduce((min, item) => {
-    const fiyat = parseInt(item.fiyat.replace(/\D/g, ""));
-    const minFiyat = parseInt(min.fiyat.replace(/\D/g, ""));
+    const fiyat = parseInt(item.fiyat.replace(/\D/g, ""), 10);
+    const minFiyat = parseInt(min.fiyat.replace(/\D/g, ""), 10);
     return fiyat < minFiyat ? item : min;
   });
 
@@ -83,7 +83,7 @@ export default async function SonAlimPage({ params }) {
             <tbody>
               {gecmisAlimlar.map((item, index) => (
                 <tr
-                  key={index}
+                  key={`${item.tarih}-${item.firma}-${item.fiyat}`}
                   style={{
                     backgroundColor: index === 0 ? "#eff6ff" : "white",
                   }}

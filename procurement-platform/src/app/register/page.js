@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { useState } from "react";
 import { supabase } from "../../lib/supabase";
 
 export default function RegisterPage() {
@@ -33,7 +33,7 @@ export default function RegisterPage() {
     });
 
     if (error) {
-      setMessage("Kayıt hatası: " + error.message);
+      setMessage(`Kayıt hatası: ${error.message}`);
       setLoading(false);
       return;
     }
@@ -58,10 +58,11 @@ export default function RegisterPage() {
 
         <form onSubmit={handleRegister} className="mt-8 space-y-4">
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">
+            <label htmlFor="fullName" className="block text-sm font-medium text-slate-700 mb-1">
               Ad Soyad
             </label>
             <input
+              id="fullName"
               type="text"
               placeholder="Adınızı ve soyadınızı girin"
               value={fullName}
@@ -71,10 +72,11 @@ export default function RegisterPage() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">
+            <label htmlFor="companyName" className="block text-sm font-medium text-slate-700 mb-1">
               Firma Adı
             </label>
             <input
+              id="companyName"
               type="text"
               placeholder="Firma adını girin"
               value={companyName}
@@ -84,10 +86,11 @@ export default function RegisterPage() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">
+            <label htmlFor="email" className="block text-sm font-medium text-slate-700 mb-1">
               E-posta
             </label>
             <input
+              id="email"
               type="email"
               placeholder="ornek@mail.com"
               value={email}
@@ -97,10 +100,11 @@ export default function RegisterPage() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">
+            <label htmlFor="password" className="block text-sm font-medium text-slate-700 mb-1">
               Şifre
             </label>
             <input
+              id="password"
               type="password"
               placeholder="Şifrenizi oluşturun"
               value={password}

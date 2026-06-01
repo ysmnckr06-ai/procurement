@@ -21,8 +21,8 @@ export default function DashboardLayout({ children }) {
 
   return (
     <div className="min-h-screen bg-slate-100">
-      <aside className="fixed left-0 top-0 z-30 hidden h-screen w-72 border-r border-slate-200 bg-white p-6 lg:block">
-        <div className="mb-10 flex items-center gap-3">
+      <aside className="fixed left-0 top-0 z-30 hidden h-screen w-72 flex-col border-r border-slate-200 bg-white p-6 lg:flex">
+        <div className="mb-10 flex shrink-0 items-center gap-3">
           <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-600 text-3xl text-white shadow-lg">
             🛒
           </div>
@@ -33,7 +33,7 @@ export default function DashboardLayout({ children }) {
           </div>
         </div>
 
-        <nav className="space-y-2">
+        <nav className="min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain pr-2">
           {menu.map((item) => {
             const active =
               item.href === "/dashboard"

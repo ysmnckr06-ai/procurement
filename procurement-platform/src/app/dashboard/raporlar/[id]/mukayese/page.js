@@ -26,8 +26,6 @@ if (error || !report) {
   );
 }
 
-console.log("MUKAYESE REPORT:", report);
-
 const analiz = report?.analysis || {};
 
 const firmalar =
@@ -67,8 +65,8 @@ if (firmalar.length === 0) {
 });
 
   const enHizli = firmalar.reduce((min, item) => {
-  const gun = parseInt(item.teslim ?? item.termin ?? 999);
-  const minGun = parseInt(min.teslim ?? min.termin ?? 999);
+  const gun = parseInt(item.teslim ?? item.termin ?? 999, 10);
+  const minGun = parseInt(min.teslim ?? min.termin ?? 999, 10);
 
   return gun < minGun ? item : min;
 });
@@ -164,7 +162,7 @@ if (firmalar.length === 0) {
                 const teslim = "-";
 
                 return (
-                  <tr key={index}>
+                  <tr key={`${firmaAdi}-${fiyat}-${index}`}>
                   <td style={tdStyle}>{firmaAdi}</td>
                   <td style={tdStyle}>{fiyat}</td>
                   <td style={tdStyle}>

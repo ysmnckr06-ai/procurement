@@ -272,6 +272,8 @@ export default function ProjectDetailPage() {
   const [storedSectionTotals, setStoredSectionTotals] = useState([]);
   const [previewParentId, setPreviewParentId] = useState("");
   const [isParsing, setIsParsing] = useState(false);
+  const [isImportingPreview, setIsImportingPreview] = useState(false);
+  const [previewActionMessage, setPreviewActionMessage] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(true);
   const visiblePreviewSections = useMemo(() => {
@@ -514,6 +516,27 @@ export default function ProjectDetailPage() {
     return matched.reduce((sum, product) => sum + Number(product.current_stock || 0), 0);
   }
 
+  function isMainProjectItem(item) {
+    if (!item?.id) return false;
+    if (item.item_type === "main") return true;
+    if (item.parent_item_id) return false;
+    if ((childItemsByParent[item.id] || []).length > 0) return true;
+
+    const hasSectionTotal = sectionQuoteTotalFor(item.product_name, 0) > 0;
+    const hasProductCode = Boolean(normalizeCode(item.product_code));
+    const note = normalizeText(item.note || "");
+
+    return (!hasProductCode && hasSectionTotal) || note.includes("kategori grubu");
+  }
+
+  function projectItemGroupKey(name, total) {
+    return `${normalizeGroupName(name)}-${Number(total || 0).toFixed(2)}`;
+  }
+
+  function materialIdentityKey(code, name, category = "") {
+    return `${normalizeCode(code)}|${normalizeText(name)}|${normalizeGroupName(category)}`;
+  }
+
   function stockInfoForItem(item) {
     const code = normalizeCode(item.product_code);
     const name = normalizeText(item.product_name);
@@ -534,7 +557,7 @@ export default function ProjectDetailPage() {
     const criticalStock = criticalLevels.length > 0 ? Math.max(...criticalLevels) : 0;
     const estimatedQuantity = Number(item.estimated_quantity || 0);
     const requiredQuantity = Math.max(0, estimatedQuantity - stockQuantity);
-    const isMainItem = item.item_type === "main" || (!item.parent_item_id && (childItemsByParent[item.id] || []).length > 0);
+    const isMainItem = isMainProjectItem(item);
     const needsPurchase = !isMainItem && requiredQuantity > 0;
     const isCritical = !isMainItem && (criticalStock > 0 ? stockQuantity < criticalStock : requiredQuantity > 0);
 
@@ -554,6 +577,7 @@ export default function ProjectDetailPage() {
     const info = stockInfoForItem(item);
     const available = info.stockQuantity;
 
+    if (info.isMainItem) return { available: "-", text: "Ana toplam", tone: "slate" };
     if (required <= 0) return { available, text: "Miktar girilmedi", tone: "slate" };
     if (available >= required) return { available, text: "Stok yeterli", tone: "green" };
     if (available > 0) return { available, text: "Kısmi stok var", tone: "yellow" };
@@ -626,12 +650,107 @@ export default function ProjectDetailPage() {
     return unitMatches && nameScore >= 0.7 && brandScore >= 0.5;
   }
 
-  async function ensureProductCardsForProjectItems(projectItems, userId) {
-    const subItems = (projectItems || []).filter((item) =>
-      item?.id && !item.product_id && item.item_type !== "main" && item.product_name
+  function projectItemCategory(item) {
+    if (item?.category) return item.category;
+
+    const parent = items.find((candidate) => candidate.id === item?.parent_item_id);
+    return parent?.product_name || item?.section_name || "Genel";
+  }
+
+  function stripPayloadFields(payload, fields) {
+    const cleanRow = (row) => Object.fromEntries(
+      Object.entries(row || {}).filter(([key]) => !fields.includes(key)),
     );
 
-    if (subItems.length === 0) return projectItems || [];
+    return Array.isArray(payload) ? payload.map(cleanRow) : cleanRow(payload);
+  }
+
+  async function insertProjectItemsWithFallback(payload) {
+    const firstResult = await supabase
+      .from("project_items")
+      .insert(payload)
+      .select("*");
+
+    if (!firstResult.error) {
+      return { data: firstResult.data || [], error: null, usedFallback: false };
+    }
+
+    const fallbackFields = [
+      "brand",
+      "quote_unit_price",
+      "quote_total",
+      "resolved_unit_price",
+      "resolved_total",
+      "price_source",
+      "price_source_order_id",
+      "price_source_date",
+      "currency",
+      "exchange_rate",
+      "estimated_total_base",
+      "source_file",
+      "source_type",
+      "raw_item_id",
+      "item_type",
+      "product_id",
+      "received_quantity",
+      "reserved_quantity",
+      "issued_to_production_quantity",
+      "defective_quantity",
+      "panel_status",
+    ];
+
+    console.warn("Project item insert full payload failed, retrying basic payload:", firstResult.error);
+
+    const fallbackResult = await supabase
+      .from("project_items")
+      .insert(stripPayloadFields(payload, fallbackFields))
+      .select("*");
+
+    return {
+      data: fallbackResult.data || [],
+      error: fallbackResult.error,
+      usedFallback: !fallbackResult.error,
+      originalError: firstResult.error,
+    };
+  }
+
+  async function insertProductWithFallback(payload) {
+    const firstResult = await supabase
+      .from("products")
+      .insert(payload)
+      .select("*")
+      .single();
+
+    if (!firstResult.error) return firstResult;
+
+    const fallbackFields = [
+      "brand",
+      "critical_stock",
+      "manual_unit_price",
+      "last_currency",
+      "last_movement_at",
+      "source",
+      "notes",
+    ];
+
+    console.warn("Product insert full payload failed, retrying basic payload:", firstResult.error);
+
+    return supabase
+      .from("products")
+      .insert(stripPayloadFields(payload, fallbackFields))
+      .select("*")
+      .single();
+  }
+
+  async function ensureProductCardsForProjectItems(projectItems, userId) {
+    const projectItemRows = projectItems || [];
+    const parentById = new Map(projectItemRows.map((item) => [item.id, item]));
+    const parentIdsWithChildren = new Set(projectItemRows.map((item) => item.parent_item_id).filter(Boolean));
+    const subItems = projectItemRows.filter((item) =>
+      item?.id && !item.product_id && item.item_type !== "main" && !parentIdsWithChildren.has(item.id) && item.product_name
+    );
+
+    if (subItems.length === 0) return projectItemRows;
 
     const createdProducts = [];
     const linkedItems = [];
@@ -642,9 +761,7 @@ export default function ProjectDetailPage() {
       let productCardStatus = "Ürün kartına bağlı";
 
       if (!product) {
-        const { data: insertedProduct, error: productError } = await supabase
-          .from("products")
-          .insert({
+        const { data: insertedProduct, error: productError } = await insertProductWithFallback({
             user_id: userId,
             product_code: item.product_code || "",
             brand: item.brand || "",
@@ -655,11 +772,9 @@ export default function ProjectDetailPage() {
             critical_stock: 0,
             last_unit_price: 0,
             manual_unit_price: 0,
-            category: "Genel",
+            category: parentById.get(item.parent_item_id)?.product_name || projectItemCategory(item),
             source: "Proje malzeme listesi",
-          })
-          .select("*")
-          .single();
+          });
 
         if (productError) {
           console.error("Ürün kartı oluşturulamadı:", productError);
@@ -692,10 +807,10 @@ export default function ProjectDetailPage() {
       setProducts((prev) => [...prev, ...createdProducts]);
     }
 
-    if (linkedItems.length === 0) return projectItems || [];
+    if (linkedItems.length === 0) return projectItemRows;
 
     const linkedById = new Map(linkedItems.map((item) => [item.id, item]));
-    return (projectItems || []).map((item) => linkedById.get(item.id) || item);
+    return projectItemRows.map((item) => linkedById.get(item.id) || item);
   }
 
   function bestPurchaseLineForItem(item, lines) {
@@ -732,6 +847,13 @@ export default function ProjectDetailPage() {
     const projectOrderLines = projectOrderRows.flatMap(normalizeOrderItems);
     const allOrderLines = allOrderRows.flatMap(normalizeOrderItems);
 
+    const quoteUnitPrice = Number(item.quote_unit_price || item.estimated_unit_price || 0);
+    const quoteTotal = sectionQuoteTotalFor(item.product_name, Number(item.quote_total || item.estimated_total || 0) || 0);
+    if (quoteUnitPrice > 0 || quoteTotal > 0) {
+      const unitPrice = quoteUnitPrice || (quantity > 0 ? quoteTotal / quantity : quoteTotal);
+      return { unitPrice, total: quantity > 0 ? quantity * unitPrice : quoteTotal, source: "Tekliften", orderId: null, sourceDate: item.updated_at || item.created_at };
+    }
+
     const projectOrderMatch = bestPurchaseLineForItem(item, projectOrderLines);
     if (projectOrderMatch) {
       const unitPrice = Number(projectOrderMatch.unitPrice || 0);
@@ -760,13 +882,6 @@ export default function ProjectDetailPage() {
     if (generalOrderMatch) {
       const unitPrice = Number(generalOrderMatch.unitPrice || 0);
       return { unitPrice, total: quantity * unitPrice, source: "Son genel al\u0131mdan", orderId: generalOrderMatch.orderId, sourceDate: generalOrderMatch.createdAt };
-    }
-
-    const quoteUnitPrice = Number(item.quote_unit_price || item.estimated_unit_price || 0);
-    const quoteTotal = sectionQuoteTotalFor(item.product_name, Number(item.quote_total || item.estimated_total || 0) || 0);
-    if (quoteUnitPrice > 0 || quoteTotal > 0) {
-      const unitPrice = quoteUnitPrice || (quantity > 0 ? quoteTotal / quantity : quoteTotal);
-      return { unitPrice, total: quantity > 0 ? quantity * unitPrice : quoteTotal, source: "Tekliften", orderId: null, sourceDate: item.updated_at || item.created_at };
     }
 
     const productMatch = [...products]
@@ -1074,10 +1189,8 @@ export default function ProjectDetailPage() {
 
     const parentPayload = validGroups.map((group) => suggestedMainPayload(group, user.id));
 
-    const { data: insertedParents, error: parentError } = await supabase
-      .from("project_items")
-      .insert(parentPayload)
-      .select("*");
+    const { data: insertedParents, error: parentError, usedFallback: parentUsedFallback } =
+      await insertProjectItemsWithFallback(parentPayload);
 
     if (parentError) {
       setMessage("Hiyerarşik kayıt yapılamadı. Supabase'de project_items için brand, source_file, source_type, raw_item_id ve item_type alanları çalıştırılmış olmalı.");
@@ -1096,10 +1209,7 @@ export default function ProjectDetailPage() {
 
     let insertedChildren = [];
     if (childPayload.length > 0) {
-      const { data, error } = await supabase
-        .from("project_items")
-        .insert(childPayload)
-        .select("*");
+      const { data, error } = await insertProjectItemsWithFallback(childPayload);
 
       if (error) {
         setMessage("Ana ürünler kaydedildi ama alt ürünler kaydedilemedi.");
@@ -1747,10 +1857,7 @@ export default function ProjectDetailPage() {
       };
     });
 
-    const { data: insertedParents, error: parentError } = await supabase
-      .from("project_items")
-      .insert(parentPayload)
-      .select("*");
+    const { data: insertedParents, error: parentError } = await insertProjectItemsWithFallback(parentPayload);
 
     if (parentError) {
       setMessage("Ana ürünler projeye aktarılamadı.");
@@ -1785,10 +1892,7 @@ export default function ProjectDetailPage() {
 
     let insertedChildren = [];
     if (childPayload.length > 0) {
-      const { data, error } = await supabase
-        .from("project_items")
-        .insert(childPayload)
-        .select("*");
+      const { data, error } = await insertProjectItemsWithFallback(childPayload);
 
       if (error) {
         setMessage("Ana ürünler aktarıldı ama alt ürünler aktarılamadı.");
@@ -1882,10 +1986,12 @@ export default function ProjectDetailPage() {
   }
 
   function previewRowPayload(row, userId, parentId = null) {
+    const resolvedParentId = parentId || previewParentId || null;
+
     return {
       user_id: userId,
       project_id: projectId,
-      parent_item_id: parentId || previewParentId || null,
+      parent_item_id: resolvedParentId,
       product_code: String(row.product_code || "").trim().toUpperCase(),
       brand: row.brand || "",
       product_name: String(row.product_name || "").trim(),
@@ -1897,7 +2003,7 @@ export default function ProjectDetailPage() {
       note: row.note || row.source_file || previewRowCategory(row),
       source_file: row.source_file || "",
       source_type: row.source_type || "",
-      item_type: parentId ? "sub" : "sub",
+      item_type: resolvedParentId ? "sub" : "item",
       updated_at: new Date().toISOString(),
     };
   }
@@ -1908,6 +2014,7 @@ export default function ProjectDetailPage() {
 
     setIsParsing(true);
     setMessage("");
+    setPreviewActionMessage("");
     setPreviewWarnings([]);
     setPreviewBlocked(false);
     setPreviewSections([]);
@@ -1984,119 +2091,211 @@ export default function ProjectDetailPage() {
   }
 
   async function importPreviewRows() {
-    const rowsToImport = selectedPreviewRows.length > 0 ? selectedPreviewRows : previewRows;
-    if (rowsToImport.length === 0) return;
+    if (isImportingPreview) return;
 
-    const user = await getUserOrRedirect();
-    if (!user) return;
+    setIsImportingPreview(true);
+    setPreviewActionMessage("Seçili ürünler projeye aktarılıyor...");
 
-    const payload = rowsToImport.map((row) => previewRowPayload(row, user.id));
-
-    const { data, error } = await supabase
-      .from("project_items")
-      .insert(payload)
-      .select("*");
-
-    if (error) {
-      setMessage("Önizleme satırları projeye aktarılamadı.");
-      return;
-    }
-
-    const nextItems = await ensureProductCardsForProjectItems([...items, ...(data || [])], user.id);
-    setItems(nextItems);
-    const importedIds = new Set(rowsToImport.map((row) => row.preview_id));
-    setPreviewRows((prev) => prev.filter((row) => !importedIds.has(row.preview_id)));
-    setSelectedPreviewRowIds([]);
-    setRawItems([]);
-    setSelectedMainRawIds([]);
-    setHierarchyGroups([]);
-    setPreviewParentId("");
-    await refreshProjectBudget(nextItems);
-    await loadProject();
-    setMessage("Dosyadan okunan ürünler projeye aktarıldı.");
-  }
-
-  async function importGroupedPreviewRows() {
-    const rowsToImport = selectedPreviewRows.length > 0 ? selectedPreviewRows : previewRows;
-    if (rowsToImport.length === 0) return;
-
-    const user = await getUserOrRedirect();
-    if (!user) return;
-
-    const rowsByCategory = rowsToImport.reduce((groups, row) => {
-      const category = previewRowCategory(row);
-      groups[category] = [...(groups[category] || []), row];
-      return groups;
-    }, {});
-
-    const parentPayload = Object.entries(rowsByCategory).map(([category, rows]) => {
-      const quoteTotal = sectionQuoteTotalFor(category, rows.reduce((sum, row) => sum + Number(row.estimated_total || 0), 0));
-      return {
-      user_id: user.id,
-      project_id: projectId,
-      parent_item_id: null,
-      product_code: "",
-      product_name: category,
-      unit: "adet",
-      estimated_quantity: 1,
-      estimated_unit_price: quoteTotal,
-      quote_unit_price: quoteTotal,
-      estimated_total: quoteTotal,
-      quote_total: quoteTotal,
-      status: "Bekliyor",
-      note: "Dosya onizleme kategori grubu",
-      item_type: "main",
-      updated_at: new Date().toISOString(),
-      };
-    });
-
-    const { data: insertedParents, error: parentError } = await supabase
-      .from("project_items")
-      .insert(parentPayload)
-      .select("*");
-
-    if (parentError) {
-      setMessage(parentError.message || "Hiyerarşik aktarım yapılamadı.");
-      return;
-    }
-
-    const childPayload = [];
-    Object.entries(rowsByCategory).forEach(([, rows], index) => {
-      const parent = insertedParents?.[index];
-      if (!parent) return;
-      rows.forEach((row) => {
-        childPayload.push(previewRowPayload(row, user.id, parent.id));
-      });
-    });
-
-    let insertedChildren = [];
-    if (childPayload.length > 0) {
-      const { data, error } = await supabase
-        .from("project_items")
-        .insert(childPayload)
-        .select("*");
-
-      if (error) {
-        setMessage(error.message || "Ana ürünler aktarıldı ama alt ürünler aktarılamadı.");
-        await loadProject();
+    try {
+      setMessage("Ürünler projeye aktarılıyor...");
+      const rowsToImport = selectedPreviewRows.length > 0 ? selectedPreviewRows : previewRows;
+      if (rowsToImport.length === 0) {
+        const emptyMessage = "Aktarılacak ürün bulunamadı.";
+        setMessage(emptyMessage);
+        setPreviewActionMessage(emptyMessage);
         return;
       }
 
-      insertedChildren = data || [];
-    }
+      const user = await getUserOrRedirect();
+      if (!user) {
+        const authMessage = "Oturum bulunamadı. Lütfen tekrar giriş yapın.";
+        setMessage(authMessage);
+        setPreviewActionMessage(authMessage);
+        return;
+      }
 
-    const importedIds = new Set(rowsToImport.map((row) => row.preview_id));
-    const nextItems = await ensureProductCardsForProjectItems([...items, ...(insertedParents || []), ...insertedChildren], user.id);
-    setItems(nextItems);
-    setPreviewRows((prev) => prev.filter((row) => !importedIds.has(row.preview_id)));
-    setSelectedPreviewRowIds([]);
-    setRawItems([]);
-    setSelectedMainRawIds([]);
-    setHierarchyGroups([]);
-    setPreviewParentId("");
-    await refreshProjectBudget(nextItems);
-    await loadProject();
-    setMessage("Kategori bazlı hiyerarşik aktarım tamamlandı.");
+      const existingMaterialKeys = new Set(
+        items
+          .filter((item) => item.product_name && !isMainProjectItem(item))
+          .map((item) => materialIdentityKey(item.product_code, item.product_name, projectItemCategory(item))),
+      );
+      const duplicateRows = rowsToImport.filter((row) =>
+        existingMaterialKeys.has(materialIdentityKey(row.product_code, row.product_name, previewRowCategory(row)))
+      );
+
+      if (duplicateRows.length > 0) {
+        const duplicateMessage = `${duplicateRows.slice(0, 3).map((row) => row.product_name).join(", ")} zaten projede var. Tekrar aktarımı engellendi.`;
+        setMessage(duplicateMessage);
+        setPreviewActionMessage(duplicateMessage);
+        return;
+      }
+
+      const payload = rowsToImport.map((row) => previewRowPayload(row, user.id));
+
+      const { data, error, usedFallback } = await insertProjectItemsWithFallback(payload);
+
+      if (error) {
+        const errorMessage = error.message || "Önizleme satırları projeye aktarılamadı.";
+        setMessage(errorMessage);
+        setPreviewActionMessage(errorMessage);
+        return;
+      }
+
+      const nextItems = await ensureProductCardsForProjectItems([...items, ...(data || [])], user.id);
+      setItems(nextItems);
+      const importedIds = new Set(rowsToImport.map((row) => row.preview_id));
+      setPreviewRows((prev) => prev.filter((row) => !importedIds.has(row.preview_id)));
+      setSelectedPreviewRowIds([]);
+      setRawItems([]);
+      setSelectedMainRawIds([]);
+      setHierarchyGroups([]);
+      setPreviewParentId("");
+      await refreshProjectBudget(nextItems);
+      await loadProject();
+      const successMessage = usedFallback
+        ? "Ürünler projeye aktarıldı. Eski veritabanı kolonları için uyumlu kayıt kullanıldı."
+        : "Dosyadan okunan ürünler projeye aktarıldı.";
+      setMessage(successMessage);
+      setPreviewActionMessage(successMessage);
+    } catch (error) {
+      console.error(error);
+      const errorMessage = error.message || "Ürünler projeye aktarılırken beklenmeyen hata oluştu.";
+      setMessage(errorMessage);
+      setPreviewActionMessage(errorMessage);
+    } finally {
+      setIsImportingPreview(false);
+    }
+  }
+
+  async function importGroupedPreviewRows() {
+    if (isImportingPreview) return;
+
+    setIsImportingPreview(true);
+    setPreviewActionMessage("Hiyerarşik aktarım hazırlanıyor...");
+
+    try {
+      setMessage("Hiyerarşik aktarım hazırlanıyor...");
+      const rowsToImport = selectedPreviewRows.length > 0 ? selectedPreviewRows : previewRows;
+      if (rowsToImport.length === 0) {
+        const emptyMessage = "Aktarılacak ürün bulunamadı.";
+        setMessage(emptyMessage);
+        setPreviewActionMessage(emptyMessage);
+        return;
+      }
+
+      const user = await getUserOrRedirect();
+      if (!user) {
+        const authMessage = "Oturum bulunamadı. Lütfen tekrar giriş yapın.";
+        setMessage(authMessage);
+        setPreviewActionMessage(authMessage);
+        return;
+      }
+
+      const rowsByCategory = rowsToImport.reduce((groups, row) => {
+        const category = previewRowCategory(row);
+        groups[category] = [...(groups[category] || []), row];
+        return groups;
+      }, {});
+
+      const existingGroupKeys = new Set(
+        items
+          .filter(isMainProjectItem)
+          .map((item) => projectItemGroupKey(item.product_name, Number(item.quote_total || item.estimated_total || 0))),
+      );
+      const duplicateCategories = Object.entries(rowsByCategory)
+        .filter(([category, rows]) => {
+          const quoteTotal = sectionQuoteTotalFor(category, rows.reduce((sum, row) => sum + Number(row.estimated_total || 0), 0));
+          return existingGroupKeys.has(projectItemGroupKey(category, quoteTotal));
+        })
+        .map(([category]) => category);
+
+      if (duplicateCategories.length > 0) {
+        const duplicateMessage = `${duplicateCategories.slice(0, 4).join(", ")} zaten projede var. Tekrar aktarımı engellendi.`;
+        setMessage(duplicateMessage);
+        setPreviewActionMessage(duplicateMessage);
+        return;
+      }
+
+      const parentPayload = Object.entries(rowsByCategory).map(([category, rows]) => {
+        const quoteTotal = sectionQuoteTotalFor(category, rows.reduce((sum, row) => sum + Number(row.estimated_total || 0), 0));
+        return {
+          user_id: user.id,
+          project_id: projectId,
+          parent_item_id: null,
+          product_code: "",
+          product_name: category,
+          unit: "adet",
+          estimated_quantity: 1,
+          estimated_unit_price: quoteTotal,
+          quote_unit_price: quoteTotal,
+          estimated_total: quoteTotal,
+          quote_total: quoteTotal,
+          status: "Bekliyor",
+          note: "Dosya onizleme kategori grubu",
+          item_type: "main",
+          updated_at: new Date().toISOString(),
+        };
+      });
+
+      const { data: insertedParents, error: parentError, usedFallback: parentUsedFallback } = await insertProjectItemsWithFallback(parentPayload);
+
+      if (parentError) {
+        const errorMessage = parentError.message || "Hiyerarşik aktarım yapılamadı.";
+        setMessage(errorMessage);
+        setPreviewActionMessage(errorMessage);
+        return;
+      }
+
+      const childPayload = [];
+      Object.entries(rowsByCategory).forEach(([, rows], index) => {
+        const parent = insertedParents?.[index];
+        if (!parent) return;
+        rows.forEach((row) => {
+          childPayload.push(previewRowPayload(row, user.id, parent.id));
+        });
+      });
+
+      let insertedChildren = [];
+      let childUsedFallback = false;
+      if (childPayload.length > 0) {
+        const { data, error, usedFallback } = await insertProjectItemsWithFallback(childPayload);
+
+        if (error) {
+          const errorMessage = error.message || "Ana ürünler aktarıldı ama alt ürünler aktarılamadı.";
+          setMessage(errorMessage);
+          setPreviewActionMessage(errorMessage);
+          await loadProject();
+          return;
+        }
+
+        insertedChildren = data || [];
+        childUsedFallback = usedFallback;
+      }
+
+      const importedIds = new Set(rowsToImport.map((row) => row.preview_id));
+      const nextItems = await ensureProductCardsForProjectItems([...items, ...(insertedParents || []), ...insertedChildren], user.id);
+      setItems(nextItems);
+      setPreviewRows((prev) => prev.filter((row) => !importedIds.has(row.preview_id)));
+      setSelectedPreviewRowIds([]);
+      setRawItems([]);
+      setSelectedMainRawIds([]);
+      setHierarchyGroups([]);
+      setPreviewParentId("");
+      await refreshProjectBudget(nextItems);
+      await loadProject();
+      const successMessage = parentUsedFallback || childUsedFallback
+        ? "Hiyerarşik aktarım tamamlandı. Eski veritabanı kolonları için uyumlu kayıt kullanıldı."
+        : "Kategori bazlı hiyerarşik aktarım tamamlandı.";
+      setMessage(successMessage);
+      setPreviewActionMessage(successMessage);
+    } catch (error) {
+      console.error(error);
+      const errorMessage = error.message || "Hiyerarşik aktarım sırasında beklenmeyen hata oluştu.";
+      setMessage(errorMessage);
+      setPreviewActionMessage(errorMessage);
+    } finally {
+      setIsImportingPreview(false);
+    }
   }
 
   function togglePurchaseItem(itemId) {
@@ -2105,6 +2304,194 @@ export default function ProjectDetailPage() {
         ? prev.filter((id) => id !== itemId)
         : [...prev, itemId],
     );
+  }
+
+  async function transferSelectedItemsToStock() {
+    setMessage("");
+
+    const user = await getUserOrRedirect();
+    if (!user) return;
+
+    const selectedItems = items.filter((item) =>
+      selectedPurchaseItemIds.includes(item.id) && !stockInfoForItem(item).isMainItem
+    );
+
+    if (selectedItems.length === 0) {
+      setMessage("Stoğa aktarmak için en az bir alt ürün seçin.");
+      return;
+    }
+
+    const approved = window.confirm(`${selectedItems.length} kalem stok kartı ve stok hareketi olarak kaydedilsin mi?`);
+    if (!approved) return;
+
+    const selectedItemIds = selectedItems.map((item) => item.id);
+    const { data: existingMovements, error: existingMovementError } = await supabase
+      .from("stock_movements")
+      .select("id, project_item_id")
+      .eq("user_id", user.id)
+      .eq("project_id", projectId)
+      .eq("source", "Proje teklifinden stok aktarımı")
+      .in("project_item_id", selectedItemIds);
+
+    if (existingMovementError) {
+      console.error("Mevcut stok hareketleri kontrol edilemedi:", existingMovementError);
+      setMessage(existingMovementError.message || "Mevcut stok hareketleri kontrol edilemedi.");
+      return;
+    }
+
+    const alreadyTransferredItemIds = new Set((existingMovements || []).map((movement) => movement.project_item_id));
+    const itemsToTransfer = selectedItems.filter((item) => !alreadyTransferredItemIds.has(item.id));
+
+    if (itemsToTransfer.length === 0) {
+      setMessage("Seçili kalemler daha önce stoğa aktarılmış. Stok tekrar artırılmadı.");
+      return;
+    }
+
+    const ensuredItems = await ensureProductCardsForProjectItems(itemsToTransfer, user.id);
+    const transferableItems = ensuredItems.filter((item) => item.product_id);
+
+    if (transferableItems.length === 0) {
+      setMessage("Stok kartı oluşturulamadığı için aktarım yapılmadı.");
+      return;
+    }
+
+    const productIds = Array.from(new Set(transferableItems.map((item) => item.product_id).filter(Boolean)));
+    const { data: latestProducts, error: latestProductError } = await supabase
+      .from("products")
+      .select("*")
+      .eq("user_id", user.id)
+      .in("id", productIds);
+
+    if (latestProductError) {
+      console.error("Stok kartları okunamadı:", latestProductError);
+      setMessage(latestProductError.message || "Stok kartları okunamadı.");
+      return;
+    }
+
+    const productById = new Map((latestProducts || []).map((product) => [product.id, product]));
+    const today = new Date().toISOString().slice(0, 10);
+    const now = new Date().toISOString();
+
+    const movementPayload = transferableItems.map((item) => {
+      const price = resolveProjectItemPrice(item);
+      const quantity = Number(item.estimated_quantity || 0) || 0;
+      const product = productById.get(item.product_id);
+
+      return {
+        user_id: user.id,
+        product_id: item.product_id,
+        project_id: projectId,
+        project_item_id: item.id,
+        parent_item_id: item.parent_item_id || null,
+        product_code: product?.product_code || item.product_code || "",
+        product_name: product?.product_name || item.product_name,
+        movement_type: "in",
+        quantity,
+        unit: item.unit || product?.unit || "adet",
+        supplier_name: item.note || item.source_file || "Proje teklifi",
+        unit_price: Number(price.unitPrice || 0) || 0,
+        currency: item.currency || product?.last_currency || "TRY",
+        movement_date: today,
+        source: "Proje teklifinden stok aktarımı",
+        notes: [
+          project?.project_code || project?.project_name || "Proje",
+          `Fiyat kaynağı: ${price.source}`,
+          item.source_file ? `Kaynak dosya: ${item.source_file}` : "",
+          Number(price.unitPrice || 0) > 0 ? "" : "Teklifte ve son alımda fiyat bulunamadı; fiyat 0 bırakıldı.",
+        ].filter(Boolean).join(" | "),
+      };
+    }).filter((movement) => movement.quantity > 0);
+
+    if (movementPayload.length === 0) {
+      setMessage("Aktarılacak kalemlerde geçerli miktar bulunamadı.");
+      return;
+    }
+
+    const { data: insertedMovements, error: movementError } = await supabase
+      .from("stock_movements")
+      .insert(movementPayload)
+      .select("*");
+
+    if (movementError) {
+      console.error("Stok hareketi kaydedilemedi:", movementError);
+      setMessage(movementError.message || "Stok hareketi kaydedilemedi.");
+      return;
+    }
+
+    const totalsByProduct = movementPayload.reduce((groups, movement) => {
+      const group = groups.get(movement.product_id) || { quantity: 0, lastPrice: 0, currency: movement.currency, supplier: movement.supplier_name };
+      group.quantity += Number(movement.quantity || 0);
+      if (Number(movement.unit_price || 0) > 0) {
+        group.lastPrice = Number(movement.unit_price || 0);
+        group.currency = movement.currency || group.currency;
+        group.supplier = movement.supplier_name || group.supplier;
+      }
+      groups.set(movement.product_id, group);
+      return groups;
+    }, new Map());
+
+    const updateWarnings = [];
+
+    for (const [productId, total] of totalsByProduct.entries()) {
+      const product = productById.get(productId) || {};
+      const updatePayload = {
+        current_stock: Number(product.current_stock || 0) + total.quantity,
+        last_supplier: total.supplier || product.last_supplier || "",
+        last_movement_at: now,
+        source: "Proje teklifinden stok aktarımı",
+        updated_at: now,
+      };
+
+      if (total.lastPrice > 0) {
+        updatePayload.last_unit_price = total.lastPrice;
+        updatePayload.last_currency = total.currency || product.last_currency || "TRY";
+      }
+
+      const { error: productUpdateError } = await supabase
+        .from("products")
+        .update(updatePayload)
+        .eq("id", productId)
+        .eq("user_id", user.id);
+
+      if (productUpdateError) {
+        console.error("Stok kartı güncellenemedi:", productUpdateError);
+        updateWarnings.push(productUpdateError.message);
+      }
+    }
+
+    for (const item of transferableItems) {
+      const price = resolveProjectItemPrice(item);
+      const quantity = Number(item.estimated_quantity || 0) || 0;
+
+      const { error: itemUpdateError } = await supabase
+        .from("project_items")
+        .update({
+          product_id: item.product_id,
+          received_quantity: Number(item.received_quantity || 0) + quantity,
+          resolved_unit_price: Number(price.unitPrice || 0) || 0,
+          resolved_total: Number(price.total || 0) || 0,
+          price_source: price.source,
+          price_source_order_id: price.orderId || null,
+          price_source_date: price.sourceDate || null,
+          status: "Depoda",
+          updated_at: now,
+        })
+        .eq("id", item.id)
+        .eq("project_id", projectId)
+        .eq("user_id", user.id);
+
+      if (itemUpdateError) {
+        console.error("Proje kalemi stok aktarımıyla güncellenemedi:", itemUpdateError);
+        updateWarnings.push(itemUpdateError.message);
+      }
+    }
+
+    setStockMovements((prev) => [...(insertedMovements || []), ...prev]);
+    setSelectedPurchaseItemIds((prev) => prev.filter((id) => !movementPayload.some((movement) => movement.project_item_id === id)));
+    await loadProject();
+
+    const skippedCount = selectedItems.length - itemsToTransfer.length;
+    setMessage(`${movementPayload.length} kalem stoğa aktarıldı.${skippedCount > 0 ? ` ${skippedCount} kalem daha önce aktarıldığı için atlandı.` : ""}${updateWarnings.length > 0 ? " Bazı kart güncellemeleri kontrol edilmeli." : ""}`);
   }
 
   function mapItemToRequestLine(item, quantityOverride = null) {
@@ -2581,7 +2968,21 @@ export default function ProjectDetailPage() {
   }, [items, selectedProjectItemIds]);
 
   const totals = useMemo(() => {
-    const itemEstimate = items.reduce((sum, item) => sum + Number(item.estimated_total || 0), 0);
+    const parentById = new Map(items.map((item) => [item.id, item]));
+    const parentIdsWithChildren = new Set(items.map((item) => item.parent_item_id).filter(Boolean));
+    const itemEstimate = items.reduce((sum, item) => {
+      if (item.parent_item_id) {
+        const parent = parentById.get(item.parent_item_id);
+        const parentTotal = Number(parent?.quote_total || parent?.estimated_total || 0);
+        return parentTotal > 0 ? sum : sum + Number(item.estimated_total || 0);
+      }
+
+      if (parentIdsWithChildren.has(item.id) || isMainProjectItem(item)) {
+        return sum + sectionQuoteTotalFor(item.product_name, Number(item.quote_total || item.estimated_total || 0));
+      }
+
+      return sum + Number(item.estimated_total || 0);
+    }, 0);
     const materialCost = items
       .filter((item) => item.parent_item_id)
       .reduce((sum, item) => sum + Number(resolveProjectItemPrice(item).total || 0), 0);
@@ -3214,11 +3615,11 @@ export default function ProjectDetailPage() {
                       </label>
                       <button
                         type="button"
-                        disabled={selectedPreviewRows.length === 0 || previewBlocked}
+                        disabled={isImportingPreview || previewRows.length === 0 || previewBlocked}
                         onClick={importPreviewRows}
                         className="rounded-xl bg-slate-900 px-4 py-3 text-sm font-bold text-white hover:bg-slate-800 disabled:bg-slate-300"
                       >
-                        Seçilenleri Projeye Aktar
+                        {isImportingPreview ? "Aktarılıyor..." : "Seçilenleri Projeye Aktar"}
                       </button>
                       <button
                         type="button"
@@ -3233,13 +3634,19 @@ export default function ProjectDetailPage() {
                     <div className="mt-4 flex justify-end">
                       <button
                         type="button"
-                        disabled={selectedPreviewRows.length === 0 || previewBlocked}
+                        disabled={isImportingPreview || previewRows.length === 0 || previewBlocked}
                         onClick={importGroupedPreviewRows}
                         className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white hover:bg-emerald-700 disabled:bg-slate-300"
                       >
-                        Hiyerarşik Aktar
+                        {isImportingPreview ? "Aktarılıyor..." : "Hiyerarşik Aktar"}
                       </button>
                     </div>
+
+                    {previewActionMessage && (
+                      <div className="mt-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-bold text-blue-900" aria-live="polite">
+                        {previewActionMessage}
+                      </div>
+                    )}
 
                     <div className="mt-5 space-y-4">
                       {Object.entries(groupedPreviewRows).map(([category, rows]) => (
@@ -3808,6 +4215,14 @@ export default function ProjectDetailPage() {
                 >
                   Seçilenlerden Talep Oluştur ({selectedPurchaseItemIds.length})
                 </button>
+                <button
+                  type="button"
+                  disabled={selectedPurchaseItemIds.length === 0}
+                  onClick={transferSelectedItemsToStock}
+                  className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white hover:bg-emerald-700 disabled:bg-slate-300"
+                >
+                  Seçilenleri Stoğa Aktar ({selectedPurchaseItemIds.length})
+                </button>
               </div>
 
               {itemStockFilter !== "all" && (
@@ -3842,6 +4257,7 @@ export default function ProjectDetailPage() {
                   const quoteTotal = sectionQuoteTotalFor(item.product_name, Number(item.quote_total || item.estimated_total || 0) || 0);
                   const childResolvedTotal = allChildren.reduce((sum, child) => sum + resolveProjectItemPrice(child).total, 0);
                   const itemDifference = quoteTotal - childResolvedTotal;
+                  const priceLivesOnParent = allChildren.length > 0 && quoteTotal > 0 && childResolvedTotal === 0;
 
                   return (
                     <div key={item.id} className="rounded-2xl border border-slate-200">
@@ -3870,13 +4286,25 @@ export default function ProjectDetailPage() {
                                 <span className={`rounded-full px-2 py-1 ${productCardLabelClass(item)}`}>{productCardLabel(item)}</span>
                               )}
                               <span className="text-emerald-700">Teklif bedeli: {formatMoney(quoteTotal)}</span>
-                              <span className="text-blue-700">Alt malzeme toplamı: {formatMoney(childResolvedTotal)}</span>
-                              <span className={itemDifference >= 0 ? "text-emerald-700" : "text-red-700"}>Fark: {formatMoney(itemDifference)}</span>
+                              {priceLivesOnParent ? (
+                                <span className="text-amber-700">Parça fiyatı yok; bedel ana toplamda</span>
+                              ) : (
+                                <>
+                                  <span className="text-blue-700">Alt malzeme toplamı: {formatMoney(childResolvedTotal)}</span>
+                                  <span className={itemDifference >= 0 ? "text-emerald-700" : "text-red-700"}>Fark: {formatMoney(itemDifference)}</span>
+                                </>
+                              )}
                               <span className={`rounded-full px-2 py-1 ${priceSourceClass(itemPrice.source)}`}>{itemPrice.source}</span>
                             </div>
-                            <div className="mt-1 text-xs font-bold text-slate-600">
-                              Tahmini: {stockInfo.estimatedQuantity} {item.unit || "adet"} · Stok: {stockInfo.stockQuantity} {item.unit || "adet"} · Satınalma gerekli: {stockInfo.requiredQuantity} {item.unit || "adet"}
-                            </div>
+                            {stockInfo.isMainItem ? (
+                              <div className="mt-1 text-xs font-bold text-slate-600">
+                                Alt malzeme: {allChildren.length} kalem · Ana satır stoktan düşülmez
+                              </div>
+                            ) : (
+                              <div className="mt-1 text-xs font-bold text-slate-600">
+                                Tahmini: {stockInfo.estimatedQuantity} {item.unit || "adet"} · Stok: {stockInfo.stockQuantity} {item.unit || "adet"} · Satınalma gerekli: {stockInfo.requiredQuantity} {item.unit || "adet"}
+                              </div>
+                            )}
                           </div>
                         </div>
                         <span className={`rounded-full px-3 py-1 text-xs font-bold ${itemStatusClass(item.status)}`}>{item.status || "Bekliyor"}</span>

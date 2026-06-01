@@ -48,6 +48,14 @@ function projectPaidAmount(project, payments) {
     .reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
 }
 
+function productCriticalLimit(product) {
+  return Math.max(
+    Number(product.min_stock || 0),
+    Number(product.critical_stock || 0),
+    Number(product.minimum_stock || 0),
+  );
+}
+
 function StatCard({ icon, title, value, text, href, tone = "blue" }) {
   const tones = {
     blue: "bg-blue-50 text-blue-700 border-blue-100",
@@ -265,9 +273,10 @@ export default function DashboardPage() {
         Number(order.received_total || 0) <= 0,
     );
     const criticalProducts = products.filter(
-      (product) =>
-        Number(product.min_stock || 0) > 0 &&
-        Number(product.current_stock || 0) <= Number(product.min_stock || 0),
+      (product) => {
+        const criticalLimit = productCriticalLimit(product);
+        return criticalLimit > 0 && Number(product.current_stock || 0) <= criticalLimit;
+      },
     );
     const activeProjects = projects.filter((project) =>
       activeProjectStatuses.includes(project.status),
@@ -304,7 +313,7 @@ export default function DashboardPage() {
         title: "Kritik stok",
         subject: product.product_name || "Ürün",
         projectName: "",
-        description: `Mevcut stok ${Number(product.current_stock || 0)} ${product.unit || "adet"}, kritik seviye ${Number(product.min_stock || 0)}.`,
+        description: `Mevcut stok ${Number(product.current_stock || 0)} ${product.unit || "adet"}, kritik seviye ${productCriticalLimit(product)}.`,
         href: "/dashboard/stok",
       })),
       ...weekDeliveries.slice(0, 4).map((order) => ({

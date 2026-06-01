@@ -42,6 +42,14 @@ function productGroupKey(product) {
   return `name__${name}`;
 }
 
+function stockCriticalLimit(product) {
+  return Math.max(
+    Number(product.min_stock || 0),
+    Number(product.critical_stock || 0),
+    Number(product.minimum_stock || 0),
+  );
+}
+
 function mergeProductGroups(items) {
   const grouped = new Map();
 
@@ -297,7 +305,10 @@ export default function StockPage() {
     { total: 0, available: 0, reserved: 0, production: 0, montage: 0, shipped: 0 },
   );
   const lowStockCount = productGroups.filter(
-    (product) => Number(product.min_stock || 0) > 0 && Number(product.current_stock || 0) <= Number(product.min_stock || 0),
+    (product) => {
+      const criticalLimit = stockCriticalLimit(product);
+      return criticalLimit > 0 && Number(product.current_stock || 0) <= criticalLimit;
+    },
   ).length;
   const incomingCount = movements.filter((movement) => movement.movement_type === "in").length;
 
@@ -402,7 +413,7 @@ export default function StockPage() {
                           <td className="p-4 font-semibold text-purple-700">{breakdown.production}</td>
                           <td className="p-4 font-semibold text-orange-700">{breakdown.montage}</td>
                           <td className="p-4">
-                            {Number(product.min_stock || 0) > 0 ? product.min_stock : "-"}
+                            {stockCriticalLimit(product) > 0 ? stockCriticalLimit(product) : "-"}
                           </td>
                           <td className="p-4">{formatDate(product.last_movement_at || product.updated_at)}</td>
                         </tr>

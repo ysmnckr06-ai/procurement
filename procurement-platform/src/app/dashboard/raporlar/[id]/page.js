@@ -161,6 +161,7 @@ const sonAlimRows = useMemo(() => {
 
         <div className="flex flex-wrap gap-3 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <button
+            type="button"
             onClick={siparisOlustur}
             disabled={loading}
             className={`rounded-xl px-5 py-3 text-sm font-bold text-white ${
