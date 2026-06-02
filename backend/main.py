@@ -435,6 +435,13 @@ def save_json(path, data):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
+def user_scoped_rows(rows, user_id):
+    return [
+        row
+        for row in rows
+        if isinstance(row, dict) and row.get("user_id") == user_id
+    ]
+
 def clean_supplier_name(name):
     name = str(name or "").strip()
     name = name.replace("_", " ").replace("-", " ")
@@ -530,6 +537,36 @@ def detect_file_type(filename: str) -> str:
         return "image"
 
     return "unknown"
+
+MAX_UPLOAD_FILES = 15
+MAX_UPLOAD_SIZE = 10 * 1024 * 1024
+ALLOWED_UPLOAD_EXTENSIONS = {".pdf", ".xlsx", ".xls", ".png", ".jpg", ".jpeg", ".webp"}
+
+def safe_upload_name(filename: str) -> str:
+    original_name = os.path.basename(filename or "dosya")
+    stem, ext = os.path.splitext(original_name)
+    safe_stem = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("._-") or "dosya"
+    return f"{uuid.uuid4()}_{safe_stem[:80]}{ext.lower()}"
+
+async def save_upload_file(upload: UploadFile) -> tuple[str | None, str | None, str | None]:
+    original_name = os.path.basename(upload.filename or "dosya")
+    ext = os.path.splitext(original_name)[1].lower()
+
+    if ext not in ALLOWED_UPLOAD_EXTENSIONS:
+        return None, original_name, f"Desteklenmeyen dosya: {original_name}"
+
+    contents = await upload.read()
+
+    if len(contents) > MAX_UPLOAD_SIZE:
+        return None, original_name, f"{original_name} dosyasi 10 MB sinirini asiyor."
+
+    safe_name = safe_upload_name(original_name)
+    save_path = os.path.join(TEMP_DIR, safe_name)
+
+    with open(save_path, "wb") as buffer:
+        buffer.write(contents)
+
+    return save_path, original_name, None
 
 def clean_key(value: str) -> str:
     text = str(value or "").lower()
@@ -893,7 +930,7 @@ async def parse_project_items(
 ):
     verify_user_token(authorization)
 
-    if len(files) > 15:
+    if len(files) > MAX_UPLOAD_FILES:
         return {
             "success": False,
             "warnings": ["En fazla 15 dosya yukleyebilirsiniz."],
@@ -901,30 +938,16 @@ async def parse_project_items(
             "totalRows": 0,
         }
 
-    max_file_size = 10 * 1024 * 1024
-    allowed_extensions = [".pdf", ".xlsx", ".xls", ".png", ".jpg", ".jpeg", ".webp"]
     all_rows = []
     sections = []
     warnings = []
     blocking_errors = []
 
     for upload in files:
-        original_name = os.path.basename(upload.filename or "dosya")
-
-        if not any(original_name.lower().endswith(ext) for ext in allowed_extensions):
-            warnings.append(f"Desteklenmeyen dosya: {original_name}")
+        save_path, original_name, upload_error = await save_upload_file(upload)
+        if upload_error:
+            warnings.append(upload_error)
             continue
-
-        contents = await upload.read()
-
-        if len(contents) > max_file_size:
-            warnings.append(f"{original_name} dosyasi 10 MB sinirini asiyor.")
-            continue
-
-        save_path = os.path.join(TEMP_DIR, f"{uuid.uuid4()}_{original_name}")
-
-        with open(save_path, "wb") as buffer:
-            buffer.write(contents)
 
         try:
             file_type = detect_file_type(original_name)
@@ -1092,6 +1115,7 @@ async def analyze_offers(
     files: list[UploadFile] = File(...),
     firma_adlari_text: str = Form(""),
     request_id: str = Form(""),
+    project_id: str = Form(""),
     request_report_path: str = Form(""),
     request_file_name: str = Form(""),
 
@@ -1119,7 +1143,7 @@ async def analyze_offers(
     user = verify_user_token(authorization)
     user_id = user["id"]
 
-    if len(files) > 15:
+    if len(files) > MAX_UPLOAD_FILES:
         raise HTTPException(status_code=400, detail="En fazla 15 dosya yükleyebilirsiniz.")
 
     MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
@@ -1185,26 +1209,27 @@ async def analyze_offers(
     ]
 
     for i, upload in enumerate(files):
-        firma_adi = os.path.splitext(upload.filename)[0].replace("_", " ").replace("-", " ").title()
-        file_type = detect_file_type(upload.filename)
-        save_path = os.path.join(TEMP_DIR, upload.filename)
+        save_path, original_name, upload_error = await save_upload_file(upload)
+        if upload_error:
+            warnings.append(upload_error)
+            continue
 
-        with open(save_path, "wb") as buffer:
-            shutil.copyfileobj(upload.file, buffer)
+        firma_adi = os.path.splitext(original_name)[0].replace("_", " ").replace("-", " ").title()
+        file_type = detect_file_type(original_name)
 
         try:
             if file_type == "excel":
-                rows = parse_excel(save_path, firma_adi, upload.filename)
+                rows = parse_excel(save_path, firma_adi, original_name)
 
             elif file_type == "pdf":
-                rows = parse_pdf(save_path, firma_adi, upload.filename)
+                rows = parse_pdf(save_path, firma_adi, original_name)
 
             elif file_type == "image":
-                rows = parse_image(save_path, firma_adi, upload.filename)
+                rows = parse_image(save_path, firma_adi, original_name)
 
             else:
                 rows = []
-                warnings.append(f"Desteklenmeyen dosya: {upload.filename}")
+                warnings.append(f"Desteklenmeyen dosya: {original_name}")
 
             print("OKUNAN TEKLİF DOSYASI:", upload.filename)
             print("OKUNAN SATIR SAYISI:", len(rows))
@@ -1396,6 +1421,7 @@ async def analyze_offers(
     report_record = {
         "id": report_id,
         "user_id": user_id,
+        "project_id": project_id if project_id else None,
         "ad": request_file_name or "Teklif Mukayese Raporu",
         "tarih": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "tur": "Mukayese",
@@ -1432,6 +1458,7 @@ async def analyze_offers(
         offer_record = {
             "user_id": user_id,
             "request_id": request_id if request_id else None,
+            "project_id": project_id if project_id else None,
             "firma_adi": offer["firma_adi"],
             "dosya_adi": offer["dosya_adi"],
             "para_birimi": offer["para_birimi"],
@@ -1496,14 +1523,23 @@ async def analyze_requests(
 
     print("BACKEND GELEN TALEP DOSYALARI:", [upload.filename for upload in files])
 
-    for upload in files:
-        save_path = os.path.join(TEMP_DIR, upload.filename)
+    if len(files) > MAX_UPLOAD_FILES:
+        return {
+            "success": False,
+            "warnings": ["En fazla 15 dosya yukleyebilirsiniz."],
+            "rows": [],
+            "reportPath": None,
+            "totalRows": 0
+        }
 
-        with open(save_path, "wb") as buffer:
-            shutil.copyfileobj(upload.file, buffer)
+    for upload in files:
+        save_path, original_name, upload_error = await save_upload_file(upload)
+        if upload_error:
+            warnings.append(upload_error)
+            continue
 
         try:
-            rows = parse_request_file(save_path, upload.filename)
+            rows = parse_request_file(save_path, original_name)
 
             print("OKUNAN TALEP DOSYASI:", upload.filename)
             print("OKUNAN TALEP SATIR SAYISI:", len(rows))
@@ -1602,7 +1638,7 @@ async def analyze_requests(
 
         result_rows.append(item)
 
-    report_name = "talep_listesi.xlsx"
+    report_name = f"talep_listesi_{user_id}_{uuid.uuid4()}.xlsx"
     report_path = os.path.join(TEMP_DIR, report_name)
 
     build_request_excel_report(result_rows, report_path)
@@ -1696,15 +1732,17 @@ def get_requests(authorization: str = Header(None)):
     }
 
 @app.get("/reports")
-def list_reports():
+def list_reports(authorization: str = Header(None)):
+    user = verify_user_token(authorization)
     return {
         "success": True,
-        "reports": load_json(REPORTS_FILE)
+        "reports": user_scoped_rows(load_json(REPORTS_FILE), user["id"])
     }
 
 @app.get("/reports/{report_id}")
-def get_report(report_id: str):
-    reports = load_json(REPORTS_FILE)
+def get_report(report_id: str, authorization: str = Header(None)):
+    user = verify_user_token(authorization)
+    reports = user_scoped_rows(load_json(REPORTS_FILE), user["id"])
 
     for report in reports:
         if report["id"] == report_id:
@@ -1719,11 +1757,12 @@ def get_report(report_id: str):
     }
 
 @app.post("/reports/{report_id}/approve")
-def approve_report(report_id: str):
+def approve_report(report_id: str, authorization: str = Header(None)):
+    user = verify_user_token(authorization)
     reports = load_json(REPORTS_FILE)
 
     for report in reports:
-        if report["id"] == report_id:
+        if report["id"] == report_id and report.get("user_id") == user["id"]:
             report["durum"] = "Tamamlandı"
             save_json(REPORTS_FILE, reports)
             return {
@@ -1737,14 +1776,15 @@ def approve_report(report_id: str):
     }
 
 @app.post("/reports/{report_id}/create-order")
-def create_order_from_report(report_id: str):
+def create_order_from_report(report_id: str, authorization: str = Header(None)):
+    user = verify_user_token(authorization)
     reports = load_json(REPORTS_FILE)
     orders = load_json(ORDERS_FILE)
 
     selected_report = None
 
     for report in reports:
-        if report["id"] == report_id:
+        if report["id"] == report_id and report.get("user_id") == user["id"]:
             selected_report = report
             break
 
@@ -1756,6 +1796,7 @@ def create_order_from_report(report_id: str):
 
     order = {
         "id": str(uuid.uuid4()),
+        "user_id": user["id"],
         "siparisNo": f"SIP-{len(orders) + 1:04d}",
         "firma": selected_report.get("onerilenFirma", "-"),
         "urun": selected_report.get("ad", "Mukayese Raporu"),
@@ -1778,28 +1819,32 @@ def create_order_from_report(report_id: str):
     }
 
 @app.get("/orders")
-def list_orders():
+def list_orders(authorization: str = Header(None)):
+    user = verify_user_token(authorization)
     return {
         "success": True,
-        "orders": load_json(ORDERS_FILE)
+        "orders": user_scoped_rows(load_json(ORDERS_FILE), user["id"])
     }
 
 @app.get("/suppliers")
-def list_suppliers():
+def list_suppliers(authorization: str = Header(None)):
+    user = verify_user_token(authorization)
     return {
         "success": True,
-        "suppliers": load_json(SUPPLIERS_FILE)
+        "suppliers": user_scoped_rows(load_json(SUPPLIERS_FILE), user["id"])
     }
 
 @app.post("/suppliers")
-def create_supplier(payload: dict = Body(...)):
+def create_supplier(payload: dict = Body(...), authorization: str = Header(None)):
+    user = verify_user_token(authorization)
     supplier = normalize_supplier_payload(payload)
+    supplier["user_id"] = user["id"]
 
     if not supplier["name"]:
         raise HTTPException(status_code=400, detail="Tedarikci adi zorunlu")
 
     suppliers = load_json(SUPPLIERS_FILE)
-    ensure_unique_supplier(suppliers, supplier)
+    ensure_unique_supplier(user_scoped_rows(suppliers, user["id"]), supplier)
     suppliers.insert(0, supplier)
     save_json(SUPPLIERS_FILE, suppliers)
 
@@ -1809,20 +1854,22 @@ def create_supplier(payload: dict = Body(...)):
     }
 
 @app.put("/suppliers/{supplier_id}")
-def update_supplier(supplier_id: str, payload: dict = Body(...)):
+def update_supplier(supplier_id: str, payload: dict = Body(...), authorization: str = Header(None)):
+    user = verify_user_token(authorization)
     suppliers = load_json(SUPPLIERS_FILE)
 
     for index, supplier in enumerate(suppliers):
-        if str(supplier.get("id")) == supplier_id:
+        if str(supplier.get("id")) == supplier_id and supplier.get("user_id") == user["id"]:
             updated = normalize_supplier_payload(
                 {**supplier, **payload},
                 supplier_id=supplier_id,
             )
+            updated["user_id"] = user["id"]
 
             if not updated["name"]:
                 raise HTTPException(status_code=400, detail="Tedarikci adi zorunlu")
 
-            ensure_unique_supplier(suppliers, updated, supplier_id=supplier_id)
+            ensure_unique_supplier(user_scoped_rows(suppliers, user["id"]), updated, supplier_id=supplier_id)
             suppliers[index] = updated
             save_json(SUPPLIERS_FILE, suppliers)
 
@@ -1834,10 +1881,13 @@ def update_supplier(supplier_id: str, payload: dict = Body(...)):
     raise HTTPException(status_code=404, detail="Tedarikci bulunamadi")
 
 @app.delete("/suppliers/{supplier_id}")
-def delete_supplier(supplier_id: str):
+def delete_supplier(supplier_id: str, authorization: str = Header(None)):
+    user = verify_user_token(authorization)
     suppliers = load_json(SUPPLIERS_FILE)
     next_suppliers = [
-        supplier for supplier in suppliers if str(supplier.get("id")) != supplier_id
+        supplier
+        for supplier in suppliers
+        if not (str(supplier.get("id")) == supplier_id and supplier.get("user_id") == user["id"])
     ]
 
     if len(next_suppliers) == len(suppliers):

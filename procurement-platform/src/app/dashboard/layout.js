@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabase";
 
 const menu = [
   { name: "Dashboard", icon: "🏠", href: "/dashboard" },
@@ -10,7 +12,7 @@ const menu = [
   { name: "Teklifler", icon: "📊", href: "/dashboard/teklifler" },
   { name: "Raporlar", icon: "📄", href: "/dashboard/raporlar" },
   { name: "Siparişler", icon: "🛒", href: "/dashboard/siparisler" },
-  { name: "Tedarikçiler", icon: "🏢", href: "/dashboard/tedarikciler" },
+  { name: "İş Ortakları", icon: "🤝", href: "/dashboard/tedarikciler" },
   { name: "Stok", icon: "📦", href: "/dashboard/stok" },
   { name: "Finans", icon: "₺", href: "/dashboard/finans" },
   { name: "Ayarlar", icon: "⚙️", href: "/dashboard/ayarlar" },
@@ -18,6 +20,48 @@ const menu = [
 
 export default function DashboardLayout({ children }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const [isCheckingSession, setIsCheckingSession] = useState(true);
+
+  async function handleSignOut() {
+    await supabase.auth.signOut();
+    router.replace("/login");
+  }
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function checkSession() {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!mounted) return;
+
+      if (!user) {
+        router.replace("/login");
+        return;
+      }
+
+      setIsCheckingSession(false);
+    }
+
+    checkSession();
+
+    return () => {
+      mounted = false;
+    };
+  }, [router]);
+
+  if (isCheckingSession) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-100 p-6">
+        <div className="rounded-2xl border border-slate-200 bg-white px-6 py-5 text-sm font-bold text-slate-700 shadow-sm">
+          Oturum kontrol ediliyor...
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-100">
@@ -29,7 +73,9 @@ export default function DashboardLayout({ children }) {
 
           <div>
             <div className="text-2xl font-black text-slate-950">Satınalma</div>
-            <div className="text-sm font-medium text-slate-500">Yönetim Sistemi</div>
+            <div className="text-sm font-medium text-slate-500">
+              Yönetim Sistemi
+            </div>
           </div>
         </div>
 
@@ -56,9 +102,60 @@ export default function DashboardLayout({ children }) {
             );
           })}
         </nav>
+
+        <button
+          type="button"
+          onClick={handleSignOut}
+          className="mt-6 flex w-full items-center gap-4 rounded-2xl border border-red-100 bg-red-50 px-5 py-4 text-base font-black text-red-700 transition hover:bg-red-100"
+        >
+          <span className="text-2xl">🚪</span>
+          <span>Çıkış Yap</span>
+        </button>
       </aside>
 
       <main className="min-h-screen lg:pl-72">
+        <div className="sticky top-0 z-20 border-b border-slate-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur lg:hidden">
+          <div className="mb-3 flex items-center justify-between">
+            <div>
+              <div className="text-lg font-black text-slate-950">Satınalma</div>
+              <div className="text-xs font-semibold text-slate-500">
+                Yönetim Sistemi
+              </div>
+            </div>
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600 text-xl text-white">
+              🛒
+            </div>
+          </div>
+          <nav className="flex gap-2 overflow-x-auto pb-1">
+            {menu.map((item) => {
+              const active =
+                item.href === "/dashboard"
+                  ? pathname === "/dashboard"
+                  : pathname.startsWith(item.href);
+
+              return (
+                <Link
+                  key={item.name}
+                  href={item.href}
+                  className={`shrink-0 rounded-full px-4 py-2 text-sm font-bold ${
+                    active
+                      ? "bg-blue-600 text-white"
+                      : "bg-slate-100 text-slate-700"
+                  }`}
+                >
+                  {item.name}
+                </Link>
+              );
+            })}
+            <button
+              type="button"
+              onClick={handleSignOut}
+              className="shrink-0 rounded-full bg-red-50 px-4 py-2 text-sm font-bold text-red-700"
+            >
+              Çıkış
+            </button>
+          </nav>
+        </div>
         <div className="p-6 lg:p-8">{children}</div>
       </main>
     </div>

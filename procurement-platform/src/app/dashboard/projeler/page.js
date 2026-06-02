@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { calculateBaseAmount, currencyOptions, formatMoney, getBaseCurrency, getExchangeRate } from "@/lib/currency";
+import { findOrCreateBusinessPartner } from "@/lib/businessPartners";
 
 const statusOptions = ["Taslak", "Onaylandı", "Devam Ediyor", "Tamamlandı", "Arşivlendi", "İptal"];
 
@@ -65,6 +66,7 @@ function StatCard({ title, value, text }) {
 export default function ProjectsPage() {
   const router = useRouter();
   const [projects, setProjects] = useState([]);
+  const [businessPartners, setBusinessPartners] = useState([]);
   const [relatedRows, setRelatedRows] = useState({
     items: [],
     requests: [],
@@ -103,6 +105,13 @@ export default function ProjectsPage() {
       .eq("user_id", user.id)
       .order("created_at", { ascending: false });
 
+    const { data: partnerData } = await supabase
+      .from("suppliers")
+      .select("id,name,partner_type,status")
+      .eq("user_id", user.id)
+      .in("partner_type", ["Müşteri", "Diğer"])
+      .order("name", { ascending: true });
+
     const [itemRes, requestRes, reportRes, orderRes, movementRes, paymentRes] = await Promise.all([
       supabase.from("project_items").select("*").eq("user_id", user.id),
       supabase.from("requests").select("id,project_id").eq("user_id", user.id),
@@ -119,6 +128,7 @@ export default function ProjectsPage() {
       .limit(1);
 
     if (settingsData?.[0]) setSettings(settingsData[0]);
+    setBusinessPartners(partnerData || []);
     setRelatedRows({
       items: itemRes.data || [],
       requests: requestRes.data || [],
@@ -197,11 +207,18 @@ export default function ProjectsPage() {
       return;
     }
 
+    const customerPartner = await findOrCreateBusinessPartner(supabase, user.id, {
+      name: form.customer_name,
+      partnerType: "Müşteri",
+    });
+
     const payload = {
       user_id: user.id,
       project_code: form.project_code || nextProjectCode(projects),
       project_name: form.project_name.trim(),
       customer_name: form.customer_name.trim(),
+      customer_partner_id: customerPartner?.id || null,
+      customer_partner_name: customerPartner?.name || form.customer_name.trim(),
       description: form.description.trim(),
       contract_amount: Number(form.contract_amount || 0),
       contract_currency: form.contract_currency || getBaseCurrency(settings),
@@ -408,7 +425,19 @@ export default function ProjectsPage() {
               </label>
               <label className="text-sm font-bold text-slate-700">
                 Müşteri Adı
-                <input className="mt-2 w-full rounded-xl border border-slate-300 p-3" value={form.customer_name} onChange={(e) => updateForm("customer_name", e.target.value)} />
+                <input
+                  list="customer-partner-options"
+                  className="mt-2 w-full rounded-xl border border-slate-300 p-3"
+                  value={form.customer_name}
+                  onChange={(e) => updateForm("customer_name", e.target.value)}
+                />
+                <datalist id="customer-partner-options">
+                  {businessPartners.map((partner) => (
+                    <option key={partner.id} value={partner.name}>
+                      {partner.partner_type || "İş Ortağı"}
+                    </option>
+                  ))}
+                </datalist>
               </label>
               <label className="text-sm font-bold text-slate-700 md:col-span-3">
                 Açıklama

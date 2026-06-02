@@ -3,6 +3,7 @@
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { findOrCreateBusinessPartner } from "@/lib/businessPartners";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL;
 
@@ -52,6 +53,34 @@ function StatCard({ icon, title, value, text }) {
   );
 }
 
+function collectPartnerNames(value, found = new Set()) {
+  if (!value) return found;
+
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectPartnerNames(item, found));
+    return found;
+  }
+
+  if (typeof value !== "object") return found;
+
+  for (const [key, item] of Object.entries(value)) {
+    const normalizedKey = String(key || "").toLocaleLowerCase("tr-TR");
+    const looksLikeCompanyKey =
+      normalizedKey.includes("firma") ||
+      normalizedKey.includes("supplier") ||
+      normalizedKey.includes("company") ||
+      normalizedKey.includes("tedarik");
+
+    if (looksLikeCompanyKey && typeof item === "string" && item.trim().length > 1) {
+      found.add(item.trim());
+    }
+
+    if (typeof item === "object") collectPartnerNames(item, found);
+  }
+
+  return found;
+}
+
 
 export default function TekliflerPage() {
   return (
@@ -64,6 +93,7 @@ export default function TekliflerPage() {
 function TekliflerPageContent() {
   const searchParams = useSearchParams();
   const requestIdFromUrl = searchParams.get("requestId");
+  const projectIdFromUrl = searchParams.get("projectId");
   const [files, setFiles] = useState([]);
   const [parsedSources, setParsedSources] = useState([]);
   const [message, setMessage] = useState("");
@@ -334,6 +364,7 @@ const loadCompanySettings = async () => {
       }
       
       formData.append("request_id", selectedRequestId);
+      formData.append("project_id", selectedRequest?.project_id || projectIdFromUrl || "");
 
       const controller = new AbortController();
       timeoutId = window.setTimeout(() => controller.abort(), 120000);
@@ -354,6 +385,20 @@ const loadCompanySettings = async () => {
       const data = await response.json();
 
       if (data.success) {
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        const partnerNames = Array.from(collectPartnerNames(data));
+        if (user && partnerNames.length > 0) {
+          await Promise.all(
+            partnerNames.map((name) =>
+              findOrCreateBusinessPartner(supabase, user.id, {
+                name,
+                partnerType: "Tedarikçi",
+              }),
+            ),
+          );
+        }
         setReportReady(true);
         setReportPath(
           API_URL + data.reportPath

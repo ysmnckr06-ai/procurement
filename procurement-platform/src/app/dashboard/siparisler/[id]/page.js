@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { calculateBaseAmount, currencyOptions, getBaseCurrency, getExchangeRate } from "@/lib/currency";
+import { findOrCreateBusinessPartner } from "@/lib/businessPartners";
 
 const statusFlow = [
   "Taslak",
@@ -346,63 +347,99 @@ export default function OrderDetailPage() {
       .eq("user_id", user.id);
   }
 
-  async function ensureProductForMovement(userId, item, addedQuantity) {
-    const productName = item.productName || item.productCode || "Ürün";
+  async function updateProductFromReceipt(userId, item, addedQuantity, options = {}) {
+    const productName = item.productName || item.productCode || "Urun";
     const productCode = String(item.productCode || "").trim().toUpperCase();
-    let productQuery = supabase
-      .from("products")
-      .select("*")
-      .eq("user_id", userId)
-      .limit(1);
+    const receiptDate = options.receiptDate || getToday();
+    let product = null;
 
-    if (productCode) {
-      productQuery = productQuery.eq("product_code", productCode).ilike("product_name", productName);
-    } else {
-      productQuery = productQuery.ilike("product_name", productName);
-    }
-
-    const { data: existingProducts } = await productQuery;
-
-    if (existingProducts?.[0]) {
-      const product = existingProducts[0];
-      await supabase
+    if (options.projectItem?.product_id) {
+      const { data: productById, error: productByIdError } = await supabase
         .from("products")
-        .update({
-          product_name: product.product_name || productName,
-          unit: item.unit || product.unit || "adet",
-          current_stock: Number(product.current_stock || 0) + Number(addedQuantity || 0),
-          last_supplier: order.supplier_name || "",
-          last_unit_price: Number(item.unitPrice || 0),
-          last_currency: order.currency || "TRY",
-          last_movement_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", product.id)
-        .eq("user_id", userId);
+        .select("*")
+        .eq("id", options.projectItem.product_id)
+        .eq("user_id", userId)
+        .maybeSingle();
 
-      return product.id;
+      if (productByIdError) console.error("?r?n kart? product_id ile bulunamad?:", productByIdError);
+      product = productById || null;
     }
 
-    const { data: insertedProduct } = await supabase
-      .from("products")
-      .insert({
-        user_id: userId,
+    if (!product && productCode) {
+      const { data: productByCode, error: productByCodeError } = await supabase
+        .from("products")
+        .select("*")
+        .eq("user_id", userId)
+        .eq("product_code", productCode)
+        .limit(1);
+
+      if (productByCodeError) console.error("?r?n kart? ?r?n kodu ile bulunamad?:", productByCodeError);
+      product = productByCode?.[0] || null;
+    }
+
+    if (!product && productName) {
+      const { data: productByName, error: productByNameError } = await supabase
+        .from("products")
+        .select("*")
+        .eq("user_id", userId)
+        .ilike("product_name", `%${productName}%`)
+        .limit(1);
+
+      if (productByNameError) console.error("?r?n kart? ?r?n ad? ile bulunamad?:", productByNameError);
+      product = productByName?.[0] || null;
+    }
+
+    if (!product?.id) {
+      console.warn("Teslim alma i?in mevcut ?r?n kart? bulunamad?:", {
         product_code: productCode,
         product_name: productName,
         unit: item.unit || "adet",
-        current_stock: Number(addedQuantity || 0),
-        last_supplier: order.supplier_name || "",
-        last_unit_price: Number(item.unitPrice || 0),
-        last_currency: order.currency || "TRY",
-        last_movement_at: new Date().toISOString(),
-        source: "Sipariş teslimatı",
-      })
-      .select("id")
-      .single();
+      });
+      return null;
+    }
 
-    return insertedProduct?.id || null;
+    const updatePayload = {
+      product_name: product.product_name || productName,
+      unit: item.unit || product.unit || "adet",
+      current_stock: Number(product.current_stock || 0) + Number(addedQuantity || 0),
+      last_supplier: order.partner_name || order.supplier_name || "",
+      last_unit_price: Number(item.unitPrice || 0),
+      last_currency: order.currency || "TRY",
+      last_purchase_date: receiptDate,
+      last_movement_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    const updateResult = await supabase
+      .from("products")
+      .update(updatePayload)
+      .eq("id", product.id)
+      .eq("user_id", userId);
+
+    if (!updateResult.error) return product.id;
+
+    const missingPurchaseDateColumn =
+      updateResult.error.message?.includes("last_purchase_date") ||
+      updateResult.error.code === "PGRST204";
+
+    if (!missingPurchaseDateColumn) {
+      console.error("?r?n kart? teslim alma ile g?ncellenemedi:", updateResult.error);
+      return product.id;
+    }
+
+    const { last_purchase_date: _unused, ...fallbackPayload } = updatePayload;
+    const fallbackResult = await supabase
+      .from("products")
+      .update(fallbackPayload)
+      .eq("id", product.id)
+      .eq("user_id", userId);
+
+    if (fallbackResult.error) {
+      console.error("?r?n kart? teslim alma ile g?ncellenemedi:", fallbackResult.error);
+    }
+
+    return product.id;
   }
-
   async function writeStockMovements(userId, previousItems, nextItems) {
     const movements = [];
 
@@ -418,7 +455,15 @@ export default function OrderDetailPage() {
 
       if (addedQuantity <= 0 || !item.productName) continue;
 
-      const productId = await ensureProductForMovement(userId, item, addedQuantity);
+      const matchingProjectItem = projectItems.find(
+        (projectItem) =>
+          (item.productCode && projectItem.product_code === item.productCode) ||
+          projectItem.product_name === item.productName,
+      );
+      const productId = await updateProductFromReceipt(userId, item, addedQuantity, {
+        projectItem: matchingProjectItem,
+        receiptDate: getToday(),
+      });
 
       movements.push({
         user_id: userId,
@@ -428,7 +473,10 @@ export default function OrderDetailPage() {
         movement_type: "in",
         quantity: addedQuantity,
         unit: item.unit || "adet",
-        supplier_name: order.supplier_name || "",
+        supplier_name: order.supplier_name || order.partner_name || "",
+        partner_id: order.partner_id || null,
+        partner_name: order.partner_name || order.supplier_name || "",
+        partner_type: order.partner_type || "Tedarikçi",
         order_id: order.id,
         report_id: order.report_id || null,
         unit_price: Number(item.unitPrice || 0),
@@ -604,6 +652,10 @@ export default function OrderDetailPage() {
     }
 
     const item = items[index];
+    const partner = await findOrCreateBusinessPartner(supabase, user.id, {
+      name: order.partner_name || order.supplier_name,
+      partnerType: order.partner_type || "Tedarikçi",
+    });
     const input = receiptInputs[index] || {};
     const orderedQuantity = Number(item.quantity || 0);
     const remainingQuantity = Math.max(orderedQuantity - Number(item.deliveredQuantity || 0), 0);
@@ -631,6 +683,9 @@ export default function OrderDetailPage() {
       parent_item_id: parentItemId,
       order_no: order.order_no || "",
       supplier_name: order.supplier_name || "",
+      partner_id: partner?.id || order.partner_id || null,
+      partner_name: partner?.name || order.partner_name || order.supplier_name || "",
+      partner_type: partner?.partner_type || order.partner_type || "Tedarikçi",
       product_code: item.productCode || "",
       product_name: item.productName,
       unit: item.unit || "adet",
@@ -659,7 +714,10 @@ export default function OrderDetailPage() {
     }
 
     if (acceptedQuantity > 0) {
-      const productId = await ensureProductForMovement(user.id, item, acceptedQuantity);
+      const productId = await updateProductFromReceipt(user.id, item, acceptedQuantity, {
+        projectItem: selectedProjectItem,
+        receiptDate: receiptPayload.receipt_date,
+      });
       const { error: movementError } = await supabase.from("stock_movements").insert({
         user_id: user.id,
         product_id: productId,
@@ -669,6 +727,9 @@ export default function OrderDetailPage() {
         quantity: acceptedQuantity,
         unit: item.unit || "adet",
         supplier_name: order.supplier_name || "",
+        partner_id: partner?.id || order.partner_id || null,
+        partner_name: partner?.name || order.partner_name || order.supplier_name || "",
+        partner_type: partner?.partner_type || order.partner_type || "Tedarikçi",
         order_id: order.id,
         report_id: order.report_id || null,
         project_id: order.project_id || null,
@@ -778,6 +839,9 @@ export default function OrderDetailPage() {
       order_id: order.id,
       project_id: order.project_id || null,
       supplier_name: order.supplier_name || "",
+      partner_id: order.partner_id || null,
+      partner_name: order.partner_name || order.supplier_name || "",
+      partner_type: order.partner_type || "Tedarikçi",
       payment_date: paymentForm.payment_date || getToday(),
       amount,
       original_amount: amount,
@@ -939,7 +1003,7 @@ export default function OrderDetailPage() {
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm lg:col-span-2">
             <h2 className="text-lg font-bold text-slate-900">Temel Bilgiler</h2>
             <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
-              <Info label="Firma" value={order.supplier_name} />
+              <Info label="İş Ortağı" value={order.partner_name || order.supplier_name} />
               <Info label="Sipariş Tarihi" value={order.order_date || "-"} />
               <Info label="Termin Tarihi" value={order.termin_date || "-"} />
               <Info label="Ödeme Vadesi" value={items[0]?.paymentTerm || "-"} />
@@ -1311,8 +1375,8 @@ function ReceivingPanel({
             </div>
           </div>
           <div className="rounded-lg bg-white p-3">
-            <div className="text-xs font-bold text-slate-500">Tedarikçi</div>
-            <div className="mt-1 font-black text-slate-900">{order.supplier_name || "-"}</div>
+            <div className="text-xs font-bold text-slate-500">İş Ortağı</div>
+            <div className="mt-1 font-black text-slate-900">{order.partner_name || order.supplier_name || "-"}</div>
           </div>
         </div>
       </div>

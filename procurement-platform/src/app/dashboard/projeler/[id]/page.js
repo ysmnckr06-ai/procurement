@@ -18,6 +18,7 @@ const tabs = [
   "Siparişler",
   "Stok Hareketleri",
   "Ödemeler",
+  "Revizyonlar",
   "Raporlar",
 ];
 
@@ -94,6 +95,21 @@ const emptyExpense = {
   exchange_rate: 1,
   expense_date: new Date().toISOString().slice(0, 10),
   description: "",
+};
+
+const projectClosureStatuses = ["Açık", "Devam Ediyor", "Teslim Edildi", "Kapandı"];
+const revisionTypes = ["Ek İş", "Revizyon", "Kesinti", "Kapsam Dışı"];
+
+const emptyRevision = {
+  revision_date: new Date().toISOString().slice(0, 10),
+  revision_type: "Ek İş",
+  title: "",
+  description: "",
+  revenue_amount: "",
+  cost_amount: "",
+  currency: "TRY",
+  exchange_rate: 1,
+  status: "Onay Bekliyor",
 };
 
 function formatMoney(value) {
@@ -236,8 +252,11 @@ export default function ProjectDetailPage() {
   const [items, setItems] = useState([]);
   const [payments, setPayments] = useState([]);
   const [expenses, setExpenses] = useState([]);
+  const [revisions, setRevisions] = useState([]);
   const [products, setProducts] = useState([]);
   const [projectRequests, setProjectRequests] = useState([]);
+  const [projectReports, setProjectReports] = useState([]);
+  const [projectOffers, setProjectOffers] = useState([]);
   const [projectOrders, setProjectOrders] = useState([]);
   const [allOrders, setAllOrders] = useState([]);
   const [stockMovements, setStockMovements] = useState([]);
@@ -246,6 +265,7 @@ export default function ProjectDetailPage() {
   const [itemForm, setItemForm] = useState(emptyItem);
   const [paymentForm, setPaymentForm] = useState(emptyPayment);
   const [expenseForm, setExpenseForm] = useState(emptyExpense);
+  const [revisionForm, setRevisionForm] = useState(emptyRevision);
   const [editingPaymentId, setEditingPaymentId] = useState(null);
   const [expandedItems, setExpandedItems] = useState({});
   const [expandedRequestIds, setExpandedRequestIds] = useState([]);
@@ -371,7 +391,7 @@ export default function ProjectDetailPage() {
     const user = await getUserOrRedirect();
     if (!user) return;
 
-    const [projectRes, itemRes, paymentRes, expenseRes, productRes, requestRes, orderRes, allOrderRes, movementRes, settingsRes] = await Promise.all([
+    const [projectRes, itemRes, paymentRes, expenseRes, revisionRes, productRes, requestRes, reportRes, offerRes, orderRes, allOrderRes, movementRes, settingsRes] = await Promise.all([
       supabase
         .from("projects")
         .select("*")
@@ -397,11 +417,29 @@ export default function ProjectDetailPage() {
         .eq("user_id", user.id)
         .order("expense_date", { ascending: false }),
       supabase
-        .from("products")
+        .from("project_revisions")
         .select("*")
+        .eq("project_id", projectId)
+        .eq("user_id", user.id)
+        .order("revision_date", { ascending: false }),
+      supabase
+        .from("products")
+        .select("*", { count: "exact" })
         .eq("user_id", user.id),
       supabase
         .from("requests")
+        .select("*")
+        .eq("project_id", projectId)
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("reports")
+        .select("*")
+        .eq("project_id", projectId)
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("offers")
         .select("*")
         .eq("project_id", projectId)
         .eq("user_id", user.id)
@@ -437,10 +475,45 @@ export default function ProjectDetailPage() {
     }
 
     setProject(projectRes.data);
-    setItems(itemRes.data || []);
     setPayments(paymentRes.data || []);
     setExpenses(expenseRes.data || []);
+    setRevisions(revisionRes.data || []);
+    console.log("Project products query result", {
+      userId: user.id,
+      returned: productRes.data?.length || 0,
+      count: productRes.count,
+      error: productRes.error?.message || null,
+      sampleUserIds: Array.from(new Set((productRes.data || []).map((product) => product.user_id))).slice(0, 5),
+    });
     setProducts(productRes.data || []);
+    const loadedItems = itemRes.data || [];
+    const linkedItems = await ensureProductCardsForProjectItems(loadedItems, user.id, productRes.data || []);
+    const linkedCount = linkedItems.filter((item) => item.product_id).length;
+    const parentIdsWithChildren = new Set(linkedItems.map((item) => item.parent_item_id).filter(Boolean));
+    const unlinkedItems = linkedItems
+      .filter((item) => !item.product_id)
+      .map((item) => ({
+        id: item.id,
+        item_type: item.item_type || "",
+        product_code: item.product_code || "",
+        product_name: item.product_name || item.description || "",
+        unit: item.unit || "",
+        reason: item.item_type === "main"
+          ? "Ana ürün/ürün grubu olduğu için ürün kartına bağlanmadı"
+          : parentIdsWithChildren.has(item.id)
+            ? "Alt malzemesi olan üst kayıt olduğu için ürün kartına bağlanmadı"
+            : !(item.product_name || item.description)
+              ? "Ürün adı/açıklama boş olduğu için eşleştirilemedi"
+              : "Eşleşme/oluşturma sonrası product_id boş kaldı",
+      }));
+    console.log("Project item product backfill", {
+      total: linkedItems.length,
+      linked: linkedCount,
+      empty: linkedItems.length - linkedCount,
+    });
+    console.log("Unlinked project_items after product backfill", unlinkedItems);
+    console.table(unlinkedItems);
+    setItems(linkedItems);
     let nextProjectRequests = requestRes.data || [];
     if (projectRes.data?.project_code) {
       const { data: fallbackRequests, error: fallbackRequestError } = await supabase
@@ -463,6 +536,8 @@ export default function ProjectDetailPage() {
       console.warn("Proje talepleri listelenemedi:", requestRes.error);
     }
     setProjectRequests(nextProjectRequests);
+    setProjectReports(reportRes.data || []);
+    setProjectOffers(offerRes.data || []);
     setProjectOrders(orderRes.data || []);
     setAllOrders(allOrderRes.data || orderRes.data || []);
     setStockMovements(movementRes.data || []);
@@ -645,7 +720,8 @@ export default function ProjectDetailPage() {
     if (itemCode || productCode) return false;
 
     const unitMatches = normalizeText(product.unit || "adet") === normalizeText(item.unit || "adet");
-    const nameScore = textSimilarity(product.product_name, item.product_name);
+    const itemName = item.product_name || item.description || "";
+    const nameScore = textSimilarity(product.product_name, itemName);
     const brandScore = item.brand || product.brand ? textSimilarity(product.brand, item.brand) : 1;
     return unitMatches && nameScore >= 0.7 && brandScore >= 0.5;
   }
@@ -742,12 +818,12 @@ export default function ProjectDetailPage() {
       .single();
   }
 
-  async function ensureProductCardsForProjectItems(projectItems, userId) {
+  async function ensureProductCardsForProjectItems(projectItems, userId, productRows = products) {
     const projectItemRows = projectItems || [];
     const parentById = new Map(projectItemRows.map((item) => [item.id, item]));
     const parentIdsWithChildren = new Set(projectItemRows.map((item) => item.parent_item_id).filter(Boolean));
     const subItems = projectItemRows.filter((item) =>
-      item?.id && !item.product_id && item.item_type !== "main" && !parentIdsWithChildren.has(item.id) && item.product_name
+      item?.id && !item.product_id && item.item_type !== "main" && !parentIdsWithChildren.has(item.id) && (item.product_name || item.description)
     );
 
     if (subItems.length === 0) return projectItemRows;
@@ -756,7 +832,8 @@ export default function ProjectDetailPage() {
     const linkedItems = [];
 
     for (const item of subItems) {
-      const searchableProducts = [...products, ...createdProducts];
+      const itemName = item.product_name || item.description || "";
+      const searchableProducts = [...(productRows || []), ...createdProducts];
       let product = searchableProducts.find((candidate) => productMatchesProjectItem(candidate, item));
       let productCardStatus = "Ürün kartına bağlı";
 
@@ -765,7 +842,7 @@ export default function ProjectDetailPage() {
             user_id: userId,
             product_code: item.product_code || "",
             brand: item.brand || "",
-            product_name: item.product_name,
+            product_name: itemName,
             unit: item.unit || "adet",
             current_stock: 0,
             min_stock: 0,
@@ -912,6 +989,10 @@ export default function ProjectDetailPage() {
 
   function updateExpenseForm(field, value) {
     setExpenseForm((prev) => ({ ...prev, [field]: value }));
+  }
+
+  function updateRevisionForm(field, value) {
+    setRevisionForm((prev) => ({ ...prev, [field]: value }));
   }
 
   function toggleMainProductCandidate(candidateId) {
@@ -1620,6 +1701,118 @@ export default function ProjectDetailPage() {
 
     setExpenses((prev) => prev.filter((item) => item.id !== expense.id));
     setMessage("Ek gider silindi. Proje maliyeti yeniden hesaplandı.");
+  }
+
+  async function addRevision(event) {
+    event.preventDefault();
+    setMessage("");
+
+    const user = await getUserOrRedirect();
+    if (!user) return;
+
+    const revenueAmount = Number(revisionForm.revenue_amount || 0);
+    const costAmount = Number(revisionForm.cost_amount || 0);
+    const currency = revisionForm.currency || getBaseCurrency(companySettings);
+    const exchangeRate = Number(revisionForm.exchange_rate || getExchangeRate(currency, companySettings));
+
+    if (!String(revisionForm.title || "").trim()) {
+      setMessage("Revizyon başlığı zorunlu.");
+      return;
+    }
+
+    if (revenueAmount <= 0 && costAmount <= 0) {
+      setMessage("Revizyon için gelir veya maliyet etkisi girin.");
+      return;
+    }
+
+    const payload = {
+      user_id: user.id,
+      project_id: projectId,
+      revision_date: revisionForm.revision_date || new Date().toISOString().slice(0, 10),
+      revision_type: revisionForm.revision_type || "Revizyon",
+      title: String(revisionForm.title || "").trim(),
+      description: String(revisionForm.description || "").trim(),
+      revenue_amount: revenueAmount,
+      revenue_base_amount: calculateBaseAmount(revenueAmount, currency, companySettings, exchangeRate),
+      cost_amount: costAmount,
+      cost_base_amount: calculateBaseAmount(costAmount, currency, companySettings, exchangeRate),
+      currency,
+      exchange_rate: exchangeRate,
+      base_currency: getBaseCurrency(companySettings),
+      status: revisionForm.status || "Onay Bekliyor",
+    };
+
+    const { data, error } = await supabase
+      .from("project_revisions")
+      .insert(payload)
+      .select("*")
+      .single();
+
+    if (error) {
+      console.error("Revizyon kaydedilemedi:", error);
+      setMessage(error.message || "Revizyon kaydedilemedi. Supabase şemasında project_revisions tablosu çalıştırılmış olmalı.");
+      return;
+    }
+
+    setRevisions((prev) => [data, ...prev]);
+    setRevisionForm(emptyRevision);
+    setMessage("Revizyon / ek iş kaydedildi.");
+  }
+
+  async function deleteRevision(revision) {
+    const approved = window.confirm("Bu revizyon kaydı silinsin mi?");
+    if (!approved) return;
+
+    const user = await getUserOrRedirect();
+    if (!user) return;
+
+    const { error } = await supabase
+      .from("project_revisions")
+      .delete()
+      .eq("id", revision.id)
+      .eq("project_id", projectId)
+      .eq("user_id", user.id);
+
+    if (error) {
+      console.error("Revizyon silinemedi:", error);
+      setMessage(error.message || "Revizyon silinemedi.");
+      return;
+    }
+
+    setRevisions((prev) => prev.filter((item) => item.id !== revision.id));
+    setMessage("Revizyon kaydı silindi.");
+  }
+
+  async function updateProjectClosureStatus(status) {
+    const user = await getUserOrRedirect();
+    if (!user) return;
+
+    const { error } = await supabase
+      .from("projects")
+      .update({
+        status,
+        closure_status: status,
+        closed_at: status === "Kapandı" ? new Date().toISOString() : null,
+        delivered_at: status === "Teslim Edildi" ? new Date().toISOString() : project?.delivered_at || null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", projectId)
+      .eq("user_id", user.id);
+
+    if (error) {
+      console.error("Proje durumu güncellenemedi:", error);
+      setMessage(error.message || "Proje kapanış durumu güncellenemedi.");
+      return;
+    }
+
+    setProject((prev) => ({
+      ...prev,
+      status,
+      closure_status: status,
+      closed_at: status === "Kapandı" ? new Date().toISOString() : null,
+      delivered_at: status === "Teslim Edildi" ? new Date().toISOString() : prev?.delivered_at || null,
+    }));
+    setMessage("Proje kapanış durumu güncellendi.");
   }
 
   async function createDemoPurchaseData() {
@@ -2389,6 +2582,10 @@ export default function ProjectDetailPage() {
         quantity,
         unit: item.unit || product?.unit || "adet",
         supplier_name: item.note || item.source_file || "Proje teklifi",
+        partner_name: item.note || item.source_file || "Proje teklifi",
+        partner_type: "Tedarikçi",
+        related_project_id: projectId,
+        related_project_name: project?.project_name || "",
         unit_price: Number(price.unitPrice || 0) || 0,
         currency: item.currency || product?.last_currency || "TRY",
         movement_date: today,
@@ -2992,10 +3189,13 @@ export default function ProjectDetailPage() {
       0,
     );
     const expenseTotal = expenses.reduce((sum, expense) => sum + Number(expense.base_amount || expense.amount || 0), 0);
-    const totalCost = materialCost + orderTotal + stockCost + expenseTotal;
+    const approvedRevisions = revisions.filter((revision) => revision.status === "Onaylandı" || revision.status === "Uygulandı");
+    const revisionRevenue = approvedRevisions.reduce((sum, revision) => sum + Number(revision.revenue_base_amount || revision.revenue_amount || 0), 0);
+    const revisionCost = approvedRevisions.reduce((sum, revision) => sum + Number(revision.cost_base_amount || revision.cost_amount || 0), 0);
+    const totalCost = materialCost + orderTotal + stockCost + expenseTotal + revisionCost;
     const actualCost = totalCost || Number(project?.actual_cost || 0) || 0;
-    const contract = Number(project?.contract_amount || 0);
-    const estimatedBudget = itemEstimate || Number(project?.estimated_budget || 0);
+    const contract = Number(project?.contract_amount || 0) + revisionRevenue;
+    const estimatedBudget = (itemEstimate || Number(project?.estimated_budget || 0)) + revisionCost;
     const remainingBudget = estimatedBudget - actualCost;
     const budgetVariance = actualCost - estimatedBudget;
     const paidTotal = payments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
@@ -3009,6 +3209,8 @@ export default function ProjectDetailPage() {
       orderTotal,
       stockCost,
       expenseTotal,
+      revisionRevenue,
+      revisionCost,
       totalCost,
       contract,
       estimatedBudget,
@@ -3018,7 +3220,7 @@ export default function ProjectDetailPage() {
       remainingCollection,
       netProfitLoss,
     };
-  }, [items, payments, expenses, project, projectOrders, allOrders, stockMovements, products, visiblePreviewSections, storedSectionTotals]);
+  }, [items, payments, expenses, revisions, project, projectOrders, allOrders, stockMovements, products, visiblePreviewSections, storedSectionTotals]);
 
   const projectKpis = useMemo(() => {
     const mainItems = items.filter((item) => !item.parent_item_id);
@@ -3132,7 +3334,56 @@ export default function ProjectDetailPage() {
 
   function overviewOrderAmount(order) {
     return Number(order.total_amount || order.order_total || order.total || 0);
-  }  if (loading) {
+  }
+
+  function parseJsonArray(value) {
+    if (Array.isArray(value)) return value;
+    if (typeof value === "string" && value.trim()) {
+      try {
+        const parsed = JSON.parse(value);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch (error) {
+        console.warn("Liste verisi okunamadi:", error);
+      }
+    }
+    return [];
+  }
+
+  function reportName(report) {
+    return report.ad || report.name || report.report_name || report.title || "Mukayese raporu";
+  }
+
+  function reportSupplier(report) {
+    return report.partner_name || report.onerilenFirma || report.onerilenfirma || report.recommended_firm || report.firma || "-";
+  }
+
+  function reportAmount(report) {
+    return Number(report.net_total_base || report.net_total || report.base_amount || report.supplier_offer_amount || report.total_amount || 0);
+  }
+
+  function reportRows(report) {
+    return parseJsonArray(report.items).length > 0 ? parseJsonArray(report.items) : parseJsonArray(report.analysis);
+  }
+
+  function offerAmount(offer) {
+    return Number(offer.toplam_tutar || offer.total_amount || offer.base_amount || 0);
+  }
+
+  function movementAmount(movement) {
+    return Number(movement.quantity || 0) * Number(movement.unit_price || 0);
+  }
+
+  function quantityText(quantity, unit = "adet") {
+    return `${new Intl.NumberFormat("tr-TR", {
+      maximumFractionDigits: 2,
+    }).format(Number(quantity || 0))} ${unit || "adet"}`;
+  }
+
+  const projectReportTotal = projectReports.reduce((sum, report) => sum + reportAmount(report), 0);
+  const projectOfferTotal = projectOffers.reduce((sum, offer) => sum + offerAmount(offer), 0);
+  const stockMovementTotal = stockMovements.reduce((sum, movement) => sum + movementAmount(movement), 0);
+
+  if (loading) {
     return <div className="p-6 text-sm text-slate-500">Proje yükleniyor...</div>;
   }
 
@@ -3163,6 +3414,15 @@ export default function ProjectDetailPage() {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
+            <select
+              value={project.closure_status || project.status || "Açık"}
+              onChange={(event) => updateProjectClosureStatus(event.target.value)}
+              className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700"
+            >
+              {projectClosureStatuses.map((status) => (
+                <option key={status} value={status}>{status}</option>
+              ))}
+            </select>
             {IS_DEMO_MODE && (
               <button
                 type="button"
@@ -3297,6 +3557,14 @@ export default function ProjectDetailPage() {
                     <div className="mt-1 text-xl font-black text-slate-950">{formatMoney(totals.contract)}</div>
                   </div>
                   <div className="border-b border-slate-100 p-4">
+                    <div className="text-xs font-bold text-slate-500">Tahmini Maliyet</div>
+                    <div className="mt-1 text-xl font-black text-slate-950">{formatMoney(totals.estimatedBudget)}</div>
+                  </div>
+                  <div className="border-b border-slate-100 p-4">
+                    <div className="text-xs font-bold text-slate-500">Gerçekleşen Maliyet</div>
+                    <div className="mt-1 text-xl font-black text-slate-950">{formatMoney(totals.actualCost)}</div>
+                  </div>
+                  <div className="border-b border-slate-100 p-4">
                     <div className="text-xs font-bold text-slate-500">Tahsil Edilen</div>
                     <div className="mt-1 text-xl font-black text-emerald-700">{formatMoney(totals.paidTotal)}</div>
                   </div>
@@ -3309,8 +3577,20 @@ export default function ProjectDetailPage() {
                     <div className="mt-1 text-xl font-black text-slate-950">{formatMoney(totals.materialCost)}</div>
                   </div>
                   <div className="border-b border-slate-100 p-4">
+                    <div className="text-xs font-bold text-slate-500">Sipariş Toplamı</div>
+                    <div className="mt-1 text-xl font-black text-slate-950">{formatMoney(totals.orderTotal)}</div>
+                  </div>
+                  <div className="border-b border-slate-100 p-4">
+                    <div className="text-xs font-bold text-slate-500">Stok Hareket Değeri</div>
+                    <div className="mt-1 text-xl font-black text-slate-950">{formatMoney(totals.stockCost)}</div>
+                  </div>
+                  <div className="border-b border-slate-100 p-4">
                     <div className="text-xs font-bold text-slate-500">Ek Giderler</div>
                     <div className="mt-1 text-xl font-black text-slate-950">{formatMoney(totals.expenseTotal)}</div>
+                  </div>
+                  <div className="border-b border-slate-100 p-4">
+                    <div className="text-xs font-bold text-slate-500">Revizyon Gelir / Maliyet</div>
+                    <div className="mt-1 text-xl font-black text-slate-950">{formatMoney(totals.revisionRevenue)} / {formatMoney(totals.revisionCost)}</div>
                   </div>
                   <div className="border-b border-slate-100 p-4">
                     <div className="text-xs font-bold text-slate-500">Toplam Maliyet</div>
@@ -3457,7 +3737,7 @@ export default function ProjectDetailPage() {
                       {recentProjectOrders.map((order) => (
                         <tr key={order.id} className="border-t border-slate-100">
                           <td className="p-3 font-bold text-slate-900">{order.order_no || order.siparis_no || order.id?.slice?.(0, 8) || "-"}</td>
-                          <td className="p-3 text-slate-700">{order.supplier_name || order.supplier || order.firma || "-"}</td>
+                          <td className="p-3 text-slate-700">{order.partner_name || order.supplier_name || order.supplier || order.firma || "-"}</td>
                           <td className="p-3 font-bold text-slate-900">{formatMoney(overviewOrderAmount(order))}</td>
                           <td className="p-3"><span className="rounded-full bg-blue-50 px-2 py-1 text-xs font-bold text-blue-700">{order.status || "Bekliyor"}</span></td>
                           <td className="p-3 text-slate-600">{formatDate(order.created_at || order.order_date)}</td>
@@ -4665,12 +4945,346 @@ export default function ProjectDetailPage() {
           </section>
         )}
 
-        {!["Genel Özet", "Malzeme Listesi", "Ödemeler", "Talepler"].includes(activeTab) && (
-          <section className="rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm">
-            <h2 className="text-2xl font-bold text-slate-900">{activeTab}</h2>
-            <p className="mx-auto mt-3 max-w-2xl text-sm leading-6 text-slate-500">
-              Bu sekme bir sonraki ad\u0131mda mevcut mod\u00fcllere proje ba\u011flant\u0131s\u0131 eklenince otomatik dolacak.
-            </p>
+        {activeTab === "Revizyonlar" && (
+          <section className="grid grid-cols-1 gap-6 xl:grid-cols-[0.9fr_1.2fr]">
+            <form onSubmit={addRevision} className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <h2 className="text-xl font-black text-slate-900">Revizyon / Ek İş Ekle</h2>
+              <div className="mt-5 space-y-4">
+                <input
+                  value={revisionForm.title}
+                  onChange={(event) => updateRevisionForm("title", event.target.value)}
+                  placeholder="Başlık"
+                  className="w-full rounded-xl border border-slate-200 p-3 text-sm font-semibold"
+                />
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <select
+                    value={revisionForm.revision_type}
+                    onChange={(event) => updateRevisionForm("revision_type", event.target.value)}
+                    className="rounded-xl border border-slate-200 p-3 text-sm font-semibold"
+                  >
+                    {revisionTypes.map((type) => <option key={type} value={type}>{type}</option>)}
+                  </select>
+                  <input
+                    type="date"
+                    value={revisionForm.revision_date}
+                    onChange={(event) => updateRevisionForm("revision_date", event.target.value)}
+                    className="rounded-xl border border-slate-200 p-3 text-sm font-semibold"
+                  />
+                </div>
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={revisionForm.revenue_amount}
+                    onChange={(event) => updateRevisionForm("revenue_amount", event.target.value)}
+                    placeholder="Gelir etkisi"
+                    className="rounded-xl border border-slate-200 p-3 text-sm font-semibold"
+                  />
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={revisionForm.cost_amount}
+                    onChange={(event) => updateRevisionForm("cost_amount", event.target.value)}
+                    placeholder="Maliyet etkisi"
+                    className="rounded-xl border border-slate-200 p-3 text-sm font-semibold"
+                  />
+                </div>
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                  <select
+                    value={revisionForm.currency}
+                    onChange={(event) => {
+                      const currency = event.target.value;
+                      updateRevisionForm("currency", currency);
+                      updateRevisionForm("exchange_rate", getExchangeRate(currency, companySettings));
+                    }}
+                    className="rounded-xl border border-slate-200 p-3 text-sm font-semibold"
+                  >
+                    {currencyOptions.map((currency) => <option key={currency} value={currency}>{currency}</option>)}
+                  </select>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.0001"
+                    value={revisionForm.exchange_rate}
+                    onChange={(event) => updateRevisionForm("exchange_rate", event.target.value)}
+                    placeholder="Kur"
+                    className="rounded-xl border border-slate-200 p-3 text-sm font-semibold"
+                  />
+                  <select
+                    value={revisionForm.status}
+                    onChange={(event) => updateRevisionForm("status", event.target.value)}
+                    className="rounded-xl border border-slate-200 p-3 text-sm font-semibold"
+                  >
+                    {["Onay Bekliyor", "Onaylandı", "Uygulandı", "İptal"].map((status) => <option key={status} value={status}>{status}</option>)}
+                  </select>
+                </div>
+                <textarea
+                  value={revisionForm.description}
+                  onChange={(event) => updateRevisionForm("description", event.target.value)}
+                  placeholder="Açıklama"
+                  rows={3}
+                  className="w-full rounded-xl border border-slate-200 p-3 text-sm font-semibold"
+                />
+                <button type="submit" className="w-full rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white hover:bg-blue-700">
+                  Revizyonu Kaydet
+                </button>
+              </div>
+            </form>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <h2 className="text-xl font-black text-slate-900">Revizyon Geçmişi</h2>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Onaylanan revizyonlar finans özetindeki gelir ve maliyet hesabına dahil edilir.
+                  </p>
+                </div>
+                <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">{revisions.length} kayıt</span>
+              </div>
+              <div className="mt-5 space-y-3">
+                {revisions.map((revision) => (
+                  <div key={revision.id} className="grid grid-cols-1 gap-3 rounded-xl border border-slate-100 p-4 md:grid-cols-[1fr_auto] md:items-center">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="font-black text-slate-900">{revision.title}</div>
+                        <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">{revision.revision_type}</span>
+                        <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">{revision.status}</span>
+                      </div>
+                      <div className="mt-1 text-xs font-semibold text-slate-500">
+                        {formatDate(revision.revision_date)} · {revision.description || "Açıklama yok"}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="text-right">
+                        <div className="font-black text-emerald-700">+ {formatMoney(revision.revenue_base_amount || revision.revenue_amount)}</div>
+                        <div className="text-xs font-bold text-red-600">- {formatMoney(revision.cost_base_amount || revision.cost_amount)}</div>
+                      </div>
+                      <button type="button" onClick={() => deleteRevision(revision)} className="rounded-lg bg-red-50 px-3 py-2 text-xs font-bold text-red-700 hover:bg-red-100">
+                        Sil
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {revisions.length === 0 && (
+                  <div className="rounded-xl bg-slate-50 p-4 text-sm font-semibold text-slate-500">
+                    Bu projede revizyon veya ek iş kaydı yok.
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
+        )}
+
+        {activeTab === "Teklifler" && (
+          <section className="space-y-5">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              <SummaryCard title="Analiz Edilen Teklif" value={projectOffers.length} text="Projeye bağlı tedarikçi teklifi" tone="blue" />
+              <SummaryCard title="Teklif Toplamı" value={formatMoney(projectOfferTotal)} text="Dosya bazlı toplam" />
+              <SummaryCard title="Mukayese Raporu" value={projectReports.length} text="Karar bekleyen/sonuçlanan analiz" tone="green" />
+            </div>
+
+            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <h2 className="text-xl font-black text-slate-900">Teklif ve Mukayese Takibi</h2>
+                  <p className="mt-1 text-sm text-slate-500">Bu projeye bağlanan teklif dosyaları ve analiz raporları.</p>
+                </div>
+                <Link
+                  href={`/dashboard/teklifler?projectId=${projectId}${projectRequests[0]?.id ? `&requestId=${projectRequests[0].id}` : ""}`}
+                  className="rounded-xl bg-blue-600 px-5 py-3 text-center text-sm font-bold text-white hover:bg-blue-700"
+                >
+                  Teklif Analizi Aç
+                </Link>
+              </div>
+
+              <div className="mt-5 grid grid-cols-1 gap-4 xl:grid-cols-2">
+                <div className="rounded-xl border border-slate-100">
+                  <div className="border-b border-slate-100 p-4">
+                    <div className="text-sm font-black text-slate-900">Tedarikçi Teklifleri</div>
+                  </div>
+                  <div className="divide-y divide-slate-100">
+                    {projectOffers.map((offer) => (
+                      <div key={offer.id} className="grid grid-cols-1 gap-3 p-4 md:grid-cols-[1fr_auto] md:items-center">
+                        <div>
+                          <div className="font-black text-slate-900">{offer.firma_adi || offer.partner_name || "Tedarikçi"}</div>
+                          <div className="mt-1 text-xs text-slate-500">{offer.dosya_adi || "Teklif dosyası"} · {offer.durum || "Analiz edildi"}</div>
+                        </div>
+                        <div className="text-left md:text-right">
+                          <div className="font-black text-slate-950">{formatMoney(offerAmount(offer))}</div>
+                          <div className="text-xs font-bold text-slate-500">{offer.para_birimi || offer.currency || "TRY"}</div>
+                        </div>
+                      </div>
+                    ))}
+                    {projectOffers.length === 0 && (
+                      <div className="p-6 text-center text-sm text-slate-500">Bu projeye bağlı teklif kaydı yok.</div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-slate-100">
+                  <div className="border-b border-slate-100 p-4">
+                    <div className="text-sm font-black text-slate-900">Mukayese Raporları</div>
+                  </div>
+                  <div className="divide-y divide-slate-100">
+                    {projectReports.map((report) => (
+                      <Link key={report.id} href={`/dashboard/raporlar/${report.id}`} className="block p-4 hover:bg-slate-50">
+                        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                          <div>
+                            <div className="font-black text-blue-700">{reportName(report)}</div>
+                            <div className="mt-1 text-xs text-slate-500">
+                              Önerilen: {reportSupplier(report)} · {reportRows(report).length || report.totalgroups || 0} grup
+                            </div>
+                          </div>
+                          <div className="text-left md:text-right">
+                            <div className="font-black text-slate-950">{formatMoney(reportAmount(report))}</div>
+                            <div className="text-xs font-bold text-slate-500">{report.durum || report.status || "Bekliyor"}</div>
+                          </div>
+                        </div>
+                      </Link>
+                    ))}
+                    {projectReports.length === 0 && (
+                      <div className="p-6 text-center text-sm text-slate-500">Bu projeye bağlı mukayese raporu yok.</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </section>
+          </section>
+        )}
+
+        {activeTab === "Siparişler" && (
+          <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <h2 className="text-xl font-black text-slate-900">Proje Siparişleri</h2>
+                <p className="mt-1 text-sm text-slate-500">Satınalma kararından teslimata kadar bu projeye bağlı siparişler.</p>
+              </div>
+              <Link href="/dashboard/siparisler" className="rounded-xl bg-blue-600 px-5 py-3 text-center text-sm font-bold text-white hover:bg-blue-700">
+                Siparişleri Aç
+              </Link>
+            </div>
+
+            <div className="mt-5 overflow-x-auto rounded-xl border border-slate-100">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-slate-50 text-xs font-bold uppercase text-slate-500">
+                  <tr>
+                    <th className="p-3">Sipariş</th>
+                    <th className="p-3">İş Ortağı</th>
+                    <th className="p-3">Termin</th>
+                    <th className="p-3">Durum</th>
+                    <th className="p-3 text-right">Tutar</th>
+                    <th className="p-3 text-right">Kalem</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {projectOrders.map((order) => {
+                    const lines = normalizeOrderItems(order);
+                    return (
+                      <tr key={order.id} className="border-t border-slate-100 hover:bg-slate-50">
+                        <td className="p-3">
+                          <Link href={`/dashboard/siparisler/${order.id}`} className="font-black text-blue-700 hover:underline">
+                            {order.order_no || order.siparisNo || "Sipariş"}
+                          </Link>
+                          <div className="mt-1 text-xs text-slate-500">{formatDate(order.order_date || order.created_at)}</div>
+                        </td>
+                        <td className="p-3 font-bold text-slate-900">{order.partner_name || order.supplier_name || order.firma || "-"}</td>
+                        <td className="p-3">{formatDate(order.termin_date || order.delivery_date)}</td>
+                        <td className="p-3">
+                          <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">{order.status || "Bekliyor"}</span>
+                        </td>
+                        <td className="p-3 text-right font-black text-slate-950">{formatMoney(overviewOrderAmount(order))}</td>
+                        <td className="p-3 text-right text-xs font-bold text-slate-500">{lines.length || order.quantity || 0}</td>
+                      </tr>
+                    );
+                  })}
+                  {projectOrders.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="p-6 text-center text-sm text-slate-500">Bu projeye bağlı sipariş yok.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
+
+        {activeTab === "Stok Hareketleri" && (
+          <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <h2 className="text-xl font-black text-slate-900">Proje Stok Hareketleri</h2>
+                <p className="mt-1 text-sm text-slate-500">Projeye giren, rezerve edilen veya üretime çıkan malzemeler.</p>
+              </div>
+              <div className="rounded-full bg-slate-100 px-4 py-2 text-sm font-black text-slate-700">
+                Toplam değer: {formatMoney(stockMovementTotal)}
+              </div>
+            </div>
+
+            <div className="mt-5 grid grid-cols-1 gap-3">
+              {stockMovements.map((movement) => (
+                <div key={movement.id} className="grid grid-cols-1 gap-3 rounded-xl border border-slate-100 p-4 md:grid-cols-[1fr_auto] md:items-center">
+                  <div>
+                    <div className="font-black text-slate-900">{movement.product_name || "Stok kalemi"}</div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      {movement.product_code || "-"} · {movement.source || movement.movement_type || "Hareket"} · {formatDate(movement.movement_date || movement.created_at)}
+                    </div>
+                    <div className="mt-2 text-xs font-bold text-slate-600">
+                      {movement.partner_name || movement.supplier_name || "-"} · {movement.notes || movement.note || "Not yok"}
+                    </div>
+                  </div>
+                  <div className="text-left md:text-right">
+                    <div className="font-black text-blue-700">{quantityText(movement.quantity, movement.unit)}</div>
+                    <div className="mt-1 text-xs font-bold text-slate-500">{formatMoney(movementAmount(movement))}</div>
+                  </div>
+                </div>
+              ))}
+              {stockMovements.length === 0 && (
+                <div className="rounded-xl bg-slate-50 p-6 text-center text-sm text-slate-500">Bu proje için stok hareketi yok.</div>
+              )}
+            </div>
+          </section>
+        )}
+
+        {activeTab === "Raporlar" && (
+          <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <h2 className="text-xl font-black text-slate-900">Proje Raporları</h2>
+                <p className="mt-1 text-sm text-slate-500">Mukayese, analiz ve karar kayıtları proje arşivinde tutulur.</p>
+              </div>
+              <div className="rounded-full bg-slate-100 px-4 py-2 text-sm font-black text-slate-700">
+                Rapor toplamı: {formatMoney(projectReportTotal)}
+              </div>
+            </div>
+
+            <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
+              {projectReports.map((report) => (
+                <Link key={report.id} href={`/dashboard/raporlar/${report.id}`} className="rounded-xl border border-slate-100 p-4 transition hover:border-blue-200 hover:bg-blue-50">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="font-black text-blue-700">{reportName(report)}</div>
+                      <div className="mt-1 text-xs text-slate-500">{formatDate(report.created_at || report.tarih)} · {report.tur || "Mukayese"}</div>
+                    </div>
+                    <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">{report.durum || "Bekliyor"}</span>
+                  </div>
+                  <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                    <div className="rounded-lg bg-white p-3">
+                      <div className="text-xs font-bold text-slate-500">Önerilen</div>
+                      <div className="mt-1 font-black text-slate-900">{reportSupplier(report)}</div>
+                    </div>
+                    <div className="rounded-lg bg-white p-3">
+                      <div className="text-xs font-bold text-slate-500">Tutar</div>
+                      <div className="mt-1 font-black text-slate-900">{formatMoney(reportAmount(report))}</div>
+                    </div>
+                  </div>
+                </Link>
+              ))}
+              {projectReports.length === 0 && (
+                <div className="rounded-xl bg-slate-50 p-6 text-center text-sm text-slate-500 md:col-span-2">Bu proje için rapor kaydı yok.</div>
+              )}
+            </div>
           </section>
         )}
       </main>

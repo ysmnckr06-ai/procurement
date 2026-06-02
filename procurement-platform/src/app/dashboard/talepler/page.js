@@ -399,7 +399,7 @@ export default function TaleplerPage() {
                       )}
 
                       <button
-                        onClick={() => router.push(`/dashboard/teklifler?requestId=${req.id}`)}
+                        onClick={() => router.push(`/dashboard/teklifler?requestId=${req.id}${req.project_id ? `&projectId=${req.project_id}` : ""}`)}
                         className="rounded-lg bg-purple-600 px-3 py-2 text-sm font-semibold text-white"
                       >
                         Tekliflere Aktar

@@ -78,9 +78,7 @@ function StatCard({ icon, title, value, text, href, tone = "blue" }) {
             {icon}
           </div>
           <div className="text-sm font-semibold text-slate-500">{title}</div>
-          <div className="mt-1 text-3xl font-black text-slate-900">
-            {value}
-          </div>
+          <div className="mt-1 text-3xl font-black text-slate-900">{value}</div>
           <div className="mt-1 text-sm text-slate-500">{text}</div>
         </div>
         <span className="text-lg text-slate-400 transition group-hover:translate-x-1">
@@ -132,6 +130,31 @@ function WorkItemCard({ item }) {
   );
 }
 
+function ProcessGapCard({ gap }) {
+  const tones = {
+    red: "border-red-200 bg-red-50 text-red-900",
+    orange: "border-orange-200 bg-orange-50 text-orange-900",
+    blue: "border-blue-200 bg-blue-50 text-blue-900",
+  };
+
+  return (
+    <Link
+      href={gap.href}
+      className={`block rounded-2xl border p-4 transition hover:-translate-y-0.5 hover:shadow-sm ${tones[gap.tone]}`}
+    >
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className="text-sm font-black">{gap.title}</div>
+          <p className="mt-2 text-sm leading-6 text-slate-700">{gap.text}</p>
+        </div>
+        <div className="shrink-0 rounded-xl bg-white/75 px-3 py-2 text-xl font-black text-slate-950">
+          {gap.count}
+        </div>
+      </div>
+    </Link>
+  );
+}
+
 function ModuleCard({ icon, title, text, href, button, tone = "blue" }) {
   const styles = {
     blue: "bg-blue-50 text-blue-700 border-blue-100",
@@ -176,6 +199,7 @@ export default function DashboardPage() {
     projects: [],
     projectPayments: [],
     projectItems: [],
+    suppliers: [],
   });
 
   useEffect(() => {
@@ -212,6 +236,7 @@ export default function DashboardPage() {
         projectsRes,
         paymentsRes,
         projectItemsRes,
+        suppliersRes,
       ] = await Promise.all([
         supabase.from("requests").select("*").eq("user_id", user.id),
         supabase.from("reports").select("*").eq("user_id", user.id),
@@ -220,6 +245,7 @@ export default function DashboardPage() {
         supabase.from("projects").select("*").eq("user_id", user.id),
         supabase.from("project_payments").select("*").eq("user_id", user.id),
         supabase.from("project_items").select("*").eq("user_id", user.id),
+        supabase.from("suppliers").select("*").eq("user_id", user.id),
       ]);
 
       setDashboardData({
@@ -230,6 +256,7 @@ export default function DashboardPage() {
         projects: projectsRes.data || [],
         projectPayments: paymentsRes.data || [],
         projectItems: projectItemsRes.data || [],
+        suppliers: suppliersRes.data || [],
       });
     };
 
@@ -248,13 +275,19 @@ export default function DashboardPage() {
     const products = dashboardData.products;
     const projectItems = dashboardData.projectItems;
     const payments = dashboardData.projectPayments;
+    const reports = dashboardData.reports;
+    const requests = dashboardData.requests;
+    const suppliers = dashboardData.suppliers;
 
     const openOrders = orders.filter(
       (order) => !closedOrderStatuses.includes(order.status),
     );
     const delayedOrders = openOrders.filter((order) => {
       const remainingDays = daysUntil(order.termin_date);
-      return order.status === "Gecikti" || (remainingDays !== null && remainingDays < 0);
+      return (
+        order.status === "Gecikti" ||
+        (remainingDays !== null && remainingDays < 0)
+      );
     });
     const weekDeliveries = openOrders.filter((order) => {
       const remainingDays = daysUntil(order.termin_date);
@@ -264,7 +297,8 @@ export default function DashboardPage() {
       ["Onay Bekliyor", "Bekliyor", "Taslak"].includes(order.status),
     );
     const paymentPendingOrders = orders.filter(
-      (order) => orderRemainingPayment(order) > 0 && Number(order.total_amount || 0) > 0,
+      (order) =>
+        orderRemainingPayment(order) > 0 && Number(order.total_amount || 0) > 0,
     );
     const paidButNotReceivedOrders = orders.filter(
       (order) =>
@@ -272,25 +306,28 @@ export default function DashboardPage() {
         !closedOrderStatuses.includes(order.status) &&
         Number(order.received_total || 0) <= 0,
     );
-    const criticalProducts = products.filter(
-      (product) => {
-        const criticalLimit = productCriticalLimit(product);
-        return criticalLimit > 0 && Number(product.current_stock || 0) <= criticalLimit;
-      },
-    );
+    const criticalProducts = products.filter((product) => {
+      const criticalLimit = productCriticalLimit(product);
+      return (
+        criticalLimit > 0 && Number(product.current_stock || 0) <= criticalLimit
+      );
+    });
     const activeProjects = projects.filter((project) =>
       activeProjectStatuses.includes(project.status),
     );
     const overBudgetProjects = projects.filter(
       (project) =>
         Number(project.estimated_budget || 0) > 0 &&
-        Number(project.actual_cost || 0) > Number(project.estimated_budget || 0),
+        Number(project.actual_cost || 0) >
+          Number(project.estimated_budget || 0),
     );
     const delayedCollections = projects.filter((project) => {
       const paid = projectPaidAmount(project, payments);
       const remainingCollection = Number(project.contract_amount || 0) - paid;
       const remainingDays = daysUntil(project.planned_end_date);
-      return remainingCollection > 0 && remainingDays !== null && remainingDays < 0;
+      return (
+        remainingCollection > 0 && remainingDays !== null && remainingDays < 0
+      );
     });
     const productionOpenPanels = projectItems.filter((item) =>
       ["Üretime verildi", "Üretimde", "Montajda"].includes(item.status),
@@ -299,13 +336,92 @@ export default function DashboardPage() {
       ["Sevke Hazır", "Sevk edildi"].includes(item.panel_status || item.status),
     );
 
+    const orderReportIds = new Set(
+      orders.map((order) => order.report_id).filter(Boolean),
+    );
+    const reportsWithoutOrders = reports.filter(
+      (report) => report.id && !orderReportIds.has(report.id),
+    );
+    const requestsWithoutProject = requests.filter(
+      (request) => !request.project_id,
+    );
+    const ordersWithoutProject = orders.filter((order) => !order.project_id);
+    const ordersWithoutTermin = openOrders.filter(
+      (order) => !order.termin_date,
+    );
+    const activeProjectsWithoutEndDate = activeProjects.filter(
+      (project) => !project.planned_end_date,
+    );
+    const productsWithoutStockLimit = products.filter(
+      (product) => productCriticalLimit(product) <= 0,
+    );
+    const riskyPartners = suppliers.filter((partner) =>
+      ["Riskli", "Onay Bekliyor", "Pasif"].includes(partner.status),
+    );
+
+    const processGaps = [
+      {
+        title: "Siparişe dönmeyen rapor",
+        count: reportsWithoutOrders.length,
+        text: "Mukayese sonrası sipariş kararı bekliyor.",
+        href: "/dashboard/raporlar",
+        tone: "orange",
+      },
+      {
+        title: "Projesiz sipariş",
+        count: ordersWithoutProject.length,
+        text: "Maliyet ve teslimat proje karlılığına bağlanmıyor.",
+        href: "/dashboard/siparisler",
+        tone: "blue",
+      },
+      {
+        title: "Terminsiz açık sipariş",
+        count: ordersWithoutTermin.length,
+        text: "Gecikme takibi için termin tarihi girilmeli.",
+        href: "/dashboard/siparisler",
+        tone: "red",
+      },
+      {
+        title: "Bitiş tarihi olmayan aktif proje",
+        count: activeProjectsWithoutEndDate.length,
+        text: "Tahsilat ve kapanış riski takip edilemiyor.",
+        href: "/dashboard/projeler",
+        tone: "orange",
+      },
+      {
+        title: "Kritik stok limiti olmayan ürün",
+        count: productsWithoutStockLimit.length,
+        text: "Minimum stok tanımlanmadığı için uyarı üretilemez.",
+        href: "/dashboard/stok",
+        tone: "blue",
+      },
+      {
+        title: "Projesiz talep listesi",
+        count: requestsWithoutProject.length,
+        text: "Talep hangi işe ait olduğu bilinmeden ilerliyor.",
+        href: "/dashboard/talepler",
+        tone: "blue",
+      },
+      {
+        title: "Riskli iş ortağı",
+        count: riskyPartners.length,
+        text: "Pasif, riskli veya onay bekleyen kayıtlar kontrol edilmeli.",
+        href: "/dashboard/tedarikciler",
+        tone: "red",
+      },
+    ].filter((gap) => gap.count > 0);
+
     const workItems = [
       ...delayedOrders.slice(0, 4).map((order) => ({
         tone: "red",
         title: "Geciken sipariş",
-        subject: order.order_no || order.supplier_name || "Sipariş",
+        subject:
+          order.order_no ||
+          order.partner_name ||
+          order.supplier_name ||
+          "Sipariş",
         projectName: projectById[order.project_id]?.project_name,
-        description: `${order.supplier_name || "Tedarikçi"} teslim tarihi geçti. Termin: ${order.termin_date || "-"}.`,
+        description: `${order.partner_name || order.supplier_name || "İş ortağı"} teslim tarihi geçti. Termin: ${order.termin_date || "-"}.`,
         href: `/dashboard/siparisler/${order.id}`,
       })),
       ...criticalProducts.slice(0, 3).map((product) => ({
@@ -319,9 +435,13 @@ export default function DashboardPage() {
       ...weekDeliveries.slice(0, 4).map((order) => ({
         tone: "orange",
         title: "Bu hafta teslim",
-        subject: order.order_no || order.supplier_name || "Sipariş",
+        subject:
+          order.order_no ||
+          order.partner_name ||
+          order.supplier_name ||
+          "Sipariş",
         projectName: projectById[order.project_id]?.project_name,
-        description: `${daysUntil(order.termin_date)} gün içinde teslim bekleniyor. Tedarikçi: ${order.supplier_name || "-"}.`,
+        description: `${daysUntil(order.termin_date)} gün içinde teslim bekleniyor. İş ortağı: ${order.partner_name || order.supplier_name || "-"}.`,
         href: `/dashboard/siparisler/${order.id}`,
       })),
       ...overBudgetProjects.slice(0, 3).map((project) => ({
@@ -335,7 +455,11 @@ export default function DashboardPage() {
       ...pendingApprovals.slice(0, 3).map((order) => ({
         tone: "green",
         title: "Onay bekleyen sipariş",
-        subject: order.order_no || order.supplier_name || "Sipariş",
+        subject:
+          order.order_no ||
+          order.partner_name ||
+          order.supplier_name ||
+          "Sipariş",
         projectName: projectById[order.project_id]?.project_name,
         description: "Sipariş durumu onay veya takip bekliyor.",
         href: `/dashboard/siparisler/${order.id}`,
@@ -343,7 +467,11 @@ export default function DashboardPage() {
       ...paidButNotReceivedOrders.slice(0, 3).map((order) => ({
         tone: "blue",
         title: "Ödendi ama ürün gelmedi",
-        subject: order.order_no || order.supplier_name || "Sipariş",
+        subject:
+          order.order_no ||
+          order.partner_name ||
+          order.supplier_name ||
+          "Sipariş",
         projectName: projectById[order.project_id]?.project_name,
         description: `${formatMoney(orderPaidAmount(order))} ödeme var, teslim kaydı henüz tamamlanmamış.`,
         href: `/dashboard/siparisler/${order.id}`,
@@ -383,6 +511,7 @@ export default function DashboardPage() {
       criticalProducts,
       overBudgetProjects,
       workItems,
+      processGaps,
     };
   }, [dashboardData, projectById]);
 
@@ -397,8 +526,8 @@ export default function DashboardPage() {
                   Satınalma Yönetim Paneli
                 </h1>
                 <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">
-                  Bugünkü takip işleri, proje riskleri, sipariş teslimleri ve stok
-                  uyarıları tek ekranda toplanır.
+                  Bugünkü takip işleri, proje riskleri, sipariş teslimleri ve
+                  stok uyarıları tek ekranda toplanır.
                 </p>
               </div>
               <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-3">
@@ -491,6 +620,34 @@ export default function DashboardPage() {
             <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
               <div>
                 <h2 className="text-2xl font-black text-slate-900">
+                  Süreç Açıkları
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Satınalma akışında rapor, proje, termin, stok limiti veya iş
+                  ortağı bağlantısı eksik kalan kayıtlar.
+                </p>
+              </div>
+              <span className="rounded-full bg-slate-100 px-4 py-2 text-sm font-black text-slate-700">
+                {intelligence.processGaps.length} konu
+              </span>
+            </div>
+
+            <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {intelligence.processGaps.map((gap) => (
+                <ProcessGapCard key={gap.title} gap={gap} />
+              ))}
+              {intelligence.processGaps.length === 0 && (
+                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 text-sm font-bold text-emerald-900 md:col-span-2 xl:col-span-3">
+                  Temel akış bağlantılarında belirgin bir eksik görünmüyor.
+                </div>
+              )}
+            </div>
+          </section>
+
+          <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+              <div>
+                <h2 className="text-2xl font-black text-slate-900">
                   İş Merkezi
                 </h2>
                 <p className="mt-1 text-sm text-slate-500">
@@ -516,7 +673,10 @@ export default function DashboardPage() {
 
             <div className="mt-5 grid grid-cols-1 gap-4 xl:grid-cols-2">
               {intelligence.workItems.map((item, index) => (
-                <WorkItemCard key={`${item.title}-${item.subject}-${index}`} item={item} />
+                <WorkItemCard
+                  key={`${item.title}-${item.subject}-${index}`}
+                  item={item}
+                />
               ))}
               {intelligence.workItems.length === 0 && (
                 <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 text-sm font-bold text-emerald-900 xl:col-span-2">

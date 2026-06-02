@@ -139,7 +139,7 @@ export default function FinancePage() {
 
     const supplierDebtRows = Object.values(
       orders.reduce((map, order) => {
-        const key = order.supplier_name || "Tedarikçi yok";
+        const key = order.partner_name || order.supplier_name || "İş ortağı yok";
         const row = map[key] || { supplier: key, total: 0, paid: 0, debt: 0 };
         row.total += Number(order.order_total_base || order.base_amount || order.total_amount || 0);
         row.paid += Number(order.paid_amount_base || order.paid_amount || 0);
@@ -178,7 +178,7 @@ export default function FinancePage() {
               Genel ve Proje Bazlı Finans
             </h1>
             <p className="mt-2 max-w-2xl text-sm text-slate-600">
-              Tahsilat, tedarikçi ödemesi, gelen ürün değeri ve proje kârlılığı tek ekranda izlenir.
+              Tahsilat, iş ortağı ödemesi, gelen ürün değeri ve proje kârlılığı tek ekranda izlenir.
             </p>
           </div>
           <button
@@ -200,15 +200,15 @@ export default function FinancePage() {
           <StatCard title="Sözleşme Bedeli" value={formatMoney(report.contractTotal, report.baseCurrency)} text="Base toplam" tone="blue" />
           <StatCard title="Tahsilat" value={formatMoney(report.projectPaymentTotal, report.baseCurrency)} text="Base alınan ödeme" tone="green" />
           <StatCard title="Bekleyen Tahsilat" value={formatMoney(report.waitingCollection, report.baseCurrency)} text="Müşteri alacağı" tone="orange" />
-          <StatCard title="Sipariş Tutarı" value={formatMoney(report.orderTotal, report.baseCurrency)} text="Base tedarikçi borç matrahı" />
-          <StatCard title="Kalan Tedarikçi Ödemesi" value={formatMoney(report.supplierDebt, report.baseCurrency)} text="Base ödenecek kalan" tone="red" />
+          <StatCard title="Sipariş Tutarı" value={formatMoney(report.orderTotal, report.baseCurrency)} text="Base iş ortağı borç matrahı" />
+          <StatCard title="Kalan İş Ortağı Ödemesi" value={formatMoney(report.supplierDebt, report.baseCurrency)} text="Base ödenecek kalan" tone="red" />
         </div>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
           <StatCard title="Gelen Ürün Değeri" value={formatMoney(report.receivedValue, report.baseCurrency)} text="Base stok giriş değeri" tone="green" />
           <StatCard title="Gelmeyen Ürün Değeri" value={formatMoney(report.notReceivedValue, report.baseCurrency)} text="Sipariş - gelen" tone="orange" />
           <StatCard title="Ödendi / Gelmedi" value={formatMoney(report.paidNotReceived, report.baseCurrency)} text="Riskli ödeme" tone="red" />
-          <StatCard title="Geldi / Ödenmedi" value={formatMoney(report.receivedNotPaid, report.baseCurrency)} text="Tedarikçi borcu" tone="blue" />
+          <StatCard title="Geldi / Ödenmedi" value={formatMoney(report.receivedNotPaid, report.baseCurrency)} text="İş ortağı borcu" tone="blue" />
         </div>
 
         <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
@@ -224,7 +224,7 @@ export default function FinancePage() {
                   <th className="p-4">Tahsilat</th>
                   <th className="p-4">Bekleyen</th>
                   <th className="p-4">Sipariş</th>
-                  <th className="p-4">Tedarikçi Borcu</th>
+                  <th className="p-4">İş Ortağı Borcu</th>
                   <th className="p-4">Kâr / Zarar</th>
                 </tr>
               </thead>
@@ -263,13 +263,13 @@ export default function FinancePage() {
 
         <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-100 p-5">
-            <h2 className="text-xl font-bold text-slate-900">Tedarikçi Bazlı Borç Durumu</h2>
+            <h2 className="text-xl font-bold text-slate-900">İş Ortağı Bazlı Borç Durumu</h2>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
-                  <th className="p-4">Tedarikçi</th>
+                  <th className="p-4">İş Ortağı</th>
                   <th className="p-4">Toplam Sipariş</th>
                   <th className="p-4">Ödenen</th>
                   <th className="p-4">Kalan Borç</th>
@@ -287,7 +287,7 @@ export default function FinancePage() {
                 {!loading && report.supplierDebtRows.length === 0 && (
                   <tr>
                     <td colSpan="4" className="p-8 text-center text-slate-500">
-                      Henüz tedarikçi borç kaydı yok.
+                      Henüz iş ortağı borç kaydı yok.
                     </td>
                   </tr>
                 )}

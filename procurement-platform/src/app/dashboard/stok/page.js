@@ -181,11 +181,34 @@ export default function StockPage() {
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(true);
   const [selectedProduct, setSelectedProduct] = useState(null);
+  const [productForm, setProductForm] = useState({
+    brand: "",
+    min_stock: "",
+    critical_stock: "",
+    manual_unit_price: "",
+    notes: "",
+  });
   const [deleting, setDeleting] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     loadStock();
   }, []);
+
+  useEffect(() => {
+    if (!selectedProduct) {
+      setProductForm({ brand: "", min_stock: "", critical_stock: "", manual_unit_price: "", notes: "" });
+      return;
+    }
+
+    setProductForm({
+      brand: selectedProduct.brand || "",
+      min_stock: String(selectedProduct.min_stock ?? selectedProduct.minimum_stock ?? ""),
+      critical_stock: String(selectedProduct.critical_stock ?? ""),
+      manual_unit_price: String(selectedProduct.manual_unit_price ?? ""),
+      notes: selectedProduct.notes || "",
+    });
+  }, [selectedProduct]);
 
   async function loadStock() {
     setLoading(true);
@@ -199,18 +222,40 @@ export default function StockPage() {
       return;
     }
 
-    const { data: productData, error: productError } = await supabase
+    console.log("Stock page session user", {
+      userId: user.id,
+      email: user.email || null,
+    });
+
+    const { data: productData, error: productError, count: productCount } = await supabase
       .from("products")
-      .select("*")
+      .select("*", { count: "exact" })
       .eq("user_id", user.id)
       .order("updated_at", { ascending: false });
 
-    const { data: movementData, error: movementError } = await supabase
+    const { data: movementData, error: movementError, count: movementCount } = await supabase
       .from("stock_movements")
-      .select("*")
+      .select("*", { count: "exact" })
       .eq("user_id", user.id)
       .order("created_at", { ascending: false })
       .limit(300);
+
+    console.log("Stock products query result", {
+      table: "products",
+      filter: { user_id: user.id },
+      returned: productData?.length || 0,
+      count: productCount,
+      error: productError?.message || null,
+      sampleUserIds: Array.from(new Set((productData || []).map((product) => product.user_id))).slice(0, 5),
+    });
+
+    console.log("Stock movements query result", {
+      table: "stock_movements",
+      filter: { user_id: user.id },
+      returned: movementData?.length || 0,
+      count: movementCount,
+      error: movementError?.message || null,
+    });
 
     if (productError || movementError) {
       setMessage("Stok tabloları hazır değil. Supabase şemasındaki products ve stock_movements bölümlerini çalıştırın.");
@@ -269,6 +314,68 @@ export default function StockPage() {
     await loadStock();
   }
 
+  function openProductDetail(product) {
+    setSelectedProduct(product);
+    setMessage("");
+  }
+
+  function updateProductForm(field, value) {
+    setProductForm((prev) => ({ ...prev, [field]: value }));
+  }
+
+  async function saveProductCard() {
+    if (!selectedProduct) return;
+
+    setSaving(true);
+    setMessage("");
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      router.push("/login");
+      return;
+    }
+
+    const productIds = selectedProduct.duplicateIds || [selectedProduct.id];
+    const updatePayload = {
+      brand: productForm.brand || "",
+      min_stock: Number(productForm.min_stock || 0),
+      critical_stock: Number(productForm.critical_stock || 0),
+      manual_unit_price: Number(productForm.manual_unit_price || 0),
+      notes: productForm.notes || "",
+      updated_at: new Date().toISOString(),
+    };
+
+    const { error } = await supabase
+      .from("products")
+      .update(updatePayload)
+      .eq("user_id", user.id)
+      .in("id", productIds);
+
+    if (error) {
+      console.error("Ürün kartı güncellenemedi:", error);
+      setMessage(error.message || "Ürün kartı güncellenemedi.");
+      setSaving(false);
+      return;
+    }
+
+    const nextProducts = products.map((product) =>
+      productIds.includes(product.id) ? { ...product, ...updatePayload } : product,
+    );
+    const nextGroups = mergeProductGroups(nextProducts);
+    const nextSelected = nextGroups.find((product) => product.groupKey === selectedProduct.groupKey) || {
+      ...selectedProduct,
+      ...updatePayload,
+    };
+
+    setProducts(nextProducts);
+    setSelectedProduct(nextSelected);
+    setMessage("Ürün kartı güncellendi.");
+    setSaving(false);
+  }
+
   const productGroups = useMemo(() => mergeProductGroups(products), [products]);
 
   const filteredProducts = useMemo(() => {
@@ -280,6 +387,7 @@ export default function StockPage() {
         product.product_code,
         product.product_name,
         product.last_supplier,
+        product.partner_name,
         product.category,
       ].join(" ")).includes(needle),
     );
@@ -357,7 +465,7 @@ export default function StockPage() {
 
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <input
-              placeholder="Ürün, kod, kategori veya tedarikçi ara..."
+              placeholder="Ürün, kod, kategori veya iş ortağı ara..."
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               className="w-full rounded-xl border border-slate-300 p-3 text-sm"
@@ -372,62 +480,72 @@ export default function StockPage() {
                   {loading ? "Yükleniyor..." : `${filteredProducts.length} ürün gösteriliyor.`}
                 </p>
               </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-slate-50 text-slate-500">
-                    <tr>
-                      <th className="p-4">Ürün kodu</th>
-                      <th className="p-4">Ürün adı</th>
-                      <th className="p-4">Toplam</th>
-                      <th className="p-4">Kullanılabilir</th>
-                      <th className="p-4">Rezerve</th>
-                      <th className="p-4">Üretimde</th>
-                      <th className="p-4">Montajda</th>
-                      <th className="p-4">Kritik</th>
-                      <th className="p-4">Son Hareket</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredProducts.map((product) => {
-                      const breakdown = stockBreakdown(product, movements);
-                      return (
-                        <tr
-                          key={product.groupKey}
-                          onClick={() => setSelectedProduct(product)}
-                          className={`cursor-pointer border-t border-slate-100 hover:bg-blue-50 ${
-                            selectedProduct?.groupKey === product.groupKey ? "bg-blue-50" : ""
-                          }`}
-                        >
-                          <td className="p-4 font-bold text-slate-900">{product.product_code || "-"}</td>
-                          <td className="p-4">
-                            <div className="font-bold text-slate-900">{product.product_name}</div>
-                            {product.duplicateCount > 1 && (
-                              <div className="mt-1 text-xs text-amber-700">
-                                {product.duplicateCount} kayıt birleşti
-                              </div>
-                            )}
-                          </td>
-                          <td className="p-4 font-black">{breakdown.total} {product.unit || "adet"}</td>
-                          <td className="p-4 font-black text-emerald-700">{breakdown.available}</td>
-                          <td className="p-4 font-semibold text-blue-700">{breakdown.reserved}</td>
-                          <td className="p-4 font-semibold text-purple-700">{breakdown.production}</td>
-                          <td className="p-4 font-semibold text-orange-700">{breakdown.montage}</td>
-                          <td className="p-4">
-                            {stockCriticalLimit(product) > 0 ? stockCriticalLimit(product) : "-"}
-                          </td>
-                          <td className="p-4">{formatDate(product.last_movement_at || product.updated_at)}</td>
-                        </tr>
-                      );
-                    })}
-                    {!loading && filteredProducts.length === 0 && (
-                      <tr>
-                        <td colSpan="9" className="p-8 text-center text-slate-500">
-                          Henüz ürün kartı yok.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
+              <div className="space-y-3 p-4">
+                {filteredProducts.map((product) => {
+                  const breakdown = stockBreakdown(product, movements);
+                  return (
+                    <button
+                      type="button"
+                      key={product.groupKey}
+                      onClick={() => openProductDetail(product)}
+                      className={`w-full rounded-2xl border p-4 text-left transition hover:border-blue-200 hover:bg-blue-50 ${
+                        selectedProduct?.groupKey === product.groupKey
+                          ? "border-blue-300 bg-blue-50"
+                          : "border-slate-200 bg-white"
+                      }`}
+                    >
+                      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2 text-xs font-bold text-slate-500">
+                            <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-700">Kod: {product.product_code || "-"}</span>
+                            <span>Marka: {product.brand || "-"}</span>
+                            <span>Birim: {product.unit || "adet"}</span>
+                          </div>
+                          <div className="mt-2 whitespace-normal break-words text-base font-black leading-snug text-slate-950">
+                            {product.product_name}
+                          </div>
+                          {product.duplicateCount > 1 && (
+                            <div className="mt-1 text-xs font-bold text-amber-700">
+                              {product.duplicateCount} kayıt birleşti
+                            </div>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-3 lg:w-[420px]">
+                          <div className="rounded-xl bg-slate-50 p-2">
+                            <div className="font-bold text-slate-500">Mevcut stok</div>
+                            <div className="mt-1 text-sm font-black text-slate-900">{breakdown.total}</div>
+                          </div>
+                          <div className="rounded-xl bg-slate-50 p-2">
+                            <div className="font-bold text-slate-500">Minimum</div>
+                            <div className="mt-1 text-sm font-black text-slate-900">{Number(product.min_stock ?? product.minimum_stock ?? 0)}</div>
+                          </div>
+                          <div className="rounded-xl bg-slate-50 p-2">
+                            <div className="font-bold text-slate-500">Kritik</div>
+                            <div className="mt-1 text-sm font-black text-slate-900">{Number(product.critical_stock ?? 0)}</div>
+                          </div>
+                          <div className="rounded-xl bg-slate-50 p-2">
+                            <div className="font-bold text-slate-500">Son alış</div>
+                            <div className="mt-1 text-sm font-black text-slate-900">{formatMoney(product.last_unit_price, product.last_currency || "TRY")}</div>
+                          </div>
+                          <div className="rounded-xl bg-slate-50 p-2">
+                            <div className="font-bold text-slate-500">Manuel</div>
+                            <div className="mt-1 text-sm font-black text-indigo-700">{formatMoney(product.manual_unit_price, product.last_currency || "TRY")}</div>
+                          </div>
+                          <div className="rounded-xl bg-slate-50 p-2">
+                            <div className="font-bold text-slate-500">Son bilgi</div>
+                            <div className="mt-1 break-words text-sm font-black text-slate-900">{product.last_supplier || "-"}</div>
+                            <div className="mt-0.5 text-[11px] font-semibold text-slate-500">{formatDate(product.last_purchase_date || product.last_movement_at || product.updated_at)}</div>
+                          </div>
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+                {!loading && filteredProducts.length === 0 && (
+                  <div className="rounded-xl bg-slate-50 p-8 text-center text-slate-500">
+                    Henüz ürün kartı yok.
+                  </div>
+                )}
               </div>
             </div>
 
@@ -438,41 +556,105 @@ export default function StockPage() {
                     const breakdown = stockBreakdown(selectedProduct, movements);
                     return (
                       <>
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <h2 className="text-xl font-bold text-slate-900">{selectedProduct.product_name}</h2>
-                      <p className="mt-1 text-sm text-slate-500">{selectedProduct.product_code || "-"}</p>
-                    </div>
-                    <button
-                      type="button"
-                      disabled={deleting}
-                      onClick={() => deleteProductGroup(selectedProduct)}
-                      className="rounded-lg bg-red-600 px-3 py-2 text-xs font-bold text-white hover:bg-red-700 disabled:bg-slate-300"
-                    >
-                      Sil
-                    </button>
-                  </div>
+                        <div className="flex items-start justify-between gap-4">
+                          <div>
+                            <div className="text-xs font-black uppercase tracking-wide text-blue-600">Ürün kartı detayı</div>
+                            <h2 className="mt-1 text-xl font-bold text-slate-900">{selectedProduct.product_name}</h2>
+                            <p className="mt-1 text-sm text-slate-500">{selectedProduct.product_code || "-"} · {selectedProduct.unit || "adet"}</p>
+                          </div>
+                          <button
+                            type="button"
+                            disabled={deleting}
+                            onClick={() => deleteProductGroup(selectedProduct)}
+                            className="rounded-lg bg-red-600 px-3 py-2 text-xs font-bold text-white hover:bg-red-700 disabled:bg-slate-300"
+                          >
+                            Sil
+                          </button>
+                        </div>
 
-                  <div className="mt-5 grid grid-cols-2 gap-3">
-                    <div className="rounded-xl bg-slate-50 p-4">
-                      <div className="text-xs font-bold text-slate-500">Toplam Stok</div>
-                      <div className="mt-1 text-xl font-black text-slate-900">
-                        {breakdown.total} {selectedProduct.unit || "adet"}
-                      </div>
-                    </div>
-                    <div className="rounded-xl bg-slate-50 p-4">
-                      <div className="text-xs font-bold text-slate-500">Kullanılabilir</div>
-                      <div className="mt-1 text-xl font-black text-emerald-700">{breakdown.available}</div>
-                    </div>
-                    <div className="rounded-xl bg-slate-50 p-4">
-                      <div className="text-xs font-bold text-slate-500">Rezerve</div>
-                      <div className="mt-1 text-xl font-black text-blue-700">{breakdown.reserved}</div>
-                    </div>
-                    <div className="rounded-xl bg-slate-50 p-4">
-                      <div className="text-xs font-bold text-slate-500">Üretim / Montaj</div>
-                      <div className="mt-1 text-xl font-black text-purple-700">{breakdown.production + breakdown.montage}</div>
-                    </div>
-                  </div>
+                        <div className="mt-5 grid grid-cols-2 gap-3">
+                          <div className="rounded-xl bg-slate-50 p-4">
+                            <div className="text-xs font-bold text-slate-500">Mevcut Stok</div>
+                            <div className="mt-1 text-xl font-black text-slate-900">
+                              {breakdown.total} {selectedProduct.unit || "adet"}
+                            </div>
+                          </div>
+                          <div className="rounded-xl bg-slate-50 p-4">
+                            <div className="text-xs font-bold text-slate-500">Kullanılabilir</div>
+                            <div className="mt-1 text-xl font-black text-emerald-700">{breakdown.available}</div>
+                          </div>
+                          <div className="rounded-xl bg-slate-50 p-4">
+                            <div className="text-xs font-bold text-slate-500">Siparişlerden Gelen Son Fiyat</div>
+                            <div className="mt-1 text-lg font-black text-slate-900">
+                              {formatMoney(selectedProduct.last_unit_price, selectedProduct.last_currency || "TRY")}
+                            </div>
+                            <div className="mt-1 text-xs text-slate-500">{formatDate(selectedProduct.last_purchase_date || selectedProduct.last_movement_at)}</div>
+                          </div>
+                          <div className="rounded-xl bg-slate-50 p-4">
+                            <div className="text-xs font-bold text-slate-500">Son İş Ortağı</div>
+                            <div className="mt-1 text-lg font-black text-slate-900">{selectedProduct.last_supplier || "-"}</div>
+                          </div>
+                        </div>
+
+                        <div className="mt-5 space-y-4 rounded-2xl border border-slate-100 bg-white p-4">
+                          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                            <label className="text-sm font-bold text-slate-700">
+                              Marka
+                              <input
+                                value={productForm.brand}
+                                onChange={(event) => updateProductForm("brand", event.target.value)}
+                                className="mt-2 w-full rounded-xl border border-slate-300 p-3 text-sm"
+                              />
+                            </label>
+                            <label className="text-sm font-bold text-slate-700">
+                              Manuel fiyat
+                              <input
+                                type="number"
+                                step="0.01"
+                                value={productForm.manual_unit_price}
+                                onChange={(event) => updateProductForm("manual_unit_price", event.target.value)}
+                                className="mt-2 w-full rounded-xl border border-slate-300 p-3 text-sm"
+                              />
+                            </label>
+                            <label className="text-sm font-bold text-slate-700">
+                              Minimum stok
+                              <input
+                                type="number"
+                                step="0.01"
+                                value={productForm.min_stock}
+                                onChange={(event) => updateProductForm("min_stock", event.target.value)}
+                                className="mt-2 w-full rounded-xl border border-slate-300 p-3 text-sm"
+                              />
+                            </label>
+                            <label className="text-sm font-bold text-slate-700">
+                              Kritik stok
+                              <input
+                                type="number"
+                                step="0.01"
+                                value={productForm.critical_stock}
+                                onChange={(event) => updateProductForm("critical_stock", event.target.value)}
+                                className="mt-2 w-full rounded-xl border border-slate-300 p-3 text-sm"
+                              />
+                            </label>
+                          </div>
+                          <label className="block text-sm font-bold text-slate-700">
+                            Not
+                            <textarea
+                              value={productForm.notes}
+                              onChange={(event) => updateProductForm("notes", event.target.value)}
+                              rows={3}
+                              className="mt-2 w-full rounded-xl border border-slate-300 p-3 text-sm"
+                            />
+                          </label>
+                          <button
+                            type="button"
+                            disabled={saving}
+                            onClick={saveProductCard}
+                            className="w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white hover:bg-blue-700 disabled:bg-slate-300"
+                          >
+                            {saving ? "Kaydediliyor..." : "Ürün Kartını Kaydet"}
+                          </button>
+                        </div>
                       </>
                     );
                   })()}
@@ -487,7 +669,7 @@ export default function StockPage() {
                             <div>
                               <div className="font-bold text-slate-900">{status}</div>
                               <div className="mt-1 text-xs text-slate-500">
-                                {movement.supplier_name || "-"} · {formatDate(movement.movement_date)} · {movement.source || "-"}
+                                {movement.partner_name || movement.supplier_name || "-"} · {formatDate(movement.movement_date)} · {movement.source || "-"}
                               </div>
                             </div>
                             <span className={`rounded-full px-3 py-1 text-xs font-bold ${movementStatusClass(status)}`}>
@@ -504,8 +686,7 @@ export default function StockPage() {
                       </div>
                     )}
                   </div>
-                </>
-              ) : (
+                </>              ) : (
                 <>
                   <h2 className="text-xl font-bold text-slate-900">Son Stok Hareketleri</h2>
                   <div className="mt-4 space-y-3">
@@ -517,7 +698,7 @@ export default function StockPage() {
                             <div>
                               <div className="font-bold text-slate-900">{movement.product_name}</div>
                               <div className="mt-1 text-xs text-slate-500">
-                                {movement.supplier_name || "-"} · {formatDate(movement.movement_date)} · {movement.source || "-"}
+                                {movement.partner_name || movement.supplier_name || "-"} · {formatDate(movement.movement_date)} · {movement.source || "-"}
                               </div>
                             </div>
                             <span className={`rounded-full px-3 py-1 text-xs font-bold ${movementStatusClass(status)}`}>

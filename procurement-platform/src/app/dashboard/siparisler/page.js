@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { calculateBaseAmount, currencyOptions, getBaseCurrency, getExchangeRate } from "@/lib/currency";
+import { findOrCreateBusinessPartner } from "@/lib/businessPartners";
 
 const emptyForm = {
   orderNo: "",
@@ -245,8 +246,9 @@ export default function OrdersPage() {
 
     const { data: supplierData } = await supabase
       .from("suppliers")
-      .select("id,name,status")
+      .select("id,name,status,partner_type")
       .eq("user_id", user.id)
+      .in("partner_type", ["Tedarikçi", "Taşeron", "Nakliye", "Hizmet Sağlayıcı", "Diğer"])
       .order("name", { ascending: true });
 
     const { data: projectData } = await supabase
@@ -322,7 +324,7 @@ export default function OrdersPage() {
     const needle = search.trim().toLowerCase();
 
     return enrichedOrders.filter((order) => {
-      const haystack = [order.order_no, order.supplier_name, order.product_name]
+      const haystack = [order.order_no, order.partner_name || order.supplier_name, order.product_name]
         .join(" ")
         .toLowerCase();
       const searchMatch = needle ? haystack.includes(needle) : true;
@@ -456,7 +458,7 @@ export default function OrdersPage() {
     setFormData({
       ...emptyForm,
       orderNo: order.order_no || "",
-      company: order.supplier_name || "",
+      company: order.partner_name || order.supplier_name || "",
       product: order.product_name || "",
       orderDate: order.order_date || "",
       dueDate: order.termin_date || "",
@@ -486,7 +488,7 @@ export default function OrdersPage() {
       !formData.product ||
       !formData.orderDate
     ) {
-      setMessage("Sipariş no, firma, başlık ve sipariş tarihi zorunludur.");
+      setMessage("Sipariş no, iş ortağı, başlık ve sipariş tarihi zorunludur.");
       isSubmittingRef.current = false;
       return;
     }
@@ -501,6 +503,10 @@ export default function OrdersPage() {
     }
 
     const items = normalizeItems(formData.items);
+    const partner = await findOrCreateBusinessPartner(supabase, user.id, {
+      name: formData.company,
+      partnerType: "Tedarikçi",
+    });
     const orderTotal = Number(formData.totalAmount || calculateOrderTotal(items));
     const baseCurrency = getBaseCurrency(companySettings);
     const baseAmount = calculateBaseAmount(orderTotal, formData.currency, companySettings, formData.exchangeRate);
@@ -508,6 +514,9 @@ export default function OrdersPage() {
       user_id: user.id,
       order_no: formData.orderNo,
       supplier_name: formData.company,
+      partner_id: partner?.id || null,
+      partner_name: partner?.name || formData.company,
+      partner_type: partner?.partner_type || "Tedarikçi",
       product_name: formData.product,
       quantity: items.length || 1,
       order_date: formData.orderDate || null,
@@ -681,7 +690,7 @@ export default function OrdersPage() {
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="grid grid-cols-1 gap-4 md:grid-cols-[1fr_220px_180px]">
               <input
-                placeholder="Sipariş no, firma veya ürün ara..."
+                placeholder="Sipariş no, iş ortağı veya ürün ara..."
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
                 className="rounded-xl border border-slate-300 p-3 text-sm"
@@ -766,7 +775,7 @@ function OrderForm({
           onChange={onChange}
         />
         <SupplierInput
-          label="Firma"
+          label="İş Ortağı"
           name="company"
           value={formData.company}
           onChange={onSupplierChange}
@@ -1046,7 +1055,7 @@ function OrdersTable({ orders, onView, onEdit, onDelete }) {
               <th className="p-4">Sipariş No</th>
               <th className="p-4">Proje</th>
               <th className="p-4">Ana ürün / pano</th>
-              <th className="p-4">Tedarikçi</th>
+              <th className="p-4">İş Ortağı</th>
               <th className="p-4">Sipariş Tarihi</th>
               <th className="p-4">Termin</th>
               <th className="p-4">Toplam Tutar</th>
@@ -1069,7 +1078,7 @@ function OrdersTable({ orders, onView, onEdit, onDelete }) {
                     : "-"}
                 </td>
                 <td className="p-4">{order.product_name || "-"}</td>
-                <td className="p-4">{order.supplier_name}</td>
+                <td className="p-4">{order.partner_name || order.supplier_name}</td>
                 <td className="p-4">{order.order_date || "-"}</td>
                 <td className="p-4">{order.termin_date || "-"}</td>
                 <td className="p-4 font-semibold">
@@ -1166,7 +1175,7 @@ function TerminTable({ orders }) {
               return (
                 <tr key={order.id} className="border-t border-slate-100">
                   <td className="p-3 font-bold">{order.order_no}</td>
-                  <td className="p-3">{order.supplier_name}</td>
+                  <td className="p-3">{order.partner_name || order.supplier_name}</td>
                   <td className="p-3">{order.termin_date || "-"}</td>
                   <td className="p-3">
                     {remaining === null
