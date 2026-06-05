@@ -67,6 +67,7 @@ def clean_number(val):
         return 0.0
 
     s = str(val).strip()
+    s = s.replace("₺", "").replace("€", "").replace("£", "")
     s = s.replace("₺", "").replace("TL", "").replace("TRY", "")
     s = s.replace("$", "").replace("USD", "")
     s = s.replace("€", "").replace("EUR", "")
@@ -88,6 +89,10 @@ def clean_number(val):
 def detect_currency(text):
     text = str(text or "").upper()
 
+    if "€" in text:
+        return "EUR"
+    if "£" in text or "GBP" in text:
+        return "GBP"
     if "$" in text or "USD" in text:
         return "USD"
     if "€" in text or "EUR" in text:

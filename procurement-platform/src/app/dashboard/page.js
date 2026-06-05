@@ -502,6 +502,46 @@ export default function DashboardPage() {
       })),
     ].slice(0, 12);
 
+    const recentActivities = [
+      ...reports.map((report) => ({
+        type: "Rapor",
+        title:
+          report.ad ||
+          report.name ||
+          report.report_name ||
+          report.file_name ||
+          "Mukayese raporu",
+        date: report.created_at,
+        href: report.id ? `/dashboard/raporlar/${report.id}` : "/dashboard/raporlar",
+      })),
+      ...orders.map((order) => ({
+        type: "Siparis",
+        title: order.order_no || order.partner_name || order.supplier_name || "Siparis",
+        date: order.created_at || order.order_date,
+        href: order.id ? `/dashboard/siparisler/${order.id}` : "/dashboard/siparisler",
+      })),
+      ...requests.map((request) => ({
+        type: "Talep",
+        title:
+          request.name ||
+          request.fileName ||
+          request.file_name ||
+          request.ad ||
+          "Talep listesi",
+        date: request.created_at,
+        href: "/dashboard/talepler",
+      })),
+      ...projects.map((project) => ({
+        type: "Proje",
+        title: project.project_name || project.project_code || "Proje",
+        date: project.updated_at || project.created_at,
+        href: project.id ? `/dashboard/projeler/${project.id}` : "/dashboard/projeler",
+      })),
+    ]
+      .filter((activity) => activity.date)
+      .sort((a, b) => new Date(b.date) - new Date(a.date))
+      .slice(0, 8);
+
     return {
       activeProjects,
       delayedOrders,
@@ -512,6 +552,7 @@ export default function DashboardPage() {
       overBudgetProjects,
       workItems,
       processGaps,
+      recentActivities,
     };
   }, [dashboardData, projectById]);
 
@@ -681,6 +722,49 @@ export default function DashboardPage() {
               {intelligence.workItems.length === 0 && (
                 <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 text-sm font-bold text-emerald-900 xl:col-span-2">
                   Bugün müdahale gerektiren kritik iş görünmüyor.
+                </div>
+              )}
+            </div>
+          </section>
+
+          <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+              <div>
+                <h2 className="text-2xl font-black text-slate-900">
+                  Son Aktiviteler
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Son olusan rapor, siparis, talep ve proje hareketleri.
+                </p>
+              </div>
+              <span className="rounded-full bg-slate-100 px-4 py-2 text-sm font-black text-slate-700">
+                {intelligence.recentActivities.length} kayit
+              </span>
+            </div>
+
+            <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-2">
+              {intelligence.recentActivities.map((activity, index) => (
+                <Link
+                  key={`${activity.type}-${activity.title}-${activity.date}-${index}`}
+                  href={activity.href}
+                  className="flex items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 transition hover:border-blue-200 hover:bg-white"
+                >
+                  <div className="min-w-0">
+                    <div className="text-xs font-black uppercase text-blue-700">
+                      {activity.type}
+                    </div>
+                    <div className="mt-1 truncate text-sm font-black text-slate-900">
+                      {activity.title}
+                    </div>
+                  </div>
+                  <div className="shrink-0 text-right text-xs font-semibold text-slate-500">
+                    {new Date(activity.date).toLocaleString("tr-TR")}
+                  </div>
+                </Link>
+              ))}
+              {intelligence.recentActivities.length === 0 && (
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm font-bold text-slate-600 md:col-span-2">
+                  Henuz gosterilecek aktivite yok.
                 </div>
               )}
             </div>

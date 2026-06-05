@@ -233,6 +233,19 @@ def clean_number(val):
         return 0.0
 
 
+def detect_currency_from_text(value):
+    text = str(value or "").upper()
+
+    if "$" in text or "USD" in text or "DOLAR" in text:
+        return "USD"
+    if "€" in text or "EUR" in text or "EURO" in text or "â‚¬" in text:
+        return "EUR"
+    if "GBP" in text or "£" in text:
+        return "GBP"
+
+    return "TRY"
+
+
 def find_header_row(df):
     for i in range(len(df)):
         row_text = " ".join(normalize_col(x) for x in df.iloc[i].values)
@@ -242,9 +255,20 @@ def find_header_row(df):
             or "aciklama" in row_text
             or "malzeme adi" in row_text
             or "malzeme tanimi" in row_text
+            or "malzemenin cinsi" in row_text
         )
-        has_qty = "miktar" in row_text or "adet" in row_text or "quantity" in row_text
-        has_price = "birim fiyat" in row_text or "unit price" in row_text
+        has_qty = (
+            "miktar" in row_text
+            or "adet" in row_text
+            or "quantity" in row_text
+            or "ad mt" in row_text
+        )
+        has_price = (
+            "birim fiyat" in row_text
+            or "unit price" in row_text
+            or "net birim fiyat" in row_text
+            or "net tutar" in row_text
+        )
 
         if has_desc and has_qty and has_price:
             return i
@@ -359,12 +383,14 @@ def detect_footer_info(df):
     dip_toplam = 0.0
     kdv = 0.0
     genel_toplam = 0.0
+    context_text = []
 
     for _, row in df.iterrows():
         cells = [clean_text(x) for x in row.values]
         joined = " ".join(cells)
         norm = normalize_col(joined)
         nums = [clean_number(x) for x in cells if clean_number(x) > 0]
+        context_text.append(joined)
 
         if "vade" in norm or "odeme" in norm:
             vade = joined
@@ -383,6 +409,21 @@ def detect_footer_info(df):
         if "genel toplam" in norm or "yekun" in norm:
             if nums:
                 genel_toplam = nums[-1]
+
+    normalized_context = normalize_col(" ".join(context_text[:20]))
+
+    if not vade:
+        vade_match = re.search(r"(\d{1,3})\s*gun", normalized_context)
+        if vade_match:
+            vade = f"{vade_match.group(1)} gün"
+
+    if not termin:
+        termin_match = re.search(
+            r"(\d{1,2}\s*-\s*\d{1,2}\s*hafta|\d{1,3}\s*gun|hazir|stok)",
+            normalized_context,
+        )
+        if termin_match:
+            termin = termin_match.group(1)
 
     return {
         "vade": vade,
@@ -412,6 +453,9 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
     df = df.dropna(how="all")
 
     code_col = find_col_exact_or_contains(df.columns, [
+        "referans",
+        "ref",
+        "ref no",
         "urun kodu",
         "malzeme kodu",
         "stok kodu",
@@ -419,6 +463,8 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
     ], exclude_keywords=["sira", "sıra", "s no"])
 
     desc_col = find_col_exact_or_contains(df.columns, [
+        "malzemenin cinsi",
+        "malzeme cinsi",
         "urun aciklamasi",
         "aciklama",
         "malzeme adi",
@@ -437,6 +483,9 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
     ])
 
     qty_col = find_col_exact_or_contains(df.columns, [
+        "ad/mt",
+        "ad mt",
+        "ad",
         "miktar",
         "adet",
         "teklif miktari",
@@ -477,12 +526,15 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
     ])
 
     net_price_col = find_col_exact_or_contains(df.columns, [
+        "net birim fiyat tl",
+        "net birim fiyat",
         "iskontolu fiyat",
         "net fiyat",
-        "net birim fiyat",
     ])
 
     total_col = find_col_exact_or_contains(df.columns, [
+        "net tutar tl",
+        "net tutar",
         "satir toplami",
         "satir toplam",
         "toplam tutar",
@@ -492,6 +544,19 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
         "genel toplam",
         "dip toplam",
         "ara toplam",
+    ])
+
+    delivery_col = find_col_exact_or_contains(df.columns, [
+        "teslim",
+        "termin",
+        "teslim suresi",
+        "lead time",
+    ])
+
+    payment_col = find_col_exact_or_contains(df.columns, [
+        "vade",
+        "odeme",
+        "payment",
     ])
 
     rows = []
@@ -532,6 +597,8 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
         "discount_col": str(discount_col),
         "net_price_col": str(net_price_col),
         "total_col": str(total_col),
+        "delivery_col": str(delivery_col),
+        "payment_col": str(payment_col),
     })
 
     for row_index, r in df.iterrows():
@@ -581,6 +648,11 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
         price = clean_number(r.get(price_col)) if price_col is not None else 0.0
         discount = clean_number(r.get(discount_col)) if discount_col is not None else 0.0
         net_price_from_file = clean_number(r.get(net_price_col)) if net_price_col is not None else 0.0
+        row_currency = detect_currency_from_text(
+            " ".join([str(x) for x in [price_col, net_price_col, total_col, joined]])
+        )
+        row_vade = clean_text(r.get(payment_col)) if payment_col is not None else footer.get("vade", "")
+        row_termin = clean_text(r.get(delivery_col)) if delivery_col is not None else footer.get("termin", "")
 
         if price <= 0 and net_price_from_file > 0:
             price = net_price_from_file
@@ -597,7 +669,7 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
         ):
             row_total_from_file = row_total_calculated
 
-        if not code or not brand or not desc:
+        if not desc:
             if should_skip_context_line(joined):
                 continue
             errors.append(f"Şüpheli Excel satırı atlandı: kod/marka/açıklama eksik ({joined})")
@@ -624,16 +696,18 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
             "firma": firma,
             "firmaAdi": firma,
             "urunKodu": code,
-            "urunAciklamasi": clean_text(f"{brand} {desc}"),
+            "urunAciklamasi": clean_text(f"{brand} {desc}") if brand else desc,
             "birim": unit or "adet",
             "firmaAdedi": qty,
-            "paraBirimi": "TRY",
+            "paraBirimi": row_currency,
             "birimFiyat": price,
             "iskonto": discount,
+            "netBirimFiyat": net_price_from_file or net_unit_calculated or price,
+            "netToplam": row_total_from_file,
             "netBirimFiyatDosyadan": net_price_from_file,
             "satirToplamDosyadan": row_total_from_file,
-            "vade": footer.get("vade", ""),
-            "termin": footer.get("termin", ""),
+            "vade": row_vade,
+            "termin": row_termin,
             "firmaDipToplam": footer.get("dipToplam", 0),
             "firmaKdv": footer.get("kdv", 0),
             "firmaGenelToplam": footer.get("genelToplam", 0),

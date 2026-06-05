@@ -157,101 +157,6 @@ async function downloadReport(rapor) {
     return durumRenkleri.bekliyor;
   }
 
-async function createOrderFromReport(rapor) {
-
-  console.log("SİPARİŞE AKTARILAN RAPOR:", rapor);
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    router.push("/login");
-    return;
-  }
-
-  const { data: existingOrder, error: existingError } = await supabase
-    .from("orders")
-    .select("id")
-    .eq("user_id", user.id)
-    .eq("report_id", rapor.id)
-    .limit(1);
-
-  if (existingError) {
-    alert("Sipariş kontrolü yapılamadı: " + existingError.message);
-    return;
-  }
-
-  if (existingOrder?.length > 0) {
-    router.push(`/dashboard/siparisler/${existingOrder[0].id}`);
-    return;
-  }
-
-  const reportItems =
-    rapor.items ||
-    rapor.products ||
-    rapor.rows ||
-    rapor.urunler ||
-    [];
-
-  const normalizedItems = reportItems.map((item) => ({
-    productCode: item.productCode || item.urunKodu || "",
-    productName: item.productName || item.urunAciklamasi || item.product || "",
-    unit: item.unit || item.birim || "adet",
-    quantity: Number(item.quantity || item.talepEdilenAdet || item.miktar || 0),
-    deliveredQuantity: 0,
-    unitPrice: Number(item.unitPrice || item.birimFiyat || 0),
-    discount: Number(item.discount || item.iskonto || 0),
-    netUnitPrice: Number(item.netUnitPrice || item.netBirimFiyat || item.unitPrice || item.birimFiyat || 0),
-    total: Number(item.total || item.netToplamTRY || item.netToplam || item.toplamTutar || 0),
-    paymentTerm: item.paymentTerm || item.vade || rapor.vade || rapor.payment_term || "",
-    deliveryTerm: item.deliveryTerm || item.termin || rapor.termin || "",
-    currency: item.currency || item.paraBirimi || rapor.currency || "TRY",
-  }));
-
-  const orderData = {
-    company:
-      getReportFirma(rapor) === "-"
-        ? ""
-        : getReportFirma(rapor),
-
-    reportId: rapor.id,
-
-    reportName: getReportName(rapor),
-
-    orderNo: `SIP-${new Date().getFullYear()}-${String(Date.now()).slice(-5)}`,
-
-    orderDate: new Date().toISOString().split("T")[0],
-
-    status: "Bekliyor",
-
-    dueDate:
-      rapor.terminTarihi ||
-      rapor.termin_tarihi ||
-      "",
-
-    paymentTerm:
-      rapor.vade ||
-      rapor.payment_term ||
-      "",
-
-    totalAmount:
-      normalizedItems.reduce((sum, item) => sum + Number(item.total || 0), 0) ||
-      rapor.toplamTutar ||
-      rapor.total_amount ||
-      0,
-
-    items: normalizedItems,
-  };
-
-  localStorage.setItem(
-    "pendingOrder",
-    JSON.stringify(orderData)
-  );
-
-  router.push("/dashboard/siparisler");
-}
-
 async function deleteReport(reportId) {
   const onay = window.confirm("Bu raporu silmek istediğine emin misin?");
   if (!onay) return;
@@ -406,25 +311,13 @@ async function deleteReport(reportId) {
                   >
                     Raporu Indir
                   </button>
-                  <button
-                    type="button"
-                    disabled={rapor.durum === "Tamamlandı"}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      createOrderFromReport(rapor);
-                    }}
-                    style={{
-                      background: rapor.durum === "Tamamlandı" ? "#9ca3af" : "#16a34a",
-                      color: "#fff",
-                      border: "none",
-                      borderRadius: "10px",
-                      padding: "10px 14px",
-                      fontWeight: "600",
-                      cursor: rapor.durum === "Tamamlandı" ? "not-allowed" : "pointer",
-                    }}
+                  <Link
+                    href={`/dashboard/raporlar/${rapor.id}`}
+                    onClick={(e) => e.stopPropagation()}
+                    style={{ background: "#0f172a", color: "#fff", border: "none", borderRadius: "10px", padding: "10px 14px", fontWeight: "600", cursor: "pointer", textDecoration: "none" }}
                   >
-                    {rapor.durum === "Tamamlandı" ? "Sipariş Oluşturuldu" : "Sipariş Oluştur"}
-                  </button>
+                    İncele
+                  </Link>
                   <button
                     type="button"
                     onClick={(e) => {

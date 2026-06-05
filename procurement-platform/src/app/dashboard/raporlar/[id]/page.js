@@ -11,7 +11,6 @@ export default function RaporDetayPage() {
 
   const [rapor, setRapor] = useState(null);
   const [message, setMessage] = useState("");
-  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     const loadReport = async () => {
@@ -91,25 +90,50 @@ const sonAlimRows = useMemo(() => {
       analiz?.onerilenfirma ||
       "-";
 
-  function siparisOlustur() {
-    if (!rapor) return;
+  const kararOzeti = useMemo(() => {
+    if (!rapor) return [];
 
-    setLoading(true);
+    const rawRows = Array.isArray(analiz)
+      ? analiz
+      : Array.isArray(analiz?.items)
+        ? analiz.items
+        : Array.isArray(analiz?.rows)
+          ? analiz.rows
+          : [];
 
-    localStorage.setItem(
-      "pendingOrder",
-      JSON.stringify({
-        company: firma === "-" ? "" : firma,
-        product: raporAdi,
-        quantity: 1,
-        dueDate: "",
-        reportId: rapor.id,
-        reportName: raporAdi,
-      })
-    );
+    if (rawRows.length === 0) {
+      return [
+        "Rapor arsivde kayitli. Detay dosyasi indirildiginde mukayese satirlari ve secim hesabi incelenebilir.",
+        firma !== "-"
+          ? `${firma} onerilen firma olarak kaydedilmis.`
+          : "Onerilen firma bilgisi bu rapor kaydinda bulunmuyor.",
+      ];
+    }
 
-    window.location.href = "/dashboard/siparisler";
-  }
+    return rawRows.slice(0, 5).map((row, index) => {
+      const supplier =
+        row.recommended_firm ||
+        row.onerilenFirma ||
+        row.firma ||
+        row.supplier ||
+        firma ||
+        "Firma";
+      const reason =
+        row.reason ||
+        row.gerekce ||
+        row.explanation ||
+        row.aciklama ||
+        "fiyat, vade, termin ve risk kriterlerine gore avantajli gorunuyor";
+      const amount =
+        row.total ||
+        row.netToplamTRY ||
+        row.netToplam ||
+        row.toplamTutar ||
+        "";
+
+      return `${index + 1}. ${supplier}: ${reason}${amount ? ` (tutar: ${amount})` : ""}.`;
+    });
+  }, [analiz, firma, rapor]);
 
   if (!rapor) {
     return (
@@ -159,19 +183,21 @@ const sonAlimRows = useMemo(() => {
           />
         </div>
 
-        <div className="flex flex-wrap gap-3 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <button
-            type="button"
-            onClick={siparisOlustur}
-            disabled={loading}
-            className={`rounded-xl px-5 py-3 text-sm font-bold text-white ${
-              loading
-                ? "cursor-not-allowed bg-slate-400"
-                : "bg-green-600 hover:bg-green-700"
-            }`}
-          >
-            {loading ? "Yönlendiriliyor..." : "Sipariş Oluştur"}
-          </button>
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h2 className="text-xl font-bold text-slate-900">Karar Ozeti</h2>
+          <p className="mt-2 text-sm text-slate-500">
+            Raporun hangi gerekceyle bu sonuca yoneldigini hizli okumak icin tutulur.
+          </p>
+          <div className="mt-4 space-y-3">
+            {kararOzeti.map((item) => (
+              <div
+                key={item}
+                className="rounded-xl bg-slate-50 p-4 text-sm font-semibold text-slate-700"
+              >
+                {item}
+              </div>
+            ))}
+          </div>
         </div>
 
         {message && (

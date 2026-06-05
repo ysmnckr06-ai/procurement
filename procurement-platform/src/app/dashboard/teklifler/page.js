@@ -1014,15 +1014,9 @@ const loadCompanySettings = async () => {
                   Raporu İndir
                 </button>
                 {reportReady && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      window.location.href = "/dashboard/raporlar";
-                    }}
-                    className="w-full rounded-xl border border-green-300 bg-green-50 px-5 py-3 text-sm font-bold text-green-800 hover:bg-green-100"
-                >
-                  Raporlar sayfasına aktarıldı ✅
-                </button>
+                  <div className="rounded-xl border border-green-300 bg-green-50 px-5 py-3 text-sm font-bold text-green-800">
+                    Rapor otomatik olarak Raporlar sayfasına aktarıldı.
+                  </div>
                 )}
               </div>
             </section>
