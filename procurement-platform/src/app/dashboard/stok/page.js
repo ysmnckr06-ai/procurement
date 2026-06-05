@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL;
+
 function formatMoney(value, currency = "TRY") {
   return `${new Intl.NumberFormat("tr-TR", {
     minimumFractionDigits: 2,
@@ -190,6 +192,7 @@ export default function StockPage() {
   });
   const [deleting, setDeleting] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [bulkImporting, setBulkImporting] = useState(false);
 
   useEffect(() => {
     loadStock();
@@ -376,6 +379,101 @@ export default function StockPage() {
     setSaving(false);
   }
 
+  async function importStockCardsFromFiles(event) {
+    const files = Array.from(event.target.files || []);
+    if (files.length === 0) return;
+
+    setBulkImporting(true);
+    setMessage(`${files.length} dosya okunuyor. Ürün kartları çıkarılıyor...`);
+
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      const token = session?.access_token;
+      if (!token || !API_URL) {
+        setMessage("Toplu stok aktarımı için API bağlantısı veya oturum bulunamadı.");
+        return;
+      }
+
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        router.push("/login");
+        return;
+      }
+
+      const formData = new FormData();
+      files.forEach((file) => formData.append("files", file));
+
+      const response = await fetch(`${API_URL}/parse-project-items`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      });
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok || !data.success) {
+        setMessage(data.detail || data.message || "Dosyalardan ürün kartı çıkarılamadı.");
+        return;
+      }
+
+      const existingKeys = new Set(products.map(productGroupKey));
+      const now = new Date().toISOString();
+      const seenKeys = new Set();
+      const rows = (data.rows || []).filter((row) => String(row.product_name || "").trim());
+      const payload = rows.map((row, index) => {
+        const productCode = String(row.product_code || "").trim().toUpperCase() || `AUTO-${Date.now()}-${index + 1}`;
+        return {
+          user_id: user.id,
+          product_code: productCode,
+          brand: row.brand || "",
+          product_name: String(row.product_name || "").trim(),
+          unit: row.unit || "adet",
+          current_stock: 0,
+          min_stock: 0,
+          critical_stock: 0,
+          last_unit_price: Number(row.estimated_unit_price || 0),
+          manual_unit_price: 0,
+          last_currency: row.currency || "TRY",
+          category: row.section_name || row.category || "Dosyadan aktarılan",
+          source: "Toplu stok aktarımı",
+          notes: row.source_file ? `Kaynak dosya: ${row.source_file}` : "",
+          updated_at: now,
+        };
+      }).filter((product) => {
+        const key = productGroupKey(product);
+        if (existingKeys.has(key) || seenKeys.has(key)) return false;
+        seenKeys.add(key);
+        return true;
+      });
+
+      if (payload.length === 0) {
+        setMessage("Dosyada yeni ürün kartı oluşturacak satır bulunamadı.");
+        return;
+      }
+
+      const { error } = await supabase.from("products").insert(payload);
+      if (error) {
+        console.error("Toplu ürün kartı aktarımı hatası:", error);
+        setMessage(error.message || "Ürün kartları oluşturulamadı.");
+        return;
+      }
+
+      setMessage(`${payload.length} ürün kartı oluşturuldu. Stok miktarları kart detayından veya stok hareketleriyle güncellenebilir.`);
+      await loadStock();
+    } catch (error) {
+      console.error("Toplu stok aktarımı bağlantı hatası:", error);
+      setMessage(error.message || "Toplu stok aktarımı sırasında hata oluştu.");
+    } finally {
+      setBulkImporting(false);
+      event.target.value = "";
+    }
+  }
+
   const productGroups = useMemo(() => mergeProductGroups(products), [products]);
 
   const filteredProducts = useMemo(() => {
@@ -434,13 +532,26 @@ export default function StockPage() {
                 Talep ve teklif dosyalarından oluşan ürün kartlarını, sipariş teslimatlarından gelen stok girişlerini takip edin.
               </p>
             </div>
-            <button
-              type="button"
-              onClick={loadStock}
-              className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-bold text-white hover:bg-slate-800"
-            >
-              Yenile
-            </button>
+            <div className="flex flex-wrap gap-3">
+              <label className={`cursor-pointer rounded-xl px-5 py-3 text-sm font-bold text-white ${bulkImporting ? "bg-slate-300" : "bg-emerald-600 hover:bg-emerald-700"}`}>
+                {bulkImporting ? "Dosya okunuyor..." : "Toplu Ürün Yükle"}
+                <input
+                  type="file"
+                  multiple
+                  accept=".xlsx,.xls,.csv,.pdf,.png,.jpg,.jpeg"
+                  disabled={bulkImporting}
+                  onChange={importStockCardsFromFiles}
+                  className="hidden"
+                />
+              </label>
+              <button
+                type="button"
+                onClick={loadStock}
+                className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-bold text-white hover:bg-slate-800"
+              >
+                Yenile
+              </button>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-4">

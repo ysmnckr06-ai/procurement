@@ -5,8 +5,10 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
+const appTitle = "Proje ve Satınalma Yönetimi";
+
 const menu = [
-  { name: "Dashboard", icon: "🏠", href: "/dashboard" },
+  { name: "Genel Bakış", icon: "🏠", href: "/dashboard" },
   { name: "Projeler", icon: "📁", href: "/dashboard/projeler" },
   { name: "Talepler", icon: "📚", href: "/dashboard/talepler" },
   { name: "Teklifler", icon: "📊", href: "/dashboard/teklifler" },
@@ -66,16 +68,14 @@ export default function DashboardLayout({ children }) {
   return (
     <div className="min-h-screen bg-slate-100">
       <aside className="fixed left-0 top-0 z-30 hidden h-screen w-72 flex-col border-r border-slate-200 bg-white p-6 lg:flex">
-        <div className="mb-10 flex shrink-0 items-center gap-3">
+        <div className="mb-8 flex shrink-0 items-center gap-3">
           <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-600 text-3xl text-white shadow-lg">
             🛒
           </div>
 
-          <div>
-            <div className="text-2xl font-black text-slate-950">Satınalma</div>
-            <div className="text-sm font-medium text-slate-500">
-              Yönetim Sistemi
-            </div>
+          <div className="min-w-0">
+            <div className="text-xl font-black leading-tight text-slate-950">Proje ve Satınalma</div>
+            <div className="text-sm font-medium text-slate-500">Yönetimi</div>
           </div>
         </div>
 
@@ -90,14 +90,14 @@ export default function DashboardLayout({ children }) {
               <Link
                 key={item.name}
                 href={item.href}
-                className={`flex items-center gap-4 rounded-2xl px-5 py-4 text-base font-bold transition ${
+                className={`flex min-w-0 items-center gap-4 rounded-2xl px-5 py-4 text-base font-bold transition ${
                   active
                     ? "bg-blue-600 text-white shadow-lg shadow-blue-200"
                     : "text-slate-600 hover:bg-slate-100 hover:text-slate-950"
                 }`}
               >
-                <span className="text-2xl">{item.icon}</span>
-                <span>{item.name}</span>
+                <span className="shrink-0 text-2xl">{item.icon}</span>
+                <span className="min-w-0 truncate">{item.name}</span>
               </Link>
             );
           })}
@@ -106,7 +106,7 @@ export default function DashboardLayout({ children }) {
         <button
           type="button"
           onClick={handleSignOut}
-          className="mt-6 flex w-full items-center gap-4 rounded-2xl border border-red-100 bg-red-50 px-5 py-4 text-base font-black text-red-700 transition hover:bg-red-100"
+          className="mt-6 flex w-full shrink-0 items-center gap-4 rounded-2xl border border-red-100 bg-red-50 px-5 py-4 text-base font-black text-red-700 transition hover:bg-red-100"
         >
           <span className="text-2xl">🚪</span>
           <span>Çıkış Yap</span>
@@ -116,13 +116,11 @@ export default function DashboardLayout({ children }) {
       <main className="min-h-screen lg:pl-72">
         <div className="sticky top-0 z-20 border-b border-slate-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur lg:hidden">
           <div className="mb-3 flex items-center justify-between">
-            <div>
-              <div className="text-lg font-black text-slate-950">Satınalma</div>
-              <div className="text-xs font-semibold text-slate-500">
-                Yönetim Sistemi
-              </div>
+            <div className="min-w-0">
+              <div className="truncate text-lg font-black text-slate-950">{appTitle}</div>
+              <div className="text-xs font-semibold text-slate-500">Canlı operasyon ekranı</div>
             </div>
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600 text-xl text-white">
+            <div className="ml-3 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-600 text-xl text-white">
               🛒
             </div>
           </div>
@@ -156,7 +154,7 @@ export default function DashboardLayout({ children }) {
             </button>
           </nav>
         </div>
-        <div className="p-6 lg:p-8">{children}</div>
+        <div className="p-4 sm:p-6 lg:p-8">{children}</div>
       </main>
     </div>
   );

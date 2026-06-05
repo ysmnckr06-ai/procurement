@@ -306,6 +306,19 @@ const loadCompanySettings = async () => {
       const formData = new FormData();
 
       if (analysisMode === "withRequest" && selectedRequest) {
+        const selectedRequestItems = (() => {
+          if (Array.isArray(selectedRequest.items)) return selectedRequest.items;
+          if (typeof selectedRequest.items === "string" && selectedRequest.items.trim()) {
+            try {
+              const parsed = JSON.parse(selectedRequest.items);
+              return Array.isArray(parsed) ? parsed : [];
+            } catch (error) {
+              console.warn("Seçili talep kalemleri okunamadı:", error);
+            }
+          }
+          return [];
+        })();
+
         formData.append(
           "request_report_path",
           selectedRequest.filepath ||
@@ -320,9 +333,11 @@ const loadCompanySettings = async () => {
             selectedRequest.ad ||
             "Talep Listesi"
         );
+        formData.append("request_items_json", JSON.stringify(selectedRequestItems));
       } else {
         formData.append("request_report_path", "");
         formData.append("request_file_name", "Talep Olmadan Teklif Karşılaştırma");
+        formData.append("request_items_json", "[]");
       }
 
       files.forEach((file) => {
@@ -1033,4 +1048,3 @@ const loadCompanySettings = async () => {
   </div>
 );
 }
-

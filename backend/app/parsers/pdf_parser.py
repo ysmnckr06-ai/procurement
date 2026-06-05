@@ -1,6 +1,11 @@
-import pdfplumber
 import re
 import os
+import unicodedata
+
+try:
+    import pdfplumber
+except Exception:
+    pdfplumber = None
 
 
 SECTION_NAMES = {
@@ -39,6 +44,8 @@ def clean_text(val):
 
 def normalize_tr(val):
     text = str(val or "").lower()
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
     replacements = {
         "ı": "i",
         "i̇": "i",
@@ -68,9 +75,10 @@ def clean_number(val):
 
     s = str(val).strip()
     s = s.replace("₺", "").replace("€", "").replace("£", "")
-    s = s.replace("₺", "").replace("TL", "").replace("TRY", "")
+    s = s.replace("â‚º", "").replace("â‚¬", "").replace("Â£", "")
+    s = s.replace("TL", "").replace("TRY", "")
     s = s.replace("$", "").replace("USD", "")
-    s = s.replace("€", "").replace("EUR", "")
+    s = s.replace("€", "").replace("EUR", "").replace("GBP", "")
     s = s.replace("%", "")
     s = s.replace(",", ".")
 
@@ -89,15 +97,74 @@ def clean_number(val):
 def detect_currency(text):
     text = str(text or "").upper()
 
-    if "€" in text:
+    if "€" in text or "â‚¬" in text or re.search(r"\b(EUR|EURO)\b", text):
         return "EUR"
-    if "£" in text or "GBP" in text:
+    if "£" in text or "Â£" in text or re.search(r"\b(GBP|STERLIN)\b", text):
         return "GBP"
-    if "$" in text or "USD" in text:
+    if "$" in text or re.search(r"\b(USD|DOLAR)\b", text):
         return "USD"
-    if "€" in text or "EUR" in text:
-        return "EUR"
     return "TRY"
+
+
+MONEY_RE = r"\d[\d.,]*"
+UNIT_RE = r"adet|ad|pcs|kutu|metre|mt|m|adet"
+CURRENCY_RE = r"₺|TL|TRY|\$|USD|€|EUR|£|GBP"
+
+
+def clean_unit(value):
+    unit = normalize_tr(value)
+
+    if unit in ["ad", "adet", "pcs"]:
+        return "adet"
+    if unit in ["mt", "m", "metre"]:
+        return "metre"
+    if unit:
+        return unit
+
+    return "adet"
+
+
+def clean_product_description(value):
+    text = clean_text(value)
+    text = re.sub(r"\(\s*\d{4,}\s*\)", " ", text)
+    text = re.sub(
+        r"\b\d+(?:[.,]\d+)?\s*(?:adet|ad)\s+(?:stok|sipariş|siparis|hazır|hazir)\s+\d+(?:[.,]\d+)?\s*(?:adet|ad)\b",
+        " ",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return clean_text(text)
+
+
+def parsed_offer_row(code, description, quantity, unit_price, line_total, currency, unit="adet", discount=0, term=""):
+    qty = clean_number(quantity)
+    net_price = clean_number(unit_price)
+    total = clean_number(line_total)
+    clean_description = clean_product_description(description)
+    clean_term = clean_text(re.sub(r"\s*(?:TL|TRY|USD|EUR|GBP|₺|€|£|\$)\s*$", "", clean_text(term), flags=re.IGNORECASE))
+
+    if not clean_description or qty <= 0 or (net_price <= 0 and total <= 0):
+        return None
+
+    if net_price <= 0 and total > 0:
+        net_price = total / qty
+
+    if total <= 0 and net_price > 0:
+        total = net_price * qty
+
+    return {
+        "urunKodu": clean_text(code),
+        "urunAciklamasi": clean_description,
+        "birim": clean_unit(unit),
+        "firmaAdedi": qty,
+        "paraBirimi": currency or "TRY",
+        "birimFiyat": net_price,
+        "iskonto": clean_number(discount),
+        "netBirimFiyat": net_price,
+        "netToplam": total,
+        "vade": "",
+        "termin": clean_term,
+    }
 
 
 def money_equals(left, right, tolerance=0.05):
@@ -223,8 +290,8 @@ def is_product_table_header(line):
         ("no" in low or "sira" in low)
         and "malzeme" in low
         and "kod" in low
-        and "aciklama" in low
-        and "adet" in low
+        and ("aciklama" in low or "cinsi" in low or "malzeme" in low)
+        and ("adet" in low or "miktar" in low or "ad/mt" in low or "ad mt" in low)
         and ("tutar" in low or "net fiyat" in low or "fiyat" in low)
     )
 
@@ -306,6 +373,12 @@ def should_skip_line(line):
 
     skip_words = [
         "not",
+        "rapor",
+        "rapor olusturan",
+        "rapor no",
+        "mukayese",
+        "karsilastirma raporu",
+        "teklif karsilastirma",
         "fiyatlandırma",
         "teklif tüm",
         "teklif tum",
@@ -361,6 +434,80 @@ def should_skip_line(line):
     return any(word in low for word in skip_words)
 
 
+def is_pdf_product_row_start(line):
+    text = clean_text(line)
+
+    if not text or is_product_table_header(text):
+        return False
+
+    if should_skip_line(text):
+        return False
+
+    return bool(
+        re.match(r"^\s*\d+\s+(?=\S*\d)[A-Za-z0-9][A-Za-z0-9._/-]{1,}\b", text)
+        or re.match(r"^\s*[A-Za-z]{1,8}\d{2,}[A-Za-z0-9._/-]*\b", text)
+    )
+
+
+def build_logical_product_lines(lines):
+    logical_lines = []
+    current = []
+    in_product_area = False
+
+    for line in lines:
+        text = clean_text(line)
+
+        if not text:
+            continue
+
+        if is_product_table_header(text):
+            in_product_area = True
+            if current:
+                logical_lines.append(clean_text(" ".join(current)))
+                current = []
+            continue
+
+        low = normalize_tr(text)
+
+        row_start = is_pdf_product_row_start(text)
+
+        if row_start:
+            if current:
+                logical_lines.append(clean_text(" ".join(current)))
+            current = [text]
+            in_product_area = True
+            continue
+
+        if current and (
+            low.startswith("toplam")
+            or low.startswith("ara toplam")
+            or low.startswith("genel toplam")
+            or low.startswith("kdv")
+            or low.startswith("aciklama")
+            or low.startswith("odeme")
+            or low.startswith("teslimat")
+            or low.startswith("not")
+            or low.startswith("opsiyon")
+            or low.startswith("teklif onayi")
+            or re.fullmatch(r"\d[\d.,]*\s*(?:₺|€|£|\$|tl|try|usd|eur|gbp)", low)
+        ):
+            logical_lines.append(clean_text(" ".join(current)))
+            current = []
+            in_product_area = False
+            continue
+
+        if not in_product_area and not is_pdf_product_row_start(text):
+            continue
+
+        if current:
+            current.append(text)
+
+    if current:
+        logical_lines.append(clean_text(" ".join(current)))
+
+    return logical_lines
+
+
 def parse_pdf_line(line):
     line = clean_text(line)
 
@@ -377,6 +524,127 @@ def parse_pdf_line(line):
         return None 
     
     currency = detect_currency(line)
+
+    # Göktürk benzeri format:
+    # S.No Ürün Kodu Malzemenin Cinsi Birim Miktar NET Fiyat Tutar Para Birimi ...
+    standard_row = re.match(
+        rf"^\s*\d+\s+"
+        rf"(?P<code>[A-Za-z0-9._/-]+)\s+"
+        rf"(?P<desc>.+?)\s+"
+        rf"(?P<unit>{UNIT_RE})\s+"
+        rf"(?P<qty>\d+(?:[.,]\d+)?)\s+"
+        rf"(?P<unit_price>{MONEY_RE})\s+"
+        rf"(?P<line_total>{MONEY_RE})\s*"
+        rf"(?P<currency>{CURRENCY_RE})?"
+        rf"(?:\s+(?P<term>.*))?$",
+        line,
+        re.IGNORECASE,
+    )
+
+    if standard_row:
+        return parsed_offer_row(
+            standard_row.group("code"),
+            standard_row.group("desc"),
+            standard_row.group("qty"),
+            standard_row.group("unit_price"),
+            standard_row.group("line_total"),
+            detect_currency(standard_row.group("currency") or line),
+            standard_row.group("unit"),
+            0,
+            standard_row.group("term") or "",
+        )
+
+    # Vata/MP System benzeri format:
+    # No Kod Açıklama ... STOK/SİPARİŞ - Marka Miktar Ad Liste Fiyat İsk Net Fiyat Tutar
+    vata_row = re.match(
+        rf"^\s*\d+\s+"
+        rf"(?P<code>[A-Za-z0-9._/-]+)\s+"
+        rf"(?P<desc>.+?)\s+"
+        rf"(?P<delivery>STOK|SİPARİŞ|SIPARIS|HAZIR|HAZİR)\s*-\s*"
+        rf"(?P<brand>[A-Za-z0-9ÇĞİÖŞÜçğıöşü._/-]+)\s+"
+        rf"(?P<qty>\d+(?:[.,]\d+)?)\s*(?P<unit>{UNIT_RE})\s+"
+        rf"(?P<list_price>{MONEY_RE})\s*(?:{CURRENCY_RE})?\s+"
+        rf"(?P<discount>\d+(?:[.,]\d+)?)\s+"
+        rf"(?P<net_price>{MONEY_RE})\s*(?:{CURRENCY_RE})?\s+"
+        rf"(?P<line_total>{MONEY_RE})\s*(?:{CURRENCY_RE})?.*$",
+        line,
+        re.IGNORECASE,
+    )
+
+    if vata_row:
+        return parsed_offer_row(
+            vata_row.group("code"),
+            f"{vata_row.group('brand')} {vata_row.group('desc')}",
+            vata_row.group("qty"),
+            vata_row.group("net_price"),
+            vata_row.group("line_total"),
+            currency,
+            vata_row.group("unit"),
+            vata_row.group("discount"),
+            vata_row.group("delivery"),
+        )
+
+    # BKC benzeri ters kolon çıktısı:
+    # Kod Açıklama Marka Birim Liste Tutar Net İsk Tutar Miktar No Teslim ParaBirimi
+    bkc_row = re.match(
+        rf"^\s*"
+        rf"(?P<code>[A-Za-z0-9._/-]+)\s+"
+        rf"(?P<desc>.+?)\s+"
+        rf"(?P<unit>ADET|Adet|adet|AD|ad)\s+"
+        rf"(?P<list_price>{MONEY_RE})\s+"
+        rf"(?P<line_total_precise>{MONEY_RE})\s+"
+        rf"(?P<net_price>{MONEY_RE})\s+"
+        rf"(?P<discount>\d+(?:[.,]\d+)?)\s+"
+        rf"(?P<line_total_rounded>{MONEY_RE})\s+"
+        rf"(?P<qty>\d+(?:[.,]\d+)?)\s+"
+        rf"(?P<row_no>\d+)\s+"
+        rf"(?P<delivery>.+?)\s+"
+        rf"(?P<currency>{CURRENCY_RE})\s*$",
+        line,
+        re.IGNORECASE,
+    )
+
+    if bkc_row:
+        return parsed_offer_row(
+            bkc_row.group("code"),
+            bkc_row.group("desc"),
+            bkc_row.group("qty"),
+            bkc_row.group("net_price"),
+            bkc_row.group("line_total_precise"),
+            detect_currency(bkc_row.group("currency")),
+            bkc_row.group("unit"),
+            bkc_row.group("discount"),
+            bkc_row.group("delivery"),
+        )
+
+    # MP System fiyat listesi görselindeki sıra:
+    # S.No Teslim Referans Ad/Mt Amb Malzemenin Cinsi Net Birim Net Tutar İskonto
+    mp_system_row = re.match(
+        rf"^\s*\d+\s+"
+        rf"(?P<delivery>\d+\s*-\s*\d+\s*HAFTA|HAZIR|HAZİR|STOK|SİPARİŞ|SIPARIS)\s+"
+        rf"(?P<code>[A-Za-z0-9._/-]+)\s+"
+        rf"(?P<qty>\d+(?:[.,]\d+)?)\s+"
+        rf"(?:\d+(?:[.,]\d+)?\s+)?"
+        rf"(?P<desc>.+?)\s+"
+        rf"(?P<unit_price>{MONEY_RE})\s+"
+        rf"(?P<line_total>{MONEY_RE})"
+        rf"(?:\s+(?P<discount>\d+(?:[.,]\d+)?))?\s*$",
+        line,
+        re.IGNORECASE,
+    )
+
+    if mp_system_row:
+        return parsed_offer_row(
+            mp_system_row.group("code"),
+            mp_system_row.group("desc"),
+            mp_system_row.group("qty"),
+            mp_system_row.group("unit_price"),
+            mp_system_row.group("line_total"),
+            currency,
+            "adet",
+            mp_system_row.group("discount") or 0,
+            mp_system_row.group("delivery"),
+        )
 
     table_row = re.match(
         r"^\s*\d+\s+"
@@ -528,6 +796,22 @@ def find_header_column(header, required_words):
     return -1
 
 
+def find_header_column_any(header, candidates, exclude_words=None):
+    exclude_words = exclude_words or []
+
+    for words in candidates:
+        for index, cell in enumerate(header):
+            low = normalize_tr(cell)
+
+            if any(word in low for word in exclude_words):
+                continue
+
+            if all(word in low for word in words):
+                return index
+
+    return -1
+
+
 def cell_at(row, index):
     if index < 0 or index >= len(row):
         return ""
@@ -602,12 +886,36 @@ def parse_product_tables(tables, firma, footer, file_name):
                 break
 
         if header:
-            code_index = find_header_column(header, ["malzeme", "kod"])
-            brand_index = find_header_column(header, ["marka"])
-            desc_index = find_header_column(header, ["aciklama"])
-            qty_index = find_header_column(header, ["adet"])
-            unit_price_index = find_header_column(header, ["net", "fiyat"])
-            total_index = find_header_column(header, ["tutar"])
+            code_index = find_header_column_any(header, [
+                ["malzeme", "kod"],
+                ["urun", "kod"],
+                ["referans"],
+                ["kod"],
+            ], exclude_words=["sira", "s no"])
+            brand_index = find_header_column_any(header, [["marka"], ["brand"], ["uretici"]])
+            desc_index = find_header_column_any(header, [
+                ["aciklama"],
+                ["malzeme", "cinsi"],
+                ["malzemenin", "cinsi"],
+                ["malzeme"],
+                ["urun"],
+            ], exclude_words=["kod"])
+            qty_index = find_header_column_any(header, [
+                ["adet"],
+                ["miktar"],
+                ["ad", "mt"],
+                ["ad/mt"],
+            ])
+            unit_index = find_header_column_any(header, [["birim"], ["unit"]], exclude_words=["fiyat"])
+            unit_price_index = find_header_column_any(header, [
+                ["net", "birim", "fiyat"],
+                ["net", "fiyat"],
+                ["birim", "fiyat"],
+                ["fiyat"],
+            ], exclude_words=["liste"])
+            total_index = find_header_column_any(header, [["net", "tutar"], ["tutar"], ["toplam"]])
+            delivery_index = find_header_column_any(header, [["teslim"], ["termin"], ["stok", "durum"]])
+            currency_index = find_header_column_any(header, [["para", "birim"], ["currency"], ["doviz"]])
 
             if qty_index < 0 or desc_index < 0:
                 active_header = None
@@ -620,8 +928,11 @@ def parse_product_tables(tables, firma, footer, file_name):
                 "brand": brand_index,
                 "desc": desc_index,
                 "qty": qty_index,
+                "unit": unit_index,
                 "unit_price": unit_price_index,
                 "total": total_index,
+                "delivery": delivery_index,
+                "currency": currency_index,
             }
         elif active_header and active_indexes:
             data_rows = table
@@ -632,8 +943,11 @@ def parse_product_tables(tables, firma, footer, file_name):
         brand_index = active_indexes["brand"]
         desc_index = active_indexes["desc"]
         qty_index = active_indexes["qty"]
+        unit_index = active_indexes["unit"]
         unit_price_index = active_indexes["unit_price"]
         total_index = active_indexes["total"]
+        delivery_index = active_indexes["delivery"]
+        currency_index = active_indexes["currency"]
 
         for raw_row in data_rows:
             cells = [clean_text(cell) for cell in raw_row]
@@ -646,8 +960,11 @@ def parse_product_tables(tables, firma, footer, file_name):
             code = cell_at(cells, code_index)
             brand = cell_at(cells, brand_index)
             description = cell_at(cells, desc_index)
+            unit = cell_at(cells, unit_index) or "adet"
             unit_price = clean_number(cell_at(cells, unit_price_index))
             line_total = clean_number(cell_at(cells, total_index))
+            delivery = cell_at(cells, delivery_index)
+            row_currency = detect_currency(cell_at(cells, currency_index) or joined)
             section_source = description or brand or code or joined
             section_name = canonical_section_name(section_source)
 
@@ -666,8 +983,8 @@ def parse_product_tables(tables, firma, footer, file_name):
             if should_skip_line(joined):
                 continue
 
-            if not code or not brand or not description:
-                errors.append(f"Şüpheli satır atlandı: kod/marka/açıklama eksik ({joined})")
+            if not code or not description:
+                errors.append(f"Şüpheli satır atlandı: kod/açıklama eksik ({joined})")
                 continue
 
             name = clean_text(f"{brand} {description}") if brand else description
@@ -696,15 +1013,15 @@ def parse_product_tables(tables, firma, footer, file_name):
                 {
                     "urunKodu": code,
                     "urunAciklamasi": name,
-                    "birim": "adet",
+                    "birim": unit or "adet",
                     "firmaAdedi": quantity,
-                    "paraBirimi": detect_currency(joined),
+                    "paraBirimi": row_currency,
                     "birimFiyat": unit_price,
                     "iskonto": 0,
                     "netBirimFiyat": unit_price,
                     "netToplam": line_total,
                     "vade": "",
-                    "termin": "",
+                    "termin": delivery,
                 },
                 firma,
                 footer,
@@ -758,6 +1075,9 @@ def parse_pdf_with_audit(file_path, firma_adi="", file_name=""):
     errors = []
     warnings = []
 
+    if pdfplumber is None:
+        raise RuntimeError("PDF okuma kütüphanesi yüklenemedi: pdfplumber")
+
     with pdfplumber.open(file_path) as pdf:
         full_text = "\n".join([page.extract_text() or "" for page in pdf.pages])
         tables = []
@@ -775,38 +1095,30 @@ def parse_pdf_with_audit(file_path, firma_adi="", file_name=""):
     lines = [clean_text(x) for x in full_text.split("\n") if clean_text(x)]
     has_product_table_header = any(is_product_table_header(line) for line in lines)
 
-    if rows:
-        return {
-            "rows": rows,
-            "sections": sections,
-            "errors": errors,
-            "warnings": warnings,
-        }
+    logical_lines = build_logical_product_lines(lines)
 
-    if has_product_table_header:
-        return {
-            "rows": [],
-            "sections": sections,
-            "errors": errors + ["Ürün tablosu bulundu ama güvenilir ürün satırı çıkarılamadı."],
-            "warnings": warnings,
-        }
+    if not logical_lines and not has_product_table_header:
+        logical_lines = lines
 
-    in_product_table = not has_product_table_header
+    fallback_rows = []
 
-    for line in lines:
-        if has_product_table_header and is_product_table_header(line):
-            in_product_table = True
-            continue
-
-        if not in_product_table:
-            continue
-
+    for line in logical_lines:
         parsed = parse_pdf_line(line)
 
         if not parsed:
             continue
 
-        rows.append(make_offer_row(parsed, firma, footer, file_name))
+        fallback_rows.append(make_offer_row(parsed, firma, footer, file_name))
+
+    if fallback_rows and (not rows or len(fallback_rows) >= len(rows)):
+        if rows and len(fallback_rows) > len(rows):
+            warnings.append(
+                f"PDF tablo okuması yerine satır okuması kullanıldı: {len(fallback_rows)} satır."
+            )
+        rows = fallback_rows
+
+    if has_product_table_header and not rows:
+        errors.append("Ürün tablosu bulundu ama güvenilir ürün satırı çıkarılamadı.")
 
     return {
         "rows": rows,

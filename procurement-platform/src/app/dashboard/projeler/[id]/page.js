@@ -107,16 +107,19 @@ const emptyRevision = {
   description: "",
   revenue_amount: "",
   cost_amount: "",
+  project_item_id: "",
+  quantity_delta: "",
+  revised_unit_price: "",
   currency: "TRY",
   exchange_rate: 1,
   status: "Onay Bekliyor",
 };
 
-function formatMoney(value) {
+function formatMoney(value, currency = "TRY") {
   return `${new Intl.NumberFormat("tr-TR", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  }).format(Number(value || 0))} TRY`;
+  }).format(Number(value || 0))} ${currency || "TRY"}`;
 }
 
 function formatDate(value) {
@@ -352,6 +355,15 @@ export default function ProjectDetailPage() {
     if (typeof window !== "undefined" && projectId) {
       window.localStorage.setItem(`project-section-totals-${projectId}`, JSON.stringify(cleanSections));
     }
+  }
+
+  function projectCurrencyForDisplay(sourceCurrency = "") {
+    return project?.estimated_budget_currency
+      || project?.contract_currency
+      || companySettings.default_currency
+      || companySettings.base_currency
+      || sourceCurrency
+      || "TRY";
   }
 
   function rowQuoteTotal(row, title = "") {
@@ -625,7 +637,11 @@ export default function ProjectDetailPage() {
       return false;
     });
 
-    const stockQuantity = matched.reduce((sum, product) => sum + Number(product.current_stock || 0), 0);
+    const stockQuantity = matched.reduce((sum, product) => {
+      const total = Number(product.current_stock || 0);
+      const reserved = Number(product.reserved_stock || 0);
+      return sum + Math.max(total - reserved, 0);
+    }, 0);
     const criticalLevels = matched
       .map((product) => Number(product.minimum_stock ?? product.critical_stock ?? product.min_stock ?? 0))
       .filter((value) => value > 0);
@@ -638,6 +654,7 @@ export default function ProjectDetailPage() {
 
     return {
       stockQuantity,
+      matchedProducts: matched,
       criticalStock,
       estimatedQuantity,
       requiredQuantity,
@@ -1428,6 +1445,7 @@ export default function ProjectDetailPage() {
     await refreshProjectBudget(nextItems);
     const freshItems = await loadProjectItems();
     await refreshProjectBudget(freshItems);
+    await loadProject();
   }
 
   function expandProjectItemSelection(selectedIds) {
@@ -1513,6 +1531,7 @@ export default function ProjectDetailPage() {
       await refreshProjectBudget(nextItems);
       const freshItems = await loadProjectItems();
       await refreshProjectBudget(freshItems);
+      await loadProject();
       if (data.remaining_count > 0) {
         setMessage(`${data.remaining_count} kayıt silinemedi. ${data.deleted_count || deletedIds.length} kayıt silindi.`);
       } else {
@@ -1711,18 +1730,64 @@ export default function ProjectDetailPage() {
     if (!user) return;
 
     const revenueAmount = Number(revisionForm.revenue_amount || 0);
-    const costAmount = Number(revisionForm.cost_amount || 0);
+    const baseCostAmount = Number(revisionForm.cost_amount || 0);
+    const quantityDelta = Number(revisionForm.quantity_delta || 0);
+    const hasRevisedUnitPrice = String(revisionForm.revised_unit_price || "").trim() !== "";
+    const revisedUnitPrice = hasRevisedUnitPrice ? Number(revisionForm.revised_unit_price || 0) : null;
+    const selectedRevisionItem = items.find((item) => item.id === revisionForm.project_item_id);
     const currency = revisionForm.currency || getBaseCurrency(companySettings);
     const exchangeRate = Number(revisionForm.exchange_rate || getExchangeRate(currency, companySettings));
 
     if (!String(revisionForm.title || "").trim()) {
-      setMessage("Revizyon başlığı zorunlu.");
+      setMessage("Revizyon ba?l??? zorunlu.");
       return;
     }
 
-    if (revenueAmount <= 0 && costAmount <= 0) {
-      setMessage("Revizyon için gelir veya maliyet etkisi girin.");
+    if (revenueAmount <= 0 && baseCostAmount <= 0 && !selectedRevisionItem) {
+      setMessage("Revizyon i?in gelir, maliyet etkisi veya ?r?n de?i?ikli?i girin.");
       return;
+    }
+
+    let itemRevisionNote = "";
+    let costAmount = baseCostAmount;
+
+    if (selectedRevisionItem) {
+      const currentQuantity = Number(selectedRevisionItem.estimated_quantity || 0);
+      const currentUnitPrice = Number(selectedRevisionItem.estimated_unit_price || selectedRevisionItem.quote_unit_price || 0);
+      const nextQuantity = Math.max(currentQuantity + quantityDelta, 0);
+      const nextUnitPrice = revisedUnitPrice !== null ? revisedUnitPrice : currentUnitPrice;
+      const currentTotal = Number(selectedRevisionItem.estimated_total || currentQuantity * currentUnitPrice || 0);
+      const nextTotal = nextQuantity * nextUnitPrice;
+      const totalDelta = nextTotal - currentTotal;
+
+      const { error: itemUpdateError } = await supabase
+        .from("project_items")
+        .update({
+          estimated_quantity: nextQuantity,
+          estimated_unit_price: nextUnitPrice,
+          estimated_total: nextTotal,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", selectedRevisionItem.id)
+        .eq("project_id", projectId)
+        .eq("user_id", user.id);
+
+      if (itemUpdateError) {
+        console.error("Revizyon ?r?n sat?r?na uygulanamad?:", itemUpdateError);
+        setMessage(itemUpdateError.message || "Revizyon ?r?n sat?r?na uygulanamad?.");
+        return;
+      }
+
+      if (costAmount <= 0 && totalDelta > 0) {
+        costAmount = totalDelta;
+      }
+
+      itemRevisionNote = [
+        `?r?n: ${selectedRevisionItem.product_name}`,
+        `Miktar: ${currentQuantity} -> ${nextQuantity}`,
+        `Birim fiyat: ${formatMoney(currentUnitPrice, currency)} -> ${formatMoney(nextUnitPrice, currency)}`,
+        `Satır toplamı: ${formatMoney(currentTotal, currency)} -> ${formatMoney(nextTotal, currency)}`,
+      ].join(" | ");
     }
 
     const payload = {
@@ -1731,7 +1796,7 @@ export default function ProjectDetailPage() {
       revision_date: revisionForm.revision_date || new Date().toISOString().slice(0, 10),
       revision_type: revisionForm.revision_type || "Revizyon",
       title: String(revisionForm.title || "").trim(),
-      description: String(revisionForm.description || "").trim(),
+      description: [String(revisionForm.description || "").trim(), itemRevisionNote].filter(Boolean).join(" | "),
       revenue_amount: revenueAmount,
       revenue_base_amount: calculateBaseAmount(revenueAmount, currency, companySettings, exchangeRate),
       cost_amount: costAmount,
@@ -1750,13 +1815,16 @@ export default function ProjectDetailPage() {
 
     if (error) {
       console.error("Revizyon kaydedilemedi:", error);
-      setMessage(error.message || "Revizyon kaydedilemedi. Supabase şemasında project_revisions tablosu çalıştırılmış olmalı.");
+      setMessage(error.message || "Revizyon kaydedilemedi. Supabase ?emas?nda project_revisions tablosu ?al??t?r?lm?? olmal?.");
       return;
     }
 
     setRevisions((prev) => [data, ...prev]);
     setRevisionForm(emptyRevision);
-    setMessage("Revizyon / ek iş kaydedildi.");
+    if (selectedRevisionItem) {
+      await loadProject();
+    }
+    setMessage("Revizyon / ek i? kaydedildi.");
   }
 
   async function deleteRevision(revision) {
@@ -2206,7 +2274,7 @@ export default function ProjectDetailPage() {
     if (files.length === 0) return;
 
     setIsParsing(true);
-    setMessage("");
+    setMessage(`${files.length} dosya okunuyor. Büyük tekliflerde bu işlem birkaç dakika sürebilir.`);
     setPreviewActionMessage("");
     setPreviewWarnings([]);
     setPreviewBlocked(false);
@@ -2256,7 +2324,6 @@ export default function ProjectDetailPage() {
         rememberSectionTotals(data.sections || []);
         const nextRawItems = data.raw_items || data.rawItems || [];
         setRawItems(nextRawItems);
-        await loadMainProductCandidates(nextRawItems, token);
         setMessage("Dosya kontrol edildi ama güvenli aktarım için kilitlendi.");
         const nextPreviewRows = preparePreviewRows(data.rows || []);
         setPreviewRows(nextPreviewRows);
@@ -2271,7 +2338,6 @@ export default function ProjectDetailPage() {
         rememberSectionTotals(data.sections || []);
         const nextRawItems = data.raw_items || data.rawItems || [];
         setRawItems(nextRawItems);
-        await loadMainProductCandidates(nextRawItems, token);
         setMessage(`${data.totalRows} satır okundu. Aktarmadan önce önizlemeyi kontrol edin.`);
       }
     } catch (error) {
@@ -2364,10 +2430,10 @@ export default function ProjectDetailPage() {
     if (isImportingPreview) return;
 
     setIsImportingPreview(true);
-    setPreviewActionMessage("Hiyerarşik aktarım hazırlanıyor...");
+    setPreviewActionMessage("Hiyerarşik aktarım hazırlanıyor. Önce ana gruplar, sonra alt malzemeler kaydedilecek.");
 
     try {
-      setMessage("Hiyerarşik aktarım hazırlanıyor...");
+      setMessage("Hiyerarşik aktarım başladı. Büyük listelerde ekran kısa süre bekleyebilir.");
       const rowsToImport = selectedPreviewRows.length > 0 ? selectedPreviewRows : previewRows;
       if (rowsToImport.length === 0) {
         const emptyMessage = "Aktarılacak ürün bulunamadı.";
@@ -2431,6 +2497,7 @@ export default function ProjectDetailPage() {
       });
 
       const { data: insertedParents, error: parentError, usedFallback: parentUsedFallback } = await insertProjectItemsWithFallback(parentPayload);
+      setPreviewActionMessage(`${parentPayload.length} ana grup kaydedildi. Alt malzemeler aktarılıyor...`);
 
       if (parentError) {
         const errorMessage = parentError.message || "Hiyerarşik aktarım yapılamadı.";
@@ -2451,6 +2518,7 @@ export default function ProjectDetailPage() {
       let insertedChildren = [];
       let childUsedFallback = false;
       if (childPayload.length > 0) {
+        setPreviewActionMessage(`${childPayload.length} alt malzeme kaydediliyor...`);
         const { data, error, usedFallback } = await insertProjectItemsWithFallback(childPayload);
 
         if (error) {
@@ -2466,6 +2534,7 @@ export default function ProjectDetailPage() {
       }
 
       const importedIds = new Set(rowsToImport.map((row) => row.preview_id));
+      setPreviewActionMessage("Ürün kartları eşleştiriliyor ve proje bütçesi yenileniyor...");
       const nextItems = await ensureProductCardsForProjectItems([...items, ...(insertedParents || []), ...insertedChildren], user.id);
       setItems(nextItems);
       setPreviewRows((prev) => prev.filter((row) => !importedIds.has(row.preview_id)));
@@ -2691,6 +2760,97 @@ export default function ProjectDetailPage() {
     setMessage(`${movementPayload.length} kalem stoğa aktarıldı.${skippedCount > 0 ? ` ${skippedCount} kalem daha önce aktarıldığı için atlandı.` : ""}${updateWarnings.length > 0 ? " Bazı kart güncellemeleri kontrol edilmeli." : ""}`);
   }
 
+  async function coverItemFromStock(item) {
+    setMessage("");
+
+    const user = await getUserOrRedirect();
+    if (!user) return;
+
+    const info = stockInfoForItem(item);
+    const product = info.matchedProducts?.find((candidate) => {
+      const total = Number(candidate.current_stock || 0);
+      const reserved = Number(candidate.reserved_stock || 0);
+      return Math.max(total - reserved, 0) > 0;
+    });
+    const coverQuantity = Math.min(Number(item.estimated_quantity || 0), Number(info.stockQuantity || 0));
+
+    if (!product || coverQuantity <= 0) {
+      setMessage("Bu kalem için stoktan karşılanabilecek uygun ürün bulunamadı.");
+      return;
+    }
+
+    const approved = window.confirm(`${item.product_name} için ${coverQuantity} ${item.unit || "adet"} stoktan projeye ayrılsın mı?`);
+    if (!approved) return;
+
+    const now = new Date().toISOString();
+    const today = now.slice(0, 10);
+    const reservedStock = Number(product.reserved_stock || 0) + coverQuantity;
+    const itemReserved = Number(item.reserved_quantity || 0) + coverQuantity;
+    const remainingAfterReserve = Math.max(Number(item.estimated_quantity || 0) - itemReserved, 0);
+    const nextStatus = remainingAfterReserve <= 0 ? "Projeye rezerve edildi" : "Satınalma gerekli";
+
+    const { error: productError } = await supabase
+      .from("products")
+      .update({
+        reserved_stock: reservedStock,
+        updated_at: now,
+      })
+      .eq("id", product.id)
+      .eq("user_id", user.id);
+
+    if (productError) {
+      setMessage(productError.message || "Stok kartı rezerve edilemedi.");
+      return;
+    }
+
+    const { error: itemError } = await supabase
+      .from("project_items")
+      .update({
+        product_id: product.id,
+        reserved_quantity: itemReserved,
+        status: nextStatus,
+        updated_at: now,
+      })
+      .eq("id", item.id)
+      .eq("project_id", projectId)
+      .eq("user_id", user.id);
+
+    if (itemError) {
+      setMessage(itemError.message || "Proje kalemi stoktan karşılandı olarak güncellenemedi.");
+      return;
+    }
+
+    const { error: movementError } = await supabase
+      .from("stock_movements")
+      .insert({
+        user_id: user.id,
+        product_id: product.id,
+        project_id: projectId,
+        project_item_id: item.id,
+        parent_item_id: item.parent_item_id || null,
+        product_code: product.product_code || item.product_code || "",
+        product_name: product.product_name || item.product_name,
+        movement_type: "out",
+        quantity: coverQuantity,
+        reserved_quantity: coverQuantity,
+        unit: item.unit || product.unit || "adet",
+        related_project_id: projectId,
+        related_project_name: project?.project_name || "",
+        unit_price: Number(product.last_unit_price || item.estimated_unit_price || 0),
+        currency: product.last_currency || projectCurrencyForDisplay(item.currency),
+        movement_date: today,
+        source: "Projeye stoktan karşılandı",
+        notes: `${project?.project_code || project?.project_name || "Proje"} için stok rezervasyonu`,
+      });
+
+    if (movementError) {
+      console.warn("Stok rezervasyonu hareketi kaydedilemedi:", movementError);
+    }
+
+    await loadProject();
+    setMessage(`${item.product_name} için ${coverQuantity} ${item.unit || "adet"} stoktan karşılandı.`);
+  }
+
   function mapItemToRequestLine(item, quantityOverride = null) {
     const quantity = quantityOverride ?? Number(item.estimated_quantity || 0);
 
@@ -2894,6 +3054,73 @@ export default function ProjectDetailPage() {
     downloadRowsAsExcel(rows, fileName, "Talep İcmali");
   }
 
+  async function deleteProjectRequest(request) {
+    setMessage("");
+
+    if (!request?.id) {
+      setMessage("Silinecek talep kaydı bulunamadı.");
+      return;
+    }
+
+    const approved = window.confirm(`"${request.ad || "Proje Talebi"}" talebi silinsin mi?`);
+    if (!approved) return;
+
+    const user = await getUserOrRedirect();
+    if (!user) return;
+
+    const requestItems = parseRequestItems(request);
+    const relatedItemIds = Array.from(
+      new Set(
+        requestItems
+          .flatMap((item) => [
+            item.projectItemId,
+            ...(item.projectItemIds || []),
+          ])
+          .filter(Boolean),
+      ),
+    );
+
+    const { error } = await supabase
+      .from("requests")
+      .delete()
+      .eq("id", request.id)
+      .eq("user_id", user.id);
+
+    if (error) {
+      console.error("Proje talebi silinemedi:", error);
+      setMessage(error.message || "Talep silinemedi.");
+      return;
+    }
+
+    if (relatedItemIds.length > 0) {
+      const { error: itemError } = await supabase
+        .from("project_items")
+        .update({ status: "Satınalma gerekli", updated_at: new Date().toISOString() })
+        .in("id", relatedItemIds)
+        .eq("project_id", projectId)
+        .eq("user_id", user.id)
+        .eq("status", "Talep oluşturuldu");
+
+      if (itemError) {
+        console.warn("Talep silindi ama proje kalemi durumları güncellenemedi:", itemError);
+      } else {
+        setItems((prev) =>
+          prev.map((item) =>
+            relatedItemIds.includes(item.id) && item.status === "Talep oluşturuldu"
+              ? { ...item, status: "Satınalma gerekli", updated_at: new Date().toISOString() }
+              : item,
+          ),
+        );
+      }
+    }
+
+    setProjectRequests((prev) => prev.filter((item) => item.id !== request.id));
+    setExpandedRequestIds((prev) => prev.filter((id) => id !== request.id));
+    if (createdRequestId === request.id) setCreatedRequestId("");
+    setMessage("Talep silindi.");
+    await loadProject();
+  }
+
   async function createRequestFromSelectedItems() {
     setMessage("");
     setCreatedRequestId("");
@@ -3068,6 +3295,10 @@ export default function ProjectDetailPage() {
     return grouped;
   }, [items]);
 
+  const revisionItemOptions = useMemo(() => {
+    return items.filter((item) => !stockInfoForItem(item).isMainItem);
+  }, [items, products, childItemsByParent]);
+
   const purchaseRequiredItems = useMemo(() => {
     return items.filter((item) => stockInfoForItem(item).needsPurchase);
   }, [items, products, childItemsByParent]);
@@ -3107,7 +3338,7 @@ export default function ProjectDetailPage() {
     setItemStockFilter(resolvedFilter);
 
     if (resolvedFilter === "all") {
-      setMessage("Malzeme listesi tum kayitlari gosterecek sekilde acildi.");
+      setMessage("Malzeme listesi tüm kayıtları gösterecek şekilde açıldı.");
       return;
     }
 
@@ -3124,8 +3355,8 @@ export default function ProjectDetailPage() {
     }));
 
     const count = resolvedFilter === "purchase" ? purchaseRequiredItems.length : criticalStockItems.length;
-    const label = resolvedFilter === "purchase" ? "Satinalma gereken" : "Kritik stok";
-    setMessage(`${label} filtresi uygulandi. ${count} kalem, ${matchedParentIds.length} ana urun altinda gosteriliyor.`);
+    const label = resolvedFilter === "purchase" ? "Satınalma gereken" : "Kritik stok";
+    setMessage(`${label} filtresi uygulandı. ${count} kalem, ${matchedParentIds.length} ana ürün altında gösteriliyor.`);
   }
 
   const previewCategories = useMemo(() => {
@@ -3292,7 +3523,7 @@ export default function ProjectDetailPage() {
       warnings.push({ tone: "orange", text: `${criticalStockItems.length} adet kritik stok seviyesi uyarisi.` });
     }
     if (totals.budgetVariance > 0) {
-      warnings.push({ tone: "amber", text: `${formatMoney(totals.budgetVariance)} butce asimi riski tespit edildi.` });
+      warnings.push({ tone: "amber", text: `${formatMoney(totals.budgetVariance)} bütçe aşımı riski tespit edildi.` });
     }
 
     const delayedOrders = projectOrders.filter((order) => {
@@ -3867,7 +4098,7 @@ export default function ProjectDetailPage() {
                       </div>
                     </div>
 
-                    <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-[1fr_220px_auto_auto_auto] md:items-center">
+                    <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-[1fr_220px_auto_auto] md:items-center">
                       <input
                         value={previewSearch}
                         onChange={(event) => setPreviewSearch(event.target.value)}
@@ -3893,14 +4124,6 @@ export default function ProjectDetailPage() {
                         />
                         Tümünü seç
                       </label>
-                      <button
-                        type="button"
-                        disabled={isImportingPreview || previewRows.length === 0 || previewBlocked}
-                        onClick={importPreviewRows}
-                        className="rounded-xl bg-slate-900 px-4 py-3 text-sm font-bold text-white hover:bg-slate-800 disabled:bg-slate-300"
-                      >
-                        {isImportingPreview ? "Aktarılıyor..." : "Seçilenleri Projeye Aktar"}
-                      </button>
                       <button
                         type="button"
                         disabled={selectedPreviewRows.length === 0}
@@ -4003,7 +4226,7 @@ export default function ProjectDetailPage() {
                   </div>
                 )}
 
-                {(rawItems.length > 0 || mainProductCandidates.length > 0 || suggestedHierarchyGroups.length > 0) && (
+                {(rawItems.length > 0 || suggestedHierarchyGroups.length > 0) && (
                   <details className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
                     <summary className="cursor-pointer text-sm font-black text-slate-700">Gelişmiş teknik detaylar</summary>
                     <div className="mt-4">
@@ -4044,9 +4267,9 @@ export default function ProjectDetailPage() {
                               <td className="p-3 font-bold text-slate-900">{row.description || "-"}</td>
                               <td className="p-3">{row.quantity || "-"}</td>
                               <td className="p-3">{row.unit || "-"}</td>
-                              <td className="p-3">{formatMoney(row.unit_price)}</td>
-                              <td className="p-3 font-bold">{formatMoney(row.total)}</td>
-                              <td className="p-3">{row.currency || "TRY"}</td>
+                              <td className="p-3">{formatMoney(row.unit_price, projectCurrencyForDisplay(row.currency))}</td>
+                              <td className="p-3 font-bold">{formatMoney(row.total, projectCurrencyForDisplay(row.currency))}</td>
+                              <td className="p-3">{projectCurrencyForDisplay(row.currency)}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -4054,11 +4277,11 @@ export default function ProjectDetailPage() {
                     </div>
                   </div>
                 )}
-                {mainProductCandidates.length > 0 && (
+                {false && mainProductCandidates.length > 0 && (
                   <div className="mt-5 rounded-2xl border border-slate-200 bg-white p-4">
                     <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
                       <div>
-                        <h3 className="text-lg font-black text-slate-900">Ana Ürün Adayları</h3>
+                        <h3 className="text-lg font-black text-slate-900">Devre dışı teknik öneriler</h3>
                         <p className="mt-1 text-sm text-slate-500">
                           Bunlar sistemin raw_items \u00fczerinden \u00fcretti\u011fi sekt\u00f6r ba\u011f\u0131ms\u0131z \u00f6nerilerdir. \u015eimdilik sadece se\u00e7im yap\u0131l\u0131r, kay\u0131t/hiyerar\u015fi olu\u015fturulmaz.
                         </p>
@@ -4200,7 +4423,7 @@ export default function ProjectDetailPage() {
                                       <div className="text-slate-500">{item.product_code || "-"} · {item.brand || "-"}</div>
                                     </td>
                                     <td className="p-3">{item.quantity || "-"} {item.unit || ""}</td>
-                                    <td className="p-3 font-bold">{formatMoney(item.total)} {item.currency || "TRY"}</td>
+                                    <td className="p-3 font-bold">{formatMoney(item.total, item.currency || "TRY")}</td>
                                     <td className="p-3 font-black text-blue-700">%{item.suggestion_score || 0}</td>
                                     <td className="p-3 text-slate-500">{(item.reasons || []).join(", ") || "-"}</td>
                                     <td className="p-3">
@@ -4448,14 +4671,14 @@ export default function ProjectDetailPage() {
                     onClick={() => applyItemStockFilter("purchase")}
                     className={`rounded-xl px-4 py-3 text-sm font-bold ${itemStockFilter === "purchase" ? "bg-red-600 text-white" : "bg-red-50 text-red-700 hover:bg-red-100"}`}
                   >
-                    {itemStockFilter === "purchase" ? "Tum Listeyi Goster" : "Satinalma Gerekenleri Goster"}
+                    {itemStockFilter === "purchase" ? "Tüm Listeyi Göster" : "Satınalma Gerekenleri Göster"}
                   </button>
                   <button
                     type="button"
                     onClick={() => applyItemStockFilter("critical")}
                     className={`rounded-xl px-4 py-3 text-sm font-bold ${itemStockFilter === "critical" ? "bg-amber-500 text-white" : "bg-amber-50 text-amber-700 hover:bg-amber-100"}`}
                   >
-                    {itemStockFilter === "critical" ? "Tum Listeyi Goster" : "Kritik Stoklari Goster"}
+                    {itemStockFilter === "critical" ? "Tüm Listeyi Göster" : "Kritik Stokları Göster"}
                   </button>
                   <button
                     type="button"
@@ -4509,10 +4732,10 @@ export default function ProjectDetailPage() {
                 <div className="mt-4 flex flex-col gap-3 rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm text-blue-900 md:flex-row md:items-center md:justify-between">
                   <div>
                     <div className="font-black">
-                      {itemStockFilter === "purchase" ? "Satinalma gerekenler filtresi aktif" : "Kritik stok filtresi aktif"}
+                      {itemStockFilter === "purchase" ? "Satınalma gerekenler filtresi aktif" : "Kritik stok filtresi aktif"}
                     </div>
                     <div className="mt-1 text-xs font-semibold">
-                      {activeStockFilterCount} kalem, {visibleParentItems.length} ana urun altinda gosteriliyor. Eslesen ana urunlerin alt malzemeleri otomatik acildi.
+                      {activeStockFilterCount} kalem, {visibleParentItems.length} ana ürün altında gösteriliyor. Eşleşen ana ürünlerin alt malzemeleri otomatik açıldı.
                     </div>
                   </div>
                   <button
@@ -4609,6 +4832,11 @@ export default function ProjectDetailPage() {
                           <button type="button" onClick={() => startAddingChildItem(item)} className="rounded-lg bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-100">
                             Malzeme ekle
                           </button>
+                          {!stockInfo.isMainItem && stockInfo.stockQuantity > 0 && (
+                            <button type="button" onClick={() => coverItemFromStock(item)} className="rounded-lg bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700 hover:bg-emerald-100">
+                              Stoktan Karşıla
+                            </button>
+                          )}
                           <button type="button" onClick={() => deleteProjectItem(item.id)} className="rounded-lg bg-red-50 px-3 py-2 text-xs font-bold text-red-700 hover:bg-red-100">
                             Sil
                           </button>
@@ -4668,6 +4896,11 @@ export default function ProjectDetailPage() {
                                   <button type="button" onClick={() => deleteProjectItem(child.id)} className="rounded-lg bg-red-50 px-3 py-2 text-xs font-bold text-red-700 hover:bg-red-100">
                                     Sil
                                   </button>
+                                  {childStockInfo.stockQuantity > 0 && (
+                                    <button type="button" onClick={() => coverItemFromStock(child)} className="rounded-lg bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700 hover:bg-emerald-100">
+                                      Stoktan Karşıla
+                                    </button>
+                                  )}
                                 </div>
                               );
                             })}
@@ -4775,10 +5008,10 @@ export default function ProjectDetailPage() {
                         <td className="p-3 font-bold text-slate-900">{payment.payment_type}</td>
                         <td className="p-3 text-slate-500">{payment.description || "-"}</td>
                         <td className="p-3 text-right font-black text-emerald-700">
-                          {formatMoney(payment.amount)} {payment.currency || "TRY"}
+                          {formatMoney(payment.amount, payment.currency || "TRY")}
                         </td>
                         <td className="p-3 text-right text-xs font-bold text-slate-500">
-                          {payment.base_amount ? `${formatMoney(payment.base_amount)} ${payment.base_currency || "TRY"}` : "-"}
+                          {payment.base_amount ? formatMoney(payment.base_amount, payment.base_currency || "TRY") : "-"}
                         </td>
                         <td className="p-3">
                           <div className="flex justify-end gap-2">
@@ -4836,26 +5069,35 @@ export default function ProjectDetailPage() {
 
                 return (
                   <div key={request.id} className="overflow-hidden rounded-xl border border-slate-100">
-                    <button
-                      type="button"
-                      onClick={() => toggleProjectRequest(request.id)}
-                      className="flex w-full flex-col gap-3 p-4 text-left hover:bg-slate-50 md:flex-row md:items-center md:justify-between"
-                    >
-                      <div>
-                        <div className="font-black text-slate-900">{request.ad || "Proje Talebi"}</div>
-                        <div className="mt-1 text-xs text-slate-500">
-                          {formatDate(request.created_at)} · {requestItems.length || request.totalitems || 0} icmal kalemi · Detayı görmek için tıkla
+                    <div className="flex flex-col gap-3 p-4 hover:bg-slate-50 md:flex-row md:items-center md:justify-between">
+                      <button
+                        type="button"
+                        onClick={() => toggleProjectRequest(request.id)}
+                        className="flex min-w-0 flex-1 flex-col gap-3 text-left md:flex-row md:items-center md:justify-between"
+                      >
+                        <div>
+                          <div className="font-black text-slate-900">{request.ad || "Proje Talebi"}</div>
+                          <div className="mt-1 text-xs text-slate-500">
+                            {formatDate(request.created_at)} · {requestItems.length || request.totalitems || 0} icmal kalemi · Detayı görmek için tıkla
+                          </div>
                         </div>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <span className="rounded-full bg-purple-100 px-3 py-1 text-xs font-bold text-purple-700">
-                          {request.durum || "Proje Talebi"}
-                        </span>
-                        <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">
-                          {isExpanded ? "Kapat" : "Aç"}
-                        </span>
-                      </div>
-                    </button>
+                        <div className="flex items-center gap-3">
+                          <span className="rounded-full bg-purple-100 px-3 py-1 text-xs font-bold text-purple-700">
+                            {request.durum || "Proje Talebi"}
+                          </span>
+                          <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">
+                            {isExpanded ? "Kapat" : "Aç"}
+                          </span>
+                        </div>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => deleteProjectRequest(request)}
+                        className="rounded-lg bg-red-50 px-3 py-2 text-xs font-bold text-red-700 hover:bg-red-100"
+                      >
+                        Talebi Sil
+                      </button>
+                    </div>
 
                     {isExpanded && (
                       <div className="border-t border-slate-100 bg-slate-50 p-4">
@@ -4917,8 +5159,8 @@ export default function ProjectDetailPage() {
                                   </td>
                                   <td className="p-3 font-black text-blue-700">{item.talepEdilenAdet || item.quantity || item.estimated_quantity || 0}</td>
                                   <td className="p-3 text-slate-600">{item.birim || item.unit || "adet"}</td>
-                                  <td className="p-3 font-bold text-emerald-700">{formatMoney(item.birimFiyat || item.unit_price || item.estimated_unit_price)} {item.paraBirimi || item.currency || "TRY"}</td>
-                                  <td className="p-3 font-bold text-slate-900">{formatMoney(item.toplam || item.total || item.estimated_total)} {item.paraBirimi || item.currency || "TRY"}</td>
+                                  <td className="p-3 font-bold text-emerald-700">{formatMoney(item.birimFiyat || item.unit_price || item.estimated_unit_price, item.paraBirimi || item.currency || "TRY")}</td>
+                                  <td className="p-3 font-bold text-slate-900">{formatMoney(item.toplam || item.total || item.estimated_total, item.paraBirimi || item.currency || "TRY")}</td>
                                   <td className="p-3 text-slate-500">{item.not || item.note || "-"}</td>
                                 </tr>
                               ))}
@@ -4970,6 +5212,45 @@ export default function ProjectDetailPage() {
                     onChange={(event) => updateRevisionForm("revision_date", event.target.value)}
                     className="rounded-xl border border-slate-200 p-3 text-sm font-semibold"
                   />
+                </div>
+                <div className="rounded-xl border border-blue-100 bg-blue-50 p-4">
+                  <div className="text-sm font-black text-slate-900">Malzeme revizyonu</div>
+                  <p className="mt-1 text-xs font-semibold text-slate-600">
+                    Ürün adedi veya fiyatı değiştiyse burada seçin; değişiklik revizyon geçmişine de işlenir.
+                  </p>
+                  <div className="mt-3 grid grid-cols-1 gap-3">
+                    <select
+                      value={revisionForm.project_item_id}
+                      onChange={(event) => updateRevisionForm("project_item_id", event.target.value)}
+                      className="rounded-xl border border-slate-200 bg-white p-3 text-sm font-semibold"
+                    >
+                      <option value="">Malzeme seçmeden finansal revizyon</option>
+                      {revisionItemOptions.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.product_name} · {Number(item.estimated_quantity || 0)} {item.unit || "adet"}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={revisionForm.quantity_delta}
+                        onChange={(event) => updateRevisionForm("quantity_delta", event.target.value)}
+                        placeholder="Miktar farkı (+/-)"
+                        className="rounded-xl border border-slate-200 bg-white p-3 text-sm font-semibold"
+                      />
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={revisionForm.revised_unit_price}
+                        onChange={(event) => updateRevisionForm("revised_unit_price", event.target.value)}
+                        placeholder="Yeni birim fiyat"
+                        className="rounded-xl border border-slate-200 bg-white p-3 text-sm font-semibold"
+                      />
+                    </div>
+                  </div>
                 </div>
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                   <input

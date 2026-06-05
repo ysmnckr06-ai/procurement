@@ -82,6 +82,7 @@ export default function ProjectsPage() {
   const [settings, setSettings] = useState({ default_currency: "TRY", base_currency: "TRY" });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [projectView, setProjectView] = useState("active");
 
   useEffect(() => {
     loadProjects();
@@ -315,7 +316,8 @@ export default function ProjectsPage() {
       return;
     }
 
-    setMessage("Proje arşivlendi.");
+    setProjectView("archived");
+    setMessage("Proje arşivlendi. Arşivlenen Projeler sekmesine taşındı.");
     await loadProjects();
   }
 
@@ -357,6 +359,10 @@ export default function ProjectsPage() {
 
     return { active, completed, contractTotal, actualTotal, overBudget };
   }, [projects]);
+
+  const archivedProjects = useMemo(() => projects.filter((project) => project.status === "Arşivlendi" || project.archived_at), [projects]);
+  const activeProjects = useMemo(() => projects.filter((project) => !(project.status === "Arşivlendi" || project.archived_at)), [projects]);
+  const displayedProjects = projectView === "archived" ? archivedProjects : activeProjects;
 
   return (
     <div className="min-h-screen bg-slate-100">
@@ -513,10 +519,30 @@ export default function ProjectsPage() {
 
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-100 p-5">
-            <h2 className="text-xl font-bold text-slate-900">Proje Listesi</h2>
-            <p className="mt-1 text-sm text-slate-500">
-              {loading ? "Yükleniyor..." : `${projects.length} proje gösteriliyor.`}
-            </p>
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <h2 className="text-xl font-bold text-slate-900">Proje Listesi</h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  {loading ? "Yükleniyor..." : `${displayedProjects.length} proje gösteriliyor.`}
+                </p>
+              </div>
+              <div className="flex rounded-xl border border-slate-200 bg-slate-50 p-1 text-sm font-bold">
+                <button
+                  type="button"
+                  onClick={() => setProjectView("active")}
+                  className={`rounded-lg px-4 py-2 ${projectView === "active" ? "bg-white text-blue-700 shadow-sm" : "text-slate-600"}`}
+                >
+                  Aktif Projeler ({activeProjects.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setProjectView("archived")}
+                  className={`rounded-lg px-4 py-2 ${projectView === "archived" ? "bg-white text-blue-700 shadow-sm" : "text-slate-600"}`}
+                >
+                  Arşivlenen Projeler ({archivedProjects.length})
+                </button>
+              </div>
+            </div>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
@@ -537,7 +563,7 @@ export default function ProjectsPage() {
                 </tr>
               </thead>
               <tbody>
-                {projects.map((project) => {
+                {displayedProjects.map((project) => {
                   const remaining = Number(project.estimated_budget || 0) - Number(project.actual_cost || 0);
                   const metrics = projectMetrics(project.id);
 
@@ -612,7 +638,7 @@ export default function ProjectsPage() {
                     </tr>
                   );
                 })}
-                {!loading && projects.length === 0 && (
+                {!loading && displayedProjects.length === 0 && (
                   <tr>
                     <td colSpan="12" className="p-8 text-center text-slate-500">
                       Henüz proje yok. İlk projeyi oluşturarak başlayın.

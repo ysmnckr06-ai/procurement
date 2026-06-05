@@ -205,7 +205,7 @@ export default function FinancePage() {
         </div>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-          <StatCard title="Gelen Ürün Değeri" value={formatMoney(report.receivedValue, report.baseCurrency)} text="Base stok giriş değeri" tone="green" />
+          <StatCard title="Gelen Ürün Değeri" value={formatMoney(report.receivedValue, report.baseCurrency)} text="Ana para stok giriş değeri" tone="green" />
           <StatCard title="Gelmeyen Ürün Değeri" value={formatMoney(report.notReceivedValue, report.baseCurrency)} text="Sipariş - gelen" tone="orange" />
           <StatCard title="Ödendi / Gelmedi" value={formatMoney(report.paidNotReceived, report.baseCurrency)} text="Riskli ödeme" tone="red" />
           <StatCard title="Geldi / Ödenmedi" value={formatMoney(report.receivedNotPaid, report.baseCurrency)} text="İş ortağı borcu" tone="blue" />

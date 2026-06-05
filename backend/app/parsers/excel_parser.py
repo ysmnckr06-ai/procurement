@@ -216,8 +216,9 @@ def clean_number(val):
     text = "".join(ch for ch in text if not unicodedata.combining(ch))
 
     text = text.upper()
-    text = text.replace("₺", "").replace("€", "").replace("$", "")
-    text = text.replace("TL", "").replace("TRY", "").replace("USD", "").replace("EUR", "")
+    text = text.replace("₺", "").replace("€", "").replace("£", "")
+    text = text.replace("â‚º", "").replace("â‚¬", "").replace("Â£", "").replace("$", "")
+    text = text.replace("TL", "").replace("TRY", "").replace("USD", "").replace("EUR", "").replace("GBP", "")
     text = text.replace("%", "")
     text = text.replace(",", ".")
 
@@ -236,11 +237,11 @@ def clean_number(val):
 def detect_currency_from_text(value):
     text = str(value or "").upper()
 
-    if "$" in text or "USD" in text or "DOLAR" in text:
+    if "$" in text or re.search(r"\b(USD|DOLAR)\b", text):
         return "USD"
-    if "€" in text or "EUR" in text or "EURO" in text or "â‚¬" in text:
+    if "€" in text or "â‚¬" in text or "Ã¢â€šÂ¬" in text or re.search(r"\b(EUR|EURO)\b", text):
         return "EUR"
-    if "GBP" in text or "£" in text:
+    if "£" in text or "Â£" in text or re.search(r"\b(GBP|STERLIN)\b", text):
         return "GBP"
 
     return "TRY"
@@ -318,6 +319,12 @@ def should_skip_context_line(line):
         "firma",
         "teklif",
         "not",
+        "rapor",
+        "rapor olusturan",
+        "rapor no",
+        "mukayese",
+        "karsilastirma raporu",
+        "teklif karsilastirma",
         "telefon",
         "tel",
         "faks",
@@ -539,11 +546,19 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
         "satir toplam",
         "toplam tutar",
         "tutar",
+        "toplam",
         "net toplam",
     ], exclude_keywords=[
         "genel toplam",
         "dip toplam",
         "ara toplam",
+    ])
+
+    currency_col = find_col_exact_or_contains(df.columns, [
+        "para birimi",
+        "doviz",
+        "döviz",
+        "currency",
     ])
 
     delivery_col = find_col_exact_or_contains(df.columns, [
@@ -574,6 +589,8 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
             row["section_name"] = section["section_name"]
             row["section_total"] = section["section_total"]
             row["birimFiyat"] = 0
+            row["netBirimFiyat"] = 0
+            row["netToplam"] = 0
             row["netBirimFiyatDosyadan"] = 0
             row["satirToplamDosyadan"] = 0
             row["price_status"] = "section_total_only"
@@ -582,24 +599,6 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
             f"{section['section_name']} toplamı üstündeki {len(pending_rows)} malzemeye bağlandı; parça fiyatları aktarılmadı."
         )
         pending_rows.clear()
-
-    print("EXCEL PARSER DEBUG:", {
-        "file": file_name,
-        "firma": firma,
-        "header_row": header_row,
-        "columns": [str(c) for c in df.columns],
-        "code_col": str(code_col),
-        "brand_col": str(brand_col),
-        "desc_col": str(desc_col),
-        "qty_col": str(qty_col),
-        "unit_col": str(unit_col),
-        "price_col": str(price_col),
-        "discount_col": str(discount_col),
-        "net_price_col": str(net_price_col),
-        "total_col": str(total_col),
-        "delivery_col": str(delivery_col),
-        "payment_col": str(payment_col),
-    })
 
     for row_index, r in df.iterrows():
         code = clean_text(r.get(code_col)) if code_col is not None else ""
@@ -648,11 +647,12 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
         price = clean_number(r.get(price_col)) if price_col is not None else 0.0
         discount = clean_number(r.get(discount_col)) if discount_col is not None else 0.0
         net_price_from_file = clean_number(r.get(net_price_col)) if net_price_col is not None else 0.0
-        row_currency = detect_currency_from_text(
+        row_currency = detect_currency_from_text(r.get(currency_col)) if currency_col is not None else detect_currency_from_text(
             " ".join([str(x) for x in [price_col, net_price_col, total_col, joined]])
         )
         row_vade = clean_text(r.get(payment_col)) if payment_col is not None else footer.get("vade", "")
         row_termin = clean_text(r.get(delivery_col)) if delivery_col is not None else footer.get("termin", "")
+        row_warnings = []
 
         if price <= 0 and net_price_from_file > 0:
             price = net_price_from_file
@@ -663,11 +663,12 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
         net_unit_calculated = price * (1 - discount / 100)
         row_total_calculated = net_unit_calculated * qty if qty > 0 else 0.0
 
-        if row_total_calculated > 0 and (
-            row_total_from_file <= 0
-            or not money_equals(row_total_calculated, row_total_from_file, 0.10)
-        ):
+        if row_total_calculated > 0 and row_total_from_file <= 0:
             row_total_from_file = row_total_calculated
+        elif row_total_calculated > 0 and row_total_from_file > 0 and not money_equals(row_total_calculated, row_total_from_file, 0.10):
+            row_warnings.append(
+                f"Satır toplamı kontrol edilmeli: {desc} ({qty} x {net_unit_calculated:.2f} != {row_total_from_file:.2f})"
+            )
 
         if not desc:
             if should_skip_context_line(joined):
@@ -687,10 +688,13 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
             row_total_from_file = 0
             price_status = "pending_section_total"
 
-        if price_status == "line_priced" and not money_equals(row_total_calculated, row_total_from_file, 0.10):
+        if price_status == "line_priced" and row_total_from_file > 0 and qty > 0 and not money_equals(row_total_calculated, row_total_from_file, 0.10) and net_price_from_file <= 0:
             price = row_total_from_file / qty
             net_price_from_file = price
             discount = 0
+            net_unit_calculated = price
+
+        net_unit_value = net_price_from_file or net_unit_calculated or price
 
         rows.append({
             "firma": firma,
@@ -702,7 +706,7 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
             "paraBirimi": row_currency,
             "birimFiyat": price,
             "iskonto": discount,
-            "netBirimFiyat": net_price_from_file or net_unit_calculated or price,
+            "netBirimFiyat": net_unit_value,
             "netToplam": row_total_from_file,
             "netBirimFiyatDosyadan": net_price_from_file,
             "satirToplamDosyadan": row_total_from_file,
@@ -713,7 +717,7 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
             "firmaGenelToplam": footer.get("genelToplam", 0),
             "kaynakDosya": file_name,
             "kaynakTipi": "excel",
-            "parserUyarilari": [],
+            "parserUyarilari": row_warnings,
             "section_name": "",
             "section_total": 0,
             "price_status": price_status,
@@ -723,6 +727,8 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
     if sections and pending_rows:
         for row in pending_rows:
             row["birimFiyat"] = 0
+            row["netBirimFiyat"] = 0
+            row["netToplam"] = 0
             row["netBirimFiyatDosyadan"] = 0
             row["satirToplamDosyadan"] = 0
             row["price_status"] = "section_total_only"
@@ -734,7 +740,7 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
 
     ungrouped_pending = [row for row in pending_rows if row.get("price_status") == "pending_section_total"]
     if ungrouped_pending:
-        errors.append(f"{len(ungrouped_pending)} Excel malzeme satırı fiyat/toplam satırıyla eşleşmedi.")
+        warnings.append(f"{len(ungrouped_pending)} Excel malzeme satırında fiyat yok; satırlar 0 fiyatla aktarıldı.")
 
     checked_total = footer.get("dipToplam") or footer.get("genelToplam") or 0
     product_total = sum(float(row.get("satirToplamDosyadan") or 0) for row in rows)
@@ -743,9 +749,6 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
         errors.append(
             f"Excel genel toplam tutmuyor: ürünler {product_total:.2f}, teklif {checked_total:.2f}"
         )
-
-    print("EXCEL OKUNAN SATIR SAYISI:", len(rows))
-    print("EXCEL İLK 5 SATIR:", rows[:5])
 
     return {
         "rows": rows,

@@ -23,6 +23,19 @@ def clean_code(code):
     return code
 
 
+def is_real_product_code(code):
+    code = clean_code(code)
+
+    if not code:
+        return False
+
+    if code.startswith(("PRD", "PRJ", "RAW", "AUTO")):
+        return False
+
+    compact = code.replace("-", "").replace("_", "").replace("/", "").replace(".", "")
+    return len(compact) >= 3 and any(ch.isdigit() for ch in compact)
+
+
 def clean_desc(desc):
     return normalize_text(str(desc or "")).strip()
 
@@ -74,6 +87,9 @@ def rows_match(row1, row2):
 
     if not desc1 or not desc2:
         return False
+
+    if is_real_product_code(kod1) and is_real_product_code(kod2) and kod1 == kod2:
+        return True
 
     # Açıklama aynıysa kod farklı olsa bile eşleşir.
     if desc_is_same(desc1, desc2):

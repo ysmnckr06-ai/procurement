@@ -55,6 +55,60 @@ def safe_int_form(val):
         return int(val)
     except:
         return None
+
+
+def normalize_request_items_payload(value):
+    if not value:
+        return []
+
+    try:
+        parsed = json.loads(value) if isinstance(value, str) else value
+    except Exception:
+        return []
+
+    if not isinstance(parsed, list):
+        return []
+
+    rows = []
+
+    for item in parsed:
+        if not isinstance(item, dict):
+            continue
+
+        code = (
+            item.get("urunKodu")
+            or item.get("product_code")
+            or item.get("productCode")
+            or ""
+        )
+        description = (
+            item.get("urunAciklamasi")
+            or item.get("product_name")
+            or item.get("productName")
+            or item.get("description")
+            or ""
+        )
+        quantity = (
+            safe_float_form(item.get("talepEdilenAdet"))
+            or safe_float_form(item.get("quantity"))
+            or safe_float_form(item.get("estimated_quantity"))
+            or safe_float_form(item.get("miktar"))
+            or 0
+        )
+
+        if not description or quantity <= 0:
+            continue
+
+        rows.append({
+            "urunKodu": str(code or "").strip(),
+            "urunAciklamasi": str(description or "").strip(),
+            "talepEdilenAdet": quantity,
+            "birim": item.get("birim") or item.get("unit") or "adet",
+            "kaynakDosya": item.get("kaynakDosya") or item.get("source_file") or "Seçili proje talebi",
+            "kaynakTipi": "request_items_json",
+        })
+
+    return rows
     
 
 def normalize_project_sections(raw_sections):
@@ -1118,6 +1172,7 @@ async def analyze_offers(
     project_id: str = Form(""),
     request_report_path: str = Form(""),
     request_file_name: str = Form(""),
+    request_items_json: str = Form(""),
 
     max_budget: str = Form(""),
     min_vade_days: str = Form(""),
@@ -1219,10 +1274,16 @@ async def analyze_offers(
 
         try:
             if file_type == "excel":
-                rows = parse_excel(save_path, firma_adi, original_name)
+                audit = parse_excel_with_audit(save_path, firma_adi, original_name)
+                rows = audit["rows"]
+                warnings.extend(audit.get("warnings", []))
+                warnings.extend(audit.get("errors", []))
 
             elif file_type == "pdf":
-                rows = parse_pdf(save_path, firma_adi, original_name)
+                audit = parse_pdf_with_audit(save_path, firma_adi, original_name)
+                rows = audit["rows"]
+                warnings.extend(audit.get("warnings", []))
+                warnings.extend(audit.get("errors", []))
 
             elif file_type == "image":
                 rows = parse_image(save_path, firma_adi, original_name)
@@ -1282,7 +1343,12 @@ async def analyze_offers(
     # --- TALEP LİSTESİNİ OKU ---
     request_items = []
 
-    if request_report_path:
+    request_items = normalize_request_items_payload(request_items_json)
+
+    if request_items:
+        print("SEÇİLEN TALEP JSON SATIR SAYISI:", len(request_items))
+
+    if not request_items and request_report_path:
         request_file_path = os.path.join(
             TEMP_DIR,
             os.path.basename(request_report_path)
