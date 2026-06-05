@@ -112,7 +112,7 @@ def is_meaningful_section_label(value):
     if not norm or norm in ["-", "_", "tl", "try", "eur", "usd"]:
         return False
 
-    if clean_number(text) > 0:
+    if re.fullmatch(r"[0-9\s.,/-]+", text):
         return False
 
     return bool(re.search(r"[a-z0-9]", norm))
@@ -145,13 +145,16 @@ def is_section_fill_rgb(rgb):
     return red >= 200 and green >= 150 and blue <= 190
 
 
-def highlighted_rows(file_path):
+def highlighted_rows(file_path, sheet_name=None):
     try:
         workbook = load_workbook(file_path, read_only=False, data_only=True)
     except Exception:
         return set()
 
-    sheet = workbook.worksheets[0]
+    if sheet_name and sheet_name in workbook.sheetnames:
+        sheet = workbook[sheet_name]
+    else:
+        sheet = workbook.worksheets[0]
     rows = set()
 
     for row in sheet.iter_rows():
@@ -196,6 +199,35 @@ def section_name_from_cells(cells):
         return ""
 
     return clean_text(text_cells[0]).upper()
+
+
+def has_material_identity(value):
+    text = clean_text(value)
+
+    if not text:
+        return False
+
+    if re.fullmatch(r"[0\s.,/-]+", text):
+        return False
+
+    return normalize_col(text) not in ["0", "00", "yok", "none", "nan"]
+
+
+def looks_like_section_row(cells, code, brand, desc, qty, unit_price, net_price, row_total):
+    if not desc or qty <= 0 or row_total <= 0:
+        return False
+
+    if should_skip_context_line(" ".join(clean_text(cell) for cell in cells)):
+        return False
+
+    has_code = has_material_identity(code)
+    has_brand = has_material_identity(brand)
+    has_unit_price = unit_price > 0 or net_price > 0
+
+    if has_code or has_brand or has_unit_price:
+        return False
+
+    return bool(section_name_from_cells(cells))
 
 
 def clean_text(val):
@@ -247,7 +279,86 @@ def detect_currency_from_text(value):
     return "TRY"
 
 
+def currency_from_token(value):
+    text = normalize_col(value)
+
+    if text in ["eur", "euro"]:
+        return "EUR"
+    if text in ["usd", "dolar", "dollar"]:
+        return "USD"
+    if text in ["tl", "try", "turk lirasi", "turk lira"]:
+        return "TRY"
+    if text in ["gbp", "sterlin"]:
+        return "GBP"
+
+    return ""
+
+
+def detect_currency_token(value):
+    text = str(value or "").upper()
+
+    if "$" in text or re.search(r"\b(USD|DOLAR|DOLLAR)\b", text):
+        return "USD"
+    if "â‚¬" in text or "Ã¢â€šÂ¬" in text or "ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬" in text or re.search(r"\b(EUR|EURO)\b", text):
+        return "EUR"
+    if "Â£" in text or "Ã‚Â£" in text or re.search(r"\b(GBP|STERLIN)\b", text):
+        return "GBP"
+    if re.search(r"\b(TL|TRY)\b", text):
+        return "TRY"
+
+    return ""
+
+
+def detect_excel_currency_context(raw_df):
+    brand_currency = {}
+    currency_counts = {}
+
+    for _, row in raw_df.head(35).iterrows():
+        for value in row.values:
+            text = clean_text(value)
+
+            if not text:
+                continue
+
+            detected = detect_currency_token(text)
+            if detected:
+                currency_counts[detected] = currency_counts.get(detected, 0) + 1
+
+            for brand, currency in re.findall(r"([A-ZÇĞİÖŞÜ0-9 .&/_-]{2,35})\s*:\s*(EURO|EUR|DOLAR|USD|TL|TRY|GBP|STERLIN)\b", text.upper()):
+                clean_brand = normalize_col(brand)
+                clean_currency = currency_from_token(currency)
+
+                if clean_brand and clean_currency and clean_brand not in ["tarih", "telefon", "faks", "email", "e mail", "teklif no"]:
+                    brand_currency[clean_brand] = clean_currency
+
+            plain_match = re.fullmatch(r"\s*([A-ZÇĞİÖŞÜ0-9 .&/_-]{2,35})\s+(EURO|EUR|DOLAR|USD|TL|TRY|GBP|STERLIN)\s*", text.upper())
+            if plain_match:
+                clean_brand = normalize_col(plain_match.group(1))
+                clean_currency = currency_from_token(plain_match.group(2))
+
+                if clean_brand and clean_currency and clean_brand not in ["euro", "dolar", "tl", "try"]:
+                    brand_currency[clean_brand] = clean_currency
+
+    non_try_counts = {currency: count for currency, count in currency_counts.items() if currency != "TRY"}
+    default_currency = "TRY"
+
+    if non_try_counts:
+        default_currency = max(non_try_counts.items(), key=lambda item: item[1])[0]
+    elif currency_counts:
+        default_currency = max(currency_counts.items(), key=lambda item: item[1])[0]
+
+    return brand_currency, default_currency
+
+
 def find_header_row(df):
+    strict_row = find_header_row_strict(df)
+    if strict_row is not None:
+        return strict_row
+
+    return 0
+
+
+def find_header_row_strict(df):
     for i in range(len(df)):
         row_text = " ".join(normalize_col(x) for x in df.iloc[i].values)
 
@@ -274,7 +385,39 @@ def find_header_row(df):
         if has_desc and has_qty and has_price:
             return i
 
-    return 0
+    return None
+
+
+def read_best_excel_sheet(file_path):
+    excel = pd.ExcelFile(file_path)
+    best = None
+
+    for sheet_name in excel.sheet_names:
+        try:
+            sample_df = pd.read_excel(file_path, sheet_name=sheet_name, header=None, nrows=160)
+        except Exception:
+            continue
+
+        header_row = find_header_row_strict(sample_df)
+
+        if header_row is None:
+            continue
+
+        nonempty_after_header = len(sample_df.iloc[header_row + 1:].dropna(how="all"))
+        sheet_bonus = 1000 if "teklif" in normalize_col(sheet_name) else 0
+        score = sheet_bonus + nonempty_after_header
+
+        if best is None or score > best["score"]:
+            best = {
+                "sheet_name": sheet_name,
+                "header_row": header_row,
+                "score": score,
+            }
+
+    if best:
+        return pd.read_excel(file_path, sheet_name=best["sheet_name"], header=None), best["sheet_name"]
+
+    return pd.read_excel(file_path, header=None), excel.sheet_names[0] if excel.sheet_names else None
 
 
 def find_col_exact_or_contains(columns, keywords, exclude_keywords=None):
@@ -301,10 +444,27 @@ def find_col_exact_or_contains(columns, keywords, exclude_keywords=None):
     return None
 
 
+def unique_columns(columns):
+    seen = {}
+    result = []
+
+    for column in columns:
+        clean = clean_text(column)
+
+        if not clean:
+            clean = "column"
+
+        count = seen.get(clean, 0)
+        seen[clean] = count + 1
+        result.append(clean if count == 0 else f"{clean}__{count + 1}")
+
+    return result
+
+
 def should_skip_context_line(line):
     norm = normalize_col(line)
 
-    if re.search(r"\b[tf]\s*\+?\s*\d", norm) or re.search(r"\b[tf]\s*\d", norm):
+    if re.search(r"\b[tf]\s*:\s*\+?\s*\d", norm) or re.search(r"\b(tel|telefon|fax|faks)\b.*\d", norm):
         return True
 
     skip_words = [
@@ -447,15 +607,15 @@ def parse_excel(file_path, firma_adi="", file_name=""):
 
 
 def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
-    raw_df = pd.read_excel(file_path, header=None)
-    highlighted_excel_rows = highlighted_rows(file_path)
+    raw_df, selected_sheet_name = read_best_excel_sheet(file_path)
 
     firma = detect_firma_adi(raw_df, firma_adi, file_name)
     footer = detect_footer_info(raw_df)
+    brand_currency_map, default_sheet_currency = detect_excel_currency_context(raw_df)
     header_row = find_header_row(raw_df)
 
     df = raw_df.copy()
-    df.columns = df.iloc[header_row]
+    df.columns = unique_columns(df.iloc[header_row])
     df = df[header_row + 1:]
     df = df.dropna(how="all")
 
@@ -612,28 +772,7 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
         row_total_from_file = clean_number(r.get(total_col)) if total_col is not None else 0.0
         if row_total_from_file <= 0 and numbers:
             row_total_from_file = numbers[-1]
-        is_highlight_section = (int(row_index) + 1) in highlighted_excel_rows
-        section_name = (
-            canonical_section_name(desc)
-            or canonical_section_name(code)
-            or canonical_section_name(brand)
-            or canonical_section_name(joined)
-        )
-
-        if is_highlight_section or section_name:
-            section_total = choose_section_total(row_total_from_file, numbers)
-            display_section_name = section_name or section_name_from_cells(cells)
-
-            if not display_section_name:
-                display_section_name = f"BÖLÜM-{len(sections) + 1}"
-
-            section = {
-                "section_name": display_section_name,
-                "section_total": section_total,
-            }
-            sections.append(section)
-            attach_section_to_pending(section)
-            continue
+        qty = clean_number(r.get(qty_col)) if qty_col is not None else 0.0
 
         if not code and not desc:
             continue
@@ -641,18 +780,28 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
         if should_skip_context_line(joined):
             continue
 
-        qty = clean_number(r.get(qty_col)) if qty_col is not None else 0.0
         unit = clean_text(r.get(unit_col)) if unit_col is not None else "adet"
 
         price = clean_number(r.get(price_col)) if price_col is not None else 0.0
         discount = clean_number(r.get(discount_col)) if discount_col is not None else 0.0
         net_price_from_file = clean_number(r.get(net_price_col)) if net_price_col is not None else 0.0
-        row_currency = detect_currency_from_text(r.get(currency_col)) if currency_col is not None else detect_currency_from_text(
-            " ".join([str(x) for x in [price_col, net_price_col, total_col, joined]])
-        )
+        explicit_currency = detect_currency_token(r.get(currency_col)) if currency_col is not None else detect_currency_token(joined)
+        brand_currency = brand_currency_map.get(normalize_col(brand), "")
+        row_currency = explicit_currency or brand_currency or default_sheet_currency or "TRY"
         row_vade = clean_text(r.get(payment_col)) if payment_col is not None else footer.get("vade", "")
         row_termin = clean_text(r.get(delivery_col)) if delivery_col is not None else footer.get("termin", "")
         row_warnings = []
+
+        if looks_like_section_row(cells, code, brand, desc, qty, price, net_price_from_file, row_total_from_file):
+            section_total = choose_section_total(row_total_from_file, numbers)
+            display_section_name = section_name_from_cells(cells) or f"BÖLÜM-{len(sections) + 1}"
+            section = {
+                "section_name": display_section_name,
+                "section_total": section_total,
+            }
+            sections.append(section)
+            attach_section_to_pending(section)
+            continue
 
         if price <= 0 and net_price_from_file > 0:
             price = net_price_from_file
@@ -671,13 +820,9 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
             )
 
         if not desc:
-            if should_skip_context_line(joined):
-                continue
-            errors.append(f"Şüpheli Excel satırı atlandı: kod/marka/açıklama eksik ({joined})")
             continue
 
         if qty <= 0:
-            errors.append(f"Şüpheli Excel satırı atlandı: adet eksik ({desc})")
             continue
 
         price_status = "line_priced"

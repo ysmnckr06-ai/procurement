@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import * as XLSX from "xlsx";
 import { supabase } from "@/lib/supabase";
@@ -250,6 +250,7 @@ export default function ProjectDetailPage() {
   const params = useParams();
   const router = useRouter();
   const projectId = params.id;
+  const previewResultsRef = useRef(null);
 
   const [project, setProject] = useState(null);
   const [items, setItems] = useState([]);
@@ -276,6 +277,7 @@ export default function ProjectDetailPage() {
   const [selectedPurchaseItemIds, setSelectedPurchaseItemIds] = useState([]);
   const [selectedProjectItemIds, setSelectedProjectItemIds] = useState([]);
   const [itemStockFilter, setItemStockFilter] = useState("all");
+  const [itemPriceDrafts, setItemPriceDrafts] = useState({});
   const [createdRequestId, setCreatedRequestId] = useState("");
   const [previewRows, setPreviewRows] = useState([]);
   const [selectedPreviewRowIds, setSelectedPreviewRowIds] = useState([]);
@@ -584,6 +586,32 @@ export default function ProjectDetailPage() {
     setSelectedProjectItemIds((prev) => prev.filter((id) => freshItems.some((item) => item.id === id)));
     setSelectedPurchaseItemIds((prev) => prev.filter((id) => freshItems.some((item) => item.id === id)));
     setLoading(false);
+    return freshItems;
+  }
+
+  function scrollToPreviewResults() {
+    window.setTimeout(() => {
+      previewResultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 80);
+  }
+
+  async function refreshProjectAfterMaterialChange(nextItems, user) {
+    await refreshProjectBudget(nextItems);
+    const freshItems = await loadProjectItems();
+
+    if (!user) return freshItems;
+
+    window.setTimeout(() => {
+      ensureProductCardsForProjectItems(freshItems, user.id)
+        .then((linkedItems) => {
+          setItems(linkedItems);
+          return loadProjectItems();
+        })
+        .catch((error) => {
+          console.warn("Urun karti eslestirme arka planda tamamlanamadi:", error);
+        });
+    }, 0);
+
     return freshItems;
   }
 
@@ -1344,6 +1372,137 @@ export default function ProjectDetailPage() {
       .eq("user_id", project.user_id);
   }
 
+  function revisionTotalsForChange(beforeItem, afterItem) {
+    const oldQuantity = Number(beforeItem?.estimated_quantity || 0);
+    const newQuantity = Number(afterItem?.estimated_quantity || 0);
+    const oldUnitPrice = Number(beforeItem?.estimated_unit_price || beforeItem?.quote_unit_price || 0);
+    const newUnitPrice = Number(afterItem?.estimated_unit_price || afterItem?.quote_unit_price || 0);
+    const oldTotal = Number(beforeItem?.estimated_total || oldQuantity * oldUnitPrice || 0);
+    const newTotal = Number(afterItem?.estimated_total || newQuantity * newUnitPrice || 0);
+
+    return {
+      oldQuantity,
+      newQuantity,
+      quantityDelta: newQuantity - oldQuantity,
+      oldUnitPrice,
+      newUnitPrice,
+      unitPriceDelta: newUnitPrice - oldUnitPrice,
+      oldTotal,
+      newTotal,
+      costImpact: newTotal - oldTotal,
+    };
+  }
+
+  function automaticRevisionTitle(actionType, item) {
+    const names = {
+      add: "Malzeme eklendi",
+      remove: "Malzeme çıkarıldı",
+      quantity: "Malzeme adedi değişti",
+      price: "Malzeme fiyatı değişti",
+    };
+
+    return `${names[actionType] || "Malzeme revizyonu"}: ${item?.product_name || "Malzeme"}`;
+  }
+
+  async function insertRevisionWithFallback(payload) {
+    const fullResult = await supabase
+      .from("project_revisions")
+      .insert(payload)
+      .select("*")
+      .single();
+
+    if (!fullResult.error) return fullResult;
+
+    const fallbackFields = [
+      "action_type",
+      "project_item_id",
+      "product_code",
+      "product_name",
+      "unit",
+      "old_quantity",
+      "new_quantity",
+      "quantity_delta",
+      "old_unit_price",
+      "new_unit_price",
+      "unit_price_delta",
+      "old_total",
+      "new_total",
+      "cost_impact",
+      "performed_by",
+      "performed_by_email",
+    ];
+
+    const fallbackPayload = stripPayloadFields(payload, fallbackFields);
+    return supabase
+      .from("project_revisions")
+      .insert(fallbackPayload)
+      .select("*")
+      .single();
+  }
+
+  async function recordMaterialRevision({ actionType, beforeItem = null, afterItem = null, user, description = "" }) {
+    const item = afterItem || beforeItem;
+    if (!item || !user) return null;
+
+    const totals = revisionTotalsForChange(beforeItem, afterItem);
+    const currency = item.currency || projectCurrencyForDisplay();
+    const exchangeRate = Number(item.exchange_rate || getExchangeRate(currency, companySettings) || 1);
+    const costImpact = Number(totals.costImpact || 0);
+    const detail = [
+      description,
+      `Eski adet: ${totals.oldQuantity}`,
+      `Yeni adet: ${totals.newQuantity}`,
+      `Adet farkı: ${totals.quantityDelta}`,
+      `Eski birim fiyat: ${formatMoney(totals.oldUnitPrice, currency)}`,
+      `Yeni birim fiyat: ${formatMoney(totals.newUnitPrice, currency)}`,
+      `Maliyet etkisi: ${formatMoney(costImpact, currency)}`,
+    ].filter(Boolean).join(" | ");
+
+    const payload = {
+      user_id: user.id,
+      project_id: projectId,
+      revision_date: new Date().toISOString().slice(0, 10),
+      revision_type: "Malzeme Değişikliği",
+      action_type: actionType,
+      title: automaticRevisionTitle(actionType, item),
+      description: detail,
+      revenue_amount: 0,
+      revenue_base_amount: 0,
+      cost_amount: costImpact,
+      cost_base_amount: calculateBaseAmount(costImpact, currency, companySettings, exchangeRate),
+      currency,
+      exchange_rate: exchangeRate,
+      base_currency: getBaseCurrency(companySettings),
+      status: "Uygulandı",
+      project_item_id: item.id || null,
+      product_code: item.product_code || "",
+      product_name: item.product_name || "",
+      unit: item.unit || "adet",
+      old_quantity: totals.oldQuantity,
+      new_quantity: totals.newQuantity,
+      quantity_delta: totals.quantityDelta,
+      old_unit_price: totals.oldUnitPrice,
+      new_unit_price: totals.newUnitPrice,
+      unit_price_delta: totals.unitPriceDelta,
+      old_total: totals.oldTotal,
+      new_total: totals.newTotal,
+      cost_impact: costImpact,
+      performed_by: user.id,
+      performed_by_email: user.email || "",
+    };
+
+    const { data, error } = await insertRevisionWithFallback(payload);
+
+    if (error) {
+      console.error("Otomatik revizyon kaydı oluşturulamadı:", error);
+      setMessage(error.message || "Malzeme değişti fakat revizyon kaydı oluşturulamadı.");
+      return null;
+    }
+
+    setRevisions((prev) => [data, ...prev]);
+    return data;
+  }
+
   async function addProjectItem(event) {
     event.preventDefault();
     setMessage("");
@@ -1388,6 +1547,13 @@ export default function ProjectDetailPage() {
     }
 
     const nextItems = await ensureProductCardsForProjectItems([...items, data], user.id);
+    await recordMaterialRevision({
+      actionType: "add",
+      beforeItem: { ...data, estimated_quantity: 0, estimated_unit_price: Number(data.estimated_unit_price || 0), estimated_total: 0 },
+      afterItem: data,
+      user,
+      description: itemForm.parent_item_id ? "Alt malzeme eklendi." : "Ana malzeme eklendi.",
+    });
     setItems(nextItems);
     setItemForm(emptyItem);
     setAddingItemParentId("");
@@ -1426,6 +1592,10 @@ export default function ProjectDetailPage() {
     const approved = window.confirm("Bu tahmini malzeme satırı silinsin mi?");
     if (!approved) return;
 
+    const user = await getUserOrRedirect();
+    if (!user) return;
+    const deletingItems = items.filter((item) => item.id === itemId || item.parent_item_id === itemId);
+
     const { error } = await supabase
       .from("project_items")
       .delete()
@@ -1439,6 +1609,15 @@ export default function ProjectDetailPage() {
 
     const removedIds = new Set([itemId, ...items.filter((item) => item.parent_item_id === itemId).map((item) => item.id)]);
     const nextItems = items.filter((item) => !removedIds.has(item.id));
+    for (const deletingItem of deletingItems) {
+      await recordMaterialRevision({
+        actionType: "remove",
+        beforeItem: deletingItem,
+        afterItem: { ...deletingItem, estimated_quantity: 0, estimated_total: 0 },
+        user,
+        description: "Malzeme listeden çıkarıldı.",
+      });
+    }
     setSelectedProjectItemIds((prev) => prev.filter((id) => !removedIds.has(id)));
     setSelectedPurchaseItemIds((prev) => prev.filter((id) => !removedIds.has(id)));
     setItems(nextItems);
@@ -1494,6 +1673,9 @@ export default function ProjectDetailPage() {
       return;
     }
 
+    const user = await getUserOrRedirect();
+    if (!user) return;
+
     try {
       console.log("Toplu silme secilen id sayisi:", selectedIds.length);
       const response = await fetch(`${API_URL}/project-items/bulk-delete`, {
@@ -1525,6 +1707,16 @@ export default function ProjectDetailPage() {
         ? deletedIds
         : Array.from(new Set([...deletedIds, ...selectedProjectItemDeleteIds, ...selectedIds]));
       const nextItems = items.filter((item) => !optimisticDeletedIds.includes(item.id));
+      const deletedItems = items.filter((item) => optimisticDeletedIds.includes(item.id));
+      for (const deletedItem of deletedItems) {
+        await recordMaterialRevision({
+          actionType: "remove",
+          beforeItem: deletedItem,
+          afterItem: { ...deletedItem, estimated_quantity: 0, estimated_total: 0 },
+          user,
+          description: "Malzeme toplu silme ile çıkarıldı.",
+        });
+      }
       setSelectedProjectItemIds([]);
       setSelectedPurchaseItemIds((prev) => prev.filter((id) => !optimisticDeletedIds.includes(id)));
       setItems(nextItems);
@@ -2328,6 +2520,7 @@ export default function ProjectDetailPage() {
         const nextPreviewRows = preparePreviewRows(data.rows || []);
         setPreviewRows(nextPreviewRows);
         setSelectedPreviewRowIds(nextPreviewRows.map((row) => row.preview_id));
+        scrollToPreviewResults();
       } else {
         const nextPreviewRows = preparePreviewRows(data.rows || []);
         setPreviewRows(nextPreviewRows);
@@ -2339,6 +2532,7 @@ export default function ProjectDetailPage() {
         const nextRawItems = data.raw_items || data.rawItems || [];
         setRawItems(nextRawItems);
         setMessage(`${data.totalRows} satır okundu. Aktarmadan önce önizlemeyi kontrol edin.`);
+        scrollToPreviewResults();
       }
     } catch (error) {
       console.error(error);
@@ -2400,7 +2594,7 @@ export default function ProjectDetailPage() {
         return;
       }
 
-      const nextItems = await ensureProductCardsForProjectItems([...items, ...(data || [])], user.id);
+      const nextItems = [...items, ...(data || [])];
       setItems(nextItems);
       const importedIds = new Set(rowsToImport.map((row) => row.preview_id));
       setPreviewRows((prev) => prev.filter((row) => !importedIds.has(row.preview_id)));
@@ -2409,8 +2603,7 @@ export default function ProjectDetailPage() {
       setSelectedMainRawIds([]);
       setHierarchyGroups([]);
       setPreviewParentId("");
-      await refreshProjectBudget(nextItems);
-      await loadProject();
+      await refreshProjectAfterMaterialChange(nextItems, user);
       const successMessage = usedFallback
         ? "Ürünler projeye aktarıldı. Eski veritabanı kolonları için uyumlu kayıt kullanıldı."
         : "Dosyadan okunan ürünler projeye aktarıldı.";
@@ -2534,8 +2727,8 @@ export default function ProjectDetailPage() {
       }
 
       const importedIds = new Set(rowsToImport.map((row) => row.preview_id));
-      setPreviewActionMessage("Ürün kartları eşleştiriliyor ve proje bütçesi yenileniyor...");
-      const nextItems = await ensureProductCardsForProjectItems([...items, ...(insertedParents || []), ...insertedChildren], user.id);
+      setPreviewActionMessage("Malzeme listesi yenileniyor...");
+      const nextItems = [...items, ...(insertedParents || []), ...insertedChildren];
       setItems(nextItems);
       setPreviewRows((prev) => prev.filter((row) => !importedIds.has(row.preview_id)));
       setSelectedPreviewRowIds([]);
@@ -2543,8 +2736,7 @@ export default function ProjectDetailPage() {
       setSelectedMainRawIds([]);
       setHierarchyGroups([]);
       setPreviewParentId("");
-      await refreshProjectBudget(nextItems);
-      await loadProject();
+      await refreshProjectAfterMaterialChange(nextItems, user);
       const successMessage = parentUsedFallback || childUsedFallback
         ? "Hiyerarşik aktarım tamamlandı. Eski veritabanı kolonları için uyumlu kayıt kullanıldı."
         : "Kategori bazlı hiyerarşik aktarım tamamlandı.";
@@ -3121,6 +3313,98 @@ export default function ProjectDetailPage() {
     await loadProject();
   }
 
+  async function updateProjectItemQuantity(item, delta) {
+    const user = await getUserOrRedirect();
+    if (!user) return;
+
+    const oldQuantity = Number(item.estimated_quantity || 0);
+    const nextQuantity = Math.max(oldQuantity + Number(delta || 0), 0);
+    if (nextQuantity === oldQuantity) return;
+
+    const unitPrice = Number(item.estimated_unit_price || item.quote_unit_price || 0);
+    const nextItem = {
+      ...item,
+      estimated_quantity: nextQuantity,
+      estimated_total: nextQuantity * unitPrice,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { error } = await supabase
+      .from("project_items")
+      .update({
+        estimated_quantity: nextItem.estimated_quantity,
+        estimated_total: nextItem.estimated_total,
+        updated_at: nextItem.updated_at,
+      })
+      .eq("id", item.id)
+      .eq("project_id", projectId)
+      .eq("user_id", user.id);
+
+    if (error) {
+      setMessage(error.message || "Malzeme adedi güncellenemedi.");
+      return;
+    }
+
+    const nextItems = items.map((candidate) => candidate.id === item.id ? nextItem : candidate);
+    setItems(nextItems);
+    await recordMaterialRevision({
+      actionType: "quantity",
+      beforeItem: item,
+      afterItem: nextItem,
+      user,
+      description: delta > 0 ? "Malzeme adedi artırıldı." : "Malzeme adedi azaltıldı.",
+    });
+    await refreshProjectBudget(nextItems);
+    await loadProject();
+  }
+
+  async function updateProjectItemUnitPrice(item) {
+    const user = await getUserOrRedirect();
+    if (!user) return;
+
+    const draft = itemPriceDrafts[item.id];
+    const nextUnitPrice = Number(draft ?? item.estimated_unit_price ?? 0);
+    const oldUnitPrice = Number(item.estimated_unit_price || item.quote_unit_price || 0);
+    if (nextUnitPrice === oldUnitPrice) return;
+
+    const quantity = Number(item.estimated_quantity || 0);
+    const nextItem = {
+      ...item,
+      estimated_unit_price: nextUnitPrice,
+      estimated_total: quantity * nextUnitPrice,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { error } = await supabase
+      .from("project_items")
+      .update({
+        estimated_unit_price: nextItem.estimated_unit_price,
+        estimated_total: nextItem.estimated_total,
+        updated_at: nextItem.updated_at,
+      })
+      .eq("id", item.id)
+      .eq("project_id", projectId)
+      .eq("user_id", user.id);
+
+    if (error) {
+      setMessage(error.message || "Malzeme fiyatı güncellenemedi.");
+      return;
+    }
+
+    const nextItems = items.map((candidate) => candidate.id === item.id ? nextItem : candidate);
+    setItems(nextItems);
+    setItemPriceDrafts((prev) => ({ ...prev, [item.id]: String(nextUnitPrice) }));
+    await recordMaterialRevision({
+      actionType: "price",
+      beforeItem: item,
+      afterItem: nextItem,
+      user,
+      description: "Malzeme birim fiyatı güncellendi.",
+    });
+    await refreshProjectBudget(nextItems);
+    await loadProject();
+  }
+
   async function createRequestFromSelectedItems() {
     setMessage("");
     setCreatedRequestId("");
@@ -3420,7 +3704,10 @@ export default function ProjectDetailPage() {
       0,
     );
     const expenseTotal = expenses.reduce((sum, expense) => sum + Number(expense.base_amount || expense.amount || 0), 0);
-    const approvedRevisions = revisions.filter((revision) => revision.status === "Onaylandı" || revision.status === "Uygulandı");
+    const approvedRevisions = revisions.filter((revision) =>
+      (revision.status === "Onaylandı" || revision.status === "Uygulandı") &&
+      revision.revision_type !== "Malzeme Değişikliği"
+    );
     const revisionRevenue = approvedRevisions.reduce((sum, revision) => sum + Number(revision.revenue_base_amount || revision.revenue_amount || 0), 0);
     const revisionCost = approvedRevisions.reduce((sum, revision) => sum + Number(revision.cost_base_amount || revision.cost_amount || 0), 0);
     const totalCost = materialCost + orderTotal + stockCost + expenseTotal + revisionCost;
@@ -3452,6 +3739,24 @@ export default function ProjectDetailPage() {
       netProfitLoss,
     };
   }, [items, payments, expenses, revisions, project, projectOrders, allOrders, stockMovements, products, visiblePreviewSections, storedSectionTotals]);
+
+  const revisionSummary = useMemo(() => {
+    const appliedRevisions = revisions.filter((revision) => !["İptal", "Iptal"].includes(revision.status));
+    const impactFor = (revision) => Number(revision.cost_impact ?? revision.cost_base_amount ?? revision.cost_amount ?? 0);
+    const netImpact = appliedRevisions.reduce((sum, revision) => sum + impactFor(revision), 0);
+    const addedCost = appliedRevisions.reduce((sum, revision) => {
+      const impact = impactFor(revision);
+      return impact > 0 ? sum + impact : sum;
+    }, 0);
+    const deductedCost = appliedRevisions.reduce((sum, revision) => {
+      const impact = impactFor(revision);
+      return impact < 0 ? sum + Math.abs(impact) : sum;
+    }, 0);
+    const currentTotal = totals.itemEstimate || Number(project?.estimated_budget || 0) || 0;
+    const initialTotal = currentTotal - netImpact;
+
+    return { initialTotal, addedCost, deductedCost, currentTotal, netImpact };
+  }, [revisions, totals.itemEstimate, project]);
 
   const projectKpis = useMemo(() => {
     const mainItems = items.filter((item) => !item.parent_item_id);
@@ -3523,7 +3828,7 @@ export default function ProjectDetailPage() {
       warnings.push({ tone: "orange", text: `${criticalStockItems.length} adet kritik stok seviyesi uyarisi.` });
     }
     if (totals.budgetVariance > 0) {
-      warnings.push({ tone: "amber", text: `${formatMoney(totals.budgetVariance)} bütçe aşımı riski tespit edildi.` });
+      warnings.push({ tone: "amber", text: `${formatMoney(totals.budgetVariance, projectCurrencyForDisplay())} bütçe aşımı riski tespit edildi.` });
     }
 
     const delayedOrders = projectOrders.filter((order) => {
@@ -3694,13 +3999,13 @@ export default function ProjectDetailPage() {
             <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
               <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-xl bg-blue-600 text-xl font-black text-white">TL</div>
               <div className="text-sm font-bold text-slate-600">Sözleşme Bedeli</div>
-              <div className="mt-3 text-2xl font-black text-slate-950">{formatMoney(totals.contract)}</div>
+              <div className="mt-3 text-2xl font-black text-slate-950">{formatMoney(totals.contract, projectCurrencyForDisplay())}</div>
               <div className="mt-2 text-sm text-slate-500">Toplam bedel</div>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
               <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-xl bg-emerald-600 text-xl font-black text-white">OK</div>
               <div className="text-sm font-bold text-slate-600">Tahsilat</div>
-              <div className="mt-3 text-2xl font-black text-slate-950">{formatMoney(totals.paidTotal)}</div>
+              <div className="mt-3 text-2xl font-black text-slate-950">{formatMoney(totals.paidTotal, projectCurrencyForDisplay())}</div>
               <div className="mt-2 text-sm text-slate-500">Tahsil edilen</div>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -3718,7 +4023,7 @@ export default function ProjectDetailPage() {
             <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
               <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-xl bg-emerald-600 text-xl font-black text-white">TL</div>
               <div className="text-sm font-bold text-slate-600">Bütçe Durumu</div>
-              <div className={`mt-3 text-2xl font-black ${totals.budgetVariance > 0 ? "text-red-600" : "text-emerald-700"}`}>{formatMoney(totals.budgetVariance)}</div>
+              <div className={`mt-3 text-2xl font-black ${totals.budgetVariance > 0 ? "text-red-600" : "text-emerald-700"}`}>{formatMoney(totals.budgetVariance, projectCurrencyForDisplay())}</div>
               <div className="mt-2 text-sm text-slate-500">Bütçe sapması</div>
             </div>
           </div>
@@ -3785,55 +4090,55 @@ export default function ProjectDetailPage() {
                 <div className="mt-6 overflow-hidden rounded-xl border border-slate-100">
                   <div className="border-b border-slate-100 p-4">
                     <div className="text-xs font-bold text-slate-500">Sözleşme Bedeli</div>
-                    <div className="mt-1 text-xl font-black text-slate-950">{formatMoney(totals.contract)}</div>
+                    <div className="mt-1 text-xl font-black text-slate-950">{formatMoney(totals.contract, projectCurrencyForDisplay())}</div>
                   </div>
                   <div className="border-b border-slate-100 p-4">
                     <div className="text-xs font-bold text-slate-500">Tahmini Maliyet</div>
-                    <div className="mt-1 text-xl font-black text-slate-950">{formatMoney(totals.estimatedBudget)}</div>
+                    <div className="mt-1 text-xl font-black text-slate-950">{formatMoney(totals.estimatedBudget, projectCurrencyForDisplay())}</div>
                   </div>
                   <div className="border-b border-slate-100 p-4">
                     <div className="text-xs font-bold text-slate-500">Gerçekleşen Maliyet</div>
-                    <div className="mt-1 text-xl font-black text-slate-950">{formatMoney(totals.actualCost)}</div>
+                    <div className="mt-1 text-xl font-black text-slate-950">{formatMoney(totals.actualCost, projectCurrencyForDisplay())}</div>
                   </div>
                   <div className="border-b border-slate-100 p-4">
                     <div className="text-xs font-bold text-slate-500">Tahsil Edilen</div>
-                    <div className="mt-1 text-xl font-black text-emerald-700">{formatMoney(totals.paidTotal)}</div>
+                    <div className="mt-1 text-xl font-black text-emerald-700">{formatMoney(totals.paidTotal, projectCurrencyForDisplay())}</div>
                   </div>
                   <div className="border-b border-slate-100 p-4">
                     <div className="text-xs font-bold text-slate-500">Kalan Tahsilat</div>
-                    <div className="mt-1 text-xl font-black text-blue-700">{formatMoney(totals.remainingCollection)}</div>
+                    <div className="mt-1 text-xl font-black text-blue-700">{formatMoney(totals.remainingCollection, projectCurrencyForDisplay())}</div>
                   </div>
                   <div className="border-b border-slate-100 p-4">
                     <div className="text-xs font-bold text-slate-500">Malzeme Maliyeti</div>
-                    <div className="mt-1 text-xl font-black text-slate-950">{formatMoney(totals.materialCost)}</div>
+                    <div className="mt-1 text-xl font-black text-slate-950">{formatMoney(totals.materialCost, projectCurrencyForDisplay())}</div>
                   </div>
                   <div className="border-b border-slate-100 p-4">
                     <div className="text-xs font-bold text-slate-500">Sipariş Toplamı</div>
-                    <div className="mt-1 text-xl font-black text-slate-950">{formatMoney(totals.orderTotal)}</div>
+                    <div className="mt-1 text-xl font-black text-slate-950">{formatMoney(totals.orderTotal, projectCurrencyForDisplay())}</div>
                   </div>
                   <div className="border-b border-slate-100 p-4">
                     <div className="text-xs font-bold text-slate-500">Stok Hareket Değeri</div>
-                    <div className="mt-1 text-xl font-black text-slate-950">{formatMoney(totals.stockCost)}</div>
+                    <div className="mt-1 text-xl font-black text-slate-950">{formatMoney(totals.stockCost, projectCurrencyForDisplay())}</div>
                   </div>
                   <div className="border-b border-slate-100 p-4">
                     <div className="text-xs font-bold text-slate-500">Ek Giderler</div>
-                    <div className="mt-1 text-xl font-black text-slate-950">{formatMoney(totals.expenseTotal)}</div>
+                    <div className="mt-1 text-xl font-black text-slate-950">{formatMoney(totals.expenseTotal, projectCurrencyForDisplay())}</div>
                   </div>
                   <div className="border-b border-slate-100 p-4">
                     <div className="text-xs font-bold text-slate-500">Revizyon Gelir / Maliyet</div>
-                    <div className="mt-1 text-xl font-black text-slate-950">{formatMoney(totals.revisionRevenue)} / {formatMoney(totals.revisionCost)}</div>
+                    <div className="mt-1 text-xl font-black text-slate-950">{formatMoney(totals.revisionRevenue, projectCurrencyForDisplay())} / {formatMoney(totals.revisionCost, projectCurrencyForDisplay())}</div>
                   </div>
                   <div className="border-b border-slate-100 p-4">
                     <div className="text-xs font-bold text-slate-500">Toplam Maliyet</div>
-                    <div className="mt-1 text-xl font-black text-slate-950">{formatMoney(totals.totalCost)}</div>
+                    <div className="mt-1 text-xl font-black text-slate-950">{formatMoney(totals.totalCost, projectCurrencyForDisplay())}</div>
                   </div>
                   <div className="border-b border-slate-100 p-4">
                     <div className="text-xs font-bold text-slate-500">Net Kâr / Zarar</div>
-                    <div className={`mt-1 text-xl font-black ${totals.netProfitLoss >= 0 ? "text-emerald-700" : "text-red-600"}`}>{formatMoney(totals.netProfitLoss)}</div>
+                    <div className={`mt-1 text-xl font-black ${totals.netProfitLoss >= 0 ? "text-emerald-700" : "text-red-600"}`}>{formatMoney(totals.netProfitLoss, projectCurrencyForDisplay())}</div>
                   </div>
                   <div className="p-4">
                     <div className="text-xs font-bold text-slate-500">Bütçe Sapması</div>
-                    <div className={`mt-1 text-xl font-black ${totals.budgetVariance > 0 ? "text-red-600" : "text-emerald-700"}`}>{formatMoney(totals.budgetVariance)}</div>
+                    <div className={`mt-1 text-xl font-black ${totals.budgetVariance > 0 ? "text-red-600" : "text-emerald-700"}`}>{formatMoney(totals.budgetVariance, projectCurrencyForDisplay())}</div>
                   </div>
                 </div>
               </div>
@@ -3908,7 +4213,7 @@ export default function ProjectDetailPage() {
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <h2 className="text-xl font-black text-slate-900">Ek Giderler</h2>
-                    <p className="mt-1 text-sm text-slate-500">Toplam: {formatMoney(totals.expenseTotal)}</p>
+                    <p className="mt-1 text-sm text-slate-500">Toplam: {formatMoney(totals.expenseTotal, projectCurrencyForDisplay())}</p>
                   </div>
                   <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">{expenses.length} kayıt</span>
                 </div>
@@ -3992,8 +4297,8 @@ export default function ProjectDetailPage() {
                     </div>
                   </div>
                   <div className="space-y-4 text-sm">
-                    <div><span className="mr-2 inline-block h-2 w-2 rounded-full bg-emerald-500" />Tahsil Edilen <div className="ml-5 font-black text-slate-900">{formatMoney(totals.paidTotal)}</div></div>
-                    <div><span className="mr-2 inline-block h-2 w-2 rounded-full bg-blue-600" />Kalan Tahsilat <div className="ml-5 font-black text-slate-900">{formatMoney(totals.remainingCollection)}</div></div>
+                    <div><span className="mr-2 inline-block h-2 w-2 rounded-full bg-emerald-500" />Tahsil Edilen <div className="ml-5 font-black text-slate-900">{formatMoney(totals.paidTotal, projectCurrencyForDisplay())}</div></div>
+                    <div><span className="mr-2 inline-block h-2 w-2 rounded-full bg-blue-600" />Kalan Tahsilat <div className="ml-5 font-black text-slate-900">{formatMoney(totals.remainingCollection, projectCurrencyForDisplay())}</div></div>
                   </div>
                 </div>
                 <div className="mt-6 rounded-xl bg-slate-50 p-4 text-sm text-slate-500">Tahsilat planına göre ilerleme oranı %{projectKpis.collection}.</div>
@@ -4055,7 +4360,7 @@ export default function ProjectDetailPage() {
                 <input
                   type="file"
                   multiple
-                  accept=".xlsx,.xls,.pdf,.png,.jpg,.jpeg"
+                  accept=".xlsx,.xls,.xlsm,.xlsb,.csv,.ods,.pdf,.png,.jpg,.jpeg,.webp,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/vnd.ms-excel.sheet.macroEnabled.12,text/csv"
                   onChange={parseProjectItemFiles}
                   className="mt-5 w-full rounded-xl border border-dashed border-blue-300 bg-blue-50 p-4 text-sm"
                 />
@@ -4063,8 +4368,8 @@ export default function ProjectDetailPage() {
                   <div className={`mt-4 rounded-xl border p-4 text-sm ${previewBlocked ? "border-red-200 bg-red-50 text-red-800" : "border-amber-200 bg-amber-50 text-amber-900"}`}>
                     <div className="font-bold">{previewBlocked ? "Aktarım kilitlendi" : "Fiyatlandırma notu"}</div>
                     <ul className="mt-2 list-disc space-y-1 pl-5">
-                      {previewWarnings.slice(0, 6).map((warning) => (
-                        <li key={warning}>{warning}</li>
+                      {previewWarnings.slice(0, 6).map((warning, index) => (
+                        <li key={`${index}-${warning}`}>{warning}</li>
                       ))}
                     </ul>
                     {previewWarnings.length > 6 && (
@@ -4087,7 +4392,7 @@ export default function ProjectDetailPage() {
                   </div>
                 )}
                 {previewRows.length > 0 && (
-                  <div className="mt-5 rounded-2xl border border-slate-200 bg-white p-4">
+                  <div ref={previewResultsRef} className="mt-5 rounded-2xl border border-slate-200 bg-white p-4">
                     <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                       <div>
                         <h3 className="text-lg font-black text-slate-900">Okunan Ürünleri Kontrol Et</h3>
@@ -4201,9 +4506,9 @@ export default function ProjectDetailPage() {
                                         onChange={(event) => updatePreviewRow(row.preview_id, "estimated_unit_price", event.target.value)}
                                       />
                                     ) : (
-                                      <div>{formatMoney(row.estimated_unit_price)}</div>
+                                      <div>{formatMoney(row.estimated_unit_price, projectCurrencyForDisplay())}</div>
                                     )}
-                                    <div className="text-slate-500">{formatMoney(row.estimated_total)}</div>
+                                    <div className="text-slate-500">{formatMoney(row.estimated_total, projectCurrencyForDisplay())}</div>
                                   </div>
                                   <div className="flex gap-2">
                                     <button type="button" onClick={() => setEditingPreviewRowId(isEditing ? "" : row.preview_id)} className="rounded-lg bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700">
@@ -4318,7 +4623,7 @@ export default function ProjectDetailPage() {
                                 <div className="mt-1 text-xs text-slate-500">Raw satır: {candidate.raw_item_id}</div>
                               </div>
                               <div className="text-sm font-bold text-slate-700">
-                                {formatMoney(candidate.estimated_total)}
+                                {formatMoney(candidate.estimated_total, projectCurrencyForDisplay())}
                               </div>
                             </div>
                             <div className="mt-3 flex items-center gap-3">
@@ -4375,7 +4680,7 @@ export default function ProjectDetailPage() {
                               </div>
                             </div>
                             <div className="text-right">
-                              <div className="font-bold text-emerald-700">{formatMoney(group.main_product?.estimated_total)}</div>
+                              <div className="font-bold text-emerald-700">{formatMoney(group.main_product?.estimated_total, projectCurrencyForDisplay())}</div>
                               <div className="text-xs font-black text-blue-700">Öneri skoru %{group.suggestion_score || 0}</div>
                               <button
                                 type="button"
@@ -4529,7 +4834,7 @@ export default function ProjectDetailPage() {
                                 )}
                               </td>
                               <td className="p-3">{row.estimated_quantity || "-"} {row.unit || ""}</td>
-                              <td className="p-3 font-bold">{formatMoney(row.estimated_total)}</td>
+                              <td className="p-3 font-bold">{formatMoney(row.estimated_total, projectCurrencyForDisplay())}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -4561,7 +4866,7 @@ export default function ProjectDetailPage() {
                               <div className="text-xs text-slate-500">{group.main.product_code || "-"} · {group.subItems.length} alt ürün</div>
                             </div>
                             <div className="flex items-center gap-2">
-                              <div className="font-bold text-emerald-700">{formatMoney(group.main.estimated_total)}</div>
+                              <div className="font-bold text-emerald-700">{formatMoney(group.main.estimated_total, projectCurrencyForDisplay())}</div>
                               <button type="button" onClick={() => removeMainGroup(group.id)} className="rounded-lg bg-red-50 px-3 py-2 text-xs font-bold text-red-700">
                                 Ana ürünü sil
                               </button>
@@ -4643,10 +4948,10 @@ export default function ProjectDetailPage() {
                             <td className="p-3">
                               {row.price_status === "section_total_only" ? (
                                 <span className="text-xs font-bold text-amber-700">Kategori toplamında</span>
-                              ) : formatMoney(row.estimated_unit_price)}
+                              ) : formatMoney(row.estimated_unit_price, projectCurrencyForDisplay())}
                             </td>
                             <td className="p-3 font-bold">
-                              {row.price_status === "section_total_only" ? "-" : formatMoney(row.estimated_total)}
+                              {row.price_status === "section_total_only" ? "-" : formatMoney(row.estimated_total, projectCurrencyForDisplay())}
                             </td>
                           </tr>
                         ))}
@@ -4662,7 +4967,7 @@ export default function ProjectDetailPage() {
                 <div>
                   <h2 className="text-xl font-bold text-slate-900">Malzeme Listesi</h2>
                   <p className="mt-1 text-sm text-slate-500">
-                    Toplam: {formatMoney(totals.itemEstimate)} · Satınalma gerekli: {purchaseRequiredItems.length} · Kritik stok: {criticalStockItems.length}
+                    Toplam: {formatMoney(totals.itemEstimate, projectCurrencyForDisplay())} · Satınalma gerekli: {purchaseRequiredItems.length} · Kritik stok: {criticalStockItems.length}
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-3">
@@ -4808,6 +5113,28 @@ export default function ProjectDetailPage() {
                                 Tahmini: {stockInfo.estimatedQuantity} {item.unit || "adet"} · Stok: {stockInfo.stockQuantity} {item.unit || "adet"} · Satınalma gerekli: {stockInfo.requiredQuantity} {item.unit || "adet"}
                               </div>
                             )}
+                            {!stockInfo.isMainItem && (
+                              <div className="mt-3 flex flex-wrap items-center gap-2">
+                                <button type="button" onClick={() => updateProjectItemQuantity(item, -1)} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50">
+                                  -1
+                                </button>
+                                <button type="button" onClick={() => updateProjectItemQuantity(item, 1)} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50">
+                                  +1
+                                </button>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  value={itemPriceDrafts[item.id] ?? item.estimated_unit_price ?? ""}
+                                  onChange={(event) => setItemPriceDrafts((prev) => ({ ...prev, [item.id]: event.target.value }))}
+                                  className="w-28 rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold"
+                                  placeholder="Birim fiyat"
+                                />
+                                <button type="button" onClick={() => updateProjectItemUnitPrice(item)} className="rounded-lg bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700 hover:bg-blue-100">
+                                  Fiyatı Güncelle
+                                </button>
+                              </div>
+                            )}
                           </div>
                         </div>
                         <span className={`rounded-full px-3 py-1 text-xs font-bold ${itemStatusClass(item.status)}`}>{item.status || "Bekliyor"}</span>
@@ -4879,6 +5206,26 @@ export default function ProjectDetailPage() {
                                       </div>
                                       <div className="mt-1 text-xs font-bold text-slate-600">
                                         Tahmini: {childStockInfo.estimatedQuantity} {child.unit || "adet"} · Stok: {childStockInfo.stockQuantity} {child.unit || "adet"} · Satınalma gerekli: {childStockInfo.requiredQuantity} {child.unit || "adet"}
+                                      </div>
+                                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                                        <button type="button" onClick={() => updateProjectItemQuantity(child, -1)} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50">
+                                          -1
+                                        </button>
+                                        <button type="button" onClick={() => updateProjectItemQuantity(child, 1)} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50">
+                                          +1
+                                        </button>
+                                        <input
+                                          type="number"
+                                          min="0"
+                                          step="0.01"
+                                          value={itemPriceDrafts[child.id] ?? child.estimated_unit_price ?? ""}
+                                          onChange={(event) => setItemPriceDrafts((prev) => ({ ...prev, [child.id]: event.target.value }))}
+                                          className="w-28 rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold"
+                                          placeholder="Birim fiyat"
+                                        />
+                                        <button type="button" onClick={() => updateProjectItemUnitPrice(child)} className="rounded-lg bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700 hover:bg-blue-100">
+                                          Fiyatı Güncelle
+                                        </button>
                                       </div>
                                     </div>
                                   </div>
@@ -5188,169 +5535,88 @@ export default function ProjectDetailPage() {
         )}
 
         {activeTab === "Revizyonlar" && (
-          <section className="grid grid-cols-1 gap-6 xl:grid-cols-[0.9fr_1.2fr]">
-            <form onSubmit={addRevision} className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-              <h2 className="text-xl font-black text-slate-900">Revizyon / Ek İş Ekle</h2>
-              <div className="mt-5 space-y-4">
-                <input
-                  value={revisionForm.title}
-                  onChange={(event) => updateRevisionForm("title", event.target.value)}
-                  placeholder="Başlık"
-                  className="w-full rounded-xl border border-slate-200 p-3 text-sm font-semibold"
-                />
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                  <select
-                    value={revisionForm.revision_type}
-                    onChange={(event) => updateRevisionForm("revision_type", event.target.value)}
-                    className="rounded-xl border border-slate-200 p-3 text-sm font-semibold"
-                  >
-                    {revisionTypes.map((type) => <option key={type} value={type}>{type}</option>)}
-                  </select>
-                  <input
-                    type="date"
-                    value={revisionForm.revision_date}
-                    onChange={(event) => updateRevisionForm("revision_date", event.target.value)}
-                    className="rounded-xl border border-slate-200 p-3 text-sm font-semibold"
-                  />
-                </div>
-                <div className="rounded-xl border border-blue-100 bg-blue-50 p-4">
-                  <div className="text-sm font-black text-slate-900">Malzeme revizyonu</div>
-                  <p className="mt-1 text-xs font-semibold text-slate-600">
-                    Ürün adedi veya fiyatı değiştiyse burada seçin; değişiklik revizyon geçmişine de işlenir.
-                  </p>
-                  <div className="mt-3 grid grid-cols-1 gap-3">
-                    <select
-                      value={revisionForm.project_item_id}
-                      onChange={(event) => updateRevisionForm("project_item_id", event.target.value)}
-                      className="rounded-xl border border-slate-200 bg-white p-3 text-sm font-semibold"
-                    >
-                      <option value="">Malzeme seçmeden finansal revizyon</option>
-                      {revisionItemOptions.map((item) => (
-                        <option key={item.id} value={item.id}>
-                          {item.product_name} · {Number(item.estimated_quantity || 0)} {item.unit || "adet"}
-                        </option>
-                      ))}
-                    </select>
-                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={revisionForm.quantity_delta}
-                        onChange={(event) => updateRevisionForm("quantity_delta", event.target.value)}
-                        placeholder="Miktar farkı (+/-)"
-                        className="rounded-xl border border-slate-200 bg-white p-3 text-sm font-semibold"
-                      />
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={revisionForm.revised_unit_price}
-                        onChange={(event) => updateRevisionForm("revised_unit_price", event.target.value)}
-                        placeholder="Yeni birim fiyat"
-                        className="rounded-xl border border-slate-200 bg-white p-3 text-sm font-semibold"
-                      />
-                    </div>
-                  </div>
-                </div>
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={revisionForm.revenue_amount}
-                    onChange={(event) => updateRevisionForm("revenue_amount", event.target.value)}
-                    placeholder="Gelir etkisi"
-                    className="rounded-xl border border-slate-200 p-3 text-sm font-semibold"
-                  />
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={revisionForm.cost_amount}
-                    onChange={(event) => updateRevisionForm("cost_amount", event.target.value)}
-                    placeholder="Maliyet etkisi"
-                    className="rounded-xl border border-slate-200 p-3 text-sm font-semibold"
-                  />
-                </div>
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                  <select
-                    value={revisionForm.currency}
-                    onChange={(event) => {
-                      const currency = event.target.value;
-                      updateRevisionForm("currency", currency);
-                      updateRevisionForm("exchange_rate", getExchangeRate(currency, companySettings));
-                    }}
-                    className="rounded-xl border border-slate-200 p-3 text-sm font-semibold"
-                  >
-                    {currencyOptions.map((currency) => <option key={currency} value={currency}>{currency}</option>)}
-                  </select>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.0001"
-                    value={revisionForm.exchange_rate}
-                    onChange={(event) => updateRevisionForm("exchange_rate", event.target.value)}
-                    placeholder="Kur"
-                    className="rounded-xl border border-slate-200 p-3 text-sm font-semibold"
-                  />
-                  <select
-                    value={revisionForm.status}
-                    onChange={(event) => updateRevisionForm("status", event.target.value)}
-                    className="rounded-xl border border-slate-200 p-3 text-sm font-semibold"
-                  >
-                    {["Onay Bekliyor", "Onaylandı", "Uygulandı", "İptal"].map((status) => <option key={status} value={status}>{status}</option>)}
-                  </select>
-                </div>
-                <textarea
-                  value={revisionForm.description}
-                  onChange={(event) => updateRevisionForm("description", event.target.value)}
-                  placeholder="Açıklama"
-                  rows={3}
-                  className="w-full rounded-xl border border-slate-200 p-3 text-sm font-semibold"
-                />
-                <button type="submit" className="w-full rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white hover:bg-blue-700">
-                  Revizyonu Kaydet
-                </button>
-              </div>
-            </form>
+          <section className="space-y-5">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+              <SummaryCard title="Proje Başlangıç Toplamı" value={formatMoney(revisionSummary.initialTotal, projectCurrencyForDisplay())} text="Revizyon öncesi malzeme toplamı" />
+              <SummaryCard title="Toplam Ek Maliyet" value={formatMoney(revisionSummary.addedCost, projectCurrencyForDisplay())} text="Eklenen/adedi veya fiyatı artan" tone="red" />
+              <SummaryCard title="Toplam Düşülen Maliyet" value={formatMoney(revisionSummary.deductedCost, projectCurrencyForDisplay())} text="Çıkarılan/adedi veya fiyatı düşen" tone="green" />
+              <SummaryCard title="Güncel Proje Toplamı" value={formatMoney(revisionSummary.currentTotal, projectCurrencyForDisplay())} text="Malzeme listesinin son hali" tone="blue" />
+            </div>
 
             <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
               <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
                 <div>
                   <h2 className="text-xl font-black text-slate-900">Revizyon Geçmişi</h2>
                   <p className="mt-1 text-sm text-slate-500">
-                    Onaylanan revizyonlar finans özetindeki gelir ve maliyet hesabına dahil edilir.
+                    Kayıtlar malzeme listesinde yapılan ekleme, çıkarma, adet ve fiyat değişikliklerinden otomatik oluşur.
                   </p>
                 </div>
                 <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">{revisions.length} kayıt</span>
               </div>
+
               <div className="mt-5 space-y-3">
-                {revisions.map((revision) => (
-                  <div key={revision.id} className="grid grid-cols-1 gap-3 rounded-xl border border-slate-100 p-4 md:grid-cols-[1fr_auto] md:items-center">
-                    <div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <div className="font-black text-slate-900">{revision.title}</div>
-                        <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">{revision.revision_type}</span>
-                        <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">{revision.status}</span>
+                {revisions.map((revision) => {
+                  const impact = Number(revision.cost_impact ?? revision.cost_base_amount ?? revision.cost_amount ?? 0);
+                  const isIncrease = impact >= 0;
+                  const oldQuantity = revision.old_quantity ?? "-";
+                  const newQuantity = revision.new_quantity ?? "-";
+                  const quantityDelta = revision.quantity_delta ?? "-";
+                  const oldUnitPrice = revision.old_unit_price ?? null;
+                  const newUnitPrice = revision.new_unit_price ?? null;
+                  const currency = revision.currency || getBaseCurrency(companySettings);
+
+                  return (
+                    <div key={revision.id} className="rounded-xl border border-slate-100 p-4">
+                      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <div className="font-black text-slate-900">{revision.title}</div>
+                            <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">{revision.revision_type || "Malzeme Değişikliği"}</span>
+                            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">{revision.status || "Uygulandı"}</span>
+                          </div>
+                          <div className="mt-1 text-xs font-semibold text-slate-500">
+                            {formatDate(revision.revision_date)} ? {revision.performed_by_email || revision.performed_by || "Kullanıcı"}
+                          </div>
+                          <div className="mt-2 text-sm font-bold text-slate-700">
+                            {revision.product_code ? `${revision.product_code} ? ` : ""}{revision.product_name || revision.description || "Malzeme"}
+                          </div>
+                          {revision.description && (
+                            <div className="mt-1 text-xs font-semibold text-slate-500">{revision.description}</div>
+                          )}
+                        </div>
+                        <div className={`rounded-xl px-4 py-3 text-right text-sm font-black ${isIncrease ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-700"}`}>
+                          {isIncrease ? "+" : "-"} {formatMoney(Math.abs(impact), currency)}
+                        </div>
                       </div>
-                      <div className="mt-1 text-xs font-semibold text-slate-500">
-                        {formatDate(revision.revision_date)} · {revision.description || "Açıklama yok"}
+
+                      <div className="mt-4 grid grid-cols-2 gap-3 text-xs md:grid-cols-5">
+                        <div className="rounded-lg bg-slate-50 p-3">
+                          <div className="font-bold text-slate-500">Eski Adet</div>
+                          <div className="mt-1 font-black text-slate-900">{oldQuantity}</div>
+                        </div>
+                        <div className="rounded-lg bg-slate-50 p-3">
+                          <div className="font-bold text-slate-500">Yeni Adet</div>
+                          <div className="mt-1 font-black text-slate-900">{newQuantity}</div>
+                        </div>
+                        <div className="rounded-lg bg-slate-50 p-3">
+                          <div className="font-bold text-slate-500">Adet Farkı</div>
+                          <div className="mt-1 font-black text-slate-900">{quantityDelta}</div>
+                        </div>
+                        <div className="rounded-lg bg-slate-50 p-3">
+                          <div className="font-bold text-slate-500">Eski Fiyat</div>
+                          <div className="mt-1 font-black text-slate-900">{oldUnitPrice === null ? "-" : formatMoney(oldUnitPrice, currency)}</div>
+                        </div>
+                        <div className="rounded-lg bg-slate-50 p-3">
+                          <div className="font-bold text-slate-500">Yeni Fiyat</div>
+                          <div className="mt-1 font-black text-slate-900">{newUnitPrice === null ? "-" : formatMoney(newUnitPrice, currency)}</div>
+                        </div>
                       </div>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <div className="text-right">
-                        <div className="font-black text-emerald-700">+ {formatMoney(revision.revenue_base_amount || revision.revenue_amount)}</div>
-                        <div className="text-xs font-bold text-red-600">- {formatMoney(revision.cost_base_amount || revision.cost_amount)}</div>
-                      </div>
-                      <button type="button" onClick={() => deleteRevision(revision)} className="rounded-lg bg-red-50 px-3 py-2 text-xs font-bold text-red-700 hover:bg-red-100">
-                        Sil
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
                 {revisions.length === 0 && (
                   <div className="rounded-xl bg-slate-50 p-4 text-sm font-semibold text-slate-500">
-                    Bu projede revizyon veya ek iş kaydı yok.
+                    Bu projede henüz otomatik revizyon kaydı yok. Malzeme listesinden adet, fiyat, ekleme veya çıkarma yapıldığında burada görünecek.
                   </div>
                 )}
               </div>
@@ -5362,7 +5628,7 @@ export default function ProjectDetailPage() {
           <section className="space-y-5">
             <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
               <SummaryCard title="Analiz Edilen Teklif" value={projectOffers.length} text="Projeye bağlı tedarikçi teklifi" tone="blue" />
-              <SummaryCard title="Teklif Toplamı" value={formatMoney(projectOfferTotal)} text="Dosya bazlı toplam" />
+              <SummaryCard title="Teklif Toplamı" value={formatMoney(projectOfferTotal, projectCurrencyForDisplay())} text="Dosya bazlı toplam" />
               <SummaryCard title="Mukayese Raporu" value={projectReports.length} text="Karar bekleyen/sonuçlanan analiz" tone="green" />
             </div>
 
@@ -5393,7 +5659,7 @@ export default function ProjectDetailPage() {
                           <div className="mt-1 text-xs text-slate-500">{offer.dosya_adi || "Teklif dosyası"} · {offer.durum || "Analiz edildi"}</div>
                         </div>
                         <div className="text-left md:text-right">
-                          <div className="font-black text-slate-950">{formatMoney(offerAmount(offer))}</div>
+                          <div className="font-black text-slate-950">{formatMoney(offerAmount(offer), offer.currency || projectCurrencyForDisplay())}</div>
                           <div className="text-xs font-bold text-slate-500">{offer.para_birimi || offer.currency || "TRY"}</div>
                         </div>
                       </div>
@@ -5419,7 +5685,7 @@ export default function ProjectDetailPage() {
                             </div>
                           </div>
                           <div className="text-left md:text-right">
-                            <div className="font-black text-slate-950">{formatMoney(reportAmount(report))}</div>
+                            <div className="font-black text-slate-950">{formatMoney(reportAmount(report), report.currency || projectCurrencyForDisplay())}</div>
                             <div className="text-xs font-bold text-slate-500">{report.durum || report.status || "Bekliyor"}</div>
                           </div>
                         </div>
@@ -5536,7 +5802,7 @@ export default function ProjectDetailPage() {
                 <p className="mt-1 text-sm text-slate-500">Mukayese, analiz ve karar kayıtları proje arşivinde tutulur.</p>
               </div>
               <div className="rounded-full bg-slate-100 px-4 py-2 text-sm font-black text-slate-700">
-                Rapor toplamı: {formatMoney(projectReportTotal)}
+                Rapor toplamı: {formatMoney(projectReportTotal, projectCurrencyForDisplay())}
               </div>
             </div>
 
@@ -5557,7 +5823,7 @@ export default function ProjectDetailPage() {
                     </div>
                     <div className="rounded-lg bg-white p-3">
                       <div className="text-xs font-bold text-slate-500">Tutar</div>
-                      <div className="mt-1 font-black text-slate-900">{formatMoney(reportAmount(report))}</div>
+                      <div className="mt-1 font-black text-slate-900">{formatMoney(reportAmount(report), report.currency || projectCurrencyForDisplay())}</div>
                     </div>
                   </div>
                 </Link>

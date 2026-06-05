@@ -53,12 +53,72 @@ function statusClass(status) {
   return classes[status] || "bg-slate-100 text-slate-700";
 }
 
+
+function projectContractCurrency(project, fallback = "TRY") {
+  return project?.contract_currency || fallback || "TRY";
+}
+
+function projectBudgetCurrency(project, fallback = "TRY") {
+  return project?.estimated_budget_currency || project?.contract_currency || fallback || "TRY";
+}
+
+function sameCurrency(projects, selector) {
+  const currencies = Array.from(new Set((projects || []).map(selector).filter(Boolean)));
+  return currencies.length === 1 ? currencies[0] : "";
+}
+
+
+function groupedMoneyTotals(projects, amountSelector, currencySelector, fallbackCurrency = "TRY") {
+  const totals = new Map();
+
+  (projects || []).forEach((project) => {
+    const currency = currencySelector(project) || fallbackCurrency || "TRY";
+    totals.set(currency, Number(totals.get(currency) || 0) + Number(amountSelector(project) || 0));
+  });
+
+  return Array.from(totals.entries())
+    .map(([currency, amount]) => ({ currency, amount }))
+    .filter((row) => Number(row.amount || 0) !== 0)
+    .sort((a, b) => a.currency.localeCompare(b.currency, "tr-TR"));
+}
+
 function StatCard({ title, value, text }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+    <div className="min-h-32 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
       <div className="text-sm font-semibold text-slate-500">{title}</div>
-      <div className="mt-2 text-3xl font-black text-slate-900">{value}</div>
+      <div className="mt-3 text-3xl font-black leading-none text-slate-900">{value}</div>
       <div className="mt-1 text-sm text-slate-500">{text}</div>
+    </div>
+  );
+}
+
+function CurrencyTotalCard({ title, rows, emptyCurrency = "TRY" }) {
+  const visibleRows = rows?.length > 0 ? rows : [{ currency: emptyCurrency, amount: 0 }];
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="text-sm font-black text-slate-900">{title}</div>
+          <div className="mt-1 text-xs font-semibold text-slate-500">Para birimine göre ayrı toplam</div>
+        </div>
+      </div>
+      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {visibleRows.map((row) => (
+          <div key={row.currency} className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+            <div className="text-xs font-black uppercase tracking-wide text-slate-500">{row.currency}</div>
+            <div className="mt-2 flex min-w-0 items-baseline gap-2">
+              <span className="whitespace-nowrap text-[clamp(1.05rem,1.45vw,1.55rem)] font-black leading-none text-slate-950">
+                {new Intl.NumberFormat("tr-TR", {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                }).format(Number(row.amount || 0))}
+              </span>
+              <span className="shrink-0 text-xs font-black text-slate-500">{row.currency}</span>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -347,22 +407,41 @@ export default function ProjectsPage() {
     await loadProjects();
   }
 
+  const archivedProjects = useMemo(() => projects.filter((project) => project.status === "Arşivlendi" || project.archived_at), [projects]);
+  const activeProjects = useMemo(() => projects.filter((project) => !(project.status === "Arşivlendi" || project.archived_at)), [projects]);
+  const displayedProjects = projectView === "archived" ? archivedProjects : activeProjects;
+
   const stats = useMemo(() => {
     const activeStatuses = ["Onaylandı", "Devam Ediyor"];
     const active = projects.filter((project) => activeStatuses.includes(project.status)).length;
     const completed = projects.filter((project) => project.status === "Tamamlandı").length;
-    const contractTotal = projects.reduce((sum, project) => sum + Number(project.contract_amount || 0), 0);
-    const actualTotal = projects.reduce((sum, project) => sum + Number(project.actual_cost || 0), 0);
-    const overBudget = projects.filter(
+    const visibleRows = displayedProjects;
+    const baseCurrency = getBaseCurrency(settings);
+    const contractTotals = groupedMoneyTotals(
+      visibleRows,
+      (project) => project.contract_amount,
+      (project) => projectContractCurrency(project, settings.default_currency),
+      baseCurrency,
+    );
+    const actualTotals = groupedMoneyTotals(
+      visibleRows,
+      (project) => project.actual_cost,
+      (project) => projectBudgetCurrency(project, settings.default_currency),
+      baseCurrency,
+    );
+    const overBudget = visibleRows.filter(
       (project) => Number(project.actual_cost || 0) > Number(project.estimated_budget || 0) && Number(project.estimated_budget || 0) > 0,
     ).length;
 
-    return { active, completed, contractTotal, actualTotal, overBudget };
-  }, [projects]);
-
-  const archivedProjects = useMemo(() => projects.filter((project) => project.status === "Arşivlendi" || project.archived_at), [projects]);
-  const activeProjects = useMemo(() => projects.filter((project) => !(project.status === "Arşivlendi" || project.archived_at)), [projects]);
-  const displayedProjects = projectView === "archived" ? archivedProjects : activeProjects;
+    return {
+      active,
+      completed,
+      contractTotals,
+      actualTotals,
+      overBudget,
+      baseCurrency,
+    };
+  }, [projects, displayedProjects, settings]);
 
   return (
     <div className="min-h-screen bg-slate-100">
@@ -387,12 +466,15 @@ export default function ProjectsPage() {
           </button>
         </div>
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-5">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           <StatCard title="Aktif Proje" value={stats.active} text="Onaylı/devam eden" />
           <StatCard title="Tamamlanan" value={stats.completed} text="Kapanmış proje" />
-          <StatCard title="Sözleşme Bedeli" value={formatMoney(stats.contractTotal)} text="Toplam" />
-          <StatCard title="Gerçekleşen Maliyet" value={formatMoney(stats.actualTotal)} text="Şimdilik manuel/bağlantılı" />
           <StatCard title="Bütçeyi Aşan" value={stats.overBudget} text="Kontrol gerekli" />
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          <CurrencyTotalCard title="Sözleşme Bedeli" rows={stats.contractTotals} emptyCurrency={stats.baseCurrency} />
+          <CurrencyTotalCard title="Gerçekleşen Maliyet" rows={stats.actualTotals} emptyCurrency={stats.baseCurrency} />
         </div>
 
         {message && (
@@ -564,6 +646,8 @@ export default function ProjectsPage() {
               </thead>
               <tbody>
                 {displayedProjects.map((project) => {
+                  const budgetCurrency = projectBudgetCurrency(project, settings.default_currency);
+                  const contractCurrency = projectContractCurrency(project, settings.default_currency);
                   const remaining = Number(project.estimated_budget || 0) - Number(project.actual_cost || 0);
                   const metrics = projectMetrics(project.id);
 
@@ -576,11 +660,11 @@ export default function ProjectsPage() {
                         <div className="mt-1 font-bold text-slate-900">{project.project_name}</div>
                       </td>
                       <td className="p-4">{project.customer_name || "-"}</td>
-                      <td className="p-4 font-bold">{formatMoney(project.contract_amount)}</td>
-                      <td className="p-4">{formatMoney(project.estimated_budget)}</td>
-                      <td className="p-4">{formatMoney(project.actual_cost)}</td>
+                      <td className="p-4 font-bold">{formatMoney(project.contract_amount, contractCurrency)}</td>
+                      <td className="p-4">{formatMoney(project.estimated_budget, budgetCurrency)}</td>
+                      <td className="p-4">{formatMoney(project.actual_cost, budgetCurrency)}</td>
                       <td className={`p-4 font-bold ${remaining < 0 ? "text-red-600" : "text-emerald-700"}`}>
-                        {formatMoney(remaining)}
+                        {formatMoney(remaining, budgetCurrency)}
                       </td>
                       <td className="p-4">
                         <div className="flex items-center gap-2">

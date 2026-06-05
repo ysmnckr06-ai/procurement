@@ -581,7 +581,7 @@ def ensure_unique_supplier(suppliers, supplier, supplier_id: str | None = None):
 def detect_file_type(filename: str) -> str:
     ext = filename.lower().split(".")[-1]
 
-    if ext in ["xlsx", "xls"]:
+    if ext in ["xlsx", "xls", "xlsm", "xlsb", "csv", "ods"]:
         return "excel"
 
     if ext == "pdf":
@@ -594,7 +594,7 @@ def detect_file_type(filename: str) -> str:
 
 MAX_UPLOAD_FILES = 15
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024
-ALLOWED_UPLOAD_EXTENSIONS = {".pdf", ".xlsx", ".xls", ".png", ".jpg", ".jpeg", ".webp"}
+ALLOWED_UPLOAD_EXTENSIONS = {".pdf", ".xlsx", ".xls", ".xlsm", ".xlsb", ".csv", ".ods", ".png", ".jpg", ".jpeg", ".webp"}
 
 def safe_upload_name(filename: str) -> str:
     original_name = os.path.basename(filename or "dosya")

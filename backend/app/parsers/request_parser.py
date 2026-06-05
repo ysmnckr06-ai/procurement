@@ -970,7 +970,7 @@ def dedupe_rows(rows):
 def parse_request_file(file_path, file_name):
     ext = os.path.splitext(file_name.lower())[1]
 
-    if ext in [".xlsx", ".xls"]:
+    if ext in [".xlsx", ".xls", ".xlsm", ".xlsb", ".csv", ".ods"]:
         return parse_request_excel(file_path, file_name)
 
     if ext == ".pdf":
