@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { fetchLiveTryRates } from "@/lib/liveCurrency";
 
 const defaultSettings = {
   company_name: "",
@@ -38,6 +39,8 @@ export default function SettingsPage() {
   const [recordId, setRecordId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
+  const [liveRateInfo, setLiveRateInfo] = useState(null);
+  const [loadingRates, setLoadingRates] = useState(false);
 
   useEffect(() => {
     loadSettings();
@@ -85,6 +88,28 @@ export default function SettingsPage() {
       ...prev,
       [name]: type === "checkbox" ? checked : value,
     }));
+  }
+
+  async function loadLiveRates() {
+    setLoadingRates(true);
+    setMessage("");
+    try {
+      const live = await fetchLiveTryRates();
+      setLiveRateInfo(live);
+      setSettings((prev) => ({
+        ...prev,
+        usd_rate: Number(live.rates.USD || prev.usd_rate || 1).toFixed(4),
+        eur_rate: Number(live.rates.EUR || prev.eur_rate || 1).toFixed(4),
+        gbp_rate: Number(live.rates.GBP || prev.gbp_rate || 1).toFixed(4),
+        exchange_rate_date: live.date || new Date().toISOString().slice(0, 10),
+      }));
+      setMessage("Canlı kurlar alındı. Kayıt/onay kuru olarak kullanmak için ayarları kaydedin.");
+    } catch (error) {
+      console.error(error);
+      setMessage("Canlı kur alınamadı. Manuel kur alanlarını kullanabilirsiniz.");
+    } finally {
+      setLoadingRates(false);
+    }
   }
 
   async function handleSubmit(event) {
@@ -215,6 +240,27 @@ export default function SettingsPage() {
                 title="Kur Bilgileri"
                 text="Kayıt anındaki kurla ana para karşılığı sabitlenir."
               />
+              <div className="mb-4 flex flex-col gap-3 rounded-2xl border border-blue-100 bg-blue-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <div className="text-sm font-black text-blue-900">Canlı kur takibi</div>
+                  <div className="mt-1 text-sm font-semibold text-blue-700">
+                    Proje, sipariş ve ödeme kayıtlarında sabit kur saklanır; canlı kur farkı takip için gösterilir.
+                  </div>
+                  {liveRateInfo && (
+                    <div className="mt-2 text-xs font-bold text-blue-800">
+                      Kaynak: {liveRateInfo.source} · Tarih: {liveRateInfo.date}
+                    </div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={loadLiveRates}
+                  disabled={loadingRates}
+                  className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white hover:bg-blue-700 disabled:bg-slate-300"
+                >
+                  {loadingRates ? "Alınıyor..." : "Canlı Kurları Al"}
+                </button>
+              </div>
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
                 <Input label="USD Kuru" name="usd_rate" type="number" value={settings.usd_rate} onChange={handleChange} />
                 <Input label="EUR Kuru" name="eur_rate" type="number" value={settings.eur_rate} onChange={handleChange} />

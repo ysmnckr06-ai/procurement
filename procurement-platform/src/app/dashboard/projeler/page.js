@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { calculateBaseAmount, currencyOptions, formatMoney, getBaseCurrency, getExchangeRate } from "@/lib/currency";
+import { fetchLiveTryRates, liveCurrencyOptions, liveRateFor, rateDiffPercent } from "@/lib/liveCurrency";
 import { findOrCreateBusinessPartner } from "@/lib/businessPartners";
 
 const statusOptions = ["Taslak", "Onaylandı", "Devam Ediyor", "Tamamlandı", "Arşivlendi", "İptal"];
@@ -165,6 +166,7 @@ export default function ProjectsPage() {
   const [editingId, setEditingId] = useState(null);
   const [message, setMessage] = useState("");
   const [settings, setSettings] = useState({ default_currency: "TRY", base_currency: "TRY" });
+  const [liveRates, setLiveRates] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [projectView, setProjectView] = useState("active");
@@ -175,6 +177,7 @@ export default function ProjectsPage() {
       const params = new URLSearchParams(window.location.search);
       setCustomerFilter(params.get("musteri") || "");
     }
+    fetchLiveTryRates().then(setLiveRates).catch(() => setLiveRates(null));
   }, []);
 
   async function loadProjects() {
@@ -529,6 +532,29 @@ export default function ProjectsPage() {
           <CurrencyTotalCard title="Gerçekleşen Maliyet" rows={stats.actualTotals} emptyCurrency={stats.baseCurrency} />
         </div>
 
+        <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4 shadow-sm">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <div className="text-sm font-black text-blue-900">Canlı kur takibi</div>
+              <div className="mt-1 text-xs font-semibold text-blue-700">
+                Proje onay/kayıt kuru sabit kalır; canlı kur sadece kur farkı takibi için gösterilir.
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {liveCurrencyOptions.map((currency) => (
+                <span key={currency} className="rounded-xl bg-white px-3 py-2 text-xs font-black text-blue-900">
+                  {currency}: {liveRateFor(currency, liveRates) ? formatMoney(liveRateFor(currency, liveRates), "TRY") : "Alınamadı"}
+                </span>
+              ))}
+              {liveRates?.date && (
+                <span className="rounded-xl bg-blue-100 px-3 py-2 text-xs font-bold text-blue-800">
+                  {liveRates.date}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
         {message && (
           <div className="rounded-xl border border-yellow-200 bg-yellow-50 p-4 text-sm font-semibold text-yellow-900">
             {message}
@@ -693,22 +719,22 @@ export default function ProjectsPage() {
               </div>
             </div>
           </div>
-          <div className="overflow-x-auto">
-            <table className="min-w-[1320px] table-fixed text-left text-sm">
+          <div className="overflow-hidden">
+            <table className="w-full table-fixed text-left text-xs [&_td]:p-2">
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
-                  <th className="w-[180px] p-4">Proje</th>
-                  <th className="w-[135px] p-4">Müşteri</th>
-                  <th className="w-[125px] p-4">Sözleşme</th>
-                  <th className="w-[125px] p-4">Tahmini</th>
-                  <th className="w-[125px] p-4">Gerçekleşen</th>
-                  <th className="w-[125px] p-4">Kalan Bütçe</th>
-                  <th className="w-[130px] p-4">Tamamlanma</th>
-                  <th className="w-[90px] p-4">Açık Sipariş</th>
-                  <th className="w-[95px] p-4">Eksik Malzeme</th>
-                  <th className="w-[115px] p-4">Tarih</th>
-                  <th className="w-[110px] p-4">Durum</th>
-                  <th className="w-[96px] p-4">İşlemler</th>
+                  <th className="w-[13%] p-2">Proje</th>
+                  <th className="w-[8%] p-2">Müşteri</th>
+                  <th className="w-[9%] p-2">Sözleşme</th>
+                  <th className="w-[9%] p-2">Tahmini</th>
+                  <th className="w-[8%] p-2">Gerçekleşen</th>
+                  <th className="w-[9%] p-2">Kalan</th>
+                  <th className="w-[9%] p-2">Tamamlanma</th>
+                  <th className="w-[6%] p-2">Sipariş</th>
+                  <th className="w-[6%] p-2">Eksik</th>
+                  <th className="w-[8%] p-2">Tarih</th>
+                  <th className="w-[7%] p-2">Durum</th>
+                  <th className="w-[8%] p-2">İşlem</th>
                 </tr>
               </thead>
               <tbody>
@@ -761,7 +787,7 @@ export default function ProjectsPage() {
                         </span>
                       </td>
                       <td className="p-4">
-                        <div className="grid w-[72px] grid-cols-1 gap-1.5">
+                        <div className="grid w-full grid-cols-1 gap-1.5">
                           <button
                             type="button"
                             onClick={() => router.push(`/dashboard/projeler/${project.id}`)}

@@ -6090,6 +6090,9 @@ export default function ProjectDetailPage() {
                 }}>
                   {currencyOptions.map((currency) => <option key={currency}>{currency}</option>)}
                 </select>
+                <div className="rounded-xl border border-blue-100 bg-blue-50 p-3 text-xs font-semibold text-blue-800">
+                  Ödeme TL yapılacaksa para birimini TRY seçin; döviz ödeme yapılacaksa ilgili dövizi seçin. Kur alanı ödeme günündeki TL karşılığını ve kur farkı takibini hesaplamak için saklanır.
+                </div>
                 <input type="number" className="w-full rounded-xl border border-slate-300 p-3" placeholder="Kur" value={paymentForm.exchange_rate} onChange={(e) => updatePaymentForm("exchange_rate", e.target.value)} />
                 <select className="w-full rounded-xl border border-slate-300 p-3" value={paymentForm.payment_type} onChange={(e) => updatePaymentForm("payment_type", e.target.value)}>
                   {paymentTypes.map((type) => <option key={type} value={type}>{type}</option>)}

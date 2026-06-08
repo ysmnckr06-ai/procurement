@@ -1,17 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL;
-
-function formatMoney(value, currency = "TRY") {
-  return `${new Intl.NumberFormat("tr-TR", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(Number(value || 0))} ${currency}`;
-}
 
 function MoneyValue({ value, currency = "TRY", tone = "text-slate-900" }) {
   const amount = new Intl.NumberFormat("tr-TR", {
@@ -30,6 +23,56 @@ function MoneyValue({ value, currency = "TRY", tone = "text-slate-900" }) {
 function formatDate(value) {
   if (!value) return "-";
   return new Date(value).toLocaleDateString("tr-TR");
+}
+
+function safeFileName(value) {
+  return String(value || "stok-raporu")
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, "-")
+    .replace(/\s+/g, "-")
+    .slice(0, 80);
+}
+
+function exportDateStamp() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+async function downloadExcelWorkbook(fileName, sheets) {
+  const XLSX = await import("xlsx");
+  const workbook = XLSX.utils.book_new();
+
+  sheets.forEach((sheet) => {
+    const rows = sheet.rows.length > 0 ? sheet.rows : [{ Bilgi: "Kayit bulunamadi" }];
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    XLSX.utils.book_append_sheet(workbook, worksheet, sheet.name.slice(0, 31));
+  });
+
+  XLSX.writeFile(workbook, `${safeFileName(fileName)}.xlsx`);
+}
+
+async function downloadPdfTable(fileName, title, rows) {
+  const { jsPDF } = await import("jspdf");
+  const autoTableModule = await import("jspdf-autotable");
+  const autoTable = autoTableModule.default || autoTableModule.autoTable;
+  const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+  const columns = Object.keys(rows[0] || { Bilgi: "Kayit bulunamadi" });
+  const body = (rows.length > 0 ? rows : [{ Bilgi: "Kayit bulunamadi" }]).map((row) =>
+    columns.map((column) => String(row[column] ?? "")),
+  );
+
+  doc.setFontSize(14);
+  doc.text(title, 40, 36);
+  doc.setFontSize(9);
+  doc.text(`Olusturma tarihi: ${formatDate(new Date())}`, 40, 52);
+  autoTable(doc, {
+    startY: 68,
+    head: [columns],
+    body,
+    styles: { fontSize: 7, cellPadding: 4, overflow: "linebreak" },
+    headStyles: { fillColor: [15, 23, 42] },
+    margin: { left: 30, right: 30 },
+  });
+  doc.save(`${safeFileName(fileName)}.pdf`);
 }
 
 function normalizeStockText(value) {
@@ -162,6 +205,65 @@ function movementStatusClass(status) {
   };
 
   return classes[status] || "bg-slate-100 text-slate-700";
+}
+
+function movementPartnerName(movement) {
+  return movement.partner_name || movement.supplier_name || movement.vendor_name || movement.customer_name || movement.company_name || "-";
+}
+
+function movementReference(movement) {
+  return movement.order_code
+    || movement.order_number
+    || movement.purchase_order_code
+    || movement.delivery_number
+    || movement.request_code
+    || movement.invoice_number
+    || movement.source_file
+    || movement.reference
+    || movement.document_no
+    || "-";
+}
+
+function movementFlowInfo(movement, project = null) {
+  const source = movement.source || movement.notes || "";
+  const normalizedSource = normalizeStockText(source);
+  const isOut = movement.movement_type === "out";
+  const partner = movementPartnerName(movement);
+  const projectName = project ? projectDisplayName(project) : "";
+
+  if (isOut) {
+    let target = projectName ? `Proje çıkışı: ${projectName}` : "Stoktan çıkış";
+    if (normalizedSource.includes("sevk")) target = projectName ? `Sevk: ${projectName}` : "Sevk edilen";
+    if (normalizedSource.includes("fire") || normalizedSource.includes("hatal")) target = "Fire / hatalı ürün çıkışı";
+    if (normalizedSource.includes("iade")) target = partner !== "-" ? `İade: ${partner}` : "İade çıkışı";
+
+    return {
+      direction: "Çıkış",
+      source: "Depo / mevcut stok",
+      target,
+      partner,
+      reference: movementReference(movement),
+      detail: source || target,
+    };
+  }
+
+  let entrySource = "Depoya giriş";
+  if (normalizedSource.includes("sayim") || normalizedSource.includes("sayım")) entrySource = "Depo sayımı";
+  if (normalizedSource.includes("manuel")) entrySource = "Manuel stok girişi";
+  if (normalizedSource.includes("siparis") || normalizedSource.includes("sipariş") || movement.order_id || movement.purchase_order_id) {
+    entrySource = "Sipariş teslimatı";
+  }
+  if (normalizedSource.includes("toplu") || normalizedSource.includes("dosya")) entrySource = "Toplu dosya aktarımı";
+  if (normalizedSource.includes("iade")) entrySource = "İade girişi";
+
+  return {
+    direction: "Giriş",
+    source: partner !== "-" ? `${entrySource}: ${partner}` : entrySource,
+    target: "Depo stoğu",
+    partner,
+    reference: movementReference(movement),
+    detail: source || entrySource,
+  };
 }
 
 function stockBreakdown(product, movements) {
@@ -348,6 +450,99 @@ function StatCard({ title, value, text }) {
       <div className="mt-1 text-sm text-slate-500">{text}</div>
     </div>
   );
+}
+
+function buildProductExportRows(productList, movements, projectItems, projects) {
+  return productList.map((product) => {
+    const breakdown = stockBreakdown(product, movements);
+    const allocation = productProjectAllocations(product, projectItems, projects, movements);
+    const lastPrice = Number(product.last_unit_price || product.manual_unit_price || 0);
+    return {
+      "Urun kodu": product.product_code || "-",
+      Marka: product.brand || "-",
+      "Urun aciklamasi": product.product_name || "-",
+      Birim: product.unit || "adet",
+      "Mevcut stok": breakdown.total,
+      "Projeye ayrilan": allocation.allocatedTotal,
+      "Bosta kullanilabilir": allocation.freeStock,
+      "Alinmasi gereken": allocation.missingTotal,
+      "Rezerve": breakdown.reserved,
+      "Islenen / uygulamadaki": breakdown.production + breakdown.montage,
+      "Sevk edilen": breakdown.shipped,
+      "Minimum stok": product.min_stock ?? product.minimum_stock ?? 0,
+      "Kritik stok": product.critical_stock ?? 0,
+      "Son alis fiyati": lastPrice,
+      "Para birimi": product.last_currency || "TRY",
+      "Son is ortagi": product.last_supplier || "-",
+      "Proje sayisi": allocation.projectRows.length,
+      "Kaynak / not": product.notes || product.source || "-",
+    };
+  });
+}
+
+function buildMovementExportRows(movementList, projects, fallbackProduct = null) {
+  return movementList.map((movement) => {
+    const project = projects.find((item) => item.id === movement.project_id);
+    const flow = movementFlowInfo(movement, project);
+    const quantity = Number(movement.quantity || 0);
+    const unitPrice = Number(movement.unit_price || movement.purchase_unit_price || movement.price || movement.unit_cost || 0);
+    const total = Number(movement.total_amount || movement.total || quantity * unitPrice || 0);
+    return {
+      "Hareket tarihi": formatDate(movement.movement_date || movement.created_at),
+      "Kayit tarihi": formatDate(movement.created_at),
+      "Urun kodu": movement.product_code || fallbackProduct?.product_code || "-",
+      "Urun aciklamasi": movement.product_name || fallbackProduct?.product_name || "-",
+      Yon: flow.direction,
+      "Hareket tipi": movementStatus(movement),
+      "Giris kaynagi": flow.source,
+      "Cikis hedefi": flow.target,
+      Firma: flow.partner,
+      "Belge / referans": flow.reference,
+      Miktar: quantity,
+      Birim: movement.unit || fallbackProduct?.unit || "adet",
+      "Birim fiyat": unitPrice,
+      "Toplam tutar": total,
+      "Para birimi": movement.currency || fallbackProduct?.last_currency || "TRY",
+      Proje: project ? projectDisplayName(project) : "-",
+      Aciklama: flow.detail,
+    };
+  });
+}
+
+function buildProductUsageExportRows(product, allocation) {
+  if (!product) return [];
+
+  return allocation.projectRows.flatMap((projectRow) => {
+    const projectName = projectDisplayName(projectRow.project);
+    const projectSummary = {
+      Seviye: "Proje toplam",
+      Proje: projectName,
+      "Ana kalem": "-",
+      "Urun kodu": product.product_code || "-",
+      "Urun aciklamasi": product.product_name || "-",
+      Ihtiyac: projectRow.need,
+      Kullanilan: projectRow.consumed,
+      Ayrilan: projectRow.allocated,
+      Eksik: projectRow.missing,
+      "Hareket sayisi": projectRow.movementCount,
+      "Son tarih": formatDate(projectRow.lastDate),
+    };
+    const parentRows = projectRow.parentGroups.map((parentGroup) => ({
+      Seviye: "Ana kalem",
+      Proje: projectName,
+      "Ana kalem": parentGroup.parentName,
+      "Urun kodu": product.product_code || "-",
+      "Urun aciklamasi": product.product_name || "-",
+      Ihtiyac: parentGroup.need,
+      Kullanilan: parentGroup.consumed,
+      Ayrilan: parentGroup.allocated,
+      Eksik: parentGroup.missing,
+      "Hareket sayisi": parentGroup.rows.reduce((sum, row) => sum + row.movementRows.length, 0),
+      "Son tarih": formatDate(projectRow.lastDate),
+    }));
+
+    return [projectSummary, ...parentRows];
+  });
 }
 
 export default function StockPage() {
@@ -681,7 +876,9 @@ export default function StockPage() {
       }
 
       const formData = new FormData();
-      files.forEach((file) => formData.append("files", file));
+      files.forEach((file) => {
+        formData.append("files", file);
+      });
 
       const response = await fetch(`${API_URL}/parse-project-items`, {
         method: "POST",
@@ -811,6 +1008,53 @@ export default function StockPage() {
     );
   }
 
+  async function exportProductsExcel() {
+    const productRows = buildProductExportRows(filteredProducts, movements, projectItems, projects);
+    const movementRows = buildMovementExportRows(movements, projects);
+    await downloadExcelWorkbook(`stok-kartlari-${exportDateStamp()}`, [
+      { name: "Stok Kartlari", rows: productRows },
+      { name: "Stok Hareketleri", rows: movementRows },
+    ]);
+  }
+
+  async function exportProductsPdf() {
+    const productRows = buildProductExportRows(filteredProducts, movements, projectItems, projects);
+    await downloadPdfTable(`stok-kartlari-${exportDateStamp()}`, "Stok Kartlari ve Depo Sayim Listesi", productRows);
+  }
+
+  async function exportMovementsExcel() {
+    const movementRows = buildMovementExportRows(visibleMovementRows, projects, selectedProduct);
+    await downloadExcelWorkbook(`stok-hareketleri-${exportDateStamp()}`, [
+      { name: "Hareketler", rows: movementRows },
+    ]);
+  }
+
+  async function exportMovementsPdf() {
+    const movementRows = buildMovementExportRows(visibleMovementRows, projects, selectedProduct);
+    const title = selectedProduct ? `${selectedProduct.product_name} - Stok Hareketleri` : "Stok Hareketleri";
+    await downloadPdfTable(`stok-hareketleri-${exportDateStamp()}`, title, movementRows);
+  }
+
+  async function exportSelectedProductUsageExcel() {
+    if (!selectedProduct) return;
+    const usageRows = buildProductUsageExportRows(selectedProduct, selectedProjectAllocation);
+    const movementRows = buildMovementExportRows(selectedMovements, projects, selectedProduct);
+    await downloadExcelWorkbook(`${selectedProduct.product_code || selectedProduct.product_name}-kullanim-${exportDateStamp()}`, [
+      { name: "Proje Kullanim", rows: usageRows },
+      { name: "Hareketler", rows: movementRows },
+    ]);
+  }
+
+  async function exportSelectedProductUsagePdf() {
+    if (!selectedProduct) return;
+    const usageRows = buildProductUsageExportRows(selectedProduct, selectedProjectAllocation);
+    await downloadPdfTable(
+      `${selectedProduct.product_code || selectedProduct.product_name}-proje-kullanim-${exportDateStamp()}`,
+      `${selectedProduct.product_name} - Proje Bazli Kullanim`,
+      usageRows,
+    );
+  }
+
   const stockTotals = productGroups.reduce(
     (totals, product) => {
       const breakdown = stockBreakdown(product, movements);
@@ -848,6 +1092,20 @@ export default function StockPage() {
               </p>
             </div>
             <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={exportProductsExcel}
+                className="rounded-xl border border-emerald-200 bg-white px-5 py-3 text-sm font-bold text-emerald-700 hover:bg-emerald-50"
+              >
+                Stok Excel
+              </button>
+              <button
+                type="button"
+                onClick={exportProductsPdf}
+                className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
+              >
+                Stok PDF
+              </button>
               <label className={`cursor-pointer rounded-xl px-5 py-3 text-sm font-bold text-white ${bulkImporting ? "bg-slate-300" : "bg-emerald-600 hover:bg-emerald-700"}`}>
                 {bulkImporting ? "Dosya okunuyor..." : "Toplu Ürün Yükle"}
                 <input
@@ -955,16 +1213,16 @@ export default function StockPage() {
                             <button
                               type="button"
                               onClick={() => openProductDetail(product)}
-                              className="block w-full truncate text-left text-base font-black leading-6 text-slate-950 hover:text-blue-700"
+                              className="block w-full whitespace-normal break-words text-left text-base font-black leading-6 text-slate-950 hover:text-blue-700"
                               title={product.product_name || ""}
                             >
                               {product.product_name}
                             </button>
                             <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5 text-[11px] font-bold text-slate-500">
-                              <span className="max-w-full truncate rounded-full bg-slate-100 px-2.5 py-1 text-slate-700" title={product.product_code || "-"}>
+                              <span className="max-w-full break-all rounded-full bg-slate-100 px-2.5 py-1 text-slate-700" title={product.product_code || "-"}>
                                 Kod: {product.product_code || "-"}
                               </span>
-                              <span className="max-w-full truncate rounded-full bg-slate-100 px-2.5 py-1" title={product.brand || "-"}>
+                              <span className="max-w-full break-words rounded-full bg-slate-100 px-2.5 py-1" title={product.brand || "-"}>
                                 Marka: {product.brand || "-"}
                               </span>
                               <span className="rounded-full bg-slate-100 px-2.5 py-1">
@@ -1019,17 +1277,33 @@ export default function StockPage() {
                         <div className="flex items-start justify-between gap-4">
                           <div>
                             <div className="text-xs font-black uppercase tracking-wide text-blue-600">Ürün kartı detayı</div>
-                            <h2 className="mt-1 text-xl font-bold text-slate-900">{selectedProduct.product_name}</h2>
-                            <p className="mt-1 text-sm text-slate-500">{selectedProduct.product_code || "-"} · {selectedProduct.unit || "adet"}</p>
+                            <h2 className="mt-1 whitespace-normal break-words text-xl font-bold text-slate-900">{selectedProduct.product_name}</h2>
+                            <p className="mt-1 break-all text-sm text-slate-500">{selectedProduct.product_code || "-"} · {selectedProduct.unit || "adet"}</p>
                           </div>
-                          <button
-                            type="button"
-                            disabled={deleting}
-                            onClick={() => deleteProductGroup(selectedProduct)}
-                            className="rounded-lg bg-red-600 px-3 py-2 text-xs font-bold text-white hover:bg-red-700 disabled:bg-slate-300"
-                          >
-                            Sil
-                          </button>
+                          <div className="flex flex-wrap justify-end gap-2">
+                            <button
+                              type="button"
+                              onClick={exportSelectedProductUsageExcel}
+                              className="rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs font-black text-emerald-700 hover:bg-emerald-50"
+                            >
+                              Kullanım Excel
+                            </button>
+                            <button
+                              type="button"
+                              onClick={exportSelectedProductUsagePdf}
+                              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50"
+                            >
+                              Kullanım PDF
+                            </button>
+                            <button
+                              type="button"
+                              disabled={deleting}
+                              onClick={() => deleteProductGroup(selectedProduct)}
+                              className="rounded-lg bg-red-600 px-3 py-2 text-xs font-bold text-white hover:bg-red-700 disabled:bg-slate-300"
+                            >
+                              Sil
+                            </button>
+                          </div>
                         </div>
 
                         <div className="mt-5 grid grid-cols-2 gap-3 xl:grid-cols-4">
@@ -1092,7 +1366,7 @@ export default function StockPage() {
                                     className="grid w-full grid-cols-[minmax(220px,1fr)_90px_90px_90px_90px_44px] items-center gap-3 px-4 py-3 text-left hover:bg-blue-50"
                                   >
                                     <div className="min-w-0">
-                                      <div className="truncate text-sm font-black text-slate-950" title={projectDisplayName(projectRow.project)}>
+                                      <div className="whitespace-normal break-words text-sm font-black text-slate-950" title={projectDisplayName(projectRow.project)}>
                                         {projectDisplayName(projectRow.project)}
                                       </div>
                                       <div className="mt-1 truncate text-xs font-semibold text-slate-500">
@@ -1111,7 +1385,7 @@ export default function StockPage() {
                                         {projectRow.parentGroups.map((parentGroup) => (
                                           <div key={parentGroup.key} className="grid grid-cols-[minmax(180px,1fr)_80px_80px_80px_80px] items-center gap-3 rounded-lg bg-slate-50 px-3 py-2 text-xs">
                                             <div className="min-w-0">
-                                              <div className="truncate font-black text-slate-900" title={parentGroup.parentName}>
+                                              <div className="whitespace-normal break-words font-black text-slate-900" title={parentGroup.parentName}>
                                                 {parentGroup.parentName}
                                               </div>
                                               <div className="mt-0.5 truncate font-semibold text-slate-500">
@@ -1219,6 +1493,20 @@ export default function StockPage() {
                     <div className="flex flex-wrap gap-2">
                       <button
                         type="button"
+                        onClick={exportMovementsExcel}
+                        className="rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs font-black text-emerald-700 hover:bg-emerald-50"
+                      >
+                        Hareket Excel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={exportMovementsPdf}
+                        className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50"
+                      >
+                        Hareket PDF
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => setSelectedMovementIds(allVisibleMovementsSelected ? [] : visibleMovementIds)}
                         className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50"
                       >
@@ -1238,6 +1526,7 @@ export default function StockPage() {
                     {selectedMovements.map((movement) => {
                       const status = movementStatus(movement);
                       const movementProject = projects.find((project) => project.id === movement.project_id);
+                      const movementFlow = movementFlowInfo(movement, movementProject);
                       const movementQuantity = Number(movement.quantity || 0);
                       const movementUnitPrice = Number(movement.unit_price || movement.purchase_unit_price || movement.price || movement.unit_cost || 0);
                       const movementTotal = Number(movement.total_amount || movement.total || movementQuantity * movementUnitPrice || 0);
@@ -1254,14 +1543,30 @@ export default function StockPage() {
                                 aria-label={`${movement.product_name || status} hareketini seç`}
                               />
                               <div className="min-w-0">
-                                <div className="truncate font-bold text-slate-900" title={movement.product_name || status}>{status}</div>
-                                <div className="mt-1 truncate text-xs text-slate-500" title={`${movement.partner_name || movement.supplier_name || "-"} · ${formatDate(movement.movement_date)} · ${movement.source || "-"}`}>
+                                <div className="whitespace-normal break-words font-bold text-slate-900" title={movement.product_name || status}>{movement.product_name || status}</div>
+                                <div className="mt-1 whitespace-normal break-words text-xs text-slate-500" title={`${movement.partner_name || movement.supplier_name || "-"} · ${formatDate(movement.movement_date)} · ${movement.source || "-"}`}>
                                 {movement.partner_name || movement.supplier_name || "-"} · {formatDate(movement.movement_date)} · {movement.source || "-"}
                                 </div>
                                 <div className="mt-2 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
                                   <div className="rounded-lg bg-slate-50 p-2">
                                     <div className="font-bold text-slate-500">Proje</div>
                                     <div className="truncate font-black text-slate-900" title={projectDisplayName(movementProject)}>{movementProject ? projectDisplayName(movementProject) : "-"}</div>
+                                  </div>
+                                  <div className="rounded-lg bg-emerald-50 p-2">
+                                    <div className="font-bold text-emerald-700">Giriş kaynağı</div>
+                                    <div className="whitespace-normal break-words font-black text-emerald-900" title={movementFlow.source}>{movementFlow.source}</div>
+                                  </div>
+                                  <div className="rounded-lg bg-blue-50 p-2">
+                                    <div className="font-bold text-blue-700">Çıkış hedefi</div>
+                                    <div className="whitespace-normal break-words font-black text-blue-900" title={movementFlow.target}>{movementFlow.target}</div>
+                                  </div>
+                                  <div className="rounded-lg bg-slate-50 p-2">
+                                    <div className="font-bold text-slate-500">Firma / kaynak</div>
+                                    <div className="whitespace-normal break-words font-black text-slate-900" title={movementFlow.partner}>{movementFlow.partner}</div>
+                                  </div>
+                                  <div className="rounded-lg bg-slate-50 p-2">
+                                    <div className="font-bold text-slate-500">Belge / referans</div>
+                                    <div className="whitespace-normal break-words font-black text-slate-900" title={movementFlow.reference}>{movementFlow.reference}</div>
                                   </div>
                                   <div className="rounded-lg bg-slate-50 p-2">
                                     <div className="font-bold text-slate-500">Birim fiyat</div>
@@ -1299,6 +1604,20 @@ export default function StockPage() {
                     <div className="flex flex-wrap gap-2">
                       <button
                         type="button"
+                        onClick={exportMovementsExcel}
+                        className="rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs font-black text-emerald-700 hover:bg-emerald-50"
+                      >
+                        Hareket Excel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={exportMovementsPdf}
+                        className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50"
+                      >
+                        Hareket PDF
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => setSelectedMovementIds(allVisibleMovementsSelected ? [] : visibleMovementIds)}
                         className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50"
                       >
@@ -1317,6 +1636,8 @@ export default function StockPage() {
                   <div className="mt-4 space-y-3">
                     {movements.map((movement) => {
                       const status = movementStatus(movement);
+                      const movementProject = projects.find((project) => project.id === movement.project_id);
+                      const movementFlow = movementFlowInfo(movement, movementProject);
                       return (
                         <div key={movement.id} className="rounded-xl border border-slate-100 p-4">
                           <div className="flex items-start justify-between gap-3">
@@ -1329,8 +1650,22 @@ export default function StockPage() {
                                 aria-label={`${movement.product_name || status} hareketini seç`}
                               />
                               <div className="min-w-0">
-                                <div className="truncate font-bold text-slate-900" title={movement.product_name || "-"}>{movement.product_name}</div>
-                                <div className="mt-1 truncate text-xs text-slate-500" title={`${movement.partner_name || movement.supplier_name || "-"} · ${formatDate(movement.movement_date)} · ${movement.source || "-"}`}>
+                                <div className="whitespace-normal break-words font-bold text-slate-900" title={movement.product_name || "-"}>{movement.product_name}</div>
+                                <div className="mt-2 grid grid-cols-1 gap-2 text-xs sm:grid-cols-3">
+                                  <div className="rounded-lg bg-emerald-50 p-2">
+                                    <div className="font-bold text-emerald-700">Giriş kaynağı</div>
+                                    <div className="whitespace-normal break-words font-black text-emerald-900">{movementFlow.source}</div>
+                                  </div>
+                                  <div className="rounded-lg bg-blue-50 p-2">
+                                    <div className="font-bold text-blue-700">Çıkış hedefi</div>
+                                    <div className="whitespace-normal break-words font-black text-blue-900">{movementFlow.target}</div>
+                                  </div>
+                                  <div className="rounded-lg bg-slate-50 p-2">
+                                    <div className="font-bold text-slate-500">Belge / referans</div>
+                                    <div className="whitespace-normal break-words font-black text-slate-900">{movementFlow.reference}</div>
+                                  </div>
+                                </div>
+                                <div className="mt-1 whitespace-normal break-words text-xs text-slate-500" title={`${movement.partner_name || movement.supplier_name || "-"} · ${formatDate(movement.movement_date)} · ${movement.source || "-"}`}>
                                 {movement.partner_name || movement.supplier_name || "-"} · {formatDate(movement.movement_date)} · {movement.source || "-"}
                                 </div>
                               </div>

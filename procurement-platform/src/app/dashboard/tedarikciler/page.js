@@ -63,6 +63,248 @@ function projectTitle(project) {
   return [project?.project_code, project?.project_name].filter(Boolean).join(" · ") || "Proje";
 }
 
+function safeNumber(value) {
+  if (value === null || value === undefined || value === "") return 0;
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  const normalized = String(value)
+    .replace(/[^\d,.-]/g, "")
+    .replace(/\.(?=\d{3}(\D|$))/g, "")
+    .replace(",", ".");
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function clampScore(value) {
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function scoreTone(score) {
+  if (score >= 80) return "bg-emerald-100 text-emerald-800";
+  if (score >= 65) return "bg-blue-100 text-blue-800";
+  if (score >= 50) return "bg-amber-100 text-amber-800";
+  return "bg-red-100 text-red-800";
+}
+
+function scoreLabel(score) {
+  if (score >= 80) return "Güçlü";
+  if (score >= 65) return "İyi";
+  if (score >= 50) return "İzlenmeli";
+  return "Riskli";
+}
+
+function parseMaybeJson(value) {
+  if (!value) return null;
+  if (typeof value === "object") return value;
+  if (typeof value !== "string") return null;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function collectObjectsDeep(value, predicate, output = [], depth = 0) {
+  if (!value || depth > 8) return output;
+  const parsed = parseMaybeJson(value) || value;
+  if (Array.isArray(parsed)) {
+    parsed.forEach((item) => collectObjectsDeep(item, predicate, output, depth + 1));
+    return output;
+  }
+  if (typeof parsed !== "object") return output;
+  if (predicate(parsed)) output.push(parsed);
+  Object.values(parsed).forEach((item) => collectObjectsDeep(item, predicate, output, depth + 1));
+  return output;
+}
+
+function offerSupplierName(row) {
+  return (
+    row?.firma ||
+    row?.firmaAdi ||
+    row?.firma_adi ||
+    row?.supplier ||
+    row?.supplier_name ||
+    row?.partner_name ||
+    row?.company ||
+    ""
+  );
+}
+
+function offerAmount(row) {
+  return safeNumber(
+    row?.tcoTRY ||
+      row?.netToplamTRY ||
+      row?.netToplam ||
+      row?.toplam_tutar ||
+      row?.total_amount ||
+      row?.total ||
+      row?.line_total,
+  );
+}
+
+function offerTermDays(row) {
+  return safeNumber(row?.terminDays || row?.termin_days || row?.termin || row?.teslim || row?.delivery_days);
+}
+
+function offerPaymentDays(row) {
+  return safeNumber(row?.vadeDays || row?.vade_days || row?.vade || row?.payment_days);
+}
+
+function isOfferEligible(row) {
+  if (row?.uygunMu === false || row?.eligible === false || row?.isEligible === false) return false;
+  const notes = [
+    ...(Array.isArray(row?.eliminationReasons) ? row.eliminationReasons : []),
+    ...(Array.isArray(row?.kararNotlari) ? row.kararNotlari : []),
+    row?.reason,
+    row?.kararNedeni,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLocaleLowerCase("tr-TR");
+  return !["kriter dışı", "uygun değil", "eksik", "elendi"].some((text) => notes.includes(text));
+}
+
+function extractOfferRowsFromRecord(record) {
+  const roots = [
+    record,
+    record?.analysis,
+    record?.analiz,
+    record?.analysis_json,
+    record?.analysisJson,
+    record?.result,
+    record?.data,
+    record?.rows,
+    record?.report_data,
+  ].map(parseMaybeJson);
+
+  const rows = [];
+  roots.forEach((root) => {
+    collectObjectsDeep(
+      root,
+      (item) =>
+        Boolean(offerSupplierName(item)) &&
+        (offerAmount(item) > 0 ||
+          offerTermDays(item) > 0 ||
+          offerPaymentDays(item) > 0 ||
+          item?.score !== undefined ||
+          item?.uygunMu !== undefined),
+      rows,
+    );
+  });
+
+  if (offerSupplierName(record)) rows.push(record);
+  return rows;
+}
+
+function calculatePartnerScore({ partner, projects, orders, projectPayments, orderPayments, movements, reports, offers }) {
+  let score = 100;
+  const reasons = [];
+  const strengths = [];
+  const key = normalizePartnerName(partner.name);
+  const isSupplier = partner.partner_type === "Tedarikçi";
+  const isCustomer = partner.partner_type === "Müşteri";
+  const today = new Date();
+
+  const allOfferRows = [...reports, ...offers].flatMap(extractOfferRowsFromRecord);
+  const supplierOffers = allOfferRows.filter((row) => normalizePartnerName(offerSupplierName(row)) === key);
+  const recommendedCount = reports.filter((report) => normalizePartnerName(offerSupplierName(report) || report.recommended_firm || report.onerilenFirma || report.onerilenfirma) === key).length;
+  const eligibleOffers = supplierOffers.filter(isOfferEligible);
+  const shortPaymentTerms = supplierOffers.filter((row) => offerPaymentDays(row) > 0 && offerPaymentDays(row) < 30).length;
+  const longTerms = supplierOffers.filter((row) => offerTermDays(row) > 0 && offerTermDays(row) > 30).length;
+  const rejectedOffers = supplierOffers.length - eligibleOffers.length;
+
+  const overdueOrders = orders.filter((order) => {
+    const due = order.termin_date || order.delivery_date || order.due_date;
+    if (!due) return false;
+    const status = String(order.status || order.durum || "").toLocaleLowerCase("tr-TR");
+    return new Date(due) < today && !["teslim", "tamam", "kapandı", "closed", "completed"].some((text) => status.includes(text));
+  });
+  const damageSignals = movements.filter((movement) =>
+    ["hasar", "iade", "eksik", "red", "kusur"].some((text) =>
+      String([movement.source, movement.note, movement.description, movement.movement_type].filter(Boolean).join(" ")).toLocaleLowerCase("tr-TR").includes(text),
+    ),
+  );
+
+  if (isSupplier || supplierOffers.length || orders.length) {
+    if (supplierOffers.length >= 3 && recommendedCount === 0) {
+      score -= 10;
+      reasons.push(`${supplierOffers.length} teklif içinde önerilen tedarikçi olmamış.`);
+    }
+    if (supplierOffers.length > 0 && rejectedOffers / supplierOffers.length > 0.35) {
+      score -= 12;
+      reasons.push(`Tekliflerin %${Math.round((rejectedOffers / supplierOffers.length) * 100)} kadarı kriter dışı veya zayıf görünüyor.`);
+    }
+    if (shortPaymentTerms > 0) {
+      score -= Math.min(12, shortPaymentTerms * 3);
+      reasons.push(`${shortPaymentTerms} teklifte kısa ödeme vadesi tespit edildi.`);
+    }
+    if (longTerms > 0) {
+      score -= Math.min(15, longTerms * 3);
+      reasons.push(`${longTerms} teklifte uzun/geç termin tespit edildi.`);
+    }
+    if (overdueOrders.length > 0) {
+      score -= Math.min(20, overdueOrders.length * 5);
+      reasons.push(`${overdueOrders.length} siparişte termin/tamamlanma riski var.`);
+    }
+    if (damageSignals.length > 0) {
+      score -= Math.min(20, damageSignals.length * 5);
+      reasons.push(`${damageSignals.length} stok hareketinde hasar/iade/eksik sinyali var.`);
+    }
+    if (recommendedCount > 0) strengths.push(`${recommendedCount} analizde avantajlı/önerilen tedarikçi olmuş.`);
+    if (orders.length > 0 && overdueOrders.length === 0) strengths.push("Bağlı siparişlerde açık gecikme sinyali yok.");
+    if (supplierOffers.length > 0 && rejectedOffers === 0) strengths.push("Analiz edilen tekliflerde kriter dışı sinyal yok.");
+  }
+
+  if (isCustomer || projects.length) {
+    const activeProjects = projects.filter((project) => ["Onaylandı", "Devam Ediyor", "Tamamlandı"].includes(project.status));
+    const draftProjects = projects.filter((project) => ["Taslak", "Teklif", "Bekliyor", "Onay Bekliyor"].includes(project.status));
+    const contractTotal = projects.reduce((sum, project) => sum + safeNumber(project.contract_amount), 0);
+    const paidTotal = projectPayments.reduce((sum, payment) => sum + safeNumber(payment.amount || payment.base_amount), 0);
+    const pendingRatio = contractTotal > 0 ? Math.max(contractTotal - paidTotal, 0) / contractTotal : 0;
+    const finishedUnpaid = projects.filter((project) => {
+      const end = project.planned_end_date || project.end_date;
+      if (!end) return false;
+      const projectPaid = projectPayments.filter((payment) => payment.project_id === project.id).reduce((sum, payment) => sum + safeNumber(payment.amount || payment.base_amount), 0);
+      return new Date(end) < today && safeNumber(project.contract_amount) > projectPaid;
+    }).length;
+
+    if (projects.length >= 3 && activeProjects.length / projects.length < 0.35) {
+      score -= 14;
+      reasons.push("Çok sayıda proje/talep var ama onaylanan iş oranı düşük.");
+    }
+    if (draftProjects.length >= 3) {
+      score -= Math.min(12, draftProjects.length * 2);
+      reasons.push(`${draftProjects.length} proje teklif/taslak aşamasında bekliyor.`);
+    }
+    if (pendingRatio > 0.4) {
+      score -= Math.min(20, Math.round(pendingRatio * 20));
+      reasons.push(`Bekleyen tahsilat oranı yüksek: %${Math.round(pendingRatio * 100)}.`);
+    }
+    if (finishedUnpaid > 0) {
+      score -= Math.min(18, finishedUnpaid * 6);
+      reasons.push(`${finishedUnpaid} projede planlanan bitiş sonrası tahsilat bekliyor.`);
+    }
+    if (activeProjects.length > 0) strengths.push(`${activeProjects.length} proje onaylı/devam eden/tamamlanan statüde.`);
+    if (contractTotal > 0 && pendingRatio <= 0.25) strengths.push("Tahsilat disiplini sağlıklı görünüyor.");
+  }
+
+  if (reasons.length === 0) reasons.push("Kritik risk sinyali görülmedi; skor mevcut kayıtlara göre hesaplandı.");
+  if (strengths.length === 0) strengths.push("Daha sağlıklı skor için teklif, ödeme, teslimat ve kalite geçmişi biriktikçe değerlendirme güçlenir.");
+
+  return {
+    value: clampScore(score),
+    label: scoreLabel(clampScore(score)),
+    reasons,
+    strengths,
+    supplierOffers,
+    recommendedCount,
+    rejectedOffers,
+    shortPaymentTerms,
+    longTerms,
+    overdueOrders,
+    damageSignals,
+  };
+}
+
 function statusClass(status) {
   const classes = {
     Aktif: "bg-green-100 text-green-700",
@@ -105,6 +347,8 @@ export default function BusinessPartnersPage() {
   const [projectPayments, setProjectPayments] = useState([]);
   const [orderPayments, setOrderPayments] = useState([]);
   const [movements, setMovements] = useState([]);
+  const [reports, setReports] = useState([]);
+  const [offers, setOffers] = useState([]);
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState(null);
   const [formOpen, setFormOpen] = useState(false);
@@ -128,7 +372,7 @@ export default function BusinessPartnersPage() {
       return;
     }
 
-    const [partnerRes, projectRes, orderRes, projectPaymentRes, orderPaymentRes, movementRes] = await Promise.all([
+    const [partnerRes, projectRes, orderRes, projectPaymentRes, orderPaymentRes, movementRes, reportRes, offerRes] = await Promise.all([
       supabase
         .from("suppliers")
         .select("*")
@@ -152,9 +396,17 @@ export default function BusinessPartnersPage() {
         .eq("user_id", user.id),
       supabase
         .from("stock_movements")
-        .select(
-          "id,partner_id,partner_name,supplier_name,product_name,quantity,movement_type,movement_date",
-        )
+        .select("*")
+        .eq("user_id", user.id)
+        .limit(500),
+      supabase
+        .from("reports")
+        .select("*")
+        .eq("user_id", user.id)
+        .limit(500),
+      supabase
+        .from("offers")
+        .select("*")
         .eq("user_id", user.id)
         .limit(500),
     ]);
@@ -213,6 +465,8 @@ export default function BusinessPartnersPage() {
     setProjectPayments(projectPaymentRes.data || []);
     setOrderPayments(orderPaymentRes.data || []);
     setMovements(movementRes.data || []);
+    setReports(reportRes.data || []);
+    setOffers(offerRes.data || []);
     setLoading(false);
   }
 
@@ -273,6 +527,16 @@ export default function BusinessPartnersPage() {
             movement.partner_name || movement.supplier_name,
           ) === key
         );
+      });
+      const performance = calculatePartnerScore({
+        partner,
+        projects: partnerProjects,
+        orders: allRelatedOrders,
+        projectPayments: partnerProjectPayments,
+        orderPayments: partnerOrderPayments,
+        movements: partnerMovements,
+        reports,
+        offers,
       });
 
       const contractTotals = new Map();
@@ -358,9 +622,10 @@ export default function BusinessPartnersPage() {
         orderPaymentTotals: moneyRows(orderPaymentTotals),
         supplierDebtTotals: moneyRows(supplierDebtTotals),
         profitTotals: moneyRows(profitTotals),
+        performance,
       };
     },
-    [orders, projects, projectPayments, orderPayments, movements],
+    [orders, projects, projectPayments, orderPayments, movements, reports, offers],
   );
 
   const enrichedPartners = useMemo(
@@ -898,6 +1163,7 @@ export default function BusinessPartnersPage() {
                     <th className="p-4">Sipariş</th>
                     <th className="p-4">Toplam alış</th>
                     <th className="p-4">Projeler</th>
+                    <th className="p-4">Puan</th>
                     <th className="p-4">Durum</th>
                     <th className="p-4 text-right">İşlem</th>
                   </tr>
@@ -935,6 +1201,11 @@ export default function BusinessPartnersPage() {
                       </td>
                       <td className="p-4 font-bold">
                         {partner.metrics.projects.length}
+                      </td>
+                      <td className="p-4">
+                        <span className={`inline-flex min-w-16 justify-center rounded-full px-3 py-1 text-xs font-black ${scoreTone(partner.metrics.performance.value)}`}>
+                          {partner.metrics.performance.value} · {partner.metrics.performance.label}
+                        </span>
                       </td>
                       <td className="p-4">
                         <span
@@ -1048,6 +1319,8 @@ export default function BusinessPartnersPage() {
                 <Info label="Adres" value={selectedPartner.address} />
               </div>
 
+              <PerformancePanel partner={selectedPartner} />
+
               <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
                 <MoneySummary title="Sözleşme Bedeli" rows={selectedPartner.metrics.contractTotals} empty="0,00" />
                 <MoneySummary title="Alınan Ödemeler" rows={selectedPartner.metrics.receivedPaymentTotals} empty="0,00" tone="green" />
@@ -1132,6 +1405,65 @@ export default function BusinessPartnersPage() {
                 </div>
               </div>
 
+              <div className="mt-6 overflow-hidden rounded-2xl border border-slate-200">
+                <div className="border-b border-slate-100 bg-slate-50 p-4">
+                  <div className="text-sm font-black text-slate-950">Sipariş ve Tedarik Finansmanı</div>
+                  <div className="text-xs font-semibold text-slate-500">
+                    {selectedPartner.metrics.relatedOrders.length} sipariş · geçilen sipariş, ödeme, kalan borç ve termin takibi
+                  </div>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[980px] text-left text-sm">
+                    <thead className="bg-white text-xs uppercase text-slate-500">
+                      <tr>
+                        <th className="p-4">Sipariş / Proje</th>
+                        <th className="p-4">Tutar</th>
+                        <th className="p-4">Ödenen</th>
+                        <th className="p-4">Kalan</th>
+                        <th className="p-4">Termin</th>
+                        <th className="p-4">Durum</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {selectedPartner.metrics.relatedOrders.map((order) => {
+                        const currency = order.currency || order.para_birimi || "TRY";
+                        const amount = safeNumber(order.total_amount || order.order_total || order.total);
+                        const paid =
+                          selectedPartner.metrics.orderPayments
+                            .filter((payment) => payment.order_id === order.id)
+                            .reduce((sum, payment) => sum + safeNumber(payment.amount || payment.base_amount), 0) ||
+                          safeNumber(order.paid_amount || order.paid_amount_base);
+                        const project = selectedPartner.metrics.projectRows.find((row) => row.id === order.project_id);
+                        return (
+                          <tr key={order.id} className="border-t border-slate-100">
+                            <td className="p-4">
+                              <div className="font-black text-slate-950">{order.order_no || order.order_number || order.id}</div>
+                              <div className="mt-1 text-xs font-semibold text-slate-500">{project ? projectTitle(project) : order.project_name || "-"}</div>
+                            </td>
+                            <td className="p-4 font-bold">{formatMoney(amount, currency)}</td>
+                            <td className="p-4 font-bold text-emerald-700">{formatMoney(paid, currency)}</td>
+                            <td className="p-4 font-bold text-red-700">{formatMoney(Math.max(amount - paid, 0), currency)}</td>
+                            <td className="p-4">{formatDate(order.termin_date || order.delivery_date || order.due_date)}</td>
+                            <td className="p-4">
+                              <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">
+                                {order.status || order.durum || "Bekliyor"}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      {selectedPartner.metrics.relatedOrders.length === 0 && (
+                        <tr>
+                          <td colSpan="6" className="p-8 text-center text-slate-500">
+                            Bu iş ortağına bağlı sipariş yok.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
               <div className="mt-6 grid grid-cols-1 gap-4 xl:grid-cols-2">
                 <PaymentTimeline
                   title="Proje Ödeme / Tahsilat Hareketleri"
@@ -1165,6 +1497,81 @@ function Info({ label, value }) {
       <div className="mt-1 break-words text-sm font-black text-slate-900">
         {value || "-"}
       </div>
+    </div>
+  );
+}
+
+function PerformancePanel({ partner }) {
+  const performance = partner.metrics.performance;
+  const isSupplier = partner.partner_type === "Tedarikçi";
+
+  return (
+    <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <div className="text-xs font-black uppercase tracking-wide text-slate-500">
+            Ticari performans puanı
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-3">
+            <span className={`rounded-2xl px-4 py-2 text-2xl font-black ${scoreTone(performance.value)}`}>
+              {performance.value}
+            </span>
+            <div>
+              <div className="text-lg font-black text-slate-950">{performance.label}</div>
+              <div className="text-sm font-semibold text-slate-500">
+                {isSupplier
+                  ? "Teklif, vade, termin, sipariş ve teslimat sinyallerinden hesaplandı."
+                  : "Proje kazanımı, tahsilat ve bekleyen ödeme sinyallerinden hesaplandı."}
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
+          <MiniMetric label="Teklif" value={performance.supplierOffers.length} />
+          <MiniMetric label="Önerilen" value={performance.recommendedCount} />
+          <MiniMetric label="Geciken sipariş" value={performance.overdueOrders.length} tone={performance.overdueOrders.length > 0 ? "red" : "green"} />
+          <MiniMetric label="Kalite sinyali" value={performance.damageSignals.length} tone={performance.damageSignals.length > 0 ? "red" : "green"} />
+        </div>
+      </div>
+      <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div className="rounded-xl bg-white p-4">
+          <div className="text-sm font-black text-slate-950">Puanı etkileyen noktalar</div>
+          <ul className="mt-3 space-y-2 text-sm font-semibold text-slate-700">
+            {performance.reasons.map((reason) => (
+              <li key={reason} className="flex gap-2">
+                <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" />
+                <span>{reason}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div className="rounded-xl bg-white p-4">
+          <div className="text-sm font-black text-slate-950">Güçlü taraflar</div>
+          <ul className="mt-3 space-y-2 text-sm font-semibold text-slate-700">
+            {performance.strengths.map((reason) => (
+              <li key={reason} className="flex gap-2">
+                <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
+                <span>{reason}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MiniMetric({ label, value, tone = "slate" }) {
+  const tones = {
+    slate: "bg-white text-slate-950",
+    green: "bg-emerald-50 text-emerald-800",
+    red: "bg-red-50 text-red-800",
+  };
+
+  return (
+    <div className={`rounded-xl p-3 ${tones[tone] || tones.slate}`}>
+      <div className="text-xs font-bold opacity-70">{label}</div>
+      <div className="mt-1 text-lg font-black">{value}</div>
     </div>
   );
 }

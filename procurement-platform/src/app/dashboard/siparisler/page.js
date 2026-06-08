@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { calculateBaseAmount, currencyOptions, getBaseCurrency, getExchangeRate } from "@/lib/currency";
+import { fetchLiveTryRates, liveCurrencyOptions, liveRateFor, rateDiffPercent } from "@/lib/liveCurrency";
 import { findOrCreateBusinessPartner } from "@/lib/businessPartners";
 
 const emptyForm = {
@@ -214,12 +215,14 @@ export default function OrdersPage() {
   const [statusFilter, setStatusFilter] = useState("Tümü");
   const [message, setMessage] = useState("");
   const [companySettings, setCompanySettings] = useState(defaultCompanySettings);
+  const [liveRates, setLiveRates] = useState(null);
 
   // Initial load should run once; these functions intentionally read current mount state.
   // biome-ignore lint/correctness/useExhaustiveDependencies: initial page hydration only
   useEffect(() => {
     loadData();
     hydratePendingOrder();
+    fetchLiveTryRates().then(setLiveRates).catch(() => setLiveRates(null));
   }, []);
 
   async function loadData() {
@@ -530,7 +533,7 @@ export default function OrdersPage() {
       original_amount: orderTotal,
       order_total: orderTotal,
       exchange_rate: Number(formData.exchangeRate || getExchangeRate(formData.currency, companySettings)),
-      exchange_rate_date: companySettings.exchange_rate_date || getToday(),
+      exchange_rate_date: formData.orderDate || companySettings.exchange_rate_date || getToday(),
       base_currency: baseCurrency,
       base_amount: baseAmount,
       order_total_base: baseAmount,
@@ -663,6 +666,29 @@ export default function OrdersPage() {
               value={delayedCount}
               text="Termin aşıldı"
             />
+          </div>
+
+          <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4 shadow-sm">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <div className="text-sm font-black text-blue-900">Canlı kur takibi</div>
+                <div className="mt-1 text-xs font-semibold text-blue-700">
+                  Sipariş tarihi sabit kur tarihi olarak saklanır; ödeme gününde TL/döviz tercihine göre canlı kur farkı izlenir.
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {liveCurrencyOptions.map((currency) => (
+                  <span key={currency} className="rounded-xl bg-white px-3 py-2 text-xs font-black text-blue-900">
+                    {currency}: {liveRateFor(currency, liveRates) ? formatMoney(liveRateFor(currency, liveRates), "TRY") : "Alınamadı"}
+                  </span>
+                ))}
+                {liveRates?.date && (
+                  <span className="rounded-xl bg-blue-100 px-3 py-2 text-xs font-bold text-blue-800">
+                    {liveRates.date}
+                  </span>
+                )}
+              </div>
+            </div>
           </div>
 
           {message && (
@@ -1083,6 +1109,12 @@ function OrdersTable({ orders, onView, onEdit, onDelete }) {
                 <td className="p-4">{order.termin_date || "-"}</td>
                 <td className="p-4 font-semibold">
                   {formatMoney(order.total_amount, order.currency || "TRY")}
+                  {order.currency && order.currency !== "TRY" && (
+                    <div className="mt-1 text-[11px] font-bold text-slate-500">
+                      Sabit kur: {Number(order.exchange_rate || 1).toLocaleString("tr-TR")} · Canlı: {liveRateFor(order.currency, liveRates) ? liveRateFor(order.currency, liveRates).toLocaleString("tr-TR", { maximumFractionDigits: 4 }) : "-"}
+                      {liveRateFor(order.currency, liveRates) ? ` · Fark %${rateDiffPercent(order.exchange_rate, liveRateFor(order.currency, liveRates)).toFixed(1)}` : ""}
+                    </div>
+                  )}
                 </td>
                 <td className="p-4 font-semibold text-emerald-700">
                   {formatMoney(order.paidAmount, order.currency || "TRY")}

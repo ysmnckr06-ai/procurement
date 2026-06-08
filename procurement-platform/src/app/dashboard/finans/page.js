@@ -24,6 +24,10 @@ function normalizeFilter(value) {
     .replace(/\s+/g, " ");
 }
 
+function profitLossTotal(rows) {
+  return rows.reduce((sum, row) => sum + Number(row.profitLoss || 0), 0);
+}
+
 function StatCard({ title, value, text, tone = "slate" }) {
   const tones = {
     slate: "border-slate-200 bg-white text-slate-900",
@@ -199,6 +203,32 @@ export default function FinancePage() {
       }, {}),
     ).sort((a, b) => b.debt - a.debt);
 
+    let partnerPerformance = null;
+    if (partnerFilter) {
+      let score = 100;
+      const notes = [];
+      const waitingRatio = contractTotal > 0 ? Math.max(contractTotal - projectPaymentTotal, 0) / contractTotal : 0;
+      const debtRatio = orderTotal > 0 ? Math.max(orderTotal - orderPaid, 0) / orderTotal : 0;
+      if (waitingRatio > 0.4) {
+        score -= Math.min(25, Math.round(waitingRatio * 25));
+        notes.push(`Bekleyen tahsilat oranı yüksek: %${Math.round(waitingRatio * 100)}.`);
+      }
+      if (debtRatio > 0.4) {
+        score -= Math.min(20, Math.round(debtRatio * 20));
+        notes.push(`Açık iş ortağı borcu oranı yüksek: %${Math.round(debtRatio * 100)}.`);
+      }
+      if (profitLossTotal(projectRows) < 0) {
+        score -= 15;
+        notes.push("Filtreli projelerde maliyet/sipariş toplamı sözleşme bedelini aşıyor.");
+      }
+      if (paidNotReceived > 0) {
+        score -= 10;
+        notes.push("Ödeme yapılmış ama ürün girişi tamamlanmamış kayıtlar var.");
+      }
+      if (notes.length === 0) notes.push("Finans tarafında kritik risk sinyali görünmüyor.");
+      partnerPerformance = { score: Math.max(0, Math.min(100, Math.round(score))), notes };
+    }
+
     return {
       contractTotal,
       projectPaymentTotal,
@@ -212,6 +242,7 @@ export default function FinancePage() {
       receivedNotPaid,
       projectRows,
       supplierDebtRows,
+      partnerPerformance,
       baseCurrency,
     };
   }, [projects, projectPayments, orders, orderPayments, stockMovements, settings, partnerFilter]);
@@ -259,6 +290,27 @@ export default function FinancePage() {
             >
               Filtreyi temizle
             </button>
+          </div>
+        )}
+
+        {report.partnerPerformance && (
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+              <div>
+                <div className="text-sm font-black text-slate-950">İş Ortağı Finans Performansı</div>
+                <p className="mt-1 text-sm text-slate-500">
+                  Seçili iş ortağının tahsilat, sipariş ödemesi, maliyet ve stok giriş sinyalleri.
+                </p>
+              </div>
+              <div className={`rounded-2xl px-5 py-3 text-2xl font-black ${report.partnerPerformance.score >= 80 ? "bg-emerald-100 text-emerald-800" : report.partnerPerformance.score >= 60 ? "bg-blue-100 text-blue-800" : report.partnerPerformance.score >= 45 ? "bg-amber-100 text-amber-800" : "bg-red-100 text-red-800"}`}>
+                {report.partnerPerformance.score}
+              </div>
+            </div>
+            <ul className="mt-4 grid grid-cols-1 gap-2 text-sm font-semibold text-slate-700 md:grid-cols-2">
+              {report.partnerPerformance.notes.map((note) => (
+                <li key={note} className="rounded-xl bg-slate-50 p-3">{note}</li>
+              ))}
+            </ul>
           </div>
         )}
 
