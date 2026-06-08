@@ -11,6 +11,19 @@ function formatMoney(value, currency = "TRY") {
   }).format(Number(value || 0))} ${currency}`;
 }
 
+function normalizeFilter(value) {
+  return String(value || "")
+    .trim()
+    .toLocaleLowerCase("tr-TR")
+    .replaceAll("ı", "i")
+    .replaceAll("ğ", "g")
+    .replaceAll("ü", "u")
+    .replaceAll("ş", "s")
+    .replaceAll("ö", "o")
+    .replaceAll("ç", "c")
+    .replace(/\s+/g, " ");
+}
+
 function StatCard({ title, value, text, tone = "slate" }) {
   const tones = {
     slate: "border-slate-200 bg-white text-slate-900",
@@ -36,10 +49,15 @@ export default function FinancePage() {
   const [orderPayments, setOrderPayments] = useState([]);
   const [stockMovements, setStockMovements] = useState([]);
   const [settings, setSettings] = useState({ base_currency: "TRY" });
+  const [partnerFilter, setPartnerFilter] = useState("");
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
 
   useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      setPartnerFilter(params.get("is_ortagi") || "");
+    }
     loadFinance();
   }, []);
 
@@ -81,22 +99,54 @@ export default function FinancePage() {
 
   const report = useMemo(() => {
     const baseCurrency = settings.base_currency || settings.default_currency || "TRY";
-    const projectPaymentTotal = projectPayments.reduce(
+    const filterNeedle = normalizeFilter(partnerFilter);
+    const matchesFilter = (parts) => normalizeFilter(parts.join(" ")).includes(filterNeedle);
+    const filteredProjects = filterNeedle
+      ? projects.filter((project) =>
+          matchesFilter([
+            project.customer_name,
+            project.customer_partner_name,
+            project.project_name,
+            project.project_code,
+            project.description,
+          ]),
+        )
+      : projects;
+    const filteredProjectIds = new Set(filteredProjects.map((project) => project.id));
+    const filteredOrders = filterNeedle
+      ? orders.filter(
+          (order) =>
+            filteredProjectIds.has(order.project_id) ||
+            matchesFilter([order.partner_name, order.supplier_name, order.customer_name, order.project_name]),
+        )
+      : orders;
+    const filteredOrderIds = new Set(filteredOrders.map((order) => order.id));
+    const filteredProjectPayments = filterNeedle
+      ? projectPayments.filter((payment) => filteredProjectIds.has(payment.project_id))
+      : projectPayments;
+    const filteredOrderPayments = filterNeedle
+      ? orderPayments.filter((payment) => filteredOrderIds.has(payment.order_id))
+      : orderPayments;
+    const filteredStockMovements = filterNeedle
+      ? stockMovements.filter((movement) => filteredProjectIds.has(movement.project_id) || filteredOrderIds.has(movement.order_id))
+      : stockMovements;
+
+    const projectPaymentTotal = filteredProjectPayments.reduce(
       (sum, payment) => sum + Number(payment.base_amount || payment.amount || 0),
       0,
     );
-    const contractTotal = projects.reduce(
+    const contractTotal = filteredProjects.reduce(
       (sum, project) => sum + Number(project.contract_base_amount || project.contract_amount || 0),
       0,
     );
-    const orderTotal = orders.reduce(
+    const orderTotal = filteredOrders.reduce(
       (sum, order) => sum + Number(order.order_total_base || order.base_amount || order.total_amount || 0),
       0,
     );
     const orderPaid =
-      orderPayments.reduce((sum, payment) => sum + Number(payment.base_amount || payment.amount || 0), 0) ||
-      orders.reduce((sum, order) => sum + Number(order.paid_amount_base || order.paid_amount || 0), 0);
-    const receivedValue = stockMovements
+      filteredOrderPayments.reduce((sum, payment) => sum + Number(payment.base_amount || payment.amount || 0), 0) ||
+      filteredOrders.reduce((sum, order) => sum + Number(order.paid_amount_base || order.paid_amount || 0), 0);
+    const receivedValue = filteredStockMovements
       .filter((movement) => movement.movement_type !== "out")
       .reduce(
         (sum, movement) =>
@@ -104,16 +154,16 @@ export default function FinancePage() {
         0,
       );
     const notReceivedValue = Math.max(orderTotal - receivedValue, 0);
-    const paidNotReceived = orders
+    const paidNotReceived = filteredOrders
       .filter((order) => Number(order.paid_amount || 0) > 0 && Number(order.received_total || 0) <= 0)
       .reduce((sum, order) => sum + Number(order.paid_amount_base || order.paid_amount || 0), 0);
     const receivedNotPaid = Math.max(receivedValue - orderPaid, 0);
 
-    const projectRows = projects.map((project) => {
-      const payments = projectPayments
+    const projectRows = filteredProjects.map((project) => {
+      const payments = filteredProjectPayments
         .filter((payment) => payment.project_id === project.id)
         .reduce((sum, payment) => sum + Number(payment.base_amount || payment.amount || 0), 0);
-      const projectOrders = orders.filter((order) => order.project_id === project.id);
+      const projectOrders = filteredOrders.filter((order) => order.project_id === project.id);
       const projectOrderTotal = projectOrders.reduce(
         (sum, order) => sum + Number(order.order_total_base || order.base_amount || order.total_amount || 0),
         0,
@@ -138,7 +188,7 @@ export default function FinancePage() {
     });
 
     const supplierDebtRows = Object.values(
-      orders.reduce((map, order) => {
+      filteredOrders.reduce((map, order) => {
         const key = order.partner_name || order.supplier_name || "İş ortağı yok";
         const row = map[key] || { supplier: key, total: 0, paid: 0, debt: 0 };
         row.total += Number(order.order_total_base || order.base_amount || order.total_amount || 0);
@@ -164,7 +214,7 @@ export default function FinancePage() {
       supplierDebtRows,
       baseCurrency,
     };
-  }, [projects, projectPayments, orders, orderPayments, stockMovements, settings]);
+  }, [projects, projectPayments, orders, orderPayments, stockMovements, settings, partnerFilter]);
 
   return (
     <div className="min-h-screen bg-slate-100 p-6">
@@ -193,6 +243,22 @@ export default function FinancePage() {
         {message && (
           <div className="rounded-xl border border-yellow-200 bg-yellow-50 p-4 text-sm font-semibold text-yellow-900">
             {message}
+          </div>
+        )}
+
+        {partnerFilter && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-blue-100 bg-blue-50 p-4 text-sm font-bold text-blue-800">
+            <span>İş ortağı filtresi: {partnerFilter}</span>
+            <button
+              type="button"
+              onClick={() => {
+                setPartnerFilter("");
+                window.history.replaceState(null, "", "/dashboard/finans");
+              }}
+              className="rounded-xl bg-white px-4 py-2 text-xs font-bold text-blue-700 hover:bg-blue-100"
+            >
+              Filtreyi temizle
+            </button>
           </div>
         )}
 

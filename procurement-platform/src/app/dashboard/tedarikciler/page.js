@@ -39,6 +39,30 @@ function formatDate(value) {
   return new Date(value).toLocaleDateString("tr-TR");
 }
 
+function addMoney(map, currency, amount) {
+  const key = currency || "TRY";
+  map.set(key, Number(map.get(key) || 0) + Number(amount || 0));
+}
+
+function moneyRows(map) {
+  return Array.from(map.entries())
+    .map(([currency, amount]) => ({ currency, amount }))
+    .filter((row) => Math.abs(row.amount) > 0.0001)
+    .sort((a, b) => a.currency.localeCompare(b.currency, "tr-TR"));
+}
+
+function projectContractCurrency(project) {
+  return project?.contract_currency || project?.currency || "TRY";
+}
+
+function projectBudgetCurrency(project) {
+  return project?.estimated_budget_currency || project?.contract_currency || project?.currency || "TRY";
+}
+
+function projectTitle(project) {
+  return [project?.project_code, project?.project_name].filter(Boolean).join(" · ") || "Proje";
+}
+
 function statusClass(status) {
   const classes = {
     Aktif: "bg-green-100 text-green-700",
@@ -78,9 +102,13 @@ export default function BusinessPartnersPage() {
   const [partners, setPartners] = useState([]);
   const [projects, setProjects] = useState([]);
   const [orders, setOrders] = useState([]);
+  const [projectPayments, setProjectPayments] = useState([]);
+  const [orderPayments, setOrderPayments] = useState([]);
   const [movements, setMovements] = useState([]);
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState(null);
+  const [formOpen, setFormOpen] = useState(false);
+  const [detailOpen, setDetailOpen] = useState(false);
   const [selectedId, setSelectedId] = useState(null);
   const [typeFilter, setTypeFilter] = useState("Tümü");
   const [statusFilter, setStatusFilter] = useState("Tümü");
@@ -100,7 +128,7 @@ export default function BusinessPartnersPage() {
       return;
     }
 
-    const [partnerRes, projectRes, orderRes, movementRes] = await Promise.all([
+    const [partnerRes, projectRes, orderRes, projectPaymentRes, orderPaymentRes, movementRes] = await Promise.all([
       supabase
         .from("suppliers")
         .select("*")
@@ -108,15 +136,19 @@ export default function BusinessPartnersPage() {
         .order("name", { ascending: true }),
       supabase
         .from("projects")
-        .select(
-          "id,project_code,project_name,customer_name,customer_partner_id,customer_partner_name,status",
-        )
+        .select("*")
         .eq("user_id", user.id),
       supabase
         .from("orders")
-        .select(
-          "id,partner_id,partner_name,supplier_name,total_amount,currency,status,order_date",
-        )
+        .select("*")
+        .eq("user_id", user.id),
+      supabase
+        .from("project_payments")
+        .select("*")
+        .eq("user_id", user.id),
+      supabase
+        .from("order_payments")
+        .select("*")
         .eq("user_id", user.id),
       supabase
         .from("stock_movements")
@@ -165,22 +197,21 @@ export default function BusinessPartnersPage() {
       const { data: refreshedProjectData } = shouldReloadPartners
         ? await supabase
             .from("projects")
-            .select(
-              "id,project_code,project_name,customer_name,customer_partner_id,customer_partner_name,status",
-            )
+            .select("*")
             .eq("user_id", user.id)
         : { data: projectRes.data || [] };
       const rows = (refreshedPartnerData || [])
         .map(normalizePartnerRecord)
         .filter((partner) => partner.status !== "Silindi");
       setPartners(rows);
-      setSelectedId((current) => current || rows[0]?.id || null);
       setProjects(refreshedProjectData || []);
       setMessage("");
     }
 
     if (partnerRes.error) setProjects(projectRes.data || []);
     setOrders(orderRes.data || []);
+    setProjectPayments(projectPaymentRes.data || []);
+    setOrderPayments(orderPaymentRes.data || []);
     setMovements(movementRes.data || []);
     setLoading(false);
   }
@@ -228,6 +259,12 @@ export default function BusinessPartnersPage() {
           ) === key
         );
       });
+      const partnerProjectIds = new Set(partnerProjects.map((project) => project.id));
+      const projectOrders = orders.filter((order) => order.project_id && partnerProjectIds.has(order.project_id));
+      const allRelatedOrders = [...new Map([...partnerOrders, ...projectOrders].map((order) => [order.id, order])).values()];
+      const relatedOrderIds = new Set(allRelatedOrders.map((order) => order.id));
+      const partnerProjectPayments = projectPayments.filter((payment) => partnerProjectIds.has(payment.project_id));
+      const partnerOrderPayments = orderPayments.filter((payment) => relatedOrderIds.has(payment.order_id));
       const partnerMovements = movements.filter((movement) => {
         if (movement.partner_id && movement.partner_id === partner.id)
           return true;
@@ -238,17 +275,92 @@ export default function BusinessPartnersPage() {
         );
       });
 
+      const contractTotals = new Map();
+      const estimatedTotals = new Map();
+      const receivedPaymentTotals = new Map();
+      const pendingPaymentTotals = new Map();
+      const projectOrderTotals = new Map();
+      const orderPaymentTotals = new Map();
+      const supplierDebtTotals = new Map();
+      const profitTotals = new Map();
+
+      partnerProjects.forEach((project) => {
+        const contractCurrency = projectContractCurrency(project);
+        const budgetCurrency = projectBudgetCurrency(project);
+        const contractAmount = Number(project.contract_amount || 0);
+        const estimatedBudget = Number(project.estimated_budget || project.actual_cost || 0);
+        const projectPaymentsTotal = partnerProjectPayments
+          .filter((payment) => payment.project_id === project.id)
+          .reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+        const orderTotal = orders
+          .filter((order) => order.project_id === project.id)
+          .reduce((sum, order) => sum + Number(order.total_amount || order.order_total || order.total || 0), 0);
+
+        addMoney(contractTotals, contractCurrency, contractAmount);
+        addMoney(estimatedTotals, budgetCurrency, estimatedBudget);
+        addMoney(receivedPaymentTotals, contractCurrency, projectPaymentsTotal);
+        addMoney(pendingPaymentTotals, contractCurrency, Math.max(contractAmount - projectPaymentsTotal, 0));
+        addMoney(projectOrderTotals, budgetCurrency, orderTotal);
+        addMoney(profitTotals, contractCurrency, contractAmount - orderTotal);
+      });
+
+      allRelatedOrders.forEach((order) => {
+        const currency = order.currency || order.para_birimi || "TRY";
+        const orderAmount = Number(order.total_amount || order.order_total || order.total || 0);
+        const paidAmount = partnerOrderPayments
+          .filter((payment) => payment.order_id === order.id)
+          .reduce((sum, payment) => sum + Number(payment.amount || 0), 0) || Number(order.paid_amount || 0);
+
+        addMoney(orderPaymentTotals, currency, paidAmount);
+        addMoney(supplierDebtTotals, currency, Math.max(orderAmount - paidAmount, 0));
+      });
+
+      const projectRows = partnerProjects.map((project) => {
+        const contractCurrency = projectContractCurrency(project);
+        const budgetCurrency = projectBudgetCurrency(project);
+        const projectPaymentRows = partnerProjectPayments.filter((payment) => payment.project_id === project.id);
+        const projectOrderRows = orders.filter((order) => order.project_id === project.id);
+        const paid = projectPaymentRows.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+        const contract = Number(project.contract_amount || 0);
+        const orderTotal = projectOrderRows.reduce((sum, order) => sum + Number(order.total_amount || order.order_total || order.total || 0), 0);
+
+        return {
+          ...project,
+          contractCurrency,
+          budgetCurrency,
+          paid,
+          pending: Math.max(contract - paid, 0),
+          orderTotal,
+          profitLoss: contract - orderTotal,
+          paymentRows: projectPaymentRows,
+          orderRows: projectOrderRows,
+        };
+      });
+
       return {
         orders: partnerOrders,
+        relatedOrders: allRelatedOrders,
+        projectOrders,
         projects: partnerProjects,
+        projectRows,
+        projectPayments: partnerProjectPayments,
+        orderPayments: partnerOrderPayments,
         movements: partnerMovements,
         totalOrderAmount: partnerOrders.reduce(
           (sum, order) => sum + Number(order.total_amount || 0),
           0,
         ),
+        contractTotals: moneyRows(contractTotals),
+        estimatedTotals: moneyRows(estimatedTotals),
+        receivedPaymentTotals: moneyRows(receivedPaymentTotals),
+        pendingPaymentTotals: moneyRows(pendingPaymentTotals),
+        projectOrderTotals: moneyRows(projectOrderTotals),
+        orderPaymentTotals: moneyRows(orderPaymentTotals),
+        supplierDebtTotals: moneyRows(supplierDebtTotals),
+        profitTotals: moneyRows(profitTotals),
       };
     },
-    [orders, projects, movements],
+    [orders, projects, projectPayments, orderPayments, movements],
   );
 
   const enrichedPartners = useMemo(
@@ -287,7 +399,6 @@ export default function BusinessPartnersPage() {
 
   const selectedPartner =
     enrichedPartners.find((partner) => partner.id === selectedId) ||
-    filteredPartners[0] ||
     null;
 
   function updateForm(field, value) {
@@ -297,12 +408,16 @@ export default function BusinessPartnersPage() {
   function startCreate() {
     setEditingId(null);
     setForm(emptyForm);
+    setFormOpen(true);
+    setDetailOpen(false);
     setMessage("");
   }
 
   function startEdit(partner) {
     setEditingId(partner.id);
     setSelectedId(partner.id);
+    setFormOpen(true);
+    setDetailOpen(true);
     setForm({
       name: partner.name || "",
       partner_type: partner.partner_type || "Tedarikçi",
@@ -380,6 +495,8 @@ export default function BusinessPartnersPage() {
 
       setEditingId(partner.id);
       setSelectedId(partner.id);
+      setFormOpen(false);
+      setDetailOpen(true);
       setMessage(
         "İş ortağı kaydedildi. Benzer kayıt varsa mevcut karta bağlandı.",
       );
@@ -406,6 +523,8 @@ export default function BusinessPartnersPage() {
 
     setEditingId(data.id);
     setSelectedId(data.id);
+    setFormOpen(false);
+    setDetailOpen(true);
     setMessage("İş ortağı kaydedildi.");
     await loadData();
   }
@@ -526,6 +645,7 @@ export default function BusinessPartnersPage() {
     setMessage("İş ortağı silindi.");
     setSelectedId(null);
     setEditingId(null);
+    setDetailOpen(false);
     await loadData();
   }
 
@@ -582,27 +702,41 @@ export default function BusinessPartnersPage() {
         />
       </div>
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[0.9fr_1.25fr]">
+      {formOpen && (
         <form
           onSubmit={savePartner}
-          className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+          className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"
         >
-          <h2 className="text-xl font-bold text-slate-900">
-            {editingId ? "İş Ortağını Düzenle" : "Yeni İş Ortağı"}
-          </h2>
-          <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
-            <label className="md:col-span-2 text-sm font-bold text-slate-700">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-xl font-black text-slate-950">
+                {editingId ? "İş Ortağını Düzenle" : "Yeni İş Ortağı"}
+              </h2>
+              <p className="mt-1 text-sm text-slate-500">
+                Firma kimliği, iletişim ve ticari durum bilgilerini düzenleyin.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setFormOpen(false)}
+              className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
+            >
+              Kapat
+            </button>
+          </div>
+          <div className="mt-6 grid grid-cols-1 gap-x-4 gap-y-5 md:grid-cols-12">
+            <label className="text-sm font-bold text-slate-700 md:col-span-12">
               İş ortağı adı
               <input
-                className="mt-2 w-full rounded-xl border border-slate-300 p-3"
+                className="mt-2 h-12 w-full rounded-xl border border-slate-300 px-4 text-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
                 value={form.name}
                 onChange={(event) => updateForm("name", event.target.value)}
               />
             </label>
-            <label className="text-sm font-bold text-slate-700">
+            <label className="text-sm font-bold text-slate-700 md:col-span-6">
               Tür
               <select
-                className="mt-2 w-full rounded-xl border border-slate-300 p-3"
+                className="mt-2 h-12 w-full rounded-xl border border-slate-300 px-4 text-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
                 value={form.partner_type}
                 onChange={(event) =>
                   updateForm("partner_type", event.target.value)
@@ -613,10 +747,10 @@ export default function BusinessPartnersPage() {
                 ))}
               </select>
             </label>
-            <label className="text-sm font-bold text-slate-700">
+            <label className="text-sm font-bold text-slate-700 md:col-span-6">
               Durum
               <select
-                className="mt-2 w-full rounded-xl border border-slate-300 p-3"
+                className="mt-2 h-12 w-full rounded-xl border border-slate-300 px-4 text-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
                 value={form.status}
                 onChange={(event) => updateForm("status", event.target.value)}
               >
@@ -627,73 +761,73 @@ export default function BusinessPartnersPage() {
                   ))}
               </select>
             </label>
-            <label className="text-sm font-bold text-slate-700">
+            <label className="text-sm font-bold text-slate-700 md:col-span-6">
               Yetkili
               <input
-                className="mt-2 w-full rounded-xl border border-slate-300 p-3"
+                className="mt-2 h-12 w-full rounded-xl border border-slate-300 px-4 text-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
                 value={form.contact_person}
                 onChange={(event) =>
                   updateForm("contact_person", event.target.value)
                 }
               />
             </label>
-            <label className="text-sm font-bold text-slate-700">
+            <label className="text-sm font-bold text-slate-700 md:col-span-6">
               Telefon
               <input
-                className="mt-2 w-full rounded-xl border border-slate-300 p-3"
+                className="mt-2 h-12 w-full rounded-xl border border-slate-300 px-4 text-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
                 value={form.phone}
                 onChange={(event) => updateForm("phone", event.target.value)}
               />
             </label>
-            <label className="text-sm font-bold text-slate-700">
+            <label className="text-sm font-bold text-slate-700 md:col-span-7">
               E-posta
               <input
-                className="mt-2 w-full rounded-xl border border-slate-300 p-3"
+                className="mt-2 h-12 w-full rounded-xl border border-slate-300 px-4 text-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
                 value={form.email}
                 onChange={(event) => updateForm("email", event.target.value)}
               />
             </label>
-            <label className="text-sm font-bold text-slate-700">
+            <label className="text-sm font-bold text-slate-700 md:col-span-5">
               Vergi no
               <input
-                className="mt-2 w-full rounded-xl border border-slate-300 p-3"
+                className="mt-2 h-12 w-full rounded-xl border border-slate-300 px-4 text-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
                 value={form.tax_number}
                 onChange={(event) =>
                   updateForm("tax_number", event.target.value)
                 }
               />
             </label>
-            <label className="text-sm font-bold text-slate-700">
+            <label className="text-sm font-bold text-slate-700 md:col-span-12">
               Şehir
               <input
-                className="mt-2 w-full rounded-xl border border-slate-300 p-3"
+                className="mt-2 h-12 w-full rounded-xl border border-slate-300 px-4 text-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
                 value={form.city}
                 onChange={(event) => updateForm("city", event.target.value)}
               />
             </label>
-            <label className="md:col-span-2 text-sm font-bold text-slate-700">
+            <label className="text-sm font-bold text-slate-700 md:col-span-12">
               Adres
               <input
-                className="mt-2 w-full rounded-xl border border-slate-300 p-3"
+                className="mt-2 h-12 w-full rounded-xl border border-slate-300 px-4 text-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
                 value={form.address}
                 onChange={(event) => updateForm("address", event.target.value)}
               />
             </label>
-            <label className="md:col-span-2 text-sm font-bold text-slate-700">
+            <label className="text-sm font-bold text-slate-700 md:col-span-12">
               Notlar
               <textarea
-                rows={3}
-                className="mt-2 w-full rounded-xl border border-slate-300 p-3"
+                rows={4}
+                className="mt-2 w-full resize-none rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
                 value={form.notes}
                 onChange={(event) => updateForm("notes", event.target.value)}
               />
             </label>
           </div>
-          <div className="mt-5 flex gap-3">
+          <div className="mt-6 flex flex-wrap gap-3">
             <button
               type="submit"
               disabled={saving}
-              className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white disabled:bg-slate-300"
+              className="rounded-xl bg-blue-600 px-6 py-3 text-sm font-bold text-white shadow-sm hover:bg-blue-700 disabled:bg-slate-300"
             >
               {saving ? "Kaydediliyor..." : "Kaydet"}
             </button>
@@ -701,15 +835,16 @@ export default function BusinessPartnersPage() {
               <button
                 type="button"
                 onClick={startCreate}
-                className="rounded-xl border border-slate-300 px-5 py-3 text-sm font-bold text-slate-700"
+                className="rounded-xl border border-slate-300 px-6 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
               >
                 Yeni kayıt
               </button>
             )}
           </div>
         </form>
+      )}
 
-        <div className="space-y-6">
+      <div className="space-y-6">
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1fr_180px_180px]">
               <input
@@ -764,7 +899,7 @@ export default function BusinessPartnersPage() {
                     <th className="p-4">Toplam alış</th>
                     <th className="p-4">Projeler</th>
                     <th className="p-4">Durum</th>
-                    <th className="p-4">İşlem</th>
+                    <th className="p-4 text-right">İşlem</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -809,14 +944,26 @@ export default function BusinessPartnersPage() {
                         </span>
                       </td>
                       <td className="p-4">
-                        <div className="flex gap-2">
+                        <div className="flex justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setSelectedId(partner.id);
+                              setFormOpen(false);
+                              setDetailOpen(true);
+                            }}
+                            className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-200"
+                          >
+                            Detay
+                          </button>
                           <button
                             type="button"
                             onClick={(event) => {
                               event.stopPropagation();
                               startEdit(partner);
                             }}
-                            className="rounded-lg bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700"
+                            className="rounded-lg bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700 hover:bg-blue-100"
                           >
                             Düzenle
                           </button>
@@ -826,7 +973,7 @@ export default function BusinessPartnersPage() {
                               event.stopPropagation();
                               deletePartner(partner);
                             }}
-                            className="rounded-lg bg-red-50 px-3 py-2 text-xs font-bold text-red-700"
+                            className="rounded-lg bg-red-50 px-3 py-2 text-xs font-bold text-red-700 hover:bg-red-100"
                           >
                             Sil
                           </button>
@@ -844,7 +991,7 @@ export default function BusinessPartnersPage() {
             )}
           </div>
 
-          {selectedPartner && (
+          {detailOpen && selectedPartner && (
             <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                 <div>
@@ -867,13 +1014,29 @@ export default function BusinessPartnersPage() {
                     </span>
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => startEdit(selectedPartner)}
-                  className="rounded-xl bg-slate-900 px-4 py-3 text-sm font-bold text-white"
-                >
-                  Düzenle
-                </button>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => startEdit(selectedPartner)}
+                    className="rounded-xl bg-slate-900 px-4 py-3 text-sm font-bold text-white hover:bg-slate-800"
+                  >
+                    Düzenle
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => deletePartner(selectedPartner)}
+                    className="rounded-xl bg-red-50 px-4 py-3 text-sm font-bold text-red-700 hover:bg-red-100"
+                  >
+                    Sil
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDetailOpen(false)}
+                    className="rounded-xl border border-slate-300 px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
+                  >
+                    Kapat
+                  </button>
+                </div>
               </div>
 
               <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
@@ -885,31 +1048,100 @@ export default function BusinessPartnersPage() {
                 <Info label="Adres" value={selectedPartner.address} />
               </div>
 
-              <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
-                <DetailList
-                  title="Bağlı Projeler"
-                  rows={selectedPartner.metrics.projects.map(
-                    (project) =>
-                      `${project.project_code || "-"} · ${project.project_name || "-"}`,
-                  )}
+              <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+                <MoneySummary title="Sözleşme Bedeli" rows={selectedPartner.metrics.contractTotals} empty="0,00" />
+                <MoneySummary title="Alınan Ödemeler" rows={selectedPartner.metrics.receivedPaymentTotals} empty="0,00" tone="green" />
+                <MoneySummary title="Bekleyen Tahsilat" rows={selectedPartner.metrics.pendingPaymentTotals} empty="0,00" tone="orange" />
+                <MoneySummary title="Proje Siparişleri" rows={selectedPartner.metrics.projectOrderTotals} empty="0,00" />
+                <MoneySummary title="Sipariş Ödemeleri" rows={selectedPartner.metrics.orderPaymentTotals} empty="0,00" tone="green" />
+                <MoneySummary title="Kalan İş Ortağı Borcu" rows={selectedPartner.metrics.supplierDebtTotals} empty="0,00" tone="red" />
+                <MoneySummary title="Tahmini / Maliyet" rows={selectedPartner.metrics.estimatedTotals} empty="0,00" />
+                <MoneySummary title="Kâr / Zarar" rows={selectedPartner.metrics.profitTotals} empty="0,00" tone="blue" />
+              </div>
+
+              <div className="mt-6 overflow-hidden rounded-2xl border border-slate-200">
+                <div className="flex flex-col gap-3 border-b border-slate-100 bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <div className="text-sm font-black text-slate-950">Bağlı Projeler ve Finans</div>
+                    <div className="text-xs font-semibold text-slate-500">
+                      {selectedPartner.metrics.projectRows.length} proje · sözleşme, tahsilat, bekleyen ödeme ve sipariş maliyeti
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => router.push(`/dashboard/finans?is_ortagi=${encodeURIComponent(selectedPartner.name)}`)}
+                    className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white hover:bg-blue-700"
+                  >
+                    Finans ekranına git
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => router.push(`/dashboard/projeler?musteri=${encodeURIComponent(selectedPartner.name)}`)}
+                    className="rounded-xl border border-blue-200 bg-white px-4 py-2 text-xs font-bold text-blue-700 hover:bg-blue-50"
+                  >
+                    Projeler sayfasında göster
+                  </button>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[980px] text-left text-sm">
+                    <thead className="bg-white text-xs uppercase text-slate-500">
+                      <tr>
+                        <th className="p-4">Proje</th>
+                        <th className="p-4">Sözleşme</th>
+                        <th className="p-4">Tahsilat</th>
+                        <th className="p-4">Bekleyen</th>
+                        <th className="p-4">Sipariş</th>
+                        <th className="p-4">Kâr / Zarar</th>
+                        <th className="p-4 text-right">İşlem</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {selectedPartner.metrics.projectRows.map((project) => (
+                        <tr key={project.id} className="border-t border-slate-100">
+                          <td className="p-4">
+                            <div className="font-black text-slate-950">{projectTitle(project)}</div>
+                            <div className="mt-1 text-xs font-semibold text-slate-500">{project.status || "-"}</div>
+                          </td>
+                          <td className="p-4 font-bold">{formatMoney(project.contract_amount, project.contractCurrency)}</td>
+                          <td className="p-4 font-bold text-emerald-700">{formatMoney(project.paid, project.contractCurrency)}</td>
+                          <td className="p-4 font-bold text-orange-700">{formatMoney(project.pending, project.contractCurrency)}</td>
+                          <td className="p-4 font-bold">{formatMoney(project.orderTotal, project.budgetCurrency)}</td>
+                          <td className={`p-4 font-black ${project.profitLoss < 0 ? "text-red-700" : "text-emerald-700"}`}>
+                            {formatMoney(project.profitLoss, project.contractCurrency)}
+                          </td>
+                          <td className="p-4 text-right">
+                            <button
+                              type="button"
+                              onClick={() => router.push(`/dashboard/projeler/${project.id}`)}
+                              className="rounded-lg bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700 hover:bg-blue-100"
+                            >
+                              Projeyi Aç
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                      {selectedPartner.metrics.projectRows.length === 0 && (
+                        <tr>
+                          <td colSpan="7" className="p-8 text-center text-slate-500">
+                            Bu iş ortağına bağlı proje yok.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="mt-6 grid grid-cols-1 gap-4 xl:grid-cols-2">
+                <PaymentTimeline
+                  title="Proje Ödeme / Tahsilat Hareketleri"
+                  rows={selectedPartner.metrics.projectPayments}
+                  projectRows={selectedPartner.metrics.projectRows}
                 />
-                <DetailList
-                  title="Sipariş Geçmişi"
-                  rows={selectedPartner.metrics.orders
-                    .slice(0, 8)
-                    .map(
-                      (order) =>
-                        `${formatDate(order.order_date)} · ${formatMoney(order.total_amount, order.currency || "TRY")} · ${order.status || "-"}`,
-                    )}
-                />
-                <DetailList
-                  title="Stok Hareketleri"
-                  rows={selectedPartner.metrics.movements
-                    .slice(0, 8)
-                    .map(
-                      (movement) =>
-                        `${formatDate(movement.movement_date)} · ${movement.product_name || "-"} · ${movement.quantity || 0}`,
-                    )}
+                <PaymentTimeline
+                  title="Sipariş Ödeme Hareketleri"
+                  rows={selectedPartner.metrics.orderPayments}
+                  orders={selectedPartner.metrics.relatedOrders}
                 />
               </div>
 
@@ -922,7 +1154,6 @@ export default function BusinessPartnersPage() {
             </div>
           )}
         </div>
-      </div>
     </div>
   );
 }
@@ -933,6 +1164,73 @@ function Info({ label, value }) {
       <div className="text-xs font-bold text-slate-500">{label}</div>
       <div className="mt-1 break-words text-sm font-black text-slate-900">
         {value || "-"}
+      </div>
+    </div>
+  );
+}
+
+function MoneySummary({ title, rows, empty = "0,00", tone = "slate" }) {
+  const tones = {
+    slate: "bg-slate-50 text-slate-950",
+    green: "bg-emerald-50 text-emerald-800",
+    orange: "bg-orange-50 text-orange-800",
+    red: "bg-red-50 text-red-800",
+    blue: "bg-blue-50 text-blue-800",
+  };
+
+  return (
+    <div className={`rounded-xl p-4 ${tones[tone] || tones.slate}`}>
+      <div className="text-xs font-black uppercase tracking-wide opacity-70">{title}</div>
+      <div className="mt-2 space-y-1">
+        {rows?.length > 0 ? (
+          rows.map((row) => (
+            <div key={`${title}-${row.currency}`} className="break-words text-lg font-black leading-tight">
+              {formatMoney(row.amount, row.currency)}
+            </div>
+          ))
+        ) : (
+          <div className="text-lg font-black leading-tight">{empty}</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PaymentTimeline({ title, rows, projectRows = [], orders = [] }) {
+  const projectById = new Map(projectRows.map((project) => [project.id, project]));
+  const orderById = new Map(orders.map((order) => [order.id, order]));
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+      <div className="font-black text-slate-950">{title}</div>
+      <div className="mt-3 space-y-2">
+        {rows?.length > 0 ? (
+          rows.slice(0, 12).map((row) => {
+            const project = projectById.get(row.project_id);
+            const order = orderById.get(row.order_id);
+            const label = project ? projectTitle(project) : order?.order_no || order?.product_name || "Bağlı kayıt";
+            const amount = Number(row.amount || row.base_amount || 0);
+            const currency = row.currency || row.base_currency || order?.currency || project?.contractCurrency || "TRY";
+
+            return (
+              <div key={row.id} className="rounded-xl bg-slate-50 p-3 text-sm">
+                <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="truncate font-black text-slate-900" title={label}>{label}</div>
+                    <div className="mt-1 text-xs font-semibold text-slate-500">
+                      {formatDate(row.payment_date || row.date || row.created_at)} · {row.payment_type || row.type || row.method || "Ödeme"} · {row.description || row.note || "-"}
+                    </div>
+                  </div>
+                  <div className="whitespace-nowrap font-black text-slate-950">{formatMoney(amount, currency)}</div>
+                </div>
+              </div>
+            );
+          })
+        ) : (
+          <div className="rounded-xl bg-slate-50 p-4 text-sm text-slate-500">
+            Kayıt yok.
+          </div>
+        )}
       </div>
     </div>
   );

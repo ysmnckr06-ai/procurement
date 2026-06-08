@@ -164,7 +164,9 @@ def is_meaningful_section_label(value):
     if len(normalized) <= 1:
         return False
 
-    if clean_number(text) > 0:
+    has_letters = bool(re.search(r"[a-z]", normalized))
+
+    if clean_number(text) > 0 and (not has_letters or any(currency in low for currency in ["eur", "euro", "usd", "try", "tl", "₺", "€", "$"])):
         return False
 
     return True
@@ -194,6 +196,7 @@ def section_name_from_cells(cells):
 def looks_like_section_total_row(cells, code, brand, description, quantity, line_total):
     numbers = row_numbers(cells)
     effective_total = line_total or choose_section_total(0, numbers)
+    effective_quantity = infer_quantity_from_cells(cells, quantity, effective_total)
 
     if effective_total <= 0:
         return False
@@ -210,7 +213,7 @@ def looks_like_section_total_row(cells, code, brand, description, quantity, line
 
     # PDF exports can shift columns. If a row has a meaningful title, quantity
     # and total but misses code/brand/detail fields, it is a main item candidate.
-    return bool(section_name_from_cells(cells)) and quantity > 0
+    return bool(section_name_from_cells(cells)) and effective_quantity > 0
 
 
 def is_section_name(value):
@@ -254,6 +257,36 @@ def choose_section_total(line_total, numbers):
         return net_total
 
     return line_total or net_total
+
+
+def infer_quantity_from_cells(cells, explicit_quantity, total):
+    if explicit_quantity > 0:
+        return explicit_quantity
+
+    first_cell_number = clean_number(cells[0]) if cells else 0
+    candidates = []
+
+    for index, cell in enumerate(cells):
+        normalized = re.sub(r"[^a-z0-9]", "", normalize_tr(cell))
+        if re.search(r"[a-z]", normalized):
+            continue
+
+        value = clean_number(cell)
+
+        if value <= 0:
+            continue
+
+        if total > 0 and money_equals(value, total, 0.01):
+            continue
+
+        # The first PDF table column is often only the row number.
+        if index == 0 and first_cell_number > 0:
+            continue
+
+        if float(value).is_integer() and value <= 10000:
+            candidates.append(value)
+
+    return candidates[0] if candidates else 0
 
 
 def is_product_table_header(line):
@@ -1027,27 +1060,28 @@ def parse_product_tables(tables, firma, footer, file_name):
                 close_open_section_as_flat_if_empty()
                 numbers = row_numbers(cells)
                 section_total = choose_section_total(line_total, numbers)
+                section_quantity = infer_quantity_from_cells(cells, quantity, section_total)
                 section_name = section_name or section_name_from_cells(cells)
                 print("Parent detected:", {"row": joined, "name": section_name})
                 section_debug.append({
                     "event": "Parent detected",
                     "row": joined,
                     "name": section_name,
-                    "quantity": quantity,
+                    "quantity": section_quantity,
                     "total": section_total,
                     "page_number": page_number,
                 })
                 section = {
                     "section_name": section_name,
                     "section_total": section_total,
-                    "section_quantity": quantity if quantity > 0 else 0,
+                    "section_quantity": section_quantity if section_quantity > 0 else 0,
                     "product_code": code,
                     "unit": unit or "adet",
                     "currency": row_currency or "TRY",
                     "page_number": page_number,
                     "page_end_parent": row_position == len(data_rows) - 1,
                 }
-                if quantity <= 0:
+                if section_quantity <= 0:
                     warnings.append(f"{section_name} ana kalem miktarı kontrol gerekli.")
                 sections.append(section)
                 had_pending_rows = bool(pending_rows)
@@ -1060,7 +1094,7 @@ def parse_product_tables(tables, firma, footer, file_name):
                 continue
 
             if not code or not description:
-                errors.append(f"Şüpheli satır atlandı: kod/açıklama eksik ({joined})")
+                warnings.append(f"Kontrol uyarısı: kod/açıklama eksik satır atlandı ({joined})")
                 print("Rejected:", {"row": joined, "reason": "kod/aciklama eksik"})
                 section_debug.append({
                     "event": "Rejected",
@@ -1073,7 +1107,7 @@ def parse_product_tables(tables, firma, footer, file_name):
             name = clean_text(f"{brand} {description}") if brand else description
 
             if should_skip_line(name) or is_section_name(name):
-                errors.append(f"Kategori/toplam satırı ürün olarak algılandı: {name}")
+                warnings.append(f"Kontrol uyarısı: kategori/toplam satırı ürün olarak algılandı ({name})")
                 print("Rejected:", {"row": name, "reason": "kategori/toplam satiri urun gibi gorundu"})
                 section_debug.append({
                     "event": "Rejected",
@@ -1084,7 +1118,7 @@ def parse_product_tables(tables, firma, footer, file_name):
                 continue
 
             if quantity <= 0:
-                errors.append(f"Şüpheli satır atlandı: adet eksik ({name})")
+                warnings.append(f"Kontrol uyarısı: adet eksik satır atlandı ({name})")
                 print("Rejected:", {"row": name, "reason": "adet eksik"})
                 section_debug.append({
                     "event": "Rejected",

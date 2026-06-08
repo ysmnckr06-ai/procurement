@@ -736,10 +736,36 @@ export default function ProjectDetailPage() {
     if (itemCode && productCode && itemCode === productCode) return true;
 
     const unitMatches = normalizeText(product.unit || "adet") === normalizeText(item.unit || "adet");
-    const itemName = item.product_name || item.description || "";
-    const nameScore = textSimilarity(product.product_name, itemName);
-    const brandScore = item.brand || product.brand ? textSimilarity(product.brand, item.brand) : 1;
+    const itemIdentity = normalizeProductIdentityForStock(item);
+    const productIdentity = normalizeProductIdentityForStock(product);
+    const nameScore = textSimilarity(productIdentity.product_name, itemIdentity.product_name);
+    const brandScore = itemIdentity.brand || productIdentity.brand ? textSimilarity(productIdentity.brand, itemIdentity.brand) : 1;
     return unitMatches && nameScore >= 0.75 && brandScore >= 0.6;
+  }
+
+  function normalizeProductIdentityForStock(item) {
+    const rawBrand = String(item?.brand || "").trim();
+    let productName = String(item?.product_name || item?.description || "").trim();
+    let brand = rawBrand && rawBrand !== "-" ? rawBrand : "";
+
+    if (!brand && productName) {
+      const leadingQuantityBrand = productName.match(/^\s*\d+(?:[.,]\d+)?\s*([A-Za-zÇĞİÖŞÜçğıöşü]{2,})\s+(.+)$/);
+      if (leadingQuantityBrand) {
+        brand = leadingQuantityBrand[1].toUpperCase();
+        productName = leadingQuantityBrand[2].trim();
+      }
+    }
+
+    if (!brand && productName) {
+      const firstTokenBrand = productName.match(/^([A-ZÇĞİÖŞÜ]{2,20})\s+(.+)$/);
+      const rest = firstTokenBrand?.[2] || "";
+      if (firstTokenBrand && /[0-9/-]/.test(rest)) {
+        brand = firstTokenBrand[1].trim();
+        productName = rest.trim();
+      }
+    }
+
+    return { brand, product_name: productName };
   }
 
   function safeProductCodeForItem(item) {
@@ -916,6 +942,7 @@ export default function ProjectDetailPage() {
       const safeProductCode = safeProductCodeForItem(item);
       const safeUnit = item.unit || "adet";
       const safeCurrency = item.currency || projectCurrencyForDisplay() || "TRY";
+      const normalizedIdentity = normalizeProductIdentityForStock(item);
       const searchableProducts = [...(productRows || []), ...createdProducts];
       let product = searchableProducts.find((candidate) => productMatchesProjectItem(candidate, item));
       let productCardStatus = "Ürün kartına bağlı";
@@ -939,8 +966,8 @@ export default function ProjectDetailPage() {
         const productPayload = {
             user_id: userId,
             product_code: safeProductCode,
-            brand: item.brand || "",
-            product_name: itemName,
+            brand: normalizedIdentity.brand || "",
+            product_name: normalizedIdentity.product_name || itemName,
             unit: safeUnit,
             current_stock: 0,
             min_stock: 0,

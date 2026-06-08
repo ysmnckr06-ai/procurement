@@ -31,6 +31,19 @@ function formatDate(value) {
   return new Date(value).toLocaleDateString("tr-TR");
 }
 
+function normalizeProjectFilter(value) {
+  return String(value || "")
+    .trim()
+    .toLocaleLowerCase("tr-TR")
+    .replaceAll("ı", "i")
+    .replaceAll("ğ", "g")
+    .replaceAll("ü", "u")
+    .replaceAll("ş", "s")
+    .replaceAll("ö", "o")
+    .replaceAll("ç", "c")
+    .replace(/\s+/g, " ");
+}
+
 function nextProjectCode(projects) {
   const maxNumber = projects.reduce((max, project) => {
     const match = String(project.project_code || "").match(/PRJ-(\d+)/i);
@@ -136,6 +149,7 @@ export default function ProjectsPage() {
   const router = useRouter();
   const [projects, setProjects] = useState([]);
   const [businessPartners, setBusinessPartners] = useState([]);
+  const [customerFilter, setCustomerFilter] = useState("");
   const [relatedRows, setRelatedRows] = useState({
     items: [],
     requests: [],
@@ -157,6 +171,10 @@ export default function ProjectsPage() {
 
   useEffect(() => {
     loadProjects();
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      setCustomerFilter(params.get("musteri") || "");
+    }
   }, []);
 
   async function loadProjects() {
@@ -431,7 +449,19 @@ export default function ProjectsPage() {
 
   const archivedProjects = useMemo(() => projects.filter((project) => project.status === "Arşivlendi" || project.archived_at), [projects]);
   const activeProjects = useMemo(() => projects.filter((project) => !(project.status === "Arşivlendi" || project.archived_at)), [projects]);
-  const displayedProjects = projectView === "archived" ? archivedProjects : activeProjects;
+  const displayedProjectsBase = projectView === "archived" ? archivedProjects : activeProjects;
+  const displayedProjects = useMemo(() => {
+    const needle = normalizeProjectFilter(customerFilter);
+    if (!needle) return displayedProjectsBase;
+    return displayedProjectsBase.filter((project) =>
+      normalizeProjectFilter([
+        project.customer_name,
+        project.customer_partner_name,
+        project.project_name,
+        project.project_code,
+      ].join(" ")).includes(needle),
+    );
+  }, [displayedProjectsBase, customerFilter]);
 
   const stats = useMemo(() => {
     const activeStatuses = ["Onaylandı", "Devam Ediyor"];
@@ -629,6 +659,21 @@ export default function ProjectsPage() {
                 <p className="mt-1 text-sm text-slate-500">
                   {loading ? "Yükleniyor..." : `${displayedProjects.length} proje gösteriliyor.`}
                 </p>
+                {customerFilter && (
+                  <div className="mt-3 inline-flex max-w-full items-center gap-2 rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">
+                    <span className="truncate">Müşteri filtresi: {customerFilter}</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCustomerFilter("");
+                        router.replace("/dashboard/projeler");
+                      }}
+                      className="shrink-0 rounded-full bg-white px-2 py-1 text-blue-700"
+                    >
+                      Temizle
+                    </button>
+                  </div>
+                )}
               </div>
               <div className="flex rounded-xl border border-slate-200 bg-slate-50 p-1 text-sm font-bold">
                 <button

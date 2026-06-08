@@ -49,9 +49,39 @@ function normalizeStockCode(value) {
   return String(value || "").trim().toUpperCase().replace(/\s+/g, "");
 }
 
+function normalizeProductIdentity(product) {
+  const rawBrand = String(product?.brand || "").trim();
+  let productName = String(product?.product_name || product?.description || "").trim();
+  let brand = rawBrand && rawBrand !== "-" ? rawBrand : "";
+
+  if (!brand && productName) {
+    const leadingQuantityBrand = productName.match(/^\s*\d+(?:[.,]\d+)?\s*([A-Za-zÇĞİÖŞÜçğıöşü]{2,})\s+(.+)$/);
+    if (leadingQuantityBrand) {
+      brand = leadingQuantityBrand[1].toUpperCase();
+      productName = leadingQuantityBrand[2].trim();
+    }
+  }
+
+  if (!brand && productName) {
+    const firstTokenBrand = productName.match(/^([A-ZÇĞİÖŞÜ]{2,20})\s+(.+)$/);
+    const rest = firstTokenBrand?.[2] || "";
+    if (firstTokenBrand && /[0-9/-]/.test(rest)) {
+      brand = firstTokenBrand[1].trim();
+      productName = rest.trim();
+    }
+  }
+
+  return {
+    ...product,
+    brand,
+    product_name: productName,
+  };
+}
+
 function productGroupKey(product) {
-  const code = normalizeStockCode(product.product_code);
-  const name = normalizeStockText(product.product_name);
+  const normalized = normalizeProductIdentity(product);
+  const code = normalizeStockCode(normalized.product_code);
+  const name = normalizeStockText(normalized.product_name);
 
   if (code && name) return `${code}__${name}`;
   if (code) return `code__${code}`;
@@ -70,36 +100,37 @@ function mergeProductGroups(items) {
   const grouped = new Map();
 
   items.forEach((product) => {
-    const key = productGroupKey(product);
+    const normalizedProduct = normalizeProductIdentity(product);
+    const key = productGroupKey(normalizedProduct);
     const existing = grouped.get(key);
 
     if (!existing) {
       grouped.set(key, {
-        ...product,
+        ...normalizedProduct,
         groupKey: key,
-        duplicateIds: [product.id],
+        duplicateIds: [normalizedProduct.id],
         duplicateCount: 1,
-        current_stock: Number(product.current_stock || 0),
-        reserved_stock: Number(product.reserved_stock || 0),
+        current_stock: Number(normalizedProduct.current_stock || 0),
+        reserved_stock: Number(normalizedProduct.reserved_stock || 0),
       });
       return;
     }
 
     const existingDate = new Date(existing.updated_at || existing.created_at || 0).getTime();
-    const productDate = new Date(product.updated_at || product.created_at || 0).getTime();
-    const base = productDate > existingDate ? { ...existing, ...product } : existing;
+    const productDate = new Date(normalizedProduct.updated_at || normalizedProduct.created_at || 0).getTime();
+    const base = productDate > existingDate ? { ...existing, ...normalizedProduct } : existing;
 
     grouped.set(key, {
       ...base,
       groupKey: key,
-      duplicateIds: [...existing.duplicateIds, product.id],
+      duplicateIds: [...existing.duplicateIds, normalizedProduct.id],
       duplicateCount: existing.duplicateCount + 1,
-      current_stock: Number(existing.current_stock || 0) + Number(product.current_stock || 0),
-      reserved_stock: Number(existing.reserved_stock || 0) + Number(product.reserved_stock || 0),
-      last_supplier: product.last_supplier || existing.last_supplier,
-      last_unit_price: Number(product.last_unit_price || 0) || existing.last_unit_price,
-      last_currency: product.last_currency || existing.last_currency,
-      last_movement_at: product.last_movement_at || existing.last_movement_at,
+      current_stock: Number(existing.current_stock || 0) + Number(normalizedProduct.current_stock || 0),
+      reserved_stock: Number(existing.reserved_stock || 0) + Number(normalizedProduct.reserved_stock || 0),
+      last_supplier: normalizedProduct.last_supplier || existing.last_supplier,
+      last_unit_price: Number(normalizedProduct.last_unit_price || 0) || existing.last_unit_price,
+      last_currency: normalizedProduct.last_currency || existing.last_currency,
+      last_movement_at: normalizedProduct.last_movement_at || existing.last_movement_at,
     });
   });
 
@@ -161,6 +192,110 @@ function stockBreakdown(product, movements) {
   };
 }
 
+function productProjectAllocations(product, projectItems, projects, movements) {
+  if (!product) return { rows: [], projectRows: [], allocatedTotal: 0, missingTotal: 0, freeStock: 0 };
+
+  const projectById = new Map((projects || []).map((project) => [project.id, project]));
+  const itemById = new Map((projectItems || []).map((item) => [item.id, item]));
+  const relatedItems = (projectItems || [])
+    .filter((item) => projectItemMatchesProduct(item, product))
+    .filter((item) => Number(item.estimated_quantity || 0) > 0)
+    .sort((left, right) => new Date(left.created_at || 0) - new Date(right.created_at || 0));
+
+  let remainingStock = Number(stockBreakdown(product, movements).total || 0);
+  const rows = relatedItems.map((item) => {
+    const project = projectById.get(item.project_id);
+    const need = Number(item.estimated_quantity || 0);
+    const consumed = Number(item.consumed_child_quantity || item.issued_to_production_quantity || 0);
+    const openNeed = Math.max(need - consumed, 0);
+    const allocated = Math.min(remainingStock, openNeed);
+    remainingStock -= allocated;
+    const missing = Math.max(openNeed - allocated, 0);
+    const movementRows = (movements || []).filter((movement) =>
+      movementMatchesProduct(movement, product) && movement.project_id === item.project_id
+    );
+    const parent = item.parent_item_id ? itemById.get(item.parent_item_id) : null;
+
+    return {
+      item,
+      parent,
+      project,
+      need,
+      consumed,
+      openNeed,
+      allocated,
+      missing,
+      movementRows,
+    };
+  });
+
+  const groupedProjects = new Map();
+  rows.forEach((row) => {
+    const key = row.item.project_id || "no-project";
+    const current = groupedProjects.get(key) || {
+      key,
+      project: row.project,
+      rows: [],
+      need: 0,
+      consumed: 0,
+      allocated: 0,
+      missing: 0,
+      movementCount: 0,
+      lastDate: null,
+    };
+
+    current.rows.push(row);
+    current.need += row.need;
+    current.consumed += row.consumed;
+    current.allocated += row.allocated;
+    current.missing += row.missing;
+    current.movementCount += row.movementRows.length;
+    const rowDate = row.item.created_at || row.item.updated_at;
+    if (rowDate && (!current.lastDate || new Date(rowDate) > new Date(current.lastDate))) {
+      current.lastDate = rowDate;
+    }
+    groupedProjects.set(key, current);
+  });
+
+  const projectRows = [...groupedProjects.values()].map((projectRow) => {
+    const parentGroups = new Map();
+    projectRow.rows.forEach((row) => {
+      const parentKey = row.parent?.id || row.item.id;
+      const parentName = row.parent?.product_name || row.parent?.description || (row.parent ? "Ana kalem" : "Bağımsız kalem");
+      const current = parentGroups.get(parentKey) || {
+        key: parentKey,
+        parent: row.parent,
+        parentName,
+        rows: [],
+        need: 0,
+        consumed: 0,
+        allocated: 0,
+        missing: 0,
+      };
+
+      current.rows.push(row);
+      current.need += row.need;
+      current.consumed += row.consumed;
+      current.allocated += row.allocated;
+      current.missing += row.missing;
+      parentGroups.set(parentKey, current);
+    });
+
+    return {
+      ...projectRow,
+      parentGroups: [...parentGroups.values()].sort((left, right) => right.need - left.need),
+    };
+  });
+
+  return {
+    rows,
+    projectRows,
+    allocatedTotal: rows.reduce((sum, row) => sum + row.allocated, 0),
+    missingTotal: rows.reduce((sum, row) => sum + row.missing, 0),
+    freeStock: Math.max(remainingStock, 0),
+  };
+}
+
 function movementMatchesProduct(movement, product) {
   if (!product) return false;
 
@@ -179,6 +314,32 @@ function movementMatchesProduct(movement, product) {
   return !productCode && productName && productName === movementName;
 }
 
+function projectItemMatchesProduct(item, product) {
+  if (!product || !item) return false;
+
+  const ids = product.duplicateIds || [product.id];
+  if (item.product_id && ids.includes(item.product_id)) return true;
+
+  const productCode = normalizeStockCode(product.product_code);
+  const itemCode = normalizeStockCode(item.product_code);
+  const productName = normalizeStockText(product.product_name);
+  const itemName = normalizeStockText(item.product_name || item.description);
+
+  if (productCode && itemCode && productCode === itemCode && productName === itemName) return true;
+  return !productCode && productName && productName === itemName;
+}
+
+function projectDisplayName(project) {
+  const company = project?.customer_name || project?.customer || project?.client_name || project?.client || project?.firma || project?.firmaAdi || project?.musteri_adi || project?.musteriAdi || "";
+  const projectName = project?.project_name || project?.name || project?.title || project?.proje_adi || project?.projeAdi || project?.project_code || "Proje";
+
+  if (company && normalizeStockText(company) !== normalizeStockText(projectName)) {
+    return `${company} - ${projectName}`;
+  }
+
+  return projectName;
+}
+
 function StatCard({ title, value, text }) {
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -193,10 +354,13 @@ export default function StockPage() {
   const router = useRouter();
   const [products, setProducts] = useState([]);
   const [movements, setMovements] = useState([]);
+  const [projectItems, setProjectItems] = useState([]);
+  const [projects, setProjects] = useState([]);
   const [search, setSearch] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(true);
   const [selectedProduct, setSelectedProduct] = useState(null);
+  const [expandedProjectKeys, setExpandedProjectKeys] = useState([]);
   const [productForm, setProductForm] = useState({
     brand: "",
     min_stock: "",
@@ -259,7 +423,20 @@ export default function StockPage() {
       .select("*", { count: "exact" })
       .eq("user_id", user.id)
       .order("created_at", { ascending: false })
-      .limit(300);
+      .limit(2000);
+
+    const { data: projectItemData, error: projectItemError } = await supabase
+      .from("project_items")
+      .select("*")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: true })
+      .limit(5000);
+
+    const { data: projectData, error: projectError } = await supabase
+      .from("projects")
+      .select("*")
+      .eq("user_id", user.id)
+      .limit(1000);
 
     console.log("Stock products query result", {
       table: "products",
@@ -278,12 +455,14 @@ export default function StockPage() {
       error: movementError?.message || null,
     });
 
-    if (productError || movementError) {
+    if (productError || movementError || projectItemError || projectError) {
       setMessage("Stok tabloları hazır değil. Supabase şemasındaki products ve stock_movements bölümlerini çalıştırın.");
     }
 
     setProducts(productData || []);
     setMovements(movementData || []);
+    setProjectItems(projectItemData || []);
+    setProjects(projectData || []);
     setSelectedProduct(null);
     setLoading(false);
   }
@@ -413,6 +592,7 @@ export default function StockPage() {
 
   function openProductDetail(product) {
     setSelectedProduct(product);
+    setExpandedProjectKeys([]);
     setMessage("");
   }
 
@@ -519,13 +699,19 @@ export default function StockPage() {
       const now = new Date().toISOString();
       const seenKeys = new Set();
       const rows = (data.rows || []).filter((row) => String(row.product_name || "").trim());
+      let skippedExisting = 0;
+      let skippedDuplicateInFile = 0;
       const payload = rows.map((row, index) => {
         const productCode = String(row.product_code || "").trim().toUpperCase() || `AUTO-${Date.now()}-${index + 1}`;
+        const normalizedRow = normalizeProductIdentity({
+          brand: row.brand || "",
+          product_name: String(row.product_name || "").trim(),
+        });
         return {
           user_id: user.id,
           product_code: productCode,
-          brand: row.brand || "",
-          product_name: String(row.product_name || "").trim(),
+          brand: normalizedRow.brand || "",
+          product_name: normalizedRow.product_name,
           unit: row.unit || "adet",
           current_stock: 0,
           min_stock: 0,
@@ -540,13 +726,20 @@ export default function StockPage() {
         };
       }).filter((product) => {
         const key = productGroupKey(product);
-        if (existingKeys.has(key) || seenKeys.has(key)) return false;
+        if (existingKeys.has(key)) {
+          skippedExisting += 1;
+          return false;
+        }
+        if (seenKeys.has(key)) {
+          skippedDuplicateInFile += 1;
+          return false;
+        }
         seenKeys.add(key);
         return true;
       });
 
       if (payload.length === 0) {
-        setMessage("Dosyada yeni ürün kartı oluşturacak satır bulunamadı.");
+        setMessage(`Dosyada yeni ürün kartı oluşturacak satır bulunamadı. ${skippedExisting} satır zaten stokta vardı, ${skippedDuplicateInFile} satır dosya içinde tekrar ediyordu.`);
         return;
       }
 
@@ -557,7 +750,8 @@ export default function StockPage() {
         return;
       }
 
-      setMessage(`${payload.length} ürün kartı oluşturuldu. Stok miktarları kart detayından veya stok hareketleriyle güncellenebilir.`);
+      const skippedMessage = [skippedExisting ? `${skippedExisting} satır zaten stokta olduğu için eklenmedi` : "", skippedDuplicateInFile ? `${skippedDuplicateInFile} tekrar satır atlandı` : ""].filter(Boolean).join(". ");
+      setMessage(`${payload.length} ürün kartı oluşturuldu.${skippedMessage ? ` ${skippedMessage}.` : ""} Stok miktarları kart detayından veya stok hareketleriyle güncellenebilir.`);
       await loadStock();
     } catch (error) {
       console.error("Toplu stok aktarımı bağlantı hatası:", error);
@@ -590,6 +784,10 @@ export default function StockPage() {
     return movements.filter((movement) => movementMatchesProduct(movement, selectedProduct));
   }, [movements, selectedProduct]);
 
+  const selectedProjectAllocation = useMemo(() => {
+    return productProjectAllocations(selectedProduct, projectItems, projects, movements);
+  }, [selectedProduct, projectItems, projects, movements]);
+
   const visibleMovementRows = selectedProduct ? selectedMovements : movements;
   const visibleMovementIds = visibleMovementRows.map((movement) => movement.id);
   const allFilteredProductsSelected = filteredProducts.length > 0 && filteredProducts.every((product) => selectedProductKeys.includes(product.groupKey));
@@ -604,6 +802,12 @@ export default function StockPage() {
   function toggleMovementSelection(id) {
     setSelectedMovementIds((current) =>
       current.includes(id) ? current.filter((movementId) => movementId !== id) : [...current, id],
+    );
+  }
+
+  function toggleProjectAllocation(key) {
+    setExpandedProjectKeys((current) =>
+      current.includes(key) ? current.filter((projectKey) => projectKey !== key) : [...current, key],
     );
   }
 
@@ -632,7 +836,7 @@ export default function StockPage() {
   return (
     <div className="min-h-screen bg-slate-100">
       <main className="p-6">
-        <div className="mx-auto max-w-7xl space-y-6">
+        <div className="mx-auto max-w-[1600px] space-y-6">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <div className="inline-flex rounded-full bg-emerald-100 px-4 py-2 text-sm font-bold text-emerald-700">
@@ -694,7 +898,7 @@ export default function StockPage() {
             />
           </div>
 
-          <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.35fr_0.9fr]">
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-[520px_minmax(0,1fr)]">
             <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
               <div className="border-b border-slate-100 p-5">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -726,6 +930,7 @@ export default function StockPage() {
               <div className="space-y-3 p-4">
                 {filteredProducts.map((product) => {
                   const breakdown = stockBreakdown(product, movements);
+                  const allocation = productProjectAllocations(product, projectItems, projects, movements);
                   return (
                     <div
                       key={product.groupKey}
@@ -735,9 +940,9 @@ export default function StockPage() {
                           : "border-slate-200 bg-white"
                       }`}
                     >
-                      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                        <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-center gap-2 text-xs font-bold text-slate-500">
+                      <div className="space-y-3">
+                        <div className="flex min-w-0 items-start gap-3">
+                          <div className="pt-1">
                             <input
                               type="checkbox"
                               checked={selectedProductKeys.includes(product.groupKey)}
@@ -745,49 +950,50 @@ export default function StockPage() {
                               className="h-4 w-4 rounded border-slate-300"
                               aria-label={`${product.product_name} seç`}
                             />
-                            <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-700">Kod: {product.product_code || "-"}</span>
-                            <span>Marka: {product.brand || "-"}</span>
-                            <span>Birim: {product.unit || "adet"}</span>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => openProductDetail(product)}
-                            className="mt-2 block max-w-full text-left text-base font-black leading-snug text-slate-950 hover:text-blue-700"
-                            title={product.product_name || ""}
-                          >
-                            {product.product_name}
-                          </button>
-                          {product.duplicateCount > 1 && (
-                            <div className="mt-1 text-xs font-bold text-amber-700">
-                              {product.duplicateCount} kayıt birleşti
+                          <div className="min-w-0 flex-1">
+                            <button
+                              type="button"
+                              onClick={() => openProductDetail(product)}
+                              className="block w-full truncate text-left text-base font-black leading-6 text-slate-950 hover:text-blue-700"
+                              title={product.product_name || ""}
+                            >
+                              {product.product_name}
+                            </button>
+                            <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5 text-[11px] font-bold text-slate-500">
+                              <span className="max-w-full truncate rounded-full bg-slate-100 px-2.5 py-1 text-slate-700" title={product.product_code || "-"}>
+                                Kod: {product.product_code || "-"}
+                              </span>
+                              <span className="max-w-full truncate rounded-full bg-slate-100 px-2.5 py-1" title={product.brand || "-"}>
+                                Marka: {product.brand || "-"}
+                              </span>
+                              <span className="rounded-full bg-slate-100 px-2.5 py-1">
+                                Birim: {product.unit || "adet"}
+                              </span>
                             </div>
-                          )}
+                            {product.duplicateCount > 1 && (
+                              <div className="mt-2 rounded-lg bg-amber-50 px-2.5 py-1 text-[11px] font-bold text-amber-700">
+                                {product.duplicateCount} kayıt birleşti. Aynı kod/açıklama için yeni kart açılmadı.
+                              </div>
+                            )}
+                          </div>
                         </div>
-                        <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-3 lg:w-[420px]">
-                          <div className="rounded-xl bg-slate-50 p-2">
-                            <div className="font-bold text-slate-500">Mevcut stok</div>
-                            <div className="mt-1 text-sm font-black text-slate-900">{breakdown.total}</div>
+                        <div className="grid min-w-0 grid-cols-4 gap-2 text-xs">
+                          <div className="min-w-0 rounded-xl bg-slate-50 px-3 py-2">
+                            <div className="truncate font-bold text-slate-500">Stok</div>
+                            <div className="mt-1 truncate text-sm font-black text-slate-900">{breakdown.total}</div>
                           </div>
-                          <div className="rounded-xl bg-slate-50 p-2">
-                            <div className="font-bold text-slate-500">Minimum</div>
-                            <div className="mt-1 text-sm font-black text-slate-900">{Number(product.min_stock ?? product.minimum_stock ?? 0)}</div>
+                          <div className="min-w-0 rounded-xl bg-blue-50 px-3 py-2">
+                            <div className="truncate font-bold text-blue-700">Ayrılan</div>
+                            <div className="mt-1 truncate text-sm font-black text-blue-900">{allocation.allocatedTotal}</div>
                           </div>
-                          <div className="rounded-xl bg-slate-50 p-2">
-                            <div className="font-bold text-slate-500">Kritik</div>
-                            <div className="mt-1 text-sm font-black text-slate-900">{Number(product.critical_stock ?? 0)}</div>
+                          <div className="min-w-0 rounded-xl bg-emerald-50 px-3 py-2">
+                            <div className="truncate font-bold text-emerald-700">Boşta</div>
+                            <div className="mt-1 truncate text-sm font-black text-emerald-900">{allocation.freeStock}</div>
                           </div>
-                          <div className="rounded-xl bg-slate-50 p-2">
-                            <div className="font-bold text-slate-500">Son alış</div>
-                            <div className="mt-1"><MoneyValue value={product.last_unit_price} currency={product.last_currency || "TRY"} /></div>
-                          </div>
-                          <div className="rounded-xl bg-slate-50 p-2">
-                            <div className="font-bold text-slate-500">Manuel</div>
-                            <div className="mt-1"><MoneyValue value={product.manual_unit_price} currency={product.last_currency || "TRY"} tone="text-indigo-700" /></div>
-                          </div>
-                          <div className="rounded-xl bg-slate-50 p-2">
-                            <div className="font-bold text-slate-500">Son bilgi</div>
-                            <div className="mt-1 break-words text-sm font-black text-slate-900">{product.last_supplier || "-"}</div>
-                            <div className="mt-0.5 text-[11px] font-semibold text-slate-500">{formatDate(product.last_purchase_date || product.last_movement_at || product.updated_at)}</div>
+                          <div className="min-w-0 rounded-xl bg-red-50 px-3 py-2">
+                            <div className="truncate font-bold text-red-700">Eksik</div>
+                            <div className="mt-1 truncate text-sm font-black text-red-900">{allocation.missingTotal}</div>
                           </div>
                         </div>
                       </div>
@@ -807,6 +1013,7 @@ export default function StockPage() {
                 <>
                   {(() => {
                     const breakdown = stockBreakdown(selectedProduct, movements);
+                    const allocation = selectedProjectAllocation;
                     return (
                       <>
                         <div className="flex items-start justify-between gap-4">
@@ -825,16 +1032,24 @@ export default function StockPage() {
                           </button>
                         </div>
 
-                        <div className="mt-5 grid grid-cols-2 gap-3">
+                        <div className="mt-5 grid grid-cols-2 gap-3 xl:grid-cols-4">
                           <div className="rounded-xl bg-slate-50 p-4">
                             <div className="text-xs font-bold text-slate-500">Mevcut Stok</div>
                             <div className="mt-1 text-xl font-black text-slate-900">
                               {breakdown.total} {selectedProduct.unit || "adet"}
                             </div>
                           </div>
-                          <div className="rounded-xl bg-slate-50 p-4">
-                            <div className="text-xs font-bold text-slate-500">Kullanılabilir</div>
-                            <div className="mt-1 text-xl font-black text-emerald-700">{breakdown.available}</div>
+                          <div className="rounded-xl bg-blue-50 p-4">
+                            <div className="text-xs font-bold text-blue-700">Projeye Ayrılan</div>
+                            <div className="mt-1 text-xl font-black text-blue-900">{allocation.allocatedTotal}</div>
+                          </div>
+                          <div className="rounded-xl bg-emerald-50 p-4">
+                            <div className="text-xs font-bold text-emerald-700">Boşta Kullanılabilir</div>
+                            <div className="mt-1 text-xl font-black text-emerald-900">{allocation.freeStock}</div>
+                          </div>
+                          <div className="rounded-xl bg-red-50 p-4">
+                            <div className="text-xs font-bold text-red-700">Alınması Gereken</div>
+                            <div className="mt-1 text-xl font-black text-red-900">{allocation.missingTotal}</div>
                           </div>
                           <div className="rounded-xl bg-slate-50 p-4">
                             <div className="text-xs font-bold text-slate-500">Siparişlerden Gelen Son Fiyat</div>
@@ -844,6 +1059,95 @@ export default function StockPage() {
                           <div className="rounded-xl bg-slate-50 p-4">
                             <div className="text-xs font-bold text-slate-500">Son İş Ortağı</div>
                             <div className="mt-1 text-lg font-black text-slate-900">{selectedProduct.last_supplier || "-"}</div>
+                          </div>
+                        </div>
+
+                        <div className="mt-5 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                              <h3 className="text-sm font-black uppercase tracking-wide text-slate-700">Proje Bazlı Kullanım</h3>
+                              <p className="mt-1 text-xs text-slate-600">Önce proje toplamı gösterilir. Projeyi açınca ürünün hangi ana kalemlerde kullanıldığı görünür.</p>
+                            </div>
+                            <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-black text-blue-700">
+                              {allocation.projectRows.length} proje
+                            </span>
+                          </div>
+                          <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200">
+                            <div className="min-w-[760px]">
+                            <div className="grid grid-cols-[minmax(220px,1fr)_90px_90px_90px_90px_44px] gap-3 bg-slate-50 px-4 py-3 text-[11px] font-black uppercase tracking-wide text-slate-500">
+                              <div>Proje</div>
+                              <div className="text-right">İhtiyaç</div>
+                              <div className="text-right">Kullanılan</div>
+                              <div className="text-right">Ayrılan</div>
+                              <div className="text-right">Eksik</div>
+                              <div />
+                            </div>
+                            {allocation.projectRows.map((projectRow) => {
+                              const expanded = expandedProjectKeys.includes(projectRow.key);
+                              return (
+                                <div key={projectRow.key} className="border-t border-slate-100 first:border-t-0">
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleProjectAllocation(projectRow.key)}
+                                    className="grid w-full grid-cols-[minmax(220px,1fr)_90px_90px_90px_90px_44px] items-center gap-3 px-4 py-3 text-left hover:bg-blue-50"
+                                  >
+                                    <div className="min-w-0">
+                                      <div className="truncate text-sm font-black text-slate-950" title={projectDisplayName(projectRow.project)}>
+                                        {projectDisplayName(projectRow.project)}
+                                      </div>
+                                      <div className="mt-1 truncate text-xs font-semibold text-slate-500">
+                                        {formatDate(projectRow.lastDate)} · {projectRow.movementCount} hareket · {projectRow.parentGroups.length} ana kalem
+                                      </div>
+                                    </div>
+                                    <div className="text-right text-sm font-black text-slate-900">{projectRow.need}</div>
+                                    <div className="text-right text-sm font-black text-slate-700">{projectRow.consumed}</div>
+                                    <div className="text-right text-sm font-black text-blue-700">{projectRow.allocated}</div>
+                                    <div className="text-right text-sm font-black text-red-700">{projectRow.missing}</div>
+                                    <div className="text-right text-lg font-black text-slate-400">{expanded ? "−" : "+"}</div>
+                                  </button>
+                                  {expanded && (
+                                    <div className="bg-slate-50 px-4 pb-4">
+                                      <div className="space-y-2 rounded-xl border border-slate-200 bg-white p-3">
+                                        {projectRow.parentGroups.map((parentGroup) => (
+                                          <div key={parentGroup.key} className="grid grid-cols-[minmax(180px,1fr)_80px_80px_80px_80px] items-center gap-3 rounded-lg bg-slate-50 px-3 py-2 text-xs">
+                                            <div className="min-w-0">
+                                              <div className="truncate font-black text-slate-900" title={parentGroup.parentName}>
+                                                {parentGroup.parentName}
+                                              </div>
+                                              <div className="mt-0.5 truncate font-semibold text-slate-500">
+                                                {parentGroup.rows.length} satırda kullanıldı
+                                              </div>
+                                            </div>
+                                            <div className="text-right">
+                                              <div className="font-bold text-slate-500">İhtiyaç</div>
+                                              <div className="font-black text-slate-900">{parentGroup.need}</div>
+                                            </div>
+                                            <div className="text-right">
+                                              <div className="font-bold text-slate-500">Kullanılan</div>
+                                              <div className="font-black text-slate-900">{parentGroup.consumed}</div>
+                                            </div>
+                                            <div className="text-right">
+                                              <div className="font-bold text-blue-700">Ayrılan</div>
+                                              <div className="font-black text-blue-900">{parentGroup.allocated}</div>
+                                            </div>
+                                            <div className="text-right">
+                                              <div className="font-bold text-red-700">Eksik</div>
+                                              <div className="font-black text-red-900">{parentGroup.missing}</div>
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                            {allocation.projectRows.length === 0 && (
+                              <div className="border-t border-slate-100 p-4 text-sm text-slate-500">
+                                Bu ürün henüz bir projede ihtiyaç olarak görünmüyor.
+                              </div>
+                            )}
+                            </div>
                           </div>
                         </div>
 
@@ -933,6 +1237,11 @@ export default function StockPage() {
                   <div className="mt-3 space-y-3">
                     {selectedMovements.map((movement) => {
                       const status = movementStatus(movement);
+                      const movementProject = projects.find((project) => project.id === movement.project_id);
+                      const movementQuantity = Number(movement.quantity || 0);
+                      const movementUnitPrice = Number(movement.unit_price || movement.purchase_unit_price || movement.price || movement.unit_cost || 0);
+                      const movementTotal = Number(movement.total_amount || movement.total || movementQuantity * movementUnitPrice || 0);
+                      const movementCurrency = movement.currency || selectedProduct.last_currency || "TRY";
                       return (
                         <div key={movement.id} className="rounded-xl border border-slate-100 p-4">
                           <div className="flex items-start justify-between gap-3">
@@ -948,6 +1257,24 @@ export default function StockPage() {
                                 <div className="truncate font-bold text-slate-900" title={movement.product_name || status}>{status}</div>
                                 <div className="mt-1 truncate text-xs text-slate-500" title={`${movement.partner_name || movement.supplier_name || "-"} · ${formatDate(movement.movement_date)} · ${movement.source || "-"}`}>
                                 {movement.partner_name || movement.supplier_name || "-"} · {formatDate(movement.movement_date)} · {movement.source || "-"}
+                                </div>
+                                <div className="mt-2 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+                                  <div className="rounded-lg bg-slate-50 p-2">
+                                    <div className="font-bold text-slate-500">Proje</div>
+                                    <div className="truncate font-black text-slate-900" title={projectDisplayName(movementProject)}>{movementProject ? projectDisplayName(movementProject) : "-"}</div>
+                                  </div>
+                                  <div className="rounded-lg bg-slate-50 p-2">
+                                    <div className="font-bold text-slate-500">Birim fiyat</div>
+                                    <MoneyValue value={movementUnitPrice} currency={movementCurrency} />
+                                  </div>
+                                  <div className="rounded-lg bg-slate-50 p-2">
+                                    <div className="font-bold text-slate-500">Toplam</div>
+                                    <MoneyValue value={movementTotal} currency={movementCurrency} />
+                                  </div>
+                                  <div className="rounded-lg bg-slate-50 p-2">
+                                    <div className="font-bold text-slate-500">Tarih</div>
+                                    <div className="font-black text-slate-900">{formatDate(movement.movement_date || movement.created_at)}</div>
+                                  </div>
                                 </div>
                               </div>
                             </div>
