@@ -8,32 +8,6 @@ except Exception:
     pdfplumber = None
 
 
-SECTION_NAMES = {
-    "trafo",
-    "kompanzasyon",
-    "adp",
-    "uadp",
-    "sgn-t",
-    "bk-t1",
-    "bk-t2",
-    "cms-kt-2",
-    "cms-kt1",
-    "mtf-t",
-    "mtf-kt",
-    "kzn-kt",
-    "zk-t1",
-    "zk-t2",
-    "1k-t1",
-    "1k-t2",
-    "atl-at1",
-    "atl-at2",
-    "atl-at3",
-    "atl-at4",
-    "atl-at5",
-    "2k-t1",
-}
-
-
 def clean_text(val):
     if val is None:
         return ""
@@ -172,13 +146,6 @@ def money_equals(left, right, tolerance=0.05):
 
 
 def canonical_section_name(value):
-    text = normalize_tr(value)
-    compact = re.sub(r"[-_\s]+", "", text)
-
-    for section_name in SECTION_NAMES:
-        if compact == re.sub(r"[-_\s]+", "", section_name):
-            return section_name.upper()
-
     return ""
 
 
@@ -192,6 +159,9 @@ def is_meaningful_section_label(value):
     normalized = re.sub(r"[^a-z0-9]", "", low)
 
     if not normalized or normalized in ["tl", "try", "eur", "usd"]:
+        return False
+
+    if len(normalized) <= 1:
         return False
 
     if clean_number(text) > 0:
@@ -218,11 +188,14 @@ def section_name_from_cells(cells):
     if not text_cells:
         return ""
 
-    return clean_text(text_cells[-1]).upper()
+    return clean_text(max(text_cells, key=lambda value: len(normalize_tr(value)))).upper()
 
 
 def looks_like_section_total_row(cells, code, brand, description, quantity, line_total):
-    if line_total <= 0:
+    numbers = row_numbers(cells)
+    effective_total = line_total or choose_section_total(0, numbers)
+
+    if effective_total <= 0:
         return False
 
     joined = " ".join(clean_text(cell) for cell in cells)
@@ -235,9 +208,9 @@ def looks_like_section_total_row(cells, code, brand, description, quantity, line
     if has_product_identity and quantity > 0:
         return False
 
-    # PDF exports do not expose Excel fill colors. A row with a price/total but
-    # missing the required material identity is a group total, whatever its name is.
-    return bool(section_name_from_cells(cells))
+    # PDF exports can shift columns. If a row has a meaningful title, quantity
+    # and total but misses code/brand/detail fields, it is a main item candidate.
+    return bool(section_name_from_cells(cells)) and quantity > 0
 
 
 def is_section_name(value):
@@ -848,28 +821,110 @@ def parse_product_tables(tables, firma, footer, file_name):
     errors = []
     warnings = []
     pending_rows = []
+    open_section = None
+    open_section_child_count = 0
+    section_debug = []
     active_header = None
     active_indexes = None
 
+    def make_flat_section_row(section):
+        quantity = section.get("section_quantity") or 0
+        section_total = section.get("section_total") or 0
+        unit_price = section_total / quantity if quantity > 0 and section_total > 0 else 0
+        flat_row = make_offer_row(
+            {
+                "urunKodu": section.get("product_code") or "",
+                "urunAciklamasi": section["section_name"],
+                "birim": section.get("unit") or "adet",
+                "firmaAdedi": quantity,
+                "paraBirimi": section.get("currency") or "TRY",
+                "birimFiyat": unit_price,
+                "iskonto": 0,
+                "netBirimFiyat": unit_price,
+                "netToplam": section_total,
+                "vade": "",
+                "termin": "",
+            },
+            firma,
+            footer,
+            file_name,
+        )
+        flat_row["section_name"] = ""
+        flat_row["section_total"] = 0
+        flat_row["section_quantity"] = 0
+        flat_row["price_status"] = "flat_main_item"
+        return flat_row
+
+    def apply_section_to_row(row, section):
+        row["section_name"] = section["section_name"]
+        row["section_total"] = section["section_total"]
+        row["section_quantity"] = section.get("section_quantity") or 0
+        row["birimFiyat"] = 0
+        row["netBirimFiyat"] = 0
+        row["netToplam"] = 0
+        row["price_status"] = "section_total_only"
+
+    def close_open_section_as_flat_if_empty():
+        nonlocal open_section, open_section_child_count
+
+        if not open_section:
+            return
+
+        if open_section_child_count <= 0:
+            rows.append(make_flat_section_row(open_section))
+            warnings.append("Bu dosyada alt kalem ilişkisi bulunmayan ana kalem satırı görüldü; bağımsız ana kalem olarak aktarılabilir.")
+            section_debug.append({
+                "section_name": open_section["section_name"],
+                "child_count": 0,
+                "page_end_parent": bool(open_section.get("page_end_parent")),
+                "page_number": open_section.get("page_number"),
+                "mode": "flat_main_item",
+            })
+        else:
+            section_debug.append({
+                "section_name": open_section["section_name"],
+                "child_count": open_section_child_count,
+                "page_end_parent": bool(open_section.get("page_end_parent")),
+                "page_number": open_section.get("page_number"),
+                "mode": "attached_to_following_rows",
+            })
+
+        open_section = None
+        open_section_child_count = 0
+
     def attach_section_to_pending(section):
         if not pending_rows:
-            warnings.append(f"{section['section_name']} toplamı bulundu ama üstünde bağlanacak malzeme satırı yok.")
+            section_debug.append({
+                "section_name": section["section_name"],
+                "child_count": 0,
+                "page_end_parent": bool(section.get("page_end_parent")),
+                "page_number": section.get("page_number"),
+                "mode": "open_parent_waiting_for_following_rows",
+            })
             return
 
         for row in pending_rows:
-            row["section_name"] = section["section_name"]
-            row["section_total"] = section["section_total"]
-            row["birimFiyat"] = 0
-            row["netBirimFiyat"] = 0
-            row["netToplam"] = 0
-            row["price_status"] = "section_total_only"
+            apply_section_to_row(row, section)
 
         warnings.append(
             f"{section['section_name']} toplamı üstündeki {len(pending_rows)} malzemeye bağlandı; parça fiyatları aktarılmadı."
         )
+        section_debug.append({
+            "section_name": section["section_name"],
+            "child_count": len(pending_rows),
+            "page_end_parent": bool(section.get("page_end_parent")),
+            "page_number": section.get("page_number"),
+            "mode": "attached_to_previous_rows",
+        })
         pending_rows.clear()
 
-    for table in tables:
+    for table_entry in tables:
+        page_number = None
+        table = table_entry
+        if isinstance(table_entry, dict):
+            page_number = table_entry.get("page_number")
+            table = table_entry.get("table") or []
+
         if not table:
             continue
 
@@ -949,7 +1004,7 @@ def parse_product_tables(tables, firma, footer, file_name):
         delivery_index = active_indexes["delivery"]
         currency_index = active_indexes["currency"]
 
-        for raw_row in data_rows:
+        for row_position, raw_row in enumerate(data_rows):
             cells = [clean_text(cell) for cell in raw_row]
             joined = " ".join(cells)
 
@@ -969,15 +1024,36 @@ def parse_product_tables(tables, firma, footer, file_name):
             section_name = canonical_section_name(section_source)
 
             if section_name or looks_like_section_total_row(cells, code, brand, description, quantity, line_total):
+                close_open_section_as_flat_if_empty()
                 numbers = row_numbers(cells)
                 section_total = choose_section_total(line_total, numbers)
                 section_name = section_name or section_name_from_cells(cells)
+                print("Parent detected:", {"row": joined, "name": section_name})
+                section_debug.append({
+                    "event": "Parent detected",
+                    "row": joined,
+                    "name": section_name,
+                    "quantity": quantity,
+                    "total": section_total,
+                    "page_number": page_number,
+                })
                 section = {
                     "section_name": section_name,
                     "section_total": section_total,
+                    "section_quantity": quantity if quantity > 0 else 0,
+                    "product_code": code,
+                    "unit": unit or "adet",
+                    "currency": row_currency or "TRY",
+                    "page_number": page_number,
+                    "page_end_parent": row_position == len(data_rows) - 1,
                 }
+                if quantity <= 0:
+                    warnings.append(f"{section_name} ana kalem miktarı kontrol gerekli.")
                 sections.append(section)
+                had_pending_rows = bool(pending_rows)
                 attach_section_to_pending(section)
+                if not had_pending_rows:
+                    open_section = section
                 continue
 
             if should_skip_line(joined):
@@ -985,16 +1061,37 @@ def parse_product_tables(tables, firma, footer, file_name):
 
             if not code or not description:
                 errors.append(f"Şüpheli satır atlandı: kod/açıklama eksik ({joined})")
+                print("Rejected:", {"row": joined, "reason": "kod/aciklama eksik"})
+                section_debug.append({
+                    "event": "Rejected",
+                    "skipped_row": joined,
+                    "reason": "kod/aciklama eksik",
+                    "page_number": page_number,
+                })
                 continue
 
             name = clean_text(f"{brand} {description}") if brand else description
 
             if should_skip_line(name) or is_section_name(name):
                 errors.append(f"Kategori/toplam satırı ürün olarak algılandı: {name}")
+                print("Rejected:", {"row": name, "reason": "kategori/toplam satiri urun gibi gorundu"})
+                section_debug.append({
+                    "event": "Rejected",
+                    "skipped_row": name,
+                    "reason": "kategori/toplam satiri urun gibi gorundu",
+                    "page_number": page_number,
+                })
                 continue
 
             if quantity <= 0:
                 errors.append(f"Şüpheli satır atlandı: adet eksik ({name})")
+                print("Rejected:", {"row": name, "reason": "adet eksik"})
+                section_debug.append({
+                    "event": "Rejected",
+                    "skipped_row": name,
+                    "reason": "adet eksik",
+                    "page_number": page_number,
+                })
                 continue
 
             price_status = "line_priced"
@@ -1029,8 +1126,15 @@ def parse_product_tables(tables, firma, footer, file_name):
             ))
             rows[-1]["section_name"] = ""
             rows[-1]["section_total"] = 0
+            rows[-1]["section_quantity"] = 0
             rows[-1]["price_status"] = price_status
-            pending_rows.append(rows[-1])
+            if open_section:
+                apply_section_to_row(rows[-1], open_section)
+                open_section_child_count += 1
+            else:
+                pending_rows.append(rows[-1])
+
+    close_open_section_as_flat_if_empty()
 
     if sections and pending_rows:
         for row in pending_rows:
@@ -1056,11 +1160,14 @@ def parse_product_tables(tables, firma, footer, file_name):
             f"Genel toplam tutmuyor: ürünler {product_total:.2f}, teklif {checked_total:.2f}"
         )
 
+    print("PDF ANA KALEM DEBUG:", section_debug)
+
     return {
         "rows": rows,
         "sections": sections,
         "errors": errors,
         "warnings": warnings,
+        "debug": section_debug,
     }
 
 
@@ -1082,8 +1189,9 @@ def parse_pdf_with_audit(file_path, firma_adi="", file_name=""):
         full_text = "\n".join([page.extract_text() or "" for page in pdf.pages])
         tables = []
 
-        for page in pdf.pages:
-            tables.extend(page.extract_tables() or [])
+        for page_number, page in enumerate(pdf.pages, start=1):
+            for table in page.extract_tables() or []:
+                tables.append({"page_number": page_number, "table": table})
 
     firma = detect_company_name(full_text, firma_adi, file_name)
     footer = detect_footer_info(full_text)
@@ -1092,6 +1200,7 @@ def parse_pdf_with_audit(file_path, firma_adi="", file_name=""):
     sections.extend(table_result["sections"])
     errors.extend(table_result["errors"])
     warnings.extend(table_result.get("warnings", []))
+    debug = table_result.get("debug", [])
     lines = [clean_text(x) for x in full_text.split("\n") if clean_text(x)]
     has_product_table_header = any(is_product_table_header(line) for line in lines)
 
@@ -1110,7 +1219,7 @@ def parse_pdf_with_audit(file_path, firma_adi="", file_name=""):
 
         fallback_rows.append(make_offer_row(parsed, firma, footer, file_name))
 
-    if fallback_rows and (not rows or len(fallback_rows) >= len(rows)):
+    if fallback_rows and not sections and (not rows or len(fallback_rows) >= len(rows)):
         if rows and len(fallback_rows) > len(rows):
             warnings.append(
                 f"PDF tablo okuması yerine satır okuması kullanıldı: {len(fallback_rows)} satır."
@@ -1125,4 +1234,5 @@ def parse_pdf_with_audit(file_path, firma_adi="", file_name=""):
         "sections": sections,
         "errors": errors,
         "warnings": warnings,
+        "debug": debug,
     }

@@ -92,6 +92,23 @@ function StatCard({ title, value, text }) {
   );
 }
 
+function MoneyStack({ value, currency = "TRY", className = "" }) {
+  const amount = new Intl.NumberFormat("tr-TR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Number(value || 0));
+  const label = `${amount} ${currency || "TRY"}`;
+
+  return (
+    <div className={`min-w-0 max-w-full leading-tight ${className || "text-slate-950"}`} title={label}>
+      <div className="max-w-full break-words text-[clamp(0.86rem,0.9vw,0.98rem)] font-black text-current">
+        {amount}
+      </div>
+      <div className="mt-0.5 text-xs font-black uppercase text-slate-500">{currency || "TRY"}</div>
+    </div>
+  );
+}
+
 function CurrencyTotalCard({ title, rows, emptyCurrency = "TRY" }) {
   const visibleRows = rows?.length > 0 ? rows : [{ currency: emptyCurrency, amount: 0 }];
 
@@ -107,15 +124,7 @@ function CurrencyTotalCard({ title, rows, emptyCurrency = "TRY" }) {
         {visibleRows.map((row) => (
           <div key={row.currency} className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
             <div className="text-xs font-black uppercase tracking-wide text-slate-500">{row.currency}</div>
-            <div className="mt-2 flex min-w-0 items-baseline gap-2">
-              <span className="whitespace-nowrap text-[clamp(1.05rem,1.45vw,1.55rem)] font-black leading-none text-slate-950">
-                {new Intl.NumberFormat("tr-TR", {
-                  minimumFractionDigits: 2,
-                  maximumFractionDigits: 2,
-                }).format(Number(row.amount || 0))}
-              </span>
-              <span className="shrink-0 text-xs font-black text-slate-500">{row.currency}</span>
-            </div>
+            <MoneyStack value={row.amount} currency={row.currency} className="mt-2" />
           </div>
         ))}
       </div>
@@ -131,9 +140,11 @@ export default function ProjectsPage() {
     items: [],
     requests: [],
     reports: [],
+    offers: [],
     orders: [],
     movements: [],
     payments: [],
+    revisions: [],
   });
   const [form, setForm] = useState(emptyForm);
   const [showForm, setShowForm] = useState(false);
@@ -173,13 +184,15 @@ export default function ProjectsPage() {
       .in("partner_type", ["Müşteri", "Diğer"])
       .order("name", { ascending: true });
 
-    const [itemRes, requestRes, reportRes, orderRes, movementRes, paymentRes] = await Promise.all([
+    const [itemRes, requestRes, reportRes, offerRes, orderRes, movementRes, paymentRes, revisionRes] = await Promise.all([
       supabase.from("project_items").select("*").eq("user_id", user.id),
       supabase.from("requests").select("id,project_id").eq("user_id", user.id),
       supabase.from("reports").select("id,project_id").eq("user_id", user.id),
+      supabase.from("offers").select("id,project_id").eq("user_id", user.id),
       supabase.from("orders").select("*").eq("user_id", user.id),
       supabase.from("stock_movements").select("id,project_id").eq("user_id", user.id),
       supabase.from("project_payments").select("id,project_id").eq("user_id", user.id),
+      supabase.from("project_revisions").select("id,project_id").eq("user_id", user.id),
     ]);
 
     const { data: settingsData } = await supabase
@@ -194,9 +207,11 @@ export default function ProjectsPage() {
       items: itemRes.data || [],
       requests: requestRes.data || [],
       reports: reportRes.data || [],
+      offers: offerRes.data || [],
       orders: orderRes.data || [],
       movements: movementRes.data || [],
       payments: paymentRes.data || [],
+      revisions: revisionRes.data || [],
     });
 
     if (error) {
@@ -344,19 +359,22 @@ export default function ProjectsPage() {
     const openOrders = orders.filter((order) =>
       !["Tam Teslim", "Teslim Edildi", "İptal"].includes(order.status),
     ).length;
+    const dependencyDetails = {
+      teklif: relatedRows.offers.filter((row) => row.project_id === projectId).length,
+      sipariş: orders.length,
+      "stok hareketi": relatedRows.movements.filter((row) => row.project_id === projectId).length,
+      ödeme: relatedRows.payments.filter((row) => row.project_id === projectId).length,
+      revizyon: relatedRows.revisions.filter((row) => row.project_id === projectId).length,
+    };
     const dependencyCount =
-      items.length +
-      relatedRows.requests.filter((row) => row.project_id === projectId).length +
-      relatedRows.reports.filter((row) => row.project_id === projectId).length +
-      orders.length +
-      relatedRows.movements.filter((row) => row.project_id === projectId).length +
-      relatedRows.payments.filter((row) => row.project_id === projectId).length;
+      Object.values(dependencyDetails).reduce((sum, count) => sum + count, 0);
 
     return {
       completion: items.length > 0 ? Math.round((completedItems / items.length) * 100) : 0,
       openOrders,
       missingMaterials,
       dependencyCount,
+      dependencyDetails,
     };
   }
 
@@ -385,7 +403,11 @@ export default function ProjectsPage() {
     const metrics = projectMetrics(project.id);
 
     if (metrics.dependencyCount > 0) {
-      setMessage("Bu projeye bağlı talep, teklif, sipariş, stok hareketi veya ödeme var. Fiziksel silme güvenli değil; lütfen Arşivle aksiyonunu kullanın.");
+      const blockers = Object.entries(metrics.dependencyDetails)
+        .filter(([, count]) => count > 0)
+        .map(([label, count]) => `${label}: ${count}`)
+        .join(", ");
+      setMessage(`Bu proje silinemez çünkü bağlı kayıtlar var. Önce proje detayından ilgili kayıtları silin. ${blockers}`);
       return;
     }
 
@@ -627,21 +649,21 @@ export default function ProjectsPage() {
             </div>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
+            <table className="min-w-[1320px] table-fixed text-left text-sm">
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
-                  <th className="p-4">Proje</th>
-                  <th className="p-4">Müşteri</th>
-                  <th className="p-4">Sözleşme</th>
-                  <th className="p-4">Tahmini</th>
-                  <th className="p-4">Gerçekleşen</th>
-                  <th className="p-4">Kalan Bütçe</th>
-                  <th className="p-4">Tamamlanma</th>
-                  <th className="p-4">Açık Sipariş</th>
-                  <th className="p-4">Eksik Malzeme</th>
-                  <th className="p-4">Tarih</th>
-                  <th className="p-4">Durum</th>
-                  <th className="p-4">İşlemler</th>
+                  <th className="w-[180px] p-4">Proje</th>
+                  <th className="w-[135px] p-4">Müşteri</th>
+                  <th className="w-[125px] p-4">Sözleşme</th>
+                  <th className="w-[125px] p-4">Tahmini</th>
+                  <th className="w-[125px] p-4">Gerçekleşen</th>
+                  <th className="w-[125px] p-4">Kalan Bütçe</th>
+                  <th className="w-[130px] p-4">Tamamlanma</th>
+                  <th className="w-[90px] p-4">Açık Sipariş</th>
+                  <th className="w-[95px] p-4">Eksik Malzeme</th>
+                  <th className="w-[115px] p-4">Tarih</th>
+                  <th className="w-[110px] p-4">Durum</th>
+                  <th className="w-[96px] p-4">İşlemler</th>
                 </tr>
               </thead>
               <tbody>
@@ -652,23 +674,29 @@ export default function ProjectsPage() {
                   const metrics = projectMetrics(project.id);
 
                   return (
-                    <tr key={project.id} className="border-t border-slate-100 hover:bg-blue-50">
+                    <tr key={project.id} className="border-t border-slate-100 align-top hover:bg-blue-50">
                       <td className="p-4">
                         <Link href={`/dashboard/projeler/${project.id}`} className="font-black text-blue-700 hover:underline">
                           {project.project_code || "-"}
                         </Link>
-                        <div className="mt-1 font-bold text-slate-900">{project.project_name}</div>
+                        <div className="mt-1 max-w-[150px] truncate font-bold text-slate-900" title={project.project_name || ""}>
+                          {project.project_name}
+                        </div>
                       </td>
-                      <td className="p-4">{project.customer_name || "-"}</td>
-                      <td className="p-4 font-bold">{formatMoney(project.contract_amount, contractCurrency)}</td>
-                      <td className="p-4">{formatMoney(project.estimated_budget, budgetCurrency)}</td>
-                      <td className="p-4">{formatMoney(project.actual_cost, budgetCurrency)}</td>
+                      <td className="p-4">
+                        <div className="max-w-[105px] truncate" title={project.customer_name || "-"}>
+                          {project.customer_name || "-"}
+                        </div>
+                      </td>
+                      <td className="p-4"><MoneyStack value={project.contract_amount} currency={contractCurrency} /></td>
+                      <td className="p-4"><MoneyStack value={project.estimated_budget} currency={budgetCurrency} /></td>
+                      <td className="p-4"><MoneyStack value={project.actual_cost} currency={budgetCurrency} /></td>
                       <td className={`p-4 font-bold ${remaining < 0 ? "text-red-600" : "text-emerald-700"}`}>
-                        {formatMoney(remaining, budgetCurrency)}
+                        <MoneyStack value={remaining} currency={budgetCurrency} />
                       </td>
                       <td className="p-4">
                         <div className="flex items-center gap-2">
-                          <div className="h-2 w-20 overflow-hidden rounded-full bg-slate-100">
+                          <div className="h-2 w-16 overflow-hidden rounded-full bg-slate-100">
                             <div className="h-full rounded-full bg-blue-600" style={{ width: `${metrics.completion}%` }} />
                           </div>
                           <span className="font-bold text-slate-700">%{metrics.completion}</span>
@@ -683,37 +711,37 @@ export default function ProjectsPage() {
                         <div className="text-xs text-slate-500">{formatDate(project.planned_end_date)}</div>
                       </td>
                       <td className="p-4">
-                        <span className={`rounded-full px-3 py-1 text-xs font-bold ${statusClass(project.status)}`}>
+                        <span className={`inline-flex max-w-full justify-center rounded-full px-2.5 py-1 text-center text-xs font-bold leading-tight ${statusClass(project.status)}`}>
                           {project.status || "Taslak"}
                         </span>
                       </td>
                       <td className="p-4">
-                        <div className="flex flex-wrap gap-2">
+                        <div className="grid w-[72px] grid-cols-1 gap-1.5">
                           <button
                             type="button"
                             onClick={() => router.push(`/dashboard/projeler/${project.id}`)}
-                            className="rounded-lg border border-blue-200 px-3 py-1.5 text-xs font-bold text-blue-700 hover:bg-blue-50"
+                            className="w-full rounded-lg border border-blue-200 px-2 py-1.5 text-xs font-bold text-blue-700 hover:bg-blue-50"
                           >
                             Detay
                           </button>
                           <button
                             type="button"
                             onClick={() => openEditForm(project)}
-                            className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50"
+                            className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50"
                           >
                             Düzenle
                           </button>
                           <button
                             type="button"
                             onClick={() => archiveProject(project)}
-                            className="rounded-lg border border-amber-200 px-3 py-1.5 text-xs font-bold text-amber-700 hover:bg-amber-50"
+                            className="w-full rounded-lg border border-amber-200 px-2 py-1.5 text-xs font-bold text-amber-700 hover:bg-amber-50"
                           >
                             Arşivle
                           </button>
                           <button
                             type="button"
                             onClick={() => deleteProject(project)}
-                            className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-bold text-red-700 hover:bg-red-50"
+                            className="w-full rounded-lg border border-red-200 px-2 py-1.5 text-xs font-bold text-red-700 hover:bg-red-50"
                           >
                             Sil
                           </button>

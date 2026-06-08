@@ -118,6 +118,7 @@ def normalize_project_sections(raw_sections):
     for section in raw_sections:
         name = str(section.get("section_name") or "").strip().upper()
         total = safe_float_form(section.get("section_total")) or 0
+        quantity = safe_float_form(section.get("section_quantity")) or 0
         compact_name = re.sub(r"[^A-Z0-9ÇĞİÖŞÜ]", "", name)
 
         if not compact_name or compact_name in ["TL", "TRY", "EUR", "USD"]:
@@ -135,6 +136,7 @@ def normalize_project_sections(raw_sections):
         normalized.append({
             "section_name": name,
             "section_total": total,
+            "section_quantity": quantity,
         })
 
     return normalized
@@ -996,6 +998,7 @@ async def parse_project_items(
     sections = []
     warnings = []
     blocking_errors = []
+    parser_debug = []
 
     for upload in files:
         save_path, original_name, upload_error = await save_upload_file(upload)
@@ -1013,12 +1016,14 @@ async def parse_project_items(
                 sections.extend(audit.get("sections", []))
                 blocking_errors.extend(audit.get("errors", []))
                 warnings.extend(audit.get("warnings", []))
+                parser_debug.extend(audit.get("debug", []))
             elif file_type == "pdf":
                 audit = parse_pdf_with_audit(save_path, fallback_name, original_name)
                 rows = audit["rows"]
                 sections.extend(audit.get("sections", []))
                 blocking_errors.extend(audit.get("errors", []))
                 warnings.extend(audit.get("warnings", []))
+                parser_debug.extend(audit.get("debug", []))
             elif file_type == "image":
                 rows = parse_image(save_path, fallback_name, original_name)
             else:
@@ -1067,7 +1072,7 @@ async def parse_project_items(
         )
         price_status = row.get("price_status") or "line_priced"
 
-        if price_status != "line_priced" or row.get("section_name"):
+        if price_status not in ["line_priced", "flat_main_item"] or row.get("section_name"):
             price_status = "section_total_only"
             unit_price = 0
             row_total = 0
@@ -1104,6 +1109,7 @@ async def parse_project_items(
             "currency": row.get("paraBirimi") or row.get("currency") or "TRY",
             "section_name": row.get("section_name") or "",
             "section_total": section_total,
+            "section_quantity": safe_float_form(row.get("section_quantity")) or 0,
             "price_status": price_status,
         })
 
@@ -1127,6 +1133,7 @@ async def parse_project_items(
             "source_type": row.get("kaynakTipi") or "",
             "section_name": row.get("section_name") or "",
             "section_total": row.get("section_total") or 0,
+            "section_quantity": row.get("section_quantity") or 0,
             "price_status": price_status,
         })
 
@@ -1140,6 +1147,7 @@ async def parse_project_items(
             "raw_items": raw_items,
             "rawItems": raw_items,
             "sections": sections,
+            "debug": parser_debug,
             "totalRows": 0,
         }
 
@@ -1151,6 +1159,7 @@ async def parse_project_items(
             "raw_items": raw_items,
             "rawItems": raw_items,
             "sections": sections,
+            "debug": parser_debug,
             "totalRows": len(result_rows),
         }
 
@@ -1161,6 +1170,7 @@ async def parse_project_items(
         "raw_items": raw_items,
         "rawItems": raw_items,
         "sections": sections,
+        "debug": parser_debug,
         "totalRows": len(result_rows),
     }
 

@@ -5,32 +5,6 @@ import unicodedata
 from openpyxl import load_workbook
 
 
-SECTION_NAMES = {
-    "trafo",
-    "kompanzasyon",
-    "adp",
-    "uadp",
-    "sgn-t",
-    "bk-t1",
-    "bk-t2",
-    "cms-kt-2",
-    "cms-kt1",
-    "mtf-t",
-    "mtf-kt",
-    "kzn-kt",
-    "zk-t1",
-    "zk-t2",
-    "1k-t1",
-    "1k-t2",
-    "atl-at1",
-    "atl-at2",
-    "atl-at3",
-    "atl-at4",
-    "atl-at5",
-    "2k-t1",
-}
-
-
 def normalize_col(value):
     text = str(value or "").strip().lower()
     text = unicodedata.normalize("NFKD", text)
@@ -48,13 +22,6 @@ def normalize_col(value):
 
 
 def canonical_section_name(value):
-    text = normalize_col(value)
-    compact = re.sub(r"[-_\s]+", "", text)
-
-    for section_name in SECTION_NAMES:
-        if compact == re.sub(r"[-_\s]+", "", section_name):
-            return section_name.upper()
-
     return ""
 
 
@@ -140,8 +107,6 @@ def is_section_fill_rgb(rgb):
     if red >= 245 and green >= 245 and blue >= 245:
         return False
 
-    # Section/group rows are marked with yellow/gold fills in supplier
-    # workbooks. Other colors are often status colors for normal product rows.
     return red >= 200 and green >= 150 and blue <= 190
 
 
@@ -742,12 +707,43 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
 
     def attach_section_to_pending(section):
         if not pending_rows:
-            warnings.append(f"{section['section_name']} toplamı bulundu ama üstünde bağlanacak malzeme satırı yok.")
+            quantity = section.get("section_quantity") or 0
+            section_total = section.get("section_total") or 0
+            unit_price = section_total / quantity if quantity > 0 and section_total > 0 else 0
+            rows.append({
+                "firma": firma,
+                "firmaAdi": firma,
+                "urunKodu": section.get("product_code") or "",
+                "urunAciklamasi": section["section_name"],
+                "birim": section.get("unit") or "adet",
+                "firmaAdedi": quantity,
+                "paraBirimi": section.get("currency") or default_sheet_currency or "TRY",
+                "birimFiyat": unit_price,
+                "iskonto": 0,
+                "netBirimFiyat": unit_price,
+                "netToplam": section_total,
+                "netBirimFiyatDosyadan": unit_price,
+                "satirToplamDosyadan": section_total,
+                "vade": footer.get("vade", ""),
+                "termin": footer.get("termin", ""),
+                "firmaDipToplam": footer.get("dipToplam", 0),
+                "firmaKdv": footer.get("kdv", 0),
+                "firmaGenelToplam": footer.get("genelToplam", 0),
+                "kaynakDosya": file_name,
+                "kaynakTipi": "excel",
+                "parserUyarilari": [],
+                "section_name": "",
+                "section_total": 0,
+                "section_quantity": 0,
+                "price_status": "flat_main_item",
+            })
+            warnings.append("Bu dosyada alt kalem ilişkisi bulunmayan ana kalem satırı görüldü; bağımsız ana kalem olarak aktarılabilir.")
             return
 
         for row in pending_rows:
             row["section_name"] = section["section_name"]
             row["section_total"] = section["section_total"]
+            row["section_quantity"] = section.get("section_quantity") or 0
             row["birimFiyat"] = 0
             row["netBirimFiyat"] = 0
             row["netToplam"] = 0
@@ -798,7 +794,13 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
             section = {
                 "section_name": display_section_name,
                 "section_total": section_total,
+                "section_quantity": qty if qty > 0 else 0,
+                "product_code": code,
+                "unit": unit or "adet",
+                "currency": row_currency,
             }
+            if qty <= 0:
+                warnings.append(f"{display_section_name} ana kalem miktarı kontrol gerekli.")
             sections.append(section)
             attach_section_to_pending(section)
             continue
@@ -865,6 +867,7 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
             "parserUyarilari": row_warnings,
             "section_name": "",
             "section_total": 0,
+            "section_quantity": 0,
             "price_status": price_status,
         })
         pending_rows.append(rows[-1])
