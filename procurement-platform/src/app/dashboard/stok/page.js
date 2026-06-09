@@ -576,6 +576,10 @@ export default function StockPage() {
   }, []);
 
   useEffect(() => {
+    setProductPage(1);
+  }, [search]);
+
+  useEffect(() => {
     if (!selectedProduct) {
       setProductForm({ brand: "", min_stock: "", critical_stock: "", manual_unit_price: "", notes: "" });
       return;
@@ -848,117 +852,181 @@ export default function StockPage() {
     setSaving(false);
   }
 
-  async function importStockCardsFromFiles(event) {
-    const files = Array.from(event.target.files || []);
-    if (files.length === 0) return;
+async function importStockCardsFromFiles(event) {
+  const files = Array.from(event.target.files || []);
+  if (files.length === 0) return;
 
-    setBulkImporting(true);
-    setMessage(`${files.length} dosya okunuyor. Ürün kartları çıkarılıyor...`);
+  setBulkImporting(true);
+  setMessage("Depo sayımı dosyası okunuyor...");
 
-    try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+  try {
+    const XLSX = await import("xlsx");
 
-      const token = session?.access_token;
-      if (!token || !API_URL) {
-        setMessage("Toplu stok aktarımı için API bağlantısı veya oturum bulunamadı.");
-        return;
-      }
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
 
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) {
-        router.push("/login");
-        return;
-      }
-
-      const formData = new FormData();
-      files.forEach((file) => {
-        formData.append("files", file);
-      });
-
-      const response = await fetch(`${API_URL}/parse-project-items`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-        body: formData,
-      });
-      const data = await response.json().catch(() => ({}));
-
-      if (!response.ok || !data.success) {
-        setMessage(data.detail || data.message || "Dosyalardan ürün kartı çıkarılamadı.");
-        return;
-      }
-
-      const existingKeys = new Set(products.map(productGroupKey));
-      const now = new Date().toISOString();
-      const seenKeys = new Set();
-      const rows = (data.rows || []).filter((row) => String(row.product_name || "").trim());
-      let skippedExisting = 0;
-      let skippedDuplicateInFile = 0;
-      const payload = rows.map((row, index) => {
-        const productCode = String(row.product_code || "").trim().toUpperCase() || `AUTO-${Date.now()}-${index + 1}`;
-        const normalizedRow = normalizeProductIdentity({
-          brand: row.brand || "",
-          product_name: String(row.product_name || "").trim(),
-        });
-        return {
-          user_id: user.id,
-          product_code: productCode,
-          brand: normalizedRow.brand || "",
-          product_name: normalizedRow.product_name,
-          unit: row.unit || "adet",
-          current_stock: 0,
-          min_stock: 0,
-          critical_stock: 0,
-          last_unit_price: Number(row.estimated_unit_price || 0),
-          manual_unit_price: 0,
-          last_currency: row.currency || "TRY",
-          category: row.section_name || row.category || "Dosyadan aktarılan",
-          source: "Toplu stok aktarımı",
-          notes: row.source_file ? `Kaynak dosya: ${row.source_file}` : "",
-          updated_at: now,
-        };
-      }).filter((product) => {
-        const key = productGroupKey(product);
-        if (existingKeys.has(key)) {
-          skippedExisting += 1;
-          return false;
-        }
-        if (seenKeys.has(key)) {
-          skippedDuplicateInFile += 1;
-          return false;
-        }
-        seenKeys.add(key);
-        return true;
-      });
-
-      if (payload.length === 0) {
-        setMessage(`Dosyada yeni ürün kartı oluşturacak satır bulunamadı. ${skippedExisting} satır zaten stokta vardı, ${skippedDuplicateInFile} satır dosya içinde tekrar ediyordu.`);
-        return;
-      }
-
-      const { error } = await supabase.from("products").insert(payload);
-      if (error) {
-        console.error("Toplu ürün kartı aktarımı hatası:", error);
-        setMessage(error.message || "Ürün kartları oluşturulamadı.");
-        return;
-      }
-
-      const skippedMessage = [skippedExisting ? `${skippedExisting} satır zaten stokta olduğu için eklenmedi` : "", skippedDuplicateInFile ? `${skippedDuplicateInFile} tekrar satır atlandı` : ""].filter(Boolean).join(". ");
-      setMessage(`${payload.length} ürün kartı oluşturuldu.${skippedMessage ? ` ${skippedMessage}.` : ""} Stok miktarları kart detayından veya stok hareketleriyle güncellenebilir.`);
-      await loadStock();
-    } catch (error) {
-      console.error("Toplu stok aktarımı bağlantı hatası:", error);
-      setMessage(error.message || "Toplu stok aktarımı sırasında hata oluştu.");
-    } finally {
-      setBulkImporting(false);
-      event.target.value = "";
+    if (!user) {
+      router.push("/login");
+      return;
     }
-  }
 
+    let processedCount = 0;
+    let movementCount = 0;
+    let notFoundCount = 0;
+    const notFoundRows = [];
+
+    const now = new Date().toISOString();
+
+    function getValue(row, names) {
+      const keys = Object.keys(row || {});
+      const foundKey = keys.find((key) =>
+        names.some((name) => normalizeStockText(key) === normalizeStockText(name))
+      );
+      return foundKey ? row[foundKey] : "";
+    }
+
+    function parseNumber(value) {
+      if (value === null || value === undefined || value === "") return 0;
+      const cleaned = String(value)
+        .replace(/\./g, "")
+        .replace(",", ".")
+        .replace(/[^\d.-]/g, "");
+      return Number(cleaned || 0);
+    }
+
+    for (const file of files) {
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: "array" });
+      const sheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
+
+      for (const row of rows) {
+        const productCode = String(
+          getValue(row, ["Urun kodu", "Ürün kodu", "Kod", "product_code"])
+        ).trim();
+
+        const brand = String(
+          getValue(row, ["Marka", "brand"])
+        ).trim();
+
+        const productName = String(
+          getValue(row, ["Urun aciklamasi", "Ürün açıklaması", "Açıklama", "Ürün", "product_name"])
+        ).trim();
+
+        const unit = String(
+          getValue(row, ["Birim", "unit"])
+        ).trim() || "adet";
+
+        const countedStock = parseNumber(
+          getValue(row, ["Mevcut stok", "Stok", "Miktar", "Adet", "Sayım", "Sayim"])
+        );
+
+        if (!productName || countedStock <= 0) continue;
+
+        const rowProduct = normalizeProductIdentity({
+          product_code: productCode,
+          brand,
+          product_name: productName,
+          unit,
+        });
+
+        const rowKey = productGroupKey(rowProduct);
+
+        const matchedProduct =
+          productGroups.find((product) => product.groupKey === rowKey) ||
+          productGroups.find((product) =>
+            productCode &&
+            normalizeStockCode(product.product_code) === normalizeStockCode(productCode)
+          ) ||
+          productGroups.find((product) =>
+            normalizeStockText(product.product_name) === normalizeStockText(productName)
+          );
+
+        if (!matchedProduct) {
+          notFoundCount += 1;
+          notFoundRows.push(`${productCode || "-"} - ${productName}`);
+          continue;
+        }
+
+        const productIds = matchedProduct.duplicateIds || [matchedProduct.id];
+        const mainProductId = productIds[0];
+
+        const oldStock = Number(matchedProduct.current_stock || 0);
+        const difference = countedStock - oldStock;
+
+        if (difference === 0) {
+          processedCount += 1;
+          continue;
+        }
+
+        const movementType = difference > 0 ? "in" : "out";
+        const movementQuantity = Math.abs(difference);
+
+        const { error: productError } = await supabase
+          .from("products")
+          .update({
+            current_stock: countedStock,
+            unit,
+            brand: matchedProduct.brand || brand || "",
+            source: "Depo sayımı",
+            notes: `Depo sayımı ile güncellendi. Eski stok: ${oldStock}, yeni stok: ${countedStock}`,
+            updated_at: now,
+            last_movement_at: now,
+          })
+          .eq("user_id", user.id)
+          .in("id", productIds);
+
+        if (productError) {
+          console.error("Ürün stok güncelleme hatası:", productError);
+          continue;
+        }
+
+        const { error: movementError } = await supabase
+          .from("stock_movements")
+          .insert({
+            user_id: user.id,
+            product_id: mainProductId,
+            product_code: matchedProduct.product_code || productCode,
+            product_name: matchedProduct.product_name || productName,
+            movement_type: movementType,
+            quantity: movementQuantity,
+            unit,
+            source: "Depo sayımı / toplu Excel aktarımı",
+            notes: `Sayım sonucu stok ${oldStock} → ${countedStock} olarak güncellendi.`,
+            movement_date: now,
+            created_at: now,
+          });
+
+        if (movementError) {
+          console.error("Stok hareketi ekleme hatası:", movementError);
+          continue;
+        }
+
+        processedCount += 1;
+        movementCount += 1;
+      }
+    }
+
+    setMessage(
+      `${processedCount} ürün güncellendi, ${movementCount} stok hareketi oluşturuldu.` +
+      (notFoundCount ? ` ${notFoundCount} ürün sistemde bulunamadı.` : "")
+    );
+
+    if (notFoundRows.length > 0) {
+      console.warn("Sistemde bulunamayan ürünler:", notFoundRows.slice(0, 50));
+    }
+
+    await loadStock();
+  } catch (error) {
+    console.error("Depo sayımı aktarım hatası:", error);
+    setMessage(error.message || "Depo sayımı aktarılırken hata oluştu.");
+  } finally {
+    setBulkImporting(false);
+    event.target.value = "";
+  }
+}
   const productGroups = useMemo(() => mergeProductGroups(products), [products]);
 
   const filteredProducts = useMemo(() => {
@@ -975,6 +1043,16 @@ export default function StockPage() {
       ].join(" ")).includes(needle),
     );
   }, [productGroups, search]);
+
+  const [productPage, setProductPage] = useState(1);
+  const productsPerPage = 25;
+
+  const pagedProducts = useMemo(() => {
+    const start = (productPage - 1) * productsPerPage;
+    return filteredProducts.slice(start, start + productsPerPage);
+  }, [filteredProducts, productPage]);
+
+  const totalProductPages = Math.max(1, Math.ceil(filteredProducts.length / productsPerPage));
 
   const selectedMovements = useMemo(() => {
     if (!selectedProduct) return [];
@@ -1186,7 +1264,7 @@ export default function StockPage() {
                 </div>
               </div>
               <div className="space-y-3 p-4">
-                {filteredProducts.map((product) => {
+                {pagedProducts.map((product) => {
                   const breakdown = stockBreakdown(product, movements);
                   const allocation = productProjectAllocations(product, projectItems, projects, movements);
                   return (
@@ -1258,6 +1336,29 @@ export default function StockPage() {
                     </div>
                   );
                 })}
+                <div className="flex items-center justify-between border-t border-slate-100 p-4 text-sm">
+                  <button
+                    type="button"
+                    disabled={productPage === 1}
+                    onClick={() => setProductPage((page) => Math.max(1, page - 1))}
+                    className="rounded-lg border px-3 py-2 font-bold disabled:opacity-40"
+                >
+                Önceki
+                </button>
+
+                <span className="font-bold text-slate-600">
+                  Sayfa {productPage} / {totalProductPages}
+                </span>
+
+                <button
+                  type="button"
+                  disabled={productPage === totalProductPages}
+                  onClick={() => setProductPage((page) => Math.min(totalProductPages, page + 1))}
+                  className="rounded-lg border px-3 py-2 font-bold disabled:opacity-40"
+              >
+                Sonraki
+              </button>
+            </div>
                 {!loading && filteredProducts.length === 0 && (
                   <div className="rounded-xl bg-slate-50 p-8 text-center text-slate-500">
                     Henüz ürün kartı yok.
