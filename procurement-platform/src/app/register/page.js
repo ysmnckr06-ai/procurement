@@ -32,17 +32,26 @@ export default function RegisterPage() {
       },
     });
 
-    if (error) {
-      setMessage(`Kayıt hatası: ${error.message}`);
-      setLoading(false);
-      return;
-    }
+if (error) {
 
-    setMessage("Kayıt başarılı! Giriş sayfasına yönlendiriliyorsunuz...");
+  if (
+    error.message.toLowerCase().includes("already") ||
+    error.message.toLowerCase().includes("registered")
+  ) {
+    setMessage("Bu e-posta adresi zaten kayıtlı. Lütfen giriş yapın.");
+  } else {
+    setMessage(`Kayıt hatası: ${error.message}`);
+  }
+
+  setLoading(false);
+  return;
+}
+
+    setMessage("Kayıt başarılı! E-posta doğrulama sayfasına yönlendiriliyorsunuz...");
 
     setTimeout(() => {
-      router.push("/login");
-    }, 1500);
+      router.push(`/verify-email?email=${encodeURIComponent(email.trim())}`);
+    }, 800);
   };
 
   return (
