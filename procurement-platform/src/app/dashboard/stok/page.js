@@ -874,6 +874,8 @@ async function importStockCardsFromFiles(event) {
     let processedCount = 0;
     let movementCount = 0;
     let notFoundCount = 0;
+    let createdProductCount = 0;
+    const createdProducts = [];
     const notFoundRows = [];
 
     const now = new Date().toISOString();
@@ -934,26 +936,70 @@ async function importStockCardsFromFiles(event) {
 
         const rowKey = productGroupKey(rowProduct);
 
-        const matchedProduct =
-          productGroups.find((product) => product.groupKey === rowKey) ||
-          productGroups.find((product) =>
-            productCode &&
-            normalizeStockCode(product.product_code) === normalizeStockCode(productCode)
-          ) ||
-          productGroups.find((product) =>
-            normalizeStockText(product.product_name) === normalizeStockText(productName)
-          );
+const matchedProduct =
+  productGroups.find((product) => product.groupKey === rowKey) ||
+  createdProducts.find((product) => productGroupKey(product) === rowKey) ||
+  productGroups.find((product) =>
+    productCode &&
+    normalizeStockCode(product.product_code) === normalizeStockCode(productCode)
+  ) ||
+  createdProducts.find((product) =>
+    productCode &&
+    normalizeStockCode(product.product_code) === normalizeStockCode(productCode)
+  ) ||
+  productGroups.find((product) =>
+    normalizeStockText(product.product_name) === normalizeStockText(productName)
+  ) ||
+  createdProducts.find((product) =>
+    normalizeStockText(product.product_name) === normalizeStockText(productName)
+  );
 
-        if (!matchedProduct) {
-          notFoundCount += 1;
-          notFoundRows.push(`${productCode || "-"} - ${productName}`);
-          continue;
-        }
+let finalProduct = matchedProduct;
+let productIds = [];
+let mainProductId = "";
 
-        const productIds = matchedProduct.duplicateIds || [matchedProduct.id];
-        const mainProductId = productIds[0];
+if (!finalProduct) {
+  const newProductPayload = {
+    user_id: user.id,
+    product_code: rowProduct.product_code || productCode || "",
+    product_name: rowProduct.product_name || productName,
+    brand: rowProduct.brand || brand || "",
+    unit,
+    category: "Toplu Yükleme",
+    current_stock: 0,
+    reserved_stock: 0,
+    min_stock: 0,
+    critical_stock: 0,
+    source: "Toplu dosya aktarımı",
+    notes: "Toplu ürün yükleme ile otomatik oluşturuldu.",
+    created_at: now,
+    updated_at: now,
+    last_movement_at: now,
+  };
 
-        const oldStock = Number(matchedProduct.current_stock || 0);
+  const { data: newProduct, error: createProductError } = await supabase
+    .from("products")
+    .insert(newProductPayload)
+    .select("*")
+    .single();
+
+  if (createProductError) {
+    console.error("Yeni ürün kartı oluşturma hatası:", createProductError);
+    notFoundCount += 1;
+    notFoundRows.push(`${productCode || "-"} - ${productName}`);
+    continue;
+  }
+
+  finalProduct = newProduct;
+  createdProductCount += 1;
+  createdProducts.push(newProduct);
+
+  }
+
+productIds = finalProduct.duplicateIds || [finalProduct.id];
+mainProductId = productIds[0];
+
+        const oldStock = Number(finalProduct.current_stock || 0);
         const difference = countedStock - oldStock;
 
         if (difference === 0) {
@@ -969,7 +1015,7 @@ async function importStockCardsFromFiles(event) {
           .update({
             current_stock: countedStock,
             unit,
-            brand: matchedProduct.brand || brand || "",
+            brand: finalProduct.brand || brand || "",
             source: "Depo sayımı",
             notes: `Depo sayımı ile güncellendi. Eski stok: ${oldStock}, yeni stok: ${countedStock}`,
             updated_at: now,
@@ -988,8 +1034,8 @@ async function importStockCardsFromFiles(event) {
           .insert({
             user_id: user.id,
             product_id: mainProductId,
-            product_code: matchedProduct.product_code || productCode,
-            product_name: matchedProduct.product_name || productName,
+            product_code: finalProduct.product_code || productCode,
+            product_name: finalProduct.product_name || productName,
             movement_type: movementType,
             quantity: movementQuantity,
             unit,
@@ -1009,10 +1055,10 @@ async function importStockCardsFromFiles(event) {
       }
     }
 
-    setMessage(
-      `${processedCount} ürün güncellendi, ${movementCount} stok hareketi oluşturuldu.` +
-      (notFoundCount ? ` ${notFoundCount} ürün sistemde bulunamadı.` : "")
-    );
+setMessage(
+  `${processedCount} ürün güncellendi, ${createdProductCount} yeni ürün kartı oluşturuldu, ${movementCount} stok hareketi oluşturuldu.` +
+  (notFoundCount ? ` ${notFoundCount} ürün aktarılamadı.` : "")
+);
 
     if (notFoundRows.length > 0) {
       console.warn("Sistemde bulunamayan ürünler:", notFoundRows.slice(0, 50));
