@@ -94,7 +94,13 @@ function normalizeItems(items) {
     return {
       productCode: item.productCode || item.urunKodu || "",
       productName:
-        item.productName || item.urunAciklamasi || item.product || "",
+        item.productName ||
+        item.urunAciklamasi ||
+        item.urunAdi ||
+        item.name ||
+        item.description ||
+        item.product ||
+      "",
       unit: item.unit || item.birim || "adet",
       quantity,
       deliveredQuantity,
@@ -742,6 +748,7 @@ export default function OrdersPage() {
 
           <OrdersTable
             orders={filteredOrders}
+            liveRates={liveRates}
             onView={(order) => router.push(`/dashboard/siparisler/${order.id}`)}
             onEdit={startEdit}
             onDelete={handleDelete}
@@ -910,7 +917,7 @@ function OrderForm({
             <tbody>
               {items.map((item, index) => (
                 <tr
-                  key={`${item.productName}-${index}`}
+                    key={index}
                   className="border-t border-slate-200"
                 >
                   <td className="p-3">
@@ -1064,7 +1071,7 @@ function OrderForm({
   );
 }
 
-function OrdersTable({ orders, onView, onEdit, onDelete }) {
+function OrdersTable({ orders, liveRates, onView, onEdit, onDelete }) {
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
       <div className="border-b border-slate-100 p-5">
@@ -1161,7 +1168,7 @@ function OrdersTable({ orders, onView, onEdit, onDelete }) {
             ))}
             {orders.length === 0 && (
               <tr>
-                <td colSpan="11" className="p-8 text-center text-slate-500">
+                <td colSpan="12" className="p-8 text-center text-slate-500">
                   Henüz sipariş kaydı yok.
                 </td>
               </tr>
