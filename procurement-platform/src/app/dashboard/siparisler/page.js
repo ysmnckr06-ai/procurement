@@ -72,8 +72,16 @@ function readNumberField(item, primaryKey, fallbackKey, defaultValue = 0) {
   return Number(value || 0);
 }
 
+function createRowId(prefix = "order-item") {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    return `${prefix}-${crypto.randomUUID()}`;
+  }
+
+  return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
 function normalizeItems(items) {
-  return (items || []).map((item) => {
+  return (items || []).map((item, index) => {
     const quantity = readNumberField(item, "quantity", "miktar");
     const unitPrice = readNumberField(item, "unitPrice", "birimFiyat");
     const discount = readNumberField(item, "discount", "iskonto");
@@ -92,6 +100,11 @@ function normalizeItems(items) {
     );
 
     return {
+      rowId:
+        item.rowId ||
+        item.id ||
+        item.itemId ||
+        `order-item-${index}-${item.productCode || item.urunKodu || ""}-${item.productName || item.urunAciklamasi || item.urunAdi || ""}`,
       productCode: item.productCode || item.urunKodu || "",
       productName:
         item.productName ||
@@ -198,6 +211,45 @@ function daysUntil(dateValue) {
   return Math.ceil((target - today) / (1000 * 60 * 60 * 24));
 }
 
+function normalizeOrderText(value) {
+  return String(value || "")
+    .trim()
+    .toLocaleLowerCase("tr-TR")
+    .replace(/\s+/g, " ");
+}
+
+function normalizeOrderCode(value) {
+  return String(value || "").trim().toUpperCase().replace(/\s+/g, "");
+}
+
+function orderItemIdentity(item) {
+  return {
+    code: normalizeOrderCode(item.productCode || item.urunKodu || item.product_code),
+    name: normalizeOrderText(item.productName || item.urunAciklamasi || item.urunAdi || item.product_name || item.name),
+  };
+}
+
+function orderLineMatchesProjectItem(line, projectItem) {
+  const left = orderItemIdentity(line);
+  const right = orderItemIdentity({
+    productCode: projectItem.product_code,
+    productName: projectItem.product_name,
+  });
+
+  if (left.code && right.code && left.code === right.code) return true;
+  return Boolean(left.name && right.name && left.name === right.name);
+}
+
+function productMatchesProjectItem(product, projectItem) {
+  const productCode = normalizeOrderCode(product.product_code);
+  const itemCode = normalizeOrderCode(projectItem.product_code);
+  const productName = normalizeOrderText(product.product_name);
+  const itemName = normalizeOrderText(projectItem.product_name);
+
+  if (productCode && itemCode && productCode === itemCode) return true;
+  return Boolean(productName && itemName && productName === itemName);
+}
+
 function StatCard({ title, value, text }) {
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -222,6 +274,16 @@ export default function OrdersPage() {
   const [message, setMessage] = useState("");
   const [companySettings, setCompanySettings] = useState(defaultCompanySettings);
   const [liveRates, setLiveRates] = useState(null);
+  const [projectLinkOpen, setProjectLinkOpen] = useState(false);
+  const [projectSearch, setProjectSearch] = useState("");
+  const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [projectOrderItems, setProjectOrderItems] = useState([]);
+  const [projectStockProducts, setProjectStockProducts] = useState([]);
+  const [selectedProjectItemIds, setSelectedProjectItemIds] = useState([]);
+  const [projectItemQuantities, setProjectItemQuantities] = useState({});
+  const [showCompletedProjectItems, setShowCompletedProjectItems] = useState(false);
+  const [projectItemsLoading, setProjectItemsLoading] = useState(false);
+  const [projectItemsMessage, setProjectItemsMessage] = useState("");
 
   // Initial load should run once; these functions intentionally read current mount state.
   // biome-ignore lint/correctness/useExhaustiveDependencies: initial page hydration only
@@ -262,7 +324,7 @@ export default function OrdersPage() {
 
     const { data: projectData } = await supabase
       .from("projects")
-      .select("id,project_code,project_name,status")
+      .select("id,project_code,project_name,status,customer_name,contract_currency,estimated_budget_currency")
       .eq("user_id", user.id)
       .order("created_at", { ascending: false });
 
@@ -358,6 +420,68 @@ export default function OrdersPage() {
     (order) => order.status === "Gecikti",
   ).length;
 
+  const projectSearchResults = useMemo(() => {
+    const needle = normalizeOrderText(projectSearch);
+    if (!needle) return projects.slice(0, 8);
+
+    return projects
+      .filter((project) =>
+        normalizeOrderText([project.project_code, project.project_name, project.customer_name].join(" ")).includes(needle),
+      )
+      .slice(0, 12);
+  }, [projects, projectSearch]);
+
+  const selectedProject = useMemo(
+    () => projects.find((project) => project.id === selectedProjectId) || null,
+    [projects, selectedProjectId],
+  );
+
+  const projectOrderRows = useMemo(() => {
+    if (!selectedProjectId) return [];
+    return orders.filter((order) => order.project_id === selectedProjectId);
+  }, [orders, selectedProjectId]);
+
+  const projectOrderRowsByItem = useMemo(() => {
+    const parentIdsWithChildren = new Set(projectOrderItems.map((item) => item.parent_item_id).filter(Boolean));
+
+    return projectOrderItems
+      .filter((item) => item.product_name && Number(item.estimated_quantity || 0) > 0)
+      .filter((item) => !(parentIdsWithChildren.has(item.id) && item.item_type === "main"))
+      .map((item) => {
+        const orderedStats = projectOrderRows.reduce(
+          (acc, order) => {
+            normalizeItems(order.items || []).forEach((line) => {
+              if (!orderLineMatchesProjectItem(line, item)) return;
+              acc.ordered += Number(line.quantity || 0);
+              acc.delivered += Number(line.deliveredQuantity || 0);
+            });
+            return acc;
+          },
+          { ordered: 0, delivered: 0 },
+        );
+        const needed = Number(item.estimated_quantity || 0);
+        const remaining = Math.max(needed - orderedStats.ordered, 0);
+        const stockQuantity = projectStockProducts
+          .filter((product) => productMatchesProjectItem(product, item))
+          .reduce((sum, product) => sum + Math.max(Number(product.current_stock || 0) - Number(product.reserved_stock || 0), 0), 0);
+        const selectedQuantity = projectItemQuantities[item.id] ?? remaining;
+
+        return {
+          ...item,
+          needed,
+          orderedQuantity: orderedStats.ordered,
+          deliveredQuantity: orderedStats.delivered,
+          remainingQuantity: remaining,
+          stockQuantity,
+          addQuantity: selectedQuantity,
+        };
+      });
+  }, [projectOrderItems, projectOrderRows, projectStockProducts, projectItemQuantities]);
+
+  const visibleProjectOrderRows = useMemo(() => {
+    return projectOrderRowsByItem.filter((item) => showCompletedProjectItems || item.remainingQuantity > 0);
+  }, [projectOrderRowsByItem, showCompletedProjectItems]);
+
   function handleChange(event) {
     const { name, value } = event.target;
     setFormData((prev) => ({
@@ -405,6 +529,7 @@ export default function OrdersPage() {
         ...normalizeItems(prev.items),
         {
           productCode: "",
+          rowId: createRowId(),
           productName: "",
           unit: "adet",
           quantity: 1,
@@ -449,6 +574,7 @@ export default function OrdersPage() {
 
   function startNewOrder() {
     setEditingId(null);
+    setProjectLinkOpen(false);
     setFormData({
       ...emptyForm,
       orderNo: createOrderNo(orders.length),
@@ -463,7 +589,134 @@ export default function OrdersPage() {
     setMessage("");
   }
 
+  async function loadProjectItemsForOrder(projectId) {
+    setSelectedProjectId(projectId);
+    setProjectOrderItems([]);
+    setProjectStockProducts([]);
+    setSelectedProjectItemIds([]);
+    setProjectItemQuantities({});
+    setProjectItemsMessage("");
+
+    if (!projectId) return;
+
+    setProjectItemsLoading(true);
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      router.push("/login");
+      return;
+    }
+
+    const { data: itemData, error: itemError } = await supabase
+      .from("project_items")
+      .select("*")
+      .eq("user_id", user.id)
+      .eq("project_id", projectId)
+      .order("created_at", { ascending: true });
+
+    const { data: productData, error: productError } = await supabase
+      .from("products")
+      .select("id,product_code,product_name,current_stock,reserved_stock,unit")
+      .eq("user_id", user.id)
+      .limit(5000);
+
+    if (itemError) {
+      setProjectItemsMessage(itemError.message || "Proje malzemeleri getirilemedi.");
+      setProjectItemsLoading(false);
+      return;
+    }
+
+    if (productError) {
+      setProjectItemsMessage("Stok bilgisi okunamadı; stok miktarları 0 kabul edildi.");
+    }
+
+    setProjectOrderItems(itemData || []);
+    setProjectStockProducts(productData || []);
+    setProjectItemsLoading(false);
+  }
+
+  function toggleProjectOrderItem(itemId) {
+    setSelectedProjectItemIds((prev) =>
+      prev.includes(itemId) ? prev.filter((id) => id !== itemId) : [...prev, itemId],
+    );
+  }
+
+  function toggleAllVisibleProjectItems() {
+    const selectableIds = visibleProjectOrderRows
+      .filter((item) => Number(projectItemQuantities[item.id] ?? item.remainingQuantity) > 0)
+      .map((item) => item.id);
+
+    setSelectedProjectItemIds((prev) => {
+      const allSelected = selectableIds.length > 0 && selectableIds.every((id) => prev.includes(id));
+      return allSelected
+        ? prev.filter((id) => !selectableIds.includes(id))
+        : Array.from(new Set([...prev, ...selectableIds]));
+    });
+  }
+
+  function updateProjectItemQuantity(itemId, value) {
+    setProjectItemQuantities((prev) => ({ ...prev, [itemId]: value }));
+  }
+
+  function transferProjectItemsToOrder() {
+    if (!selectedProject) {
+      setProjectItemsMessage("Önce proje seçin.");
+      return;
+    }
+
+    const selectedRows = projectOrderRowsByItem
+      .filter((item) => selectedProjectItemIds.includes(item.id))
+      .map((item) => ({
+        ...item,
+        addQuantity: Number(projectItemQuantities[item.id] ?? item.remainingQuantity),
+      }))
+      .filter((item) => item.addQuantity > 0);
+
+    if (selectedRows.length === 0) {
+      setProjectItemsMessage("Siparişe aktarılacak en az bir ürün seçin.");
+      return;
+    }
+
+    const projectCurrency = selectedProject.estimated_budget_currency || selectedProject.contract_currency || companySettings.default_currency || "TRY";
+    const items = selectedRows.map((item) => normalizeItems([{
+      rowId: createRowId("project-order-item"),
+      productCode: item.product_code || "",
+      productName: item.product_name || "",
+      unit: item.unit || "adet",
+      quantity: item.addQuantity,
+      deliveredQuantity: 0,
+      unitPrice: Number(item.estimated_unit_price || item.quote_unit_price || 0),
+      discount: 0,
+      paymentTerm: "",
+      deliveryTerm: "",
+      currency: projectCurrency,
+    }])[0]);
+
+    setFormData({
+      ...emptyForm,
+      orderNo: createOrderNo(orders.length),
+      company: "",
+      product: `${selectedProject.project_code || ""} ${selectedProject.project_name || ""}`.trim() || "Proje Siparişi",
+      orderDate: getToday(),
+      status: "Taslak",
+      projectId: selectedProject.id,
+      items,
+      totalAmount: calculateOrderTotal(items),
+      currency: projectCurrency,
+      exchangeRate: getExchangeRate(projectCurrency, companySettings),
+      note: `Projeye bağlı sipariş: ${selectedProject.project_code || ""} ${selectedProject.project_name || ""}`.trim(),
+    });
+    setEditingId(null);
+    setShowForm(true);
+    setProjectLinkOpen(false);
+    setMessage(`${items.length} proje kalemi sipariş formuna aktarıldı.`);
+  }
+
   function startEdit(order) {
+    setProjectLinkOpen(false);
     setFormData({
       ...emptyForm,
       orderNo: order.order_no || "",
@@ -637,13 +890,27 @@ export default function OrdersPage() {
               </p>
             </div>
 
-            <button
-              type="button"
-              onClick={showForm ? resetForm : startNewOrder}
-              className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white hover:bg-blue-700"
-            >
-              {showForm ? "Formu Kapat" : "+ Yeni Sipariş"}
-            </button>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <button
+                type="button"
+                onClick={showForm ? resetForm : startNewOrder}
+                className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white hover:bg-blue-700"
+              >
+                {showForm ? "Formu Kapat" : "+ Yeni Sipariş"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setProjectLinkOpen((prev) => !prev);
+                  setShowForm(false);
+                  setEditingId(null);
+                  setMessage("");
+                }}
+                className="rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-3 text-sm font-bold text-emerald-700 hover:bg-emerald-100"
+              >
+                Projeye Bağla
+              </button>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-5">
@@ -701,6 +968,29 @@ export default function OrdersPage() {
             <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm font-semibold text-blue-900">
               {message}
             </div>
+          )}
+
+          {projectLinkOpen && (
+            <ProjectOrderLinkPanel
+              projects={projectSearchResults}
+              projectSearch={projectSearch}
+              selectedProject={selectedProject}
+              selectedProjectId={selectedProjectId}
+              rows={visibleProjectOrderRows}
+              allRows={projectOrderRowsByItem}
+              selectedIds={selectedProjectItemIds}
+              quantities={projectItemQuantities}
+              loading={projectItemsLoading}
+              message={projectItemsMessage}
+              showCompleted={showCompletedProjectItems}
+              onSearchChange={setProjectSearch}
+              onSelectProject={loadProjectItemsForOrder}
+              onToggleCompleted={setShowCompletedProjectItems}
+              onToggleItem={toggleProjectOrderItem}
+              onToggleAll={toggleAllVisibleProjectItems}
+              onQuantityChange={updateProjectItemQuantity}
+              onTransfer={transferProjectItemsToOrder}
+            />
           )}
 
           {showForm && (
@@ -761,6 +1051,205 @@ export default function OrdersPage() {
   );
 }
 
+function ProjectOrderLinkPanel({
+  projects,
+  projectSearch,
+  selectedProject,
+  selectedProjectId,
+  rows,
+  allRows,
+  selectedIds,
+  quantities,
+  loading,
+  message,
+  showCompleted,
+  onSearchChange,
+  onSelectProject,
+  onToggleCompleted,
+  onToggleItem,
+  onToggleAll,
+  onQuantityChange,
+  onTransfer,
+}) {
+  const selectableCount = rows.filter((row) => Number(quantities[row.id] ?? row.remainingQuantity) > 0).length;
+  const allVisibleSelected = selectableCount > 0
+    && rows
+      .filter((row) => Number(quantities[row.id] ?? row.remainingQuantity) > 0)
+      .every((row) => selectedIds.includes(row.id));
+
+  return (
+    <section className="rounded-2xl border border-emerald-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <h2 className="text-xl font-black text-slate-900">Projeye Bağlı Sipariş Oluştur</h2>
+          <p className="mt-1 text-sm text-slate-500">
+            Proje kalemlerinden eksik kalan ürünleri seçip mevcut sipariş formuna aktarın.
+          </p>
+        </div>
+        <div className="rounded-xl bg-emerald-50 px-4 py-2 text-xs font-black text-emerald-700">
+          {selectedIds.length} seçili
+        </div>
+      </div>
+
+      <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-[360px_1fr]">
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <label className="block">
+            <span className="mb-2 block text-sm font-bold text-slate-700">Proje ara</span>
+            <input
+              value={projectSearch}
+              onChange={(event) => onSearchChange(event.target.value)}
+              placeholder="Proje no, proje adı veya müşteri..."
+              className="w-full rounded-xl border border-slate-300 bg-white p-3 text-sm"
+            />
+          </label>
+
+          <div className="mt-3 max-h-80 space-y-2 overflow-y-auto pr-1">
+            {projects.map((project) => (
+              <button
+                key={project.id}
+                type="button"
+                onClick={() => onSelectProject(project.id)}
+                className={`w-full rounded-xl border p-3 text-left text-sm transition ${selectedProjectId === project.id ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-white hover:border-blue-200"}`}
+              >
+                <div className="font-black text-slate-900">{project.project_code || "-"}</div>
+                <div className="mt-1 line-clamp-2 text-xs font-semibold text-slate-600">{project.project_name || "-"}</div>
+                <div className="mt-1 text-[11px] text-slate-500">{project.customer_name || "Müşteri yok"}</div>
+              </button>
+            ))}
+            {projects.length === 0 && (
+              <div className="rounded-xl bg-white p-4 text-sm text-slate-500">Aramaya uygun proje bulunamadı.</div>
+            )}
+          </div>
+        </div>
+
+        <div className="min-w-0 rounded-2xl border border-slate-200">
+          {!selectedProject && (
+            <div className="p-8 text-center text-sm font-semibold text-slate-500">
+              Proje seçildiğinde ürünler, eksikler, daha önce sipariş verilenler ve stok durumu burada listelenecek.
+            </div>
+          )}
+
+          {selectedProject && (
+            <>
+              <div className="border-b border-slate-100 p-4">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                  <div>
+                    <div className="text-sm font-black text-slate-900">
+                      {selectedProject.project_code} · {selectedProject.project_name}
+                    </div>
+                    <div className="mt-1 text-xs font-semibold text-slate-500">
+                      {allRows.length} kalem bulundu · varsayılan görünümde sadece eksikler listelenir.
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <label className="flex items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={showCompleted}
+                        onChange={(event) => onToggleCompleted(event.target.checked)}
+                      />
+                      Tamamlananları göster
+                    </label>
+                    <button
+                      type="button"
+                      disabled={rows.length === 0}
+                      onClick={onToggleAll}
+                      className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-700 disabled:bg-slate-100 disabled:text-slate-400"
+                    >
+                      {allVisibleSelected ? "Seçimi Temizle" : "Görünenleri Seç"}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={selectedIds.length === 0}
+                      onClick={onTransfer}
+                      className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-black text-white hover:bg-emerald-700 disabled:bg-slate-300"
+                    >
+                      Seçilenleri Siparişe Aktar
+                    </button>
+                  </div>
+                </div>
+                {message && (
+                  <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-900">
+                    {message}
+                  </div>
+                )}
+              </div>
+
+              {loading ? (
+                <div className="flex items-center gap-3 p-6 text-sm font-bold text-slate-600">
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-200 border-t-emerald-600" />
+                  Proje kalemleri yükleniyor...
+                </div>
+              ) : rows.length === 0 ? (
+                <div className="p-8 text-center text-sm font-semibold text-slate-500">
+                  {showCompleted ? "Bu projede aktarılabilecek kalem bulunamadı." : "Eksik/kalan ihtiyaç bulunamadı. Tamamlananları göster seçeneğiyle tüm kalemleri görebilirsiniz."}
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[980px] text-left text-xs">
+                    <thead className="bg-slate-50 text-slate-500">
+                      <tr>
+                        <th className="p-3">Seç</th>
+                        <th className="p-3">Ürün Kodu</th>
+                        <th className="p-3">Ürün</th>
+                        <th className="p-3">Birim</th>
+                        <th className="p-3">İhtiyaç</th>
+                        <th className="p-3">Sipariş</th>
+                        <th className="p-3">Teslim</th>
+                        <th className="p-3">Kalan</th>
+                        <th className="p-3">Stok</th>
+                        <th className="p-3">Eklenecek</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((row) => {
+                        const quantityValue = quantities[row.id] ?? row.remainingQuantity;
+                        return (
+                          <tr key={row.id} className="border-t border-slate-100 align-top">
+                            <td className="p-3">
+                              <input
+                                type="checkbox"
+                                checked={selectedIds.includes(row.id)}
+                                disabled={Number(quantityValue || 0) <= 0}
+                                onChange={() => onToggleItem(row.id)}
+                                className="h-4 w-4"
+                              />
+                            </td>
+                            <td className="p-3 font-bold text-slate-700">{row.product_code || "-"}</td>
+                            <td className="p-3">
+                              <div className="max-w-sm font-black text-slate-900">{row.product_name}</div>
+                              {row.parent_name && <div className="mt-1 text-[11px] text-slate-500">{row.parent_name}</div>}
+                            </td>
+                            <td className="p-3">{row.unit || "adet"}</td>
+                            <td className="p-3 font-bold">{row.needed}</td>
+                            <td className="p-3 font-bold text-blue-700">{row.orderedQuantity}</td>
+                            <td className="p-3 font-bold text-emerald-700">{row.deliveredQuantity}</td>
+                            <td className={`p-3 font-black ${row.remainingQuantity > 0 ? "text-red-700" : "text-slate-500"}`}>{row.remainingQuantity}</td>
+                            <td className="p-3 font-bold text-slate-700">{row.stockQuantity || 0}</td>
+                            <td className="p-3">
+                              <input
+                                type="number"
+                                min="0"
+                                value={quantityValue}
+                                onChange={(event) => onQuantityChange(row.id, event.target.value)}
+                                className="w-24 rounded-lg border border-slate-300 px-2 py-1"
+                              />
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function OrderForm({
   formData,
   suppliers,
@@ -774,7 +1263,13 @@ function OrderForm({
   onCancel,
   onSubmit,
 }) {
-  const items = normalizeItems(formData.items);
+  const items = useMemo(() => normalizeItems(formData.items), [formData.items]);
+  const missingRequiredFields = [
+    ["Sipariş No", formData.orderNo],
+    ["İş Ortağı", formData.company],
+    ["Sipariş Başlığı", formData.product],
+    ["Sipariş Tarihi", formData.orderDate],
+  ].filter(([, value]) => !String(value || "").trim());
 
   return (
     <form
@@ -806,6 +1301,7 @@ function OrderForm({
           name="orderNo"
           value={formData.orderNo}
           onChange={onChange}
+          required
         />
         <SupplierInput
           label="İş Ortağı"
@@ -813,12 +1309,14 @@ function OrderForm({
           value={formData.company}
           onChange={onSupplierChange}
           suppliers={suppliers}
+          required
         />
         <Input
           label="Sipariş Başlığı"
           name="product"
           value={formData.product}
           onChange={onChange}
+          required
         />
         <Select
           label="Durum"
@@ -846,6 +1344,7 @@ function OrderForm({
           type="date"
           value={formData.orderDate}
           onChange={onChange}
+          required
         />
         <Input
           label="Termin Tarihi"
@@ -860,6 +1359,7 @@ function OrderForm({
           type="date"
           value={formData.deliveryDate}
           onChange={onChange}
+          hint="Opsiyonel"
         />
         <Select
           label="Para Birimi"
@@ -888,6 +1388,12 @@ function OrderForm({
         />
       </label>
 
+      {missingRequiredFields.length > 0 && (
+        <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">
+          Zorunlu alanlar: {missingRequiredFields.map(([label]) => label).join(", ")}
+        </div>
+      )}
+
       <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4">
         <div className="mb-4 flex items-center justify-between">
           <h3 className="text-lg font-bold text-slate-900">Ürün Kalemleri</h3>
@@ -904,7 +1410,9 @@ function OrderForm({
           <table className="w-full text-left text-sm">
             <thead className="bg-white text-slate-500">
               <tr>
+                <th className="p-3">Ürün Kodu</th>
                 <th className="p-3">Ürün / Rapor</th>
+                <th className="p-3">Birim</th>
                 <th className="p-3">Miktar</th>
                 <th className="p-3">Gelen</th>
                 <th className="p-3">Kalan</th>
@@ -917,9 +1425,19 @@ function OrderForm({
             <tbody>
               {items.map((item, index) => (
                 <tr
-                    key={index}
+                  key={item.rowId}
                   className="border-t border-slate-200"
                 >
+                  <td className="p-3">
+                    <input
+                      value={item.productCode}
+                      onChange={(event) =>
+                        onItemChange(index, "productCode", event.target.value)
+                      }
+                      placeholder="Kod"
+                      className="w-28 rounded border border-slate-300 px-2 py-1"
+                    />
+                  </td>
                   <td className="p-3">
                     <input
                       value={item.productName}
@@ -927,6 +1445,15 @@ function OrderForm({
                         onItemChange(index, "productName", event.target.value)
                       }
                       className="w-full rounded border border-slate-300 px-2 py-1"
+                    />
+                  </td>
+                  <td className="p-3">
+                    <input
+                      value={item.unit}
+                      onChange={(event) =>
+                        onItemChange(index, "unit", event.target.value)
+                      }
+                      className="w-20 rounded border border-slate-300 px-2 py-1"
                     />
                   </td>
                   <td className="p-3">
@@ -988,19 +1515,24 @@ function OrderForm({
                     )}
                   </td>
                   <td className="p-3">
-                    <input
-                      type="number"
-                      value={item.unitPrice}
-                      onFocus={() => {
-                        if (Number(item.unitPrice || 0) === 0) {
-                          onItemChange(index, "unitPrice", "");
+                    <div>
+                      <input
+                        type="number"
+                        value={item.unitPrice}
+                        onFocus={() => {
+                          if (Number(item.unitPrice || 0) === 0) {
+                            onItemChange(index, "unitPrice", "");
+                          }
+                        }}
+                        onChange={(event) =>
+                          onItemChange(index, "unitPrice", event.target.value)
                         }
-                      }}
-                      onChange={(event) =>
-                        onItemChange(index, "unitPrice", event.target.value)
-                      }
-                      className="w-28 rounded border border-slate-300 px-2 py-1"
-                    />
+                        className={`w-28 rounded border px-2 py-1 ${Number(item.unitPrice || 0) <= 0 ? "border-amber-300 bg-amber-50" : "border-slate-300"}`}
+                      />
+                      {Number(item.unitPrice || 0) <= 0 && (
+                        <div className="mt-1 text-[11px] font-bold text-amber-700">Fiyat 0</div>
+                      )}
+                    </div>
                   </td>
                   <td className="p-3">
                     <input
@@ -1033,7 +1565,7 @@ function OrderForm({
               ))}
               {items.length === 0 && (
                 <tr>
-                  <td colSpan="8" className="p-5 text-center text-slate-500">
+                  <td colSpan="10" className="p-5 text-center text-slate-500">
                     Henüz ürün kalemi yok.
                   </td>
                 </tr>
@@ -1043,7 +1575,7 @@ function OrderForm({
         </div>
 
         <div className="mt-4 flex justify-end">
-          <div className="rounded-xl bg-white px-5 py-3 text-right shadow-sm">
+          <div className="min-w-56 rounded-xl bg-white px-5 py-3 text-right shadow-sm">
             <div className="text-sm text-slate-500">Toplam Tutar</div>
             <div className="mt-1 text-xl font-black text-slate-900">
               {formatMoney(formData.totalAmount, formData.currency)}
@@ -1052,7 +1584,11 @@ function OrderForm({
         </div>
       </div>
 
-      <div className="mt-5 flex justify-end gap-3">
+      <div className="mt-5 flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 md:flex-row md:items-center md:justify-between">
+        <div className="text-sm text-slate-500">
+          Teslim tarihi opsiyoneldir. Zorunlu alanlar yıldızla işaretlenir.
+        </div>
+        <div className="flex flex-col gap-3 sm:flex-row sm:justify-end">
         <button
           type="button"
           onClick={onCancel}
@@ -1066,6 +1602,7 @@ function OrderForm({
         >
           {editingId ? "Kaydet" : "Siparişi Oluştur"}
         </button>
+        </div>
       </div>
     </form>
   );
@@ -1244,18 +1781,20 @@ function TerminTable({ orders }) {
   );
 }
 
-function Input({ label, name, value, onChange, type = "text" }) {
+function Input({ label, name, value, onChange, type = "text", required = false, hint = "" }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-sm font-bold text-slate-700">
+      <span className="mb-2 flex items-center gap-2 text-sm font-bold text-slate-700">
         {label}
+        {required && <span className="text-red-600">*</span>}
+        {hint && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-500">{hint}</span>}
       </span>
       <input
         type={type}
         name={name}
         value={value}
         onChange={onChange}
-        className="w-full rounded-xl border border-slate-300 p-3 text-sm"
+        className={`w-full rounded-xl border p-3 text-sm ${required && !String(value || "").trim() ? "border-amber-300 bg-amber-50" : "border-slate-300"}`}
       />
     </label>
   );
@@ -1289,18 +1828,19 @@ function Select({ label, name, value, onChange, options }) {
   );
 }
 
-function SupplierInput({ label, name, value, onChange, suppliers }) {
+function SupplierInput({ label, name, value, onChange, suppliers, required = false }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-sm font-bold text-slate-700">
+      <span className="mb-2 flex items-center gap-2 text-sm font-bold text-slate-700">
         {label}
+        {required && <span className="text-red-600">*</span>}
       </span>
       <input
         list="supplier-options"
         name={name}
         value={value}
         onChange={onChange}
-        className="w-full rounded-xl border border-slate-300 p-3 text-sm"
+        className={`w-full rounded-xl border p-3 text-sm ${required && !String(value || "").trim() ? "border-amber-300 bg-amber-50" : "border-slate-300"}`}
       />
       <datalist id="supplier-options">
         {suppliers.map((supplier) => (
