@@ -240,6 +240,7 @@ export default function ProjectDetailPage() {
   const [payments, setPayments] = useState([]);
   const [expenses, setExpenses] = useState([]);
   const [revisions, setRevisions] = useState([]);
+  const [selectedRevisionIds, setSelectedRevisionIds] = useState([]);
   const [products, setProducts] = useState([]);
   const [projectRequests, setProjectRequests] = useState([]);
   const [projectReports, setProjectReports] = useState([]);
@@ -1629,6 +1630,38 @@ export default function ProjectDetailPage() {
     setRevisions((prev) => prev.filter((item) => item.id !== revision.id));
     setMessage("Revizyon kaydı silindi.");
   }
+
+  async function deleteSelectedRevisions() {
+  if (selectedRevisionIds.length === 0) return;
+
+  const approved = window.confirm(
+    `${selectedRevisionIds.length} revizyon kaydı silinsin mi?`
+  );
+
+  if (!approved) return;
+
+  const user = await getUserOrRedirect();
+  if (!user) return;
+
+  const { error } = await supabase
+    .from("project_revisions")
+    .delete()
+    .in("id", selectedRevisionIds)
+    .eq("project_id", projectId)
+    .eq("user_id", user.id);
+
+  if (error) {
+    setMessage("Revizyonlar silinemedi.");
+    return;
+  }
+
+  setRevisions((prev) =>
+    prev.filter((r) => !selectedRevisionIds.includes(r.id))
+  );
+
+  setSelectedRevisionIds([]);
+  setMessage(`${selectedRevisionIds.length} revizyon silindi.`);
+}
 
   async function addProjectItem(event) {
     event.preventDefault();
@@ -6321,7 +6354,34 @@ export default function ProjectDetailPage() {
                     Kayıtlar malzeme listesinde yapılan ekleme, çıkarma, adet ve fiyat değişikliklerinden otomatik oluşur.
                   </p>
                 </div>
-                <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">{revisions.length} kayıt</span>
+                <div className="flex flex-wrap items-center gap-2">
+  <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">
+    {revisions.length} kayıt
+  </span>
+
+  <button
+    type="button"
+    onClick={() =>
+      setSelectedRevisionIds(
+        selectedRevisionIds.length === revisions.length
+          ? []
+          : revisions.map((revision) => revision.id)
+      )
+    }
+    className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50"
+  >
+    {selectedRevisionIds.length === revisions.length ? "Seçimi Temizle" : "Tümünü Seç"}
+  </button>
+
+  <button
+    type="button"
+    disabled={selectedRevisionIds.length === 0}
+    onClick={deleteSelectedRevisions}
+    className="rounded-lg bg-red-600 px-3 py-2 text-xs font-black text-white hover:bg-red-700 disabled:bg-slate-300"
+  >
+    Seçilenleri Sil ({selectedRevisionIds.length})
+  </button>
+</div>
               </div>
 
               <div className="mt-5 space-y-3">
@@ -6338,6 +6398,18 @@ export default function ProjectDetailPage() {
                   return (
                     <div key={revision.id} className="rounded-xl border border-slate-100 p-4">
                       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                        <input
+                          type="checkbox"
+                          checked={selectedRevisionIds.includes(revision.id)}
+                          onChange={() =>
+                            setSelectedRevisionIds((prev) =>
+                              prev.includes(revision.id)
+                                ? prev.filter((id) => id !== revision.id)
+                                : [...prev, revision.id]
+                          )
+                        }
+                        className="mt-1 h-4 w-4 rounded border-slate-300"
+                      />
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
                             <div className="font-black text-slate-900">{revision.title}</div>
