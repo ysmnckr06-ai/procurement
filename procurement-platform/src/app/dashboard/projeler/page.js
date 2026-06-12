@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { calculateBaseAmount, currencyOptions, formatMoney, getBaseCurrency, getExchangeRate } from "@/lib/currency";
-import { fetchLiveTryRates, liveCurrencyOptions, liveRateFor, rateDiffPercent } from "@/lib/liveCurrency";
+import { fetchLiveTryRates, liveCurrencyOptions, liveRateFor } from "@/lib/liveCurrency";
 import { findOrCreateBusinessPartner } from "@/lib/businessPartners";
 
 const statusOptions = ["Taslak", "Onaylandı", "Devam Ediyor", "Tamamlandı", "Arşivlendi", "İptal"];
@@ -68,80 +68,12 @@ function statusClass(status) {
 }
 
 
-function projectContractCurrency(project, fallback = "TRY") {
-  return project?.contract_currency || fallback || "TRY";
-}
-
-function projectBudgetCurrency(project, fallback = "TRY") {
-  return project?.estimated_budget_currency || project?.contract_currency || fallback || "TRY";
-}
-
-function sameCurrency(projects, selector) {
-  const currencies = Array.from(new Set((projects || []).map(selector).filter(Boolean)));
-  return currencies.length === 1 ? currencies[0] : "";
-}
-
-
-function groupedMoneyTotals(projects, amountSelector, currencySelector, fallbackCurrency = "TRY") {
-  const totals = new Map();
-
-  (projects || []).forEach((project) => {
-    const currency = currencySelector(project) || fallbackCurrency || "TRY";
-    totals.set(currency, Number(totals.get(currency) || 0) + Number(amountSelector(project) || 0));
-  });
-
-  return Array.from(totals.entries())
-    .map(([currency, amount]) => ({ currency, amount }))
-    .filter((row) => Number(row.amount || 0) !== 0)
-    .sort((a, b) => a.currency.localeCompare(b.currency, "tr-TR"));
-}
-
 function StatCard({ title, value, text }) {
   return (
     <div className="min-h-32 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
       <div className="text-sm font-semibold text-slate-500">{title}</div>
       <div className="mt-3 text-3xl font-black leading-none text-slate-900">{value}</div>
       <div className="mt-1 text-sm text-slate-500">{text}</div>
-    </div>
-  );
-}
-
-function MoneyStack({ value, currency = "TRY", className = "" }) {
-  const amount = new Intl.NumberFormat("tr-TR", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(Number(value || 0));
-  const label = `${amount} ${currency || "TRY"}`;
-
-  return (
-    <div className={`min-w-0 max-w-full leading-tight ${className || "text-slate-950"}`} title={label}>
-      <div className="max-w-full break-words text-[clamp(0.86rem,0.9vw,0.98rem)] font-black text-current">
-        {amount}
-      </div>
-      <div className="mt-0.5 text-xs font-black uppercase text-slate-500">{currency || "TRY"}</div>
-    </div>
-  );
-}
-
-function CurrencyTotalCard({ title, rows, emptyCurrency = "TRY" }) {
-  const visibleRows = rows?.length > 0 ? rows : [{ currency: emptyCurrency, amount: 0 }];
-
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <div className="text-sm font-black text-slate-900">{title}</div>
-          <div className="mt-1 text-xs font-semibold text-slate-500">Para birimine göre ayrı toplam</div>
-        </div>
-      </div>
-      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {visibleRows.map((row) => (
-          <div key={row.currency} className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-            <div className="text-xs font-black uppercase tracking-wide text-slate-500">{row.currency}</div>
-            <MoneyStack value={row.amount} currency={row.currency} className="mt-2" />
-          </div>
-        ))}
-      </div>
     </div>
   );
 }
@@ -470,33 +402,18 @@ export default function ProjectsPage() {
     const activeStatuses = ["Onaylandı", "Devam Ediyor"];
     const active = projects.filter((project) => activeStatuses.includes(project.status)).length;
     const completed = projects.filter((project) => project.status === "Tamamlandı").length;
-    const visibleRows = displayedProjects;
-    const baseCurrency = getBaseCurrency(settings);
-    const contractTotals = groupedMoneyTotals(
-      visibleRows,
-      (project) => project.contract_amount,
-      (project) => projectContractCurrency(project, settings.default_currency),
-      baseCurrency,
-    );
-    const actualTotals = groupedMoneyTotals(
-      visibleRows,
-      (project) => project.actual_cost,
-      (project) => projectBudgetCurrency(project, settings.default_currency),
-      baseCurrency,
-    );
-    const overBudget = visibleRows.filter(
-      (project) => Number(project.actual_cost || 0) > Number(project.estimated_budget || 0) && Number(project.estimated_budget || 0) > 0,
-    ).length;
+    const statusCounts = statusOptions.reduce((acc, status) => {
+      if (status === "Arşivlendi") return acc;
+      acc[status] = projects.filter((project) => (project.status || "Taslak") === status).length;
+      return acc;
+    }, {});
 
     return {
       active,
       completed,
-      contractTotals,
-      actualTotals,
-      overBudget,
-      baseCurrency,
+      statusCounts,
     };
-  }, [projects, displayedProjects, settings]);
+  }, [projects]);
 
   return (
     <div className="min-h-screen bg-slate-100">
@@ -521,15 +438,20 @@ export default function ProjectsPage() {
           </button>
         </div>
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
           <StatCard title="Aktif Proje" value={stats.active} text="Onaylı/devam eden" />
           <StatCard title="Tamamlanan" value={stats.completed} text="Kapanmış proje" />
-          <StatCard title="Bütçeyi Aşan" value={stats.overBudget} text="Kontrol gerekli" />
+          <StatCard title="Taslak" value={stats.statusCounts.Taslak || 0} text="Henüz onaylanmadı" />
+          <StatCard title="İptal" value={stats.statusCounts.İptal || 0} text="Kapanan/iptal" />
         </div>
 
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-          <CurrencyTotalCard title="Sözleşme Bedeli" rows={stats.contractTotals} emptyCurrency={stats.baseCurrency} />
-          <CurrencyTotalCard title="Gerçekleşen Maliyet" rows={stats.actualTotals} emptyCurrency={stats.baseCurrency} />
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+          {["Taslak", "Onaylandı", "Devam Ediyor", "Tamamlandı", "İptal"].map((status) => (
+            <div key={status} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="text-xs font-black uppercase text-slate-500">{status}</div>
+              <div className="mt-2 text-2xl font-black text-slate-950">{stats.statusCounts[status] || 0}</div>
+            </div>
+          ))}
         </div>
 
         <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4 shadow-sm">
@@ -616,8 +538,9 @@ export default function ProjectsPage() {
               <label className="text-sm font-bold text-slate-700">
                 Sözleşme Para Birimi
                 <select className="mt-2 w-full rounded-xl border border-slate-300 p-3" value={form.contract_currency} onChange={(e) => {
-                  updateForm("contract_currency", e.target.value);
-                  updateForm("contract_exchange_rate", getExchangeRate(e.target.value, settings));
+                  const nextCurrency = e.target.value;
+                  updateForm("contract_currency", nextCurrency);
+                  updateForm("contract_exchange_rate", liveRateFor(nextCurrency, liveRates) || getExchangeRate(nextCurrency, settings));
                 }}>
                   {currencyOptions.map((currency) => <option key={currency}>{currency}</option>)}
                 </select>
@@ -633,8 +556,9 @@ export default function ProjectsPage() {
               <label className="text-sm font-bold text-slate-700">
                 Bütçe Para Birimi
                 <select className="mt-2 w-full rounded-xl border border-slate-300 p-3" value={form.estimated_budget_currency} onChange={(e) => {
-                  updateForm("estimated_budget_currency", e.target.value);
-                  updateForm("estimated_budget_exchange_rate", getExchangeRate(e.target.value, settings));
+                  const nextCurrency = e.target.value;
+                  updateForm("estimated_budget_currency", nextCurrency);
+                  updateForm("estimated_budget_exchange_rate", liveRateFor(nextCurrency, liveRates) || getExchangeRate(nextCurrency, settings));
                 }}>
                   {currencyOptions.map((currency) => <option key={currency}>{currency}</option>)}
                 </select>
@@ -643,6 +567,26 @@ export default function ProjectsPage() {
                 Bütçe Kuru
                 <input type="number" className="mt-2 w-full rounded-xl border border-slate-300 p-3" value={form.estimated_budget_exchange_rate} onChange={(e) => updateForm("estimated_budget_exchange_rate", e.target.value)} />
               </label>
+              <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4 text-sm md:col-span-3">
+                <div className="font-black text-blue-900">Canlı kur takibi</div>
+                <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                  {[
+                    ["Sözleşme", form.contract_currency, form.contract_exchange_rate],
+                    ["Bütçe", form.estimated_budget_currency, form.estimated_budget_exchange_rate],
+                  ].map(([label, currency, savedRate]) => {
+                    const liveRate = liveRateFor(currency, liveRates);
+                    return (
+                      <div key={label} className="rounded-xl bg-white p-3">
+                        <div className="text-xs font-black uppercase text-slate-500">{label} para birimi: {currency}</div>
+                        <div className="mt-1 text-sm font-bold text-slate-900">
+                          {currency === "TRY" ? "TRY için kur 1 kabul edilir." : liveRate ? `Canlı kur: ${formatMoney(liveRate, "TRY")}` : "Canlı kur alınamadı."}
+                        </div>
+                        <div className="mt-1 text-xs font-semibold text-slate-500">Kayıt kuru: {savedRate || 1}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
               <label className="text-sm font-bold text-slate-700">
                 Proje Sorumlusu
                 <input className="mt-2 w-full rounded-xl border border-slate-300 p-3" value={form.project_owner} onChange={(e) => updateForm("project_owner", e.target.value)} />
@@ -723,25 +667,18 @@ export default function ProjectsPage() {
             <table className="w-full table-fixed text-left text-xs [&_td]:p-2">
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
-                  <th className="w-[13%] p-2">Proje</th>
-                  <th className="w-[8%] p-2">Müşteri</th>
-                  <th className="w-[9%] p-2">Sözleşme</th>
-                  <th className="w-[9%] p-2">Tahmini</th>
-                  <th className="w-[8%] p-2">Gerçekleşen</th>
-                  <th className="w-[9%] p-2">Kalan</th>
-                  <th className="w-[9%] p-2">Tamamlanma</th>
-                  <th className="w-[6%] p-2">Sipariş</th>
-                  <th className="w-[6%] p-2">Eksik</th>
-                  <th className="w-[8%] p-2">Tarih</th>
-                  <th className="w-[7%] p-2">Durum</th>
-                  <th className="w-[8%] p-2">İşlem</th>
+                  <th className="w-[20%] p-2">Proje</th>
+                  <th className="w-[14%] p-2">Müşteri</th>
+                  <th className="w-[12%] p-2">Tamamlanma</th>
+                  <th className="w-[8%] p-2">Sipariş</th>
+                  <th className="w-[8%] p-2">Eksik</th>
+                  <th className="w-[12%] p-2">Tarih</th>
+                  <th className="w-[10%] p-2">Durum</th>
+                  <th className="w-[16%] p-2">İşlem</th>
                 </tr>
               </thead>
               <tbody>
                 {displayedProjects.map((project) => {
-                  const budgetCurrency = projectBudgetCurrency(project, settings.default_currency);
-                  const contractCurrency = projectContractCurrency(project, settings.default_currency);
-                  const remaining = Number(project.estimated_budget || 0) - Number(project.actual_cost || 0);
                   const metrics = projectMetrics(project.id);
 
                   return (
@@ -758,12 +695,6 @@ export default function ProjectsPage() {
                         <div className="max-w-[105px] truncate" title={project.customer_name || "-"}>
                           {project.customer_name || "-"}
                         </div>
-                      </td>
-                      <td className="p-4"><MoneyStack value={project.contract_amount} currency={contractCurrency} /></td>
-                      <td className="p-4"><MoneyStack value={project.estimated_budget} currency={budgetCurrency} /></td>
-                      <td className="p-4"><MoneyStack value={project.actual_cost} currency={budgetCurrency} /></td>
-                      <td className={`p-4 font-bold ${remaining < 0 ? "text-red-600" : "text-emerald-700"}`}>
-                        <MoneyStack value={remaining} currency={budgetCurrency} />
                       </td>
                       <td className="p-4">
                         <div className="flex items-center gap-2">
@@ -823,7 +754,7 @@ export default function ProjectsPage() {
                 })}
                 {!loading && displayedProjects.length === 0 && (
                   <tr>
-                    <td colSpan="12" className="p-8 text-center text-slate-500">
+                    <td colSpan="8" className="p-8 text-center text-slate-500">
                       Henüz proje yok. İlk projeyi oluşturarak başlayın.
                     </td>
                   </tr>

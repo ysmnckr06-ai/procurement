@@ -20,7 +20,6 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL;
 const UNCATEGORIZED_PREVIEW_CATEGORY = "Kategorisiz Ürünler";
 
 const tabs = [
-  "Genel Özet",
   "Malzeme Listesi",
   "Talepler",
   "Teklifler",
@@ -29,6 +28,7 @@ const tabs = [
   "Ödemeler",
   "Revizyonlar",
   "Raporlar",
+  "Genel Özet",
 ];
 
 const paymentTypes = ["Avans", "Ara ödeme", "Hakediş", "Kapanış ödemesi"];
@@ -286,6 +286,7 @@ export default function ProjectDetailPage() {
   const [createParentNameDraft, setCreateParentNameDraft] = useState("");
   const [createParentQuantityDraft, setCreateParentQuantityDraft] = useState("");
   const [isParsing, setIsParsing] = useState(false);
+  const [parsingFileCount, setParsingFileCount] = useState(0);
   const [isImportingPreview, setIsImportingPreview] = useState(false);
   const [previewActionMessage, setPreviewActionMessage] = useState("");
   const [message, setMessage] = useState("");
@@ -348,6 +349,35 @@ export default function ProjectDetailPage() {
       window.localStorage.setItem(`project-section-totals-${projectId}`, JSON.stringify(cleanSections));
     }
   }
+
+  useEffect(() => {
+    if (!projectId || typeof window === "undefined") return;
+
+    const savedTab = window.localStorage.getItem(`project-detail-active-tab-${projectId}`);
+    const savedExpandedItems = window.localStorage.getItem(`project-detail-expanded-items-${projectId}`);
+
+    if (savedTab && tabs.includes(savedTab)) {
+      setActiveTab(savedTab);
+    }
+
+    if (savedExpandedItems) {
+      try {
+        setExpandedItems(JSON.parse(savedExpandedItems) || {});
+      } catch {
+        window.localStorage.removeItem(`project-detail-expanded-items-${projectId}`);
+      }
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    if (!projectId || typeof window === "undefined") return;
+    window.localStorage.setItem(`project-detail-active-tab-${projectId}`, activeTab);
+  }, [activeTab, projectId]);
+
+  useEffect(() => {
+    if (!projectId || typeof window === "undefined") return;
+    window.localStorage.setItem(`project-detail-expanded-items-${projectId}`, JSON.stringify(expandedItems));
+  }, [expandedItems, projectId]);
 
   function projectCurrencyForDisplay(sourceCurrency = "") {
     return project?.estimated_budget_currency
@@ -923,8 +953,11 @@ export default function ProjectDetailPage() {
     }
 
     const createdProducts = [];
+    const productCreationMovements = [];
     const linkedItems = [];
     const failedItems = [];
+    const projectLabel = [project?.project_code, project?.project_name].filter(Boolean).join(" - ") || projectId;
+    const today = new Date().toISOString().slice(0, 10);
 
     for (const item of subItems) {
       const itemName = String(item.product_name || item.description || "").trim();
@@ -1010,7 +1043,30 @@ export default function ProjectDetailPage() {
 
         if (!product) {
           product = insertedProduct;
-          if (insertedProduct) createdProducts.push(insertedProduct);
+          if (insertedProduct) {
+            createdProducts.push(insertedProduct);
+            productCreationMovements.push({
+              user_id: userId,
+              product_id: insertedProduct.id,
+              project_id: projectId,
+              project_item_id: item.id,
+              product_code: insertedProduct.product_code || safeProductCode,
+              product_name: insertedProduct.product_name || normalizedIdentity.product_name || itemName,
+              movement_type: "in",
+              quantity: 0,
+              unit: safeUnit,
+              unit_price: 0,
+              currency: safeCurrency,
+              movement_date: today,
+              source: "Proje dosyasından ürün kartı oluşturuldu",
+              supplier_name: "Proje malzeme listesi",
+              partner_name: project?.customer_name || "Proje malzeme listesi",
+              partner_type: "Proje",
+              related_project_id: projectId,
+              related_project_name: project?.project_name || "",
+              notes: `${projectLabel} içinden ürün kartı oluşturuldu. Kalem durumu: ${item.status || "Bekliyor"}. Kaynak dosya: ${item.source_file || "Proje malzeme listesi"}.`,
+            });
+          }
           productCardStatus = "Ürün kartı oluşturuldu";
         }
       }
@@ -1054,6 +1110,19 @@ export default function ProjectDetailPage() {
 
     if (createdProducts.length > 0) {
       setProducts((prev) => [...prev, ...createdProducts]);
+    }
+
+    if (productCreationMovements.length > 0) {
+      const { data: movementRows, error: movementError } = await supabase
+        .from("stock_movements")
+        .insert(productCreationMovements)
+        .select("*");
+
+      if (movementError) {
+        console.warn("Ürün kartı oluşturma hareketleri kaydedilemedi:", movementError);
+      } else if (movementRows?.length) {
+        setStockMovements((prev) => [...movementRows, ...prev]);
+      }
     }
 
     if (linkedItems.length === 0) return projectItemRows;
@@ -2462,6 +2531,7 @@ export default function ProjectDetailPage() {
     if (files.length === 0) return;
 
     setIsParsing(true);
+    setParsingFileCount(files.length);
     setMessage(`${files.length} dosya okunuyor. Büyük tekliflerde bu işlem birkaç dakika sürebilir.`);
     setPreviewActionMessage("");
     setPreviewWarnings([]);
@@ -2488,6 +2558,7 @@ export default function ProjectDetailPage() {
       if (!token || !API_URL) {
         setMessage("Dosya okuma için oturum veya API adresi bulunamadı.");
         setIsParsing(false);
+        setParsingFileCount(0);
         return;
       }
 
@@ -2535,6 +2606,7 @@ export default function ProjectDetailPage() {
       setMessage("Dosya okunurken hata oluştu.");
     } finally {
       setIsParsing(false);
+      setParsingFileCount(0);
       event.target.value = "";
     }
   }
@@ -4126,10 +4198,18 @@ export default function ProjectDetailPage() {
     return items.filter((item) => stockInfoForItem(item).isCritical);
   }, [items, products, childItemsByParent]);
 
+  const stockCoverableItems = useMemo(() => {
+    return items.filter((item) => {
+      const info = stockInfoForItem(item);
+      return !info.isMainItem && info.openQuantity > 0 && info.stockQuantity > 0;
+    });
+  }, [items, products, childItemsByParent]);
+
   function itemMatchesFilter(item, filter = itemStockFilter) {
     const info = stockInfoForItem(item);
     if (filter === "purchase") return info.needsPurchase;
     if (filter === "critical") return info.isCritical;
+    if (filter === "stock") return !info.isMainItem && info.openQuantity > 0 && info.stockQuantity > 0;
     return true;
   }
 
@@ -4150,7 +4230,9 @@ export default function ProjectDetailPage() {
     ? purchaseRequiredItems.length
     : itemStockFilter === "critical"
       ? criticalStockItems.length
-      : items.length;
+      : itemStockFilter === "stock"
+        ? stockCoverableItems.length
+        : items.length;
 
   function applyItemStockFilter(nextFilter) {
     const resolvedFilter = itemStockFilter === nextFilter ? "all" : nextFilter;
@@ -4173,8 +4255,16 @@ export default function ProjectDetailPage() {
       ...Object.fromEntries(matchedParentIds.map((id) => [id, true])),
     }));
 
-    const count = resolvedFilter === "purchase" ? purchaseRequiredItems.length : criticalStockItems.length;
-    const label = resolvedFilter === "purchase" ? "Satınalma gereken" : "Kritik stok";
+    const count = resolvedFilter === "purchase"
+      ? purchaseRequiredItems.length
+      : resolvedFilter === "critical"
+        ? criticalStockItems.length
+        : stockCoverableItems.length;
+    const label = resolvedFilter === "purchase"
+      ? "Satınalma gereken"
+      : resolvedFilter === "critical"
+        ? "Kritik stok"
+        : "Stoktan karşılanabilir";
     setMessage(`${label} filtresi uygulandı. ${count} kalem, ${matchedParentIds.length} ana ürün altında gösteriliyor.`);
   }
 
@@ -4979,15 +5069,21 @@ export default function ProjectDetailPage() {
           <section className="space-y-6">
             <div className="grid grid-cols-1 gap-6 xl:grid-cols-1">
               <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                <h2 className="text-xl font-bold text-slate-900">Excel / PDF / Görselden Ürünleri Yükle</h2>
-                <p className="mt-2 text-sm text-slate-500">Dosyadan okunan satırlar önce önizlemeye alınır, kontrol ettikten sonra projeye aktarılır.</p>
+                <h2 className="text-xl font-bold text-slate-900">Excel / PDF ile Ürünleri Yükle</h2>
+                <p className="mt-2 text-sm text-slate-500">Projeye sadece Excel veya PDF malzeme listesi yüklenir. Okunan satırlar önce önizlemeye alınır, kontrol ettikten sonra projeye aktarılır.</p>
                 <input
                   type="file"
                   multiple
-                  accept=".xlsx,.xls,.xlsm,.xlsb,.csv,.ods,.pdf,.png,.jpg,.jpeg,.webp,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/vnd.ms-excel.sheet.macroEnabled.12,text/csv"
+                  accept=".xlsx,.xls,.xlsm,.xlsb,.csv,.ods,.pdf,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/vnd.ms-excel.sheet.macroEnabled.12,text/csv"
                   onChange={parseProjectItemFiles}
                   className="mt-5 w-full rounded-xl border border-dashed border-blue-300 bg-blue-50 p-4 text-sm"
                 />
+                {isParsing && (
+                  <div className="mt-4 flex items-center gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-bold text-blue-800">
+                    <span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-blue-200 border-t-blue-700" />
+                    <span>{parsingFileCount || 1} dosya okunuyor. Büyük tekliflerde bu işlem birkaç dakika sürebilir.</span>
+                  </div>
+                )}
                 {previewWarnings.length > 0 && (
                   <div className={`mt-4 rounded-xl border p-4 text-sm ${previewBlocked ? "border-red-200 bg-red-50 text-red-800" : "border-amber-200 bg-amber-50 text-amber-900"}`}>
                     <div className="font-bold">{previewBlocked ? "Aktarım kilitlendi" : "Fiyatlandırma notu"}</div>
@@ -5120,6 +5216,29 @@ export default function ProjectDetailPage() {
                       >
                         {isImportingPreview ? "Aktarılıyor..." : "Hiyerarşik Aktar"}
                       </button>
+                    </div>
+
+                    <div className="mt-3 grid grid-cols-1 gap-2 text-xs text-slate-600 md:grid-cols-2 xl:grid-cols-5">
+                      <div className="rounded-xl bg-slate-50 p-3">
+                        <div className="font-black text-slate-900">Seçilileri Bağımsız Aktar</div>
+                        <p className="mt-1">Seçili satırları hiçbir ana kaleme bağlamadan normal proje kalemi yapar.</p>
+                      </div>
+                      <div className="rounded-xl bg-indigo-50 p-3">
+                        <div className="font-black text-indigo-900">Bağımsız Ana Kalem</div>
+                        <p className="mt-1">Seçili satırları alt bileşeni olmayan ana kalem olarak aktarır.</p>
+                      </div>
+                      <div className="rounded-xl bg-blue-50 p-3">
+                        <div className="font-black text-blue-900">Ana Kaleme Bağla</div>
+                        <p className="mt-1">Seçili satırları yukarıdan seçilen mevcut ana kalemin alt bileşeni yapar.</p>
+                      </div>
+                      <div className="rounded-xl bg-amber-50 p-3">
+                        <div className="font-black text-amber-900">Seçiliden Ana Kalem</div>
+                        <p className="mt-1">Modal açar; seçili satırlardan birini ana kalem, diğerlerini alt kalem yaparsınız.</p>
+                      </div>
+                      <div className="rounded-xl bg-emerald-50 p-3">
+                        <div className="font-black text-emerald-900">Hiyerarşik Aktar</div>
+                        <p className="mt-1">Dosyada okunan ana kalem ve alt kalem ilişkisini olduğu gibi projeye taşır.</p>
+                      </div>
                     </div>
 
                     {createParentModalOpen && (
@@ -5758,6 +5877,13 @@ export default function ProjectDetailPage() {
                   </button>
                   <button
                     type="button"
+                    onClick={() => applyItemStockFilter("stock")}
+                    className={`rounded-xl px-4 py-3 text-sm font-bold ${itemStockFilter === "stock" ? "bg-emerald-600 text-white" : "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"}`}
+                  >
+                    {itemStockFilter === "stock" ? "Tüm Listeyi Göster" : "Stoktan Karşılanabilir"}
+                  </button>
+                  <button
+                    type="button"
                     disabled={purchaseRequiredItems.length === 0}
                     onClick={createRequestFromNeededItems}
                     className="rounded-xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700 disabled:bg-slate-300"
@@ -5808,7 +5934,11 @@ export default function ProjectDetailPage() {
                 <div className="mt-4 flex flex-col gap-3 rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm text-blue-900 md:flex-row md:items-center md:justify-between">
                   <div>
                     <div className="font-black">
-                      {itemStockFilter === "purchase" ? "Satınalma gerekenler filtresi aktif" : "Kritik stok filtresi aktif"}
+                      {itemStockFilter === "purchase"
+                        ? "Satınalma gerekenler filtresi aktif"
+                        : itemStockFilter === "critical"
+                          ? "Kritik stok filtresi aktif"
+                          : "Stoktan karşılanabilir filtresi aktif"}
                     </div>
                     <div className="mt-1 text-xs font-semibold">
                       {activeStockFilterCount} kalem, {visibleParentItems.length} ana ürün altında gösteriliyor. Eşleşen ana ürünlerin alt malzemeleri otomatik açıldı.
@@ -5850,7 +5980,7 @@ export default function ProjectDetailPage() {
                             title="Silmek için seç"
                             className="mt-1 h-4 w-4"
                           />
-                          {item.status === "Satınalma gerekli" && !stockInfo.isMainItem && (
+                          {(item.status === "Satınalma gerekli" || itemStockFilter === "stock") && !stockInfo.isMainItem && (
                             <input
                               type="checkbox"
                               checked={selectedPurchaseItemIds.includes(item.id)}
@@ -5987,7 +6117,7 @@ export default function ProjectDetailPage() {
                                       title="Silmek için seç"
                                       className="mt-1 h-4 w-4"
                                     />
-                                    {child.status === "Satınalma gerekli" && (
+                                    {(child.status === "Satınalma gerekli" || itemStockFilter === "stock") && (
                                       <input
                                         type="checkbox"
                                         checked={selectedPurchaseItemIds.includes(child.id)}

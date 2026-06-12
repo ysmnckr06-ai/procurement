@@ -555,6 +555,7 @@ export default function StockPage() {
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(true);
   const [selectedProduct, setSelectedProduct] = useState(null);
+  const [savedSelectedProductKey, setSavedSelectedProductKey] = useState("");
   const [expandedProjectKeys, setExpandedProjectKeys] = useState([]);
   const [productForm, setProductForm] = useState({
     brand: "",
@@ -572,6 +573,9 @@ export default function StockPage() {
   const [bulkDeletingMovements, setBulkDeletingMovements] = useState(false);
 
   useEffect(() => {
+    if (typeof window !== "undefined") {
+      setSavedSelectedProductKey(window.localStorage.getItem("stock-selected-product-key") || "");
+    }
     loadStock();
   }, []);
 
@@ -662,7 +666,6 @@ export default function StockPage() {
     setMovements(movementData || []);
     setProjectItems(projectItemData || []);
     setProjects(projectData || []);
-    setSelectedProduct(null);
     setLoading(false);
   }
 
@@ -700,6 +703,7 @@ export default function StockPage() {
 
     setMessage("Ürün kartı silindi.");
     setSelectedProduct(null);
+    if (typeof window !== "undefined") window.localStorage.removeItem("stock-selected-product-key");
     setDeleting(false);
     await loadStock();
   }
@@ -756,6 +760,7 @@ export default function StockPage() {
 
     setSelectedProductKeys([]);
     setSelectedProduct(null);
+    if (typeof window !== "undefined") window.localStorage.removeItem("stock-selected-product-key");
     setMessage(`${selectedGroups.length} ürün kartı silindi.`);
     setBulkDeletingProducts(false);
     await loadStock();
@@ -791,6 +796,9 @@ export default function StockPage() {
 
   function openProductDetail(product) {
     setSelectedProduct(product);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("stock-selected-product-key", product.groupKey || "");
+    }
     setExpandedProjectKeys([]);
     setMessage("");
   }
@@ -1074,6 +1082,14 @@ setMessage(
   }
 }
   const productGroups = useMemo(() => mergeProductGroups(products), [products]);
+
+  useEffect(() => {
+    if (selectedProduct || !savedSelectedProductKey || productGroups.length === 0) return;
+    const restored = productGroups.find((product) => product.groupKey === savedSelectedProductKey);
+    if (restored) {
+      setSelectedProduct(restored);
+    }
+  }, [productGroups, savedSelectedProductKey, selectedProduct]);
 
   const filteredProducts = useMemo(() => {
     const needle = normalizeStockText(search);
