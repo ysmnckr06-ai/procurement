@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
-const appTitle = "Proje ve Satınalma Yönetimi";
+const appTitle = "CORVIAN Business Suite";
 
 const menu = [
   { name: "Genel Bakış", icon: "🏠", href: "/dashboard" },
@@ -74,8 +74,8 @@ export default function DashboardLayout({ children }) {
           </div>
 
           <div className="min-w-0">
-            <div className="text-xl font-black leading-tight text-slate-950">Proje ve Satınalma</div>
-            <div className="text-sm font-medium text-slate-500">Yönetimi</div>
+            <div className="text-xl font-black leading-tight text-slate-950">CORVIAN</div>
+            <div className="text-sm font-medium text-slate-500">Business Suite</div>
           </div>
         </div>
 

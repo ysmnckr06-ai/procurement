@@ -1,8 +1,8 @@
 import "./globals.css";
 
 export const metadata = {
-  title: "Satınalma Yönetim Sistemi",
-  description: "Satınalma talep, teklif, rapor ve sipariş yönetimi",
+  title: "CORVIAN Business Suite",
+  description: "CORVIAN Business Suite",
 };
 
 export default function RootLayout({ children }) {

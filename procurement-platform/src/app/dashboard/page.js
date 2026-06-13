@@ -564,7 +564,7 @@ export default function DashboardPage() {
             <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
               <div>
                 <h1 className="text-4xl font-bold text-slate-900">
-                  Proje ve Satınalma Yönetimi
+                  CORVIAN Business Suite
                 </h1>
                 <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">
                   Bugünkü takip işleri, proje riskleri, sipariş teslimleri ve
