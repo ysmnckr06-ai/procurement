@@ -7,8 +7,12 @@ import { supabase } from "@/lib/supabase";
 import { calculateBaseAmount, currencyOptions, formatMoney, getBaseCurrency, getExchangeRate } from "@/lib/currency";
 import { fetchLiveTryRates, liveCurrencyOptions, liveRateFor } from "@/lib/liveCurrency";
 import { findOrCreateBusinessPartner } from "@/lib/businessPartners";
+import { hierarchyQuantityFields } from "@/lib/projectHierarchy";
 
 const statusOptions = ["Taslak", "Onaylandı", "Devam Ediyor", "Tamamlandı", "Arşivlendi", "İptal"];
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL;
+const UNCATEGORIZED_PREVIEW_CATEGORY = "Kategorisiz Ürünler";
 
 const emptyForm = {
   project_code: "",
@@ -43,6 +47,54 @@ function normalizeProjectFilter(value) {
     .replaceAll("ö", "o")
     .replaceAll("ç", "c")
     .replace(/\s+/g, " ");
+}
+
+function normalizeGroupName(value) {
+  return String(value || "")
+    .trim()
+    .toLocaleUpperCase("tr-TR")
+    .replace(/[^A-Z0-9ÇĞİÖŞÜ]/g, "");
+}
+
+function previewRowCategory(row) {
+  return row.section_name || row.category || row.parent_name || UNCATEGORIZED_PREVIEW_CATEGORY;
+}
+
+function isUncategorizedPreviewCategory(category) {
+  return normalizeProjectFilter(category) === normalizeProjectFilter(UNCATEGORIZED_PREVIEW_CATEGORY);
+}
+
+function stripPayloadFields(payload, fields) {
+  const cleanRow = (row) => Object.fromEntries(
+    Object.entries(row || {}).filter(([key]) => !fields.includes(key)),
+  );
+
+  return Array.isArray(payload) ? payload.map(cleanRow) : cleanRow(payload);
+}
+
+function parsedRowQuantity(row) {
+  return Number(row.estimated_quantity ?? row.quantity ?? 0) || 0;
+}
+
+function parsedRowTotal(row) {
+  return Number(row.estimated_total ?? row.total ?? 0) || 0;
+}
+
+function parsedRowUnitPrice(row) {
+  const quantity = parsedRowQuantity(row);
+  const directPrice = Number(row.estimated_unit_price ?? row.unit_price ?? 0) || 0;
+  if (directPrice > 0) return directPrice;
+  return quantity > 0 ? parsedRowTotal(row) / quantity : 0;
+}
+
+function sectionQuoteTotalForRows(name, rows, sections) {
+  const target = normalizeGroupName(name);
+  const sectionMatch = (sections || []).find((section) =>
+    normalizeGroupName(section.section_name) === target && Number(section.section_total || 0) > 0
+  );
+
+  if (sectionMatch) return Number(sectionMatch.section_total || 0);
+  return (rows || []).reduce((sum, row) => sum + parsedRowTotal(row), 0);
 }
 
 function nextProjectCode(projects) {
@@ -94,6 +146,8 @@ export default function ProjectsPage() {
     revisions: [],
   });
   const [form, setForm] = useState(emptyForm);
+  const [projectFiles, setProjectFiles] = useState([]);
+  const [projectFileSummary, setProjectFileSummary] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [message, setMessage] = useState("");
@@ -184,6 +238,8 @@ export default function ProjectsPage() {
 
   function openCreateForm() {
     setEditingId(null);
+    setProjectFiles([]);
+    setProjectFileSummary("");
     setForm({
       ...emptyForm,
       project_code: nextProjectCode(projects),
@@ -197,6 +253,8 @@ export default function ProjectsPage() {
 
   function openEditForm(project) {
     setEditingId(project.id);
+    setProjectFiles([]);
+    setProjectFileSummary("");
     setForm({
       ...emptyForm,
       project_code: project.project_code || "",
@@ -220,6 +278,232 @@ export default function ProjectsPage() {
 
   function updateForm(field, value) {
     setForm((prev) => ({ ...prev, [field]: value }));
+  }
+
+  function updateProjectFiles(event) {
+    const files = Array.from(event.target.files || []);
+    const allowedFiles = files.filter((file) =>
+      /\.(xlsx|xls|xlsm|pdf)$/i.test(file.name)
+    );
+    setProjectFiles(allowedFiles);
+    setProjectFileSummary(
+      allowedFiles.length > 0
+        ? `${allowedFiles.length} dosya seçildi: ${allowedFiles.map((file) => file.name).join(", ")}`
+        : "",
+    );
+  }
+
+  async function insertProjectItemsWithFallback(payload) {
+    const firstResult = await supabase
+      .from("project_items")
+      .insert(payload)
+      .select("*");
+
+    if (!firstResult.error) {
+      return { data: firstResult.data || [], error: null, usedFallback: false };
+    }
+
+    const fallbackFields = [
+      "brand",
+      "quote_unit_price",
+      "quote_total",
+      "resolved_unit_price",
+      "resolved_total",
+      "price_source",
+      "price_source_order_id",
+      "price_source_date",
+      "currency",
+      "exchange_rate",
+      "estimated_total_base",
+      "source_file",
+      "source_type",
+      "raw_item_id",
+      "item_type",
+      "product_id",
+      "received_quantity",
+      "reserved_quantity",
+      "parent_name",
+      "parent_quantity",
+      "child_quantity_total",
+      "child_quantity_per_parent",
+      "remaining_parent_quantity",
+      "produced_parent_quantity",
+      "reserved_child_quantity",
+      "consumed_child_quantity",
+      "issued_to_production_quantity",
+      "defective_quantity",
+    ];
+
+    console.warn("Project item insert full payload failed, retrying basic payload:", firstResult.error);
+
+    const fallbackResult = await supabase
+      .from("project_items")
+      .insert(stripPayloadFields(payload, fallbackFields))
+      .select("*");
+
+    return {
+      data: fallbackResult.data || [],
+      error: fallbackResult.error,
+      usedFallback: !fallbackResult.error,
+      originalError: firstResult.error,
+    };
+  }
+
+  function projectFileRowPayload(row, userId, projectId, projectPayload, parent = null, itemType = "standalone") {
+    const quantity = parsedRowQuantity(row);
+    const total = parsedRowTotal(row);
+    const unitPrice = parsedRowUnitPrice(row);
+    const currency = row.currency || projectPayload.estimated_budget_currency || projectPayload.contract_currency || getBaseCurrency(settings);
+    const exchangeRate = Number(row.exchange_rate || getExchangeRate(currency, settings) || 1);
+
+    return {
+      user_id: userId,
+      project_id: projectId,
+      parent_item_id: parent?.id || null,
+      product_code: String(row.product_code || "").trim().toUpperCase(),
+      brand: row.brand || "",
+      product_name: String(row.product_name || row.description || row.item_name || "").trim(),
+      unit: row.unit || "adet",
+      estimated_quantity: quantity,
+      estimated_unit_price: unitPrice,
+      quote_unit_price: unitPrice,
+      estimated_total: total,
+      quote_total: total,
+      currency,
+      exchange_rate: exchangeRate,
+      status: row.status || "Bekliyor",
+      note: row.note || row.source_file || previewRowCategory(row),
+      source_file: row.source_file || "",
+      source_type: row.source_type || "",
+      raw_item_id: row.raw_item_id || row.id || "",
+      item_type: itemType,
+      ...(parent ? hierarchyQuantityFields(parent, quantity) : {}),
+      updated_at: new Date().toISOString(),
+    };
+  }
+
+  async function importProjectFilesForProject(files, projectId, userId, projectPayload) {
+    if (!files.length) return { imported: 0, parents: 0, children: 0, warnings: [] };
+
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    const token = session?.access_token;
+
+    if (!token || !API_URL) {
+      return { imported: 0, parents: 0, children: 0, warnings: ["Dosya okuma için API adresi veya oturum bulunamadı."] };
+    }
+
+    const formData = new FormData();
+    files.forEach((file) => formData.append("files", file));
+
+    const response = await fetch(`${API_URL}/parse-project-items`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: formData,
+    });
+    const data = await response.json();
+    const rows = (data.rows || []).map((row, index) => ({ ...row, preview_id: row.preview_id || `new-project-preview-${index}` }));
+    const sections = data.sections || [];
+    const warnings = data.warnings || [];
+
+    if (!rows.length) {
+      return {
+        imported: 0,
+        parents: 0,
+        children: 0,
+        warnings: warnings.length ? warnings : [data.detail || "Dosyadan aktarılacak satır okunamadı."],
+      };
+    }
+
+    const groups = rows.reduce((acc, row) => {
+      const category = previewRowCategory(row);
+      acc[category] = [...(acc[category] || []), row];
+      return acc;
+    }, {});
+
+    const parentPayload = [];
+    const childGroups = [];
+    const standaloneRows = [];
+
+    Object.entries(groups).forEach(([category, groupRows]) => {
+      const parentQuantity = Number(groupRows.find((row) => Number(row.section_quantity || 0) > 0)?.section_quantity || 0);
+      const canCreateParent = !isUncategorizedPreviewCategory(category) && parentQuantity > 0;
+
+      if (!canCreateParent) {
+        standaloneRows.push(...groupRows);
+        return;
+      }
+
+      const quoteTotal = sectionQuoteTotalForRows(category, groupRows, sections);
+      parentPayload.push({
+        user_id: userId,
+        project_id: projectId,
+        parent_item_id: null,
+        product_code: "",
+        product_name: category,
+        unit: "adet",
+        estimated_quantity: parentQuantity,
+        estimated_unit_price: quoteTotal,
+        quote_unit_price: quoteTotal,
+        estimated_total: quoteTotal,
+        quote_total: quoteTotal,
+        currency: groupRows[0]?.currency || projectPayload.estimated_budget_currency || projectPayload.contract_currency || getBaseCurrency(settings),
+        exchange_rate: Number(groupRows[0]?.exchange_rate || projectPayload.estimated_budget_exchange_rate || projectPayload.contract_exchange_rate || 1),
+        status: "Bekliyor",
+        note: "Yeni proje dosyasından ana kalem grubu",
+        source_file: groupRows[0]?.source_file || "",
+        source_type: groupRows[0]?.source_type || "",
+        item_type: "main",
+        updated_at: new Date().toISOString(),
+      });
+      childGroups.push(groupRows);
+    });
+
+    let insertedParents = [];
+    let insertedChildren = [];
+    if (parentPayload.length > 0) {
+      const { data: parents, error } = await insertProjectItemsWithFallback(parentPayload);
+      if (error) throw new Error(error.message || "Ana kalemler projeye aktarılamadı.");
+      insertedParents = parents || [];
+    }
+
+    const childPayload = [];
+    childGroups.forEach((groupRows, index) => {
+      const parent = insertedParents[index];
+      if (!parent) {
+        standaloneRows.push(...groupRows);
+        return;
+      }
+      groupRows.forEach((row) => {
+        childPayload.push(projectFileRowPayload(row, userId, projectId, projectPayload, parent, "sub"));
+      });
+    });
+
+    if (childPayload.length > 0) {
+      const { data: children, error } = await insertProjectItemsWithFallback(childPayload);
+      if (error) throw new Error(error.message || "Alt kalemler projeye aktarılamadı.");
+      insertedChildren = children || [];
+    }
+
+    let insertedStandalone = [];
+    if (standaloneRows.length > 0) {
+      const standalonePayload = standaloneRows.map((row) =>
+        projectFileRowPayload(row, userId, projectId, projectPayload, null, "standalone")
+      );
+      const { data: standalone, error } = await insertProjectItemsWithFallback(standalonePayload);
+      if (error) throw new Error(error.message || "Bağımsız kalemler projeye aktarılamadı.");
+      insertedStandalone = standalone || [];
+    }
+
+    const imported = insertedParents.length + insertedChildren.length + insertedStandalone.length;
+    return {
+      imported,
+      parents: insertedParents.length,
+      children: insertedChildren.length,
+      standalone: insertedStandalone.length,
+      warnings,
+    };
   }
 
   async function saveProject(event) {
@@ -293,10 +577,31 @@ export default function ProjectsPage() {
       return;
     }
 
+    const targetProjectId = editingId || data.id;
+    let fileImportMessage = "";
+    if (projectFiles.length > 0 && targetProjectId) {
+      setMessage("Proje kaydedildi. Seçilen teklif/dosya analiz ediliyor...");
+      try {
+        const importResult = await importProjectFilesForProject(projectFiles, targetProjectId, user.id, payload);
+        fileImportMessage = importResult.imported > 0
+          ? `Dosyadan ${importResult.imported} kalem aktarıldı (${importResult.parents || 0} ana kalem, ${importResult.children || 0} alt kalem, ${importResult.standalone || 0} bağımsız kalem).`
+          : "Proje kaydedildi ancak dosyadan aktarılacak kalem bulunamadı.";
+        if (importResult.warnings?.length) {
+          fileImportMessage += ` ${importResult.warnings.slice(0, 2).join(" ")}`;
+        }
+      } catch (fileError) {
+        console.error("Yeni proje dosyası aktarımı başarısız:", fileError);
+        fileImportMessage = `Proje kaydedildi, dosya aktarımı tamamlanamadı: ${fileError.message || "Bilinmeyen hata"}. Dosyayı proje detayından tekrar yükleyebilirsiniz.`;
+      }
+    }
+
     setSaving(false);
     setShowForm(false);
     setEditingId(null);
+    setProjectFiles([]);
+    setProjectFileSummary("");
     await loadProjects();
+    if (fileImportMessage) setMessage(fileImportMessage);
     if (!editingId) router.push(`/dashboard/projeler/${data.id}`);
   }
 
@@ -465,6 +770,8 @@ export default function ProjectsPage() {
                 onClick={() => {
                   setShowForm(false);
                   setEditingId(null);
+                  setProjectFiles([]);
+                  setProjectFileSummary("");
                 }}
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-bold text-slate-600 hover:bg-slate-50"
               >
@@ -579,13 +886,48 @@ export default function ProjectsPage() {
               </label>
             </div>
 
+            <div className="mt-5 rounded-2xl border border-dashed border-blue-200 bg-blue-50/60 p-5">
+              <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                <div>
+                  <div className="text-sm font-black text-slate-900">Proje teklif/dosya yükleme</div>
+                  <p className="mt-1 text-sm font-semibold text-slate-600">
+                    Excel veya PDF dosyası seçebilirsiniz. Dosya eklenmezse proje boş olarak oluşturulur; dosya eklenirse proje kaydından sonra aynı işlemde analiz edilip malzeme listesine aktarılır.
+                  </p>
+                </div>
+                <span className="inline-flex w-fit rounded-full bg-white px-3 py-1 text-xs font-black text-blue-700">
+                  Excel / PDF
+                </span>
+              </div>
+              <label className="mt-4 block rounded-xl border border-blue-200 bg-white p-4 text-sm font-bold text-slate-700">
+                Dosya seç
+                <input
+                  type="file"
+                  multiple
+                  accept=".xlsx,.xls,.xlsm,.pdf,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                  onChange={updateProjectFiles}
+                  className="mt-3 block w-full text-sm font-semibold text-slate-700 file:mr-4 file:rounded-lg file:border-0 file:bg-blue-600 file:px-4 file:py-2 file:font-bold file:text-white hover:file:bg-blue-700"
+                />
+              </label>
+              {projectFileSummary && (
+                <div className="mt-3 rounded-xl bg-white px-4 py-3 text-sm font-semibold text-slate-700">
+                  {projectFileSummary}
+                </div>
+              )}
+            </div>
+
             <div className="mt-5 flex justify-end">
               <button
                 type="submit"
                 disabled={saving}
                 className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white hover:bg-blue-700 disabled:bg-slate-300"
               >
-                {saving ? "Kaydediliyor..." : editingId ? "Projeyi Kaydet" : "Projeyi Oluştur"}
+                {saving
+                  ? projectFiles.length > 0
+                    ? "Kaydediliyor ve dosya analiz ediliyor..."
+                    : "Kaydediliyor..."
+                  : editingId
+                    ? "Projeyi Kaydet"
+                    : "Projeyi Oluştur"}
               </button>
             </div>
           </form>
