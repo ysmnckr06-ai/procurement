@@ -5,6 +5,21 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL;
+const PRODUCT_TYPES = {
+  MAIN: "main_product",
+  COMPONENT: "component",
+};
+
+function productTypeOf(product) {
+  const categoryHint = normalizeStockText(product?.category);
+  return product?.product_type === PRODUCT_TYPES.MAIN || categoryHint === "ana urun" || categoryHint === "ana ürün"
+    ? PRODUCT_TYPES.MAIN
+    : PRODUCT_TYPES.COMPONENT;
+}
+
+function isMainProduct(product) {
+  return productTypeOf(product) === PRODUCT_TYPES.MAIN;
+}
 
 function MoneyValue({ value, currency = "TRY", tone = "text-slate-900" }) {
   const amount = new Intl.NumberFormat("tr-TR", {
@@ -155,6 +170,7 @@ function mergeProductGroups(items) {
         duplicateCount: 1,
         current_stock: Number(normalizedProduct.current_stock || 0),
         reserved_stock: Number(normalizedProduct.reserved_stock || 0),
+        product_type: productTypeOf(normalizedProduct),
       });
       return;
     }
@@ -170,6 +186,7 @@ function mergeProductGroups(items) {
       duplicateCount: existing.duplicateCount + 1,
       current_stock: Number(existing.current_stock || 0) + Number(normalizedProduct.current_stock || 0),
       reserved_stock: Number(existing.reserved_stock || 0) + Number(normalizedProduct.reserved_stock || 0),
+      product_type: isMainProduct(existing) || isMainProduct(normalizedProduct) ? PRODUCT_TYPES.MAIN : PRODUCT_TYPES.COMPONENT,
       last_supplier: normalizedProduct.last_supplier || existing.last_supplier,
       last_unit_price: Number(normalizedProduct.last_unit_price || 0) || existing.last_unit_price,
       last_currency: normalizedProduct.last_currency || existing.last_currency,
@@ -398,6 +415,31 @@ function productProjectAllocations(product, projectItems, projects, movements) {
   };
 }
 
+function mainProductProjectStats(product, projectItems, movements) {
+  if (!product) {
+    return { projectQuantity: 0, inProcess: 0, shipped: 0, remainingShipment: 0 };
+  }
+
+  const relatedItems = (projectItems || [])
+    .filter((item) => projectItemMatchesProduct(item, product) || (item.item_type === "main" && normalizeStockText(item.product_name) === normalizeStockText(product.product_name)));
+  const projectQuantity = relatedItems.reduce((sum, item) => sum + Number(item.estimated_quantity || 0), 0);
+  const inProcess = relatedItems.reduce(
+    (sum, item) => sum + Number(item.produced_parent_quantity || item.issued_to_production_quantity || 0),
+    0,
+  );
+  const shipped = (movements || [])
+    .filter((movement) => movementMatchesProduct(movement, product))
+    .filter((movement) => movement.movement_type === "out" || normalizeStockText(movement.source).includes("sevk"))
+    .reduce((sum, movement) => sum + Number(movement.quantity || 0), 0);
+
+  return {
+    projectQuantity,
+    inProcess,
+    shipped,
+    remainingShipment: Math.max(projectQuantity - shipped, 0),
+  };
+}
+
 function movementMatchesProduct(movement, product) {
   if (!product) return false;
 
@@ -567,6 +609,8 @@ export default function StockPage() {
   const [deleting, setDeleting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [bulkImporting, setBulkImporting] = useState(false);
+  const [activeProductType, setActiveProductType] = useState(PRODUCT_TYPES.COMPONENT);
+  const [stockImportType, setStockImportType] = useState(PRODUCT_TYPES.COMPONENT);
   const [selectedProductKeys, setSelectedProductKeys] = useState([]);
   const [selectedMovementIds, setSelectedMovementIds] = useState([]);
   const [bulkDeletingProducts, setBulkDeletingProducts] = useState(false);
@@ -863,6 +907,8 @@ export default function StockPage() {
 async function importStockCardsFromFiles(event) {
   const files = Array.from(event.target.files || []);
   if (files.length === 0) return;
+  const importType = stockImportType;
+  const importingMainProducts = importType === PRODUCT_TYPES.MAIN;
 
   setBulkImporting(true);
   setMessage("Depo sayımı dosyası okunuyor...");
@@ -929,11 +975,11 @@ async function importStockCardsFromFiles(event) {
           getValue(row, ["Birim", "unit"])
         ).trim() || "adet";
 
-        const countedStock = parseNumber(
+        const countedStock = importingMainProducts ? 0 : parseNumber(
           getValue(row, ["Mevcut stok", "Stok", "Miktar", "Adet", "Sayım", "Sayim"])
         );
 
-        if (!productName || countedStock <= 0) continue;
+        if (!productName || (!importingMainProducts && countedStock <= 0)) continue;
 
         const rowProduct = normalizeProductIdentity({
           product_code: productCode,
@@ -973,7 +1019,8 @@ if (!finalProduct) {
     product_name: rowProduct.product_name || productName,
     brand: rowProduct.brand || brand || "",
     unit,
-    category: "Toplu Yükleme",
+    category: importingMainProducts ? "Ana Ürün" : "Toplu Yükleme",
+    product_type: importType,
     current_stock: 0,
     reserved_stock: 0,
     min_stock: 0,
@@ -985,11 +1032,23 @@ if (!finalProduct) {
     last_movement_at: now,
   };
 
-  const { data: newProduct, error: createProductError } = await supabase
+  let { data: newProduct, error: createProductError } = await supabase
     .from("products")
     .insert(newProductPayload)
     .select("*")
     .single();
+
+  if (createProductError && String(createProductError.message || "").includes("product_type")) {
+    const fallbackPayload = { ...newProductPayload };
+    delete fallbackPayload.product_type;
+    const fallbackResult = await supabase
+      .from("products")
+      .insert(fallbackPayload)
+      .select("*")
+      .single();
+    newProduct = fallbackResult.data;
+    createProductError = fallbackResult.error;
+  }
 
   if (createProductError) {
     console.error("Yeni ürün kartı oluşturma hatası:", createProductError);
@@ -1006,6 +1065,11 @@ if (!finalProduct) {
 
 productIds = finalProduct.duplicateIds || [finalProduct.id];
 mainProductId = productIds[0];
+
+        if (importingMainProducts) {
+          processedCount += 1;
+          continue;
+        }
 
         const oldStock = Number(finalProduct.current_stock || 0);
         const difference = countedStock - oldStock;
@@ -1082,6 +1146,10 @@ setMessage(
   }
 }
   const productGroups = useMemo(() => mergeProductGroups(products), [products]);
+  const productTypeCounts = useMemo(() => ({
+    main: productGroups.filter(isMainProduct).length,
+    component: productGroups.filter((product) => !isMainProduct(product)).length,
+  }), [productGroups]);
 
   useEffect(() => {
     if (selectedProduct || !savedSelectedProductKey || productGroups.length === 0) return;
@@ -1093,9 +1161,10 @@ setMessage(
 
   const filteredProducts = useMemo(() => {
     const needle = normalizeStockText(search);
-    if (!needle) return productGroups;
+    const productsByType = productGroups.filter((product) => productTypeOf(product) === activeProductType);
+    if (!needle) return productsByType;
 
-    return productGroups.filter((product) =>
+    return productsByType.filter((product) =>
       normalizeStockText([
         product.product_code,
         product.product_name,
@@ -1104,7 +1173,7 @@ setMessage(
         product.category,
       ].join(" ")).includes(needle),
     );
-  }, [productGroups, search]);
+  }, [productGroups, search, activeProductType]);
 
   const [productPage, setProductPage] = useState(1);
   const productsPerPage = 25;
@@ -1195,7 +1264,8 @@ setMessage(
     );
   }
 
-  const stockTotals = productGroups.reduce(
+  const componentProductGroups = productGroups.filter((product) => !isMainProduct(product));
+  const stockTotals = componentProductGroups.reduce(
     (totals, product) => {
       const breakdown = stockBreakdown(product, movements);
       return {
@@ -1209,7 +1279,7 @@ setMessage(
     },
     { total: 0, available: 0, reserved: 0, production: 0, montage: 0, shipped: 0 },
   );
-  const lowStockCount = productGroups.filter(
+  const lowStockCount = componentProductGroups.filter(
     (product) => {
       const criticalLimit = stockCriticalLimit(product);
       return criticalLimit > 0 && Number(product.current_stock || 0) <= criticalLimit;
@@ -1232,6 +1302,22 @@ setMessage(
               </p>
             </div>
             <div className="flex flex-wrap gap-3">
+              <div className="inline-flex rounded-xl border border-slate-200 bg-white p-1 text-sm font-black">
+                <button
+                  type="button"
+                  onClick={() => setStockImportType(PRODUCT_TYPES.COMPONENT)}
+                  className={`rounded-lg px-3 py-2 ${stockImportType === PRODUCT_TYPES.COMPONENT ? "bg-emerald-100 text-emerald-700" : "text-slate-600"}`}
+                >
+                  Alt Ürün Excel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStockImportType(PRODUCT_TYPES.MAIN)}
+                  className={`rounded-lg px-3 py-2 ${stockImportType === PRODUCT_TYPES.MAIN ? "bg-blue-100 text-blue-700" : "text-slate-600"}`}
+                >
+                  Ana Ürün Excel
+                </button>
+              </div>
               <button
                 type="button"
                 onClick={exportProductsExcel}
@@ -1287,6 +1373,45 @@ setMessage(
             </div>
           )}
 
+          <div className="rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
+            <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveProductType(PRODUCT_TYPES.MAIN);
+                  setProductPage(1);
+                  setSelectedProduct(null);
+                }}
+                className={`rounded-xl px-5 py-4 text-left transition ${
+                  activeProductType === PRODUCT_TYPES.MAIN
+                    ? "bg-blue-600 text-white shadow-sm"
+                    : "bg-slate-50 text-slate-700 hover:bg-blue-50"
+                }`}
+              >
+                <div className="text-sm font-black">Ana Ürünler</div>
+                <div className="mt-1 text-xs font-semibold opacity-80">Nihai ürün, proje ve sevk takibi</div>
+                <div className="mt-2 text-2xl font-black">{productTypeCounts.main}</div>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveProductType(PRODUCT_TYPES.COMPONENT);
+                  setProductPage(1);
+                  setSelectedProduct(null);
+                }}
+                className={`rounded-xl px-5 py-4 text-left transition ${
+                  activeProductType === PRODUCT_TYPES.COMPONENT
+                    ? "bg-emerald-600 text-white shadow-sm"
+                    : "bg-slate-50 text-slate-700 hover:bg-emerald-50"
+                }`}
+              >
+                <div className="text-sm font-black">Alt Ürünler / Malzemeler</div>
+                <div className="mt-1 text-xs font-semibold opacity-80">Gerçek stok, rezervasyon ve satınalma takibi</div>
+                <div className="mt-2 text-2xl font-black">{productTypeCounts.component}</div>
+              </button>
+            </div>
+          </div>
+
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <input
               placeholder="Ürün, kod, kategori veya iş ortağı ara..."
@@ -1329,6 +1454,8 @@ setMessage(
                 {pagedProducts.map((product) => {
                   const breakdown = stockBreakdown(product, movements);
                   const allocation = productProjectAllocations(product, projectItems, projects, movements);
+                  const mainStats = mainProductProjectStats(product, projectItems, movements);
+                  const mainProduct = isMainProduct(product);
                   return (
                     <div
                       key={product.groupKey}
@@ -1369,6 +1496,11 @@ setMessage(
                                 Birim: {product.unit || "adet"}
                               </span>
                             </div>
+                            <div className={`mt-2 inline-flex rounded-full px-2.5 py-1 text-[11px] font-black ${
+                              mainProduct ? "bg-blue-100 text-blue-700" : "bg-emerald-100 text-emerald-700"
+                            }`}>
+                              {mainProduct ? "Ana Ürün" : "Alt Ürün / Malzeme"}
+                            </div>
                             {product.duplicateCount > 1 && (
                               <div className="mt-2 rounded-lg bg-amber-50 px-2.5 py-1 text-[11px] font-bold text-amber-700">
                                 {product.duplicateCount} kayıt birleşti. Aynı kod/açıklama için yeni kart açılmadı.
@@ -1378,20 +1510,20 @@ setMessage(
                         </div>
                         <div className="grid min-w-0 grid-cols-4 gap-2 text-xs">
                           <div className="min-w-0 rounded-xl bg-slate-50 px-3 py-2">
-                            <div className="truncate font-bold text-slate-500">Stok</div>
-                            <div className="mt-1 truncate text-sm font-black text-slate-900">{breakdown.total}</div>
+                            <div className="truncate font-bold text-slate-500">{mainProduct ? "Proje adedi" : "Stok"}</div>
+                            <div className="mt-1 truncate text-sm font-black text-slate-900">{mainProduct ? mainStats.projectQuantity : breakdown.total}</div>
                           </div>
                           <div className="min-w-0 rounded-xl bg-blue-50 px-3 py-2">
-                            <div className="truncate font-bold text-blue-700">Ayrılan</div>
-                            <div className="mt-1 truncate text-sm font-black text-blue-900">{allocation.allocatedTotal}</div>
+                            <div className="truncate font-bold text-blue-700">{mainProduct ? "İşlenen" : "Ayrılan"}</div>
+                            <div className="mt-1 truncate text-sm font-black text-blue-900">{mainProduct ? mainStats.inProcess : allocation.allocatedTotal}</div>
                           </div>
                           <div className="min-w-0 rounded-xl bg-emerald-50 px-3 py-2">
-                            <div className="truncate font-bold text-emerald-700">Boşta</div>
-                            <div className="mt-1 truncate text-sm font-black text-emerald-900">{allocation.freeStock}</div>
+                            <div className="truncate font-bold text-emerald-700">{mainProduct ? "Sevk" : "Boşta"}</div>
+                            <div className="mt-1 truncate text-sm font-black text-emerald-900">{mainProduct ? mainStats.shipped : allocation.freeStock}</div>
                           </div>
                           <div className="min-w-0 rounded-xl bg-red-50 px-3 py-2">
-                            <div className="truncate font-bold text-red-700">Eksik</div>
-                            <div className="mt-1 truncate text-sm font-black text-red-900">{allocation.missingTotal}</div>
+                            <div className="truncate font-bold text-red-700">{mainProduct ? "Kalan sevk" : "Eksik"}</div>
+                            <div className="mt-1 truncate text-sm font-black text-red-900">{mainProduct ? mainStats.remainingShipment : allocation.missingTotal}</div>
                           </div>
                         </div>
                       </div>
@@ -1435,6 +1567,8 @@ setMessage(
                   {(() => {
                     const breakdown = stockBreakdown(selectedProduct, movements);
                     const allocation = selectedProjectAllocation;
+                    const selectedMainProduct = isMainProduct(selectedProduct);
+                    const selectedMainStats = mainProductProjectStats(selectedProduct, projectItems, movements);
                     return (
                       <>
                         <div className="flex items-start justify-between gap-4">
@@ -1471,22 +1605,22 @@ setMessage(
 
                         <div className="mt-5 grid grid-cols-2 gap-3 xl:grid-cols-4">
                           <div className="rounded-xl bg-slate-50 p-4">
-                            <div className="text-xs font-bold text-slate-500">Mevcut Stok</div>
+                            <div className="text-xs font-bold text-slate-500">{selectedMainProduct ? "Projelerde Toplam Adet" : "Mevcut Stok"}</div>
                             <div className="mt-1 text-xl font-black text-slate-900">
-                              {breakdown.total} {selectedProduct.unit || "adet"}
+                              {selectedMainProduct ? selectedMainStats.projectQuantity : breakdown.total} {selectedProduct.unit || "adet"}
                             </div>
                           </div>
                           <div className="rounded-xl bg-blue-50 p-4">
-                            <div className="text-xs font-bold text-blue-700">Projeye Ayrılan</div>
-                            <div className="mt-1 text-xl font-black text-blue-900">{allocation.allocatedTotal}</div>
+                            <div className="text-xs font-bold text-blue-700">{selectedMainProduct ? "Üretimde / İşlenen" : "Projeye Ayrılan"}</div>
+                            <div className="mt-1 text-xl font-black text-blue-900">{selectedMainProduct ? selectedMainStats.inProcess : allocation.allocatedTotal}</div>
                           </div>
                           <div className="rounded-xl bg-emerald-50 p-4">
-                            <div className="text-xs font-bold text-emerald-700">Boşta Kullanılabilir</div>
-                            <div className="mt-1 text-xl font-black text-emerald-900">{allocation.freeStock}</div>
+                            <div className="text-xs font-bold text-emerald-700">{selectedMainProduct ? "Sevk Edilen" : "Boşta Kullanılabilir"}</div>
+                            <div className="mt-1 text-xl font-black text-emerald-900">{selectedMainProduct ? selectedMainStats.shipped : allocation.freeStock}</div>
                           </div>
                           <div className="rounded-xl bg-red-50 p-4">
-                            <div className="text-xs font-bold text-red-700">Alınması Gereken</div>
-                            <div className="mt-1 text-xl font-black text-red-900">{allocation.missingTotal}</div>
+                            <div className="text-xs font-bold text-red-700">{selectedMainProduct ? "Kalan Sevk" : "Alınması Gereken"}</div>
+                            <div className="mt-1 text-xl font-black text-red-900">{selectedMainProduct ? selectedMainStats.remainingShipment : allocation.missingTotal}</div>
                           </div>
                           <div className="rounded-xl bg-slate-50 p-4">
                             <div className="text-xs font-bold text-slate-500">Siparişlerden Gelen Son Fiyat</div>
