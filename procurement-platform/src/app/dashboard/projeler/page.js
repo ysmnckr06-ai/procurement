@@ -438,13 +438,6 @@ export default function ProjectsPage() {
           </button>
         </div>
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <StatCard title="Aktif Proje" value={stats.active} text="Onaylı/devam eden" />
-          <StatCard title="Tamamlanan" value={stats.completed} text="Kapanmış proje" />
-          <StatCard title="Taslak" value={stats.statusCounts.Taslak || 0} text="Henüz onaylanmadı" />
-          <StatCard title="İptal" value={stats.statusCounts.İptal || 0} text="Kapanan/iptal" />
-        </div>
-
         <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
           {["Taslak", "Onaylandı", "Devam Ediyor", "Tamamlandı", "İptal"].map((status) => (
             <div key={status} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -452,29 +445,6 @@ export default function ProjectsPage() {
               <div className="mt-2 text-2xl font-black text-slate-950">{stats.statusCounts[status] || 0}</div>
             </div>
           ))}
-        </div>
-
-        <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4 shadow-sm">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <div className="text-sm font-black text-blue-900">Canlı kur takibi</div>
-              <div className="mt-1 text-xs font-semibold text-blue-700">
-                Proje onay/kayıt kuru sabit kalır; canlı kur sadece kur farkı takibi için gösterilir.
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {liveCurrencyOptions.map((currency) => (
-                <span key={currency} className="rounded-xl bg-white px-3 py-2 text-xs font-black text-blue-900">
-                  {currency}: {liveRateFor(currency, liveRates) ? formatMoney(liveRateFor(currency, liveRates), "TRY") : "Alınamadı"}
-                </span>
-              ))}
-              {liveRates?.date && (
-                <span className="rounded-xl bg-blue-100 px-3 py-2 text-xs font-bold text-blue-800">
-                  {liveRates.date}
-                </span>
-              )}
-            </div>
-          </div>
         </div>
 
         {message && (

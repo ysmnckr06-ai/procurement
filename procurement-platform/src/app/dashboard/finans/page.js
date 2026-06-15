@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { fetchLiveTryRates, liveCurrencyOptions, liveRateFor } from "@/lib/liveCurrency";
 
 function formatMoney(value, currency = "TRY") {
   return `${new Intl.NumberFormat("tr-TR", {
@@ -54,6 +55,7 @@ export default function FinancePage() {
   const [stockMovements, setStockMovements] = useState([]);
   const [settings, setSettings] = useState({ base_currency: "TRY" });
   const [partnerFilter, setPartnerFilter] = useState("");
+  const [liveRates, setLiveRates] = useState(null);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
 
@@ -63,6 +65,9 @@ export default function FinancePage() {
       setPartnerFilter(params.get("is_ortagi") || "");
     }
     loadFinance();
+    fetchLiveTryRates()
+      .then(setLiveRates)
+      .catch(() => setLiveRates(null));
   }, []);
 
   async function loadFinance() {
@@ -276,6 +281,29 @@ export default function FinancePage() {
             {message}
           </div>
         )}
+
+        <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4 shadow-sm">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <div className="text-sm font-black text-blue-900">Canlı kur bilgisi</div>
+              <div className="mt-1 text-xs font-semibold text-blue-700">
+                Sabit kur kaydı olan proje ve siparişlerde finans hesapları kayıtlı kur/base tutarı öncelikli kullanır.
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {liveCurrencyOptions.map((currency) => (
+                <span key={currency} className="rounded-xl bg-white px-3 py-2 text-xs font-black text-blue-900">
+                  {currency}: {liveRateFor(currency, liveRates) ? formatMoney(liveRateFor(currency, liveRates), "TRY") : "Alınamadı"}
+                </span>
+              ))}
+              {liveRates?.date && (
+                <span className="rounded-xl bg-blue-100 px-3 py-2 text-xs font-bold text-blue-800">
+                  {liveRates.date}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
 
         {partnerFilter && (
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-blue-100 bg-blue-50 p-4 text-sm font-bold text-blue-800">

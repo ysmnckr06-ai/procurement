@@ -21,6 +21,8 @@ const emptyForm = {
   note: "",
   currency: "TRY",
   exchangeRate: 1,
+  rateLocked: false,
+  rateLockedAt: "",
   reportId: null,
 };
 
@@ -365,7 +367,9 @@ export default function OrdersPage() {
       items,
       totalAmount: calculateOrderTotal(items),
       currency: parsedOrder.currency || companySettings.default_currency || "TRY",
-      exchangeRate: getExchangeRate(parsedOrder.currency || companySettings.default_currency || "TRY", companySettings),
+      exchangeRate: liveRateFor(parsedOrder.currency || companySettings.default_currency || "TRY", liveRates) || getExchangeRate(parsedOrder.currency || companySettings.default_currency || "TRY", companySettings),
+      rateLocked: false,
+      rateLockedAt: "",
       note: parsedOrder.paymentTerm
         ? `Ödeme vadesi: ${parsedOrder.paymentTerm}`
         : "",
@@ -483,12 +487,19 @@ export default function OrdersPage() {
   }, [projectOrderRowsByItem, showCompletedProjectItems]);
 
   function handleChange(event) {
-    const { name, value } = event.target;
+    const { name, value, type, checked } = event.target;
+    const nextValue = type === "checkbox" ? checked : value;
     setFormData((prev) => ({
       ...prev,
-      [name]: value,
+      [name]: nextValue,
       ...(name === "currency"
-        ? { exchangeRate: getExchangeRate(value, companySettings) }
+        ? { exchangeRate: liveRateFor(value, liveRates) || getExchangeRate(value, companySettings) }
+        : {}),
+      ...(name === "rateLocked" && checked
+        ? {
+            exchangeRate: liveRateFor(prev.currency, liveRates) || prev.exchangeRate || getExchangeRate(prev.currency, companySettings),
+            rateLockedAt: new Date().toISOString(),
+          }
         : {}),
     }));
   }
@@ -580,7 +591,9 @@ export default function OrdersPage() {
       orderNo: createOrderNo(orders.length),
       orderDate: getToday(),
       currency: companySettings.default_currency || "TRY",
-      exchangeRate: getExchangeRate(companySettings.default_currency || "TRY", companySettings),
+      exchangeRate: liveRateFor(companySettings.default_currency || "TRY", liveRates) || getExchangeRate(companySettings.default_currency || "TRY", companySettings),
+      rateLocked: false,
+      rateLockedAt: "",
       note: companySettings.default_payment_term
         ? `Ödeme vadesi: ${companySettings.default_payment_term}`
         : "",
@@ -706,7 +719,9 @@ export default function OrdersPage() {
       items,
       totalAmount: calculateOrderTotal(items),
       currency: projectCurrency,
-      exchangeRate: getExchangeRate(projectCurrency, companySettings),
+      exchangeRate: liveRateFor(projectCurrency, liveRates) || getExchangeRate(projectCurrency, companySettings),
+      rateLocked: false,
+      rateLockedAt: "",
       note: `Projeye bağlı sipariş: ${selectedProject.project_code || ""} ${selectedProject.project_name || ""}`.trim(),
     });
     setEditingId(null);
@@ -733,6 +748,8 @@ export default function OrdersPage() {
       note: order.note || "",
       currency: order.currency || "TRY",
       exchangeRate: Number(order.exchange_rate || 1),
+      rateLocked: Boolean(order.rate_locked || order.exchange_rate),
+      rateLockedAt: order.rate_locked_at || order.exchange_rate_date || "",
     });
     setEditingId(order.id);
     setShowForm(true);
@@ -793,6 +810,11 @@ export default function OrdersPage() {
       order_total: orderTotal,
       exchange_rate: Number(formData.exchangeRate || getExchangeRate(formData.currency, companySettings)),
       exchange_rate_date: formData.orderDate || companySettings.exchange_rate_date || getToday(),
+      rate_locked: Boolean(formData.rateLocked),
+      rate_locked_at: formData.rateLocked ? (formData.rateLockedAt || new Date().toISOString()) : null,
+      fixed_usd_rate: formData.rateLocked ? (liveRateFor("USD", liveRates) || Number(companySettings.usd_rate || 1)) : null,
+      fixed_eur_rate: formData.rateLocked ? (liveRateFor("EUR", liveRates) || Number(companySettings.eur_rate || 1)) : null,
+      fixed_gbp_rate: formData.rateLocked ? (liveRateFor("GBP", liveRates) || Number(companySettings.gbp_rate || 1)) : null,
       base_currency: baseCurrency,
       base_amount: baseAmount,
       order_total_base: baseAmount,
@@ -817,17 +839,31 @@ export default function OrdersPage() {
       payload.status = "Kısmi Teslim";
     }
 
-    const request = editingId
+    const saveOrder = (nextPayload) => editingId
       ? supabase
           .from("orders")
-          .update(payload)
+          .update(nextPayload)
           .eq("id", editingId)
           .eq("user_id", user.id)
           .select("id")
           .single()
-      : supabase.from("orders").insert(payload).select("id").single();
+      : supabase.from("orders").insert(nextPayload).select("id").single();
 
-    const { data: savedOrder, error } = await request;
+    let { data: savedOrder, error } = await saveOrder(payload);
+
+    if (error && /rate_locked|fixed_usd_rate|fixed_eur_rate|fixed_gbp_rate/i.test(error.message || "")) {
+      const {
+        rate_locked: _rateLocked,
+        rate_locked_at: _rateLockedAt,
+        fixed_usd_rate: _fixedUsdRate,
+        fixed_eur_rate: _fixedEurRate,
+        fixed_gbp_rate: _fixedGbpRate,
+        ...fallbackPayload
+      } = payload;
+      const fallbackResult = await saveOrder(fallbackPayload);
+      savedOrder = fallbackResult.data;
+      error = fallbackResult.error;
+    }
     isSubmittingRef.current = false;
 
     if (error) {
@@ -1006,6 +1042,7 @@ export default function OrdersPage() {
               onDeleteItem={deleteOrderItem}
               onCancel={resetForm}
               onSubmit={handleSubmit}
+              liveRates={liveRates}
             />
           )}
 
@@ -1262,6 +1299,7 @@ function OrderForm({
   onDeleteItem,
   onCancel,
   onSubmit,
+  liveRates,
 }) {
   const items = useMemo(() => normalizeItems(formData.items), [formData.items]);
   const missingRequiredFields = [
@@ -1375,6 +1413,39 @@ function OrderForm({
           value={formData.exchangeRate}
           onChange={onChange}
         />
+      </div>
+
+      <div className="mt-4 rounded-2xl border border-blue-100 bg-blue-50 p-4">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <div className="text-sm font-black text-blue-900">Sipariş kuru</div>
+            <div className="mt-1 text-xs font-semibold text-blue-700">
+              Sipariş kaydedildiğinde seçili kur hesaplamalarda sabit kur olarak kullanılabilir.
+            </div>
+          </div>
+          <label className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-3 text-sm font-black text-blue-900 shadow-sm">
+            <input
+              type="checkbox"
+              name="rateLocked"
+              checked={Boolean(formData.rateLocked)}
+              onChange={onChange}
+              className="h-4 w-4"
+            />
+            Bu sipariş için kuru sabitle
+          </label>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2 text-xs font-black text-blue-900">
+          {["USD", "EUR", "GBP"].map((currency) => (
+            <span key={currency} className="rounded-xl bg-white px-3 py-2">
+              {currency}: {liveRateFor(currency, liveRates) ? formatMoney(liveRateFor(currency, liveRates), "TRY") : "Alınamadı"}
+            </span>
+          ))}
+          {formData.rateLocked && (
+            <span className="rounded-xl bg-blue-100 px-3 py-2 text-blue-800">
+              Sabitlenen kur: {Number(formData.exchangeRate || 1).toLocaleString("tr-TR")}
+            </span>
+          )}
+        </div>
       </div>
 
       <label className="mt-4 block">

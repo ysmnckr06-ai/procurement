@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import { calculateBaseAmount, currencyOptions, getBaseCurrency, getExchangeRate } from "@/lib/currency";
+import { fetchLiveTryRates, liveCurrencyOptions, liveRateFor, rateDiffPercent } from "@/lib/liveCurrency";
 import {
   buildComponentConsumptionRows,
   componentRelationForItem,
@@ -259,6 +260,7 @@ export default function ProjectDetailPage() {
   const [allOrders, setAllOrders] = useState([]);
   const [stockMovements, setStockMovements] = useState([]);
   const [companySettings, setCompanySettings] = useState({ default_currency: "TRY", base_currency: "TRY" });
+  const [liveRates, setLiveRates] = useState(null);
   const [activeTab, setActiveTab] = useState("Genel Özet");
   const [itemForm, setItemForm] = useState(emptyItem);
   const [paymentForm, setPaymentForm] = useState(emptyPayment);
@@ -417,6 +419,12 @@ export default function ProjectDetailPage() {
     loadProject();
   }, [projectId]);
 
+  useEffect(() => {
+    fetchLiveTryRates()
+      .then(setLiveRates)
+      .catch(() => setLiveRates(null));
+  }, []);
+
   async function getUserOrRedirect() {
     const {
       data: { user },
@@ -428,6 +436,59 @@ export default function ProjectDetailPage() {
     }
 
     return user;
+  }
+
+  async function lockProjectRates() {
+    if (!project) return;
+    const user = await getUserOrRedirect();
+    if (!user) return;
+
+    const contractCurrency = project.contract_currency || companySettings.default_currency || "TRY";
+    const budgetCurrency = project.estimated_budget_currency || contractCurrency;
+    const contractRate = liveRateFor(contractCurrency, liveRates) || Number(project.contract_exchange_rate || getExchangeRate(contractCurrency, companySettings));
+    const budgetRate = liveRateFor(budgetCurrency, liveRates) || Number(project.estimated_budget_exchange_rate || getExchangeRate(budgetCurrency, companySettings));
+    const now = new Date().toISOString();
+    const payload = {
+      contract_exchange_rate: contractRate || 1,
+      estimated_budget_exchange_rate: budgetRate || 1,
+      rate_locked: true,
+      rate_locked_at: now,
+      fixed_usd_rate: liveRateFor("USD", liveRates) || Number(companySettings.usd_rate || 1),
+      fixed_eur_rate: liveRateFor("EUR", liveRates) || Number(companySettings.eur_rate || 1),
+      fixed_gbp_rate: liveRateFor("GBP", liveRates) || Number(companySettings.gbp_rate || 1),
+      updated_at: now,
+    };
+
+    let { error } = await supabase
+      .from("projects")
+      .update(payload)
+      .eq("id", projectId)
+      .eq("user_id", user.id);
+
+    if (error && /rate_locked|fixed_usd_rate|fixed_eur_rate|fixed_gbp_rate/i.test(error.message || "")) {
+      const {
+        rate_locked: _rateLocked,
+        rate_locked_at: _rateLockedAt,
+        fixed_usd_rate: _fixedUsdRate,
+        fixed_eur_rate: _fixedEurRate,
+        fixed_gbp_rate: _fixedGbpRate,
+        ...fallbackPayload
+      } = payload;
+      const fallbackResult = await supabase
+        .from("projects")
+        .update(fallbackPayload)
+        .eq("id", projectId)
+        .eq("user_id", user.id);
+      error = fallbackResult.error;
+    }
+
+    if (error) {
+      setMessage(error.message || "Proje kuru sabitlenemedi.");
+      return;
+    }
+
+    setMessage("Proje kuru sabitlendi.");
+    await loadProject();
   }
 
   async function loadProject() {
@@ -4700,6 +4761,58 @@ export default function ProjectDetailPage() {
             <div className="mt-1">{productCardWarning}</div>
           </div>
         )}
+
+        <section className="rounded-2xl border border-blue-100 bg-blue-50 p-4 shadow-sm">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <div className="text-sm font-black text-blue-900">Canlı kur bilgisi</div>
+              <p className="mt-1 text-xs font-semibold text-blue-700">
+                Proje kuru sabitlenirse bütçe ve finans takibinde kayıtlı kur esas alınır.
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {liveCurrencyOptions.map((currency) => (
+                  <span key={currency} className="rounded-xl bg-white px-3 py-2 text-xs font-black text-blue-900">
+                    {currency}: {liveRateFor(currency, liveRates) ? formatMoney(liveRateFor(currency, liveRates), "TRY") : "Alınamadı"}
+                  </span>
+                ))}
+                {liveRates?.date && (
+                  <span className="rounded-xl bg-blue-100 px-3 py-2 text-xs font-bold text-blue-800">
+                    {liveRates.date}
+                  </span>
+                )}
+              </div>
+            </div>
+            <div className="grid min-w-0 grid-cols-1 gap-2 text-xs font-bold text-slate-700 sm:grid-cols-2 lg:min-w-[420px]">
+              {[
+                ["Sözleşme", project?.contract_currency, project?.contract_exchange_rate],
+                ["Bütçe", project?.estimated_budget_currency, project?.estimated_budget_exchange_rate],
+              ].map(([label, currency, savedRate]) => {
+                const liveRate = liveRateFor(currency, liveRates);
+                return (
+                  <div key={label} className="rounded-xl bg-white p-3">
+                    <div className="font-black text-slate-950">{label}: {currency || "TRY"}</div>
+                    <div className="mt-1">Kayıt kuru: {Number(savedRate || 1).toLocaleString("tr-TR")}</div>
+                    <div className="mt-1">
+                      Canlı: {liveRate ? liveRate.toLocaleString("tr-TR", { maximumFractionDigits: 4 }) : "-"}
+                    </div>
+                    {liveRate && Number(savedRate || 0) > 0 && (
+                      <div className="mt-1 text-blue-700">
+                        Fark %{rateDiffPercent(savedRate, liveRate).toFixed(1)}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              <button
+                type="button"
+                onClick={lockProjectRates}
+                className="rounded-xl bg-blue-600 px-4 py-3 text-sm font-black text-white hover:bg-blue-700 sm:col-span-2"
+              >
+                Proje Kuru Sabitle
+              </button>
+            </div>
+          </div>
+        </section>
 
         <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
