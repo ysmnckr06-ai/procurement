@@ -20,16 +20,26 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL;
 const UNCATEGORIZED_PREVIEW_CATEGORY = "Kategorisiz Ürünler";
 
 const tabs = [
+  "Genel Özet",
   "Malzeme Listesi",
+  "İhtiyaç Analizi",
   "Talepler",
-  "Teklifler",
   "Siparişler",
-  "Stok Hareketleri",
   "Ödemeler",
   "Revizyonlar",
   "Raporlar",
-  "Genel Özet",
 ];
+
+const tabLabels = {
+  "Genel Özet": "Genel Bakış",
+  "Malzeme Listesi": "Ana Ürünler",
+  "İhtiyaç Analizi": "İhtiyaç Analizi",
+  Talepler: "Satınalma Listeleri",
+  Siparişler: "Siparişler",
+  Ödemeler: "Ödemeler",
+  Revizyonlar: "Revizyonlar",
+  Raporlar: "Raporlar",
+};
 
 const paymentTypes = ["Avans", "Ara ödeme", "Hakediş", "Kapanış ödemesi"];
 
@@ -4753,7 +4763,7 @@ export default function ProjectDetailPage() {
                   activeTab === tab ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-100"
                 }`}
               >
-                {tab}
+                {tabLabels[tab] || tab}
               </button>
             ))}
           </div>
@@ -5065,6 +5075,110 @@ export default function ProjectDetailPage() {
             </div>
           </section>
         )}
+        {activeTab === "İhtiyaç Analizi" && (
+          <section className="space-y-6">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              <SummaryCard
+                title="Ana Ürün"
+                value={parentItems.length}
+                text="Projeye bağlı ana kalem"
+                tone="blue"
+              />
+              <SummaryCard
+                title="Stoktan Karşılanabilir"
+                value={stockCoverableItems.length}
+                text="Stok düşmeden ayrılabilecek"
+                tone="green"
+              />
+              <SummaryCard
+                title="Satınalma Gerekli"
+                value={purchaseRequiredItems.length}
+                text="Havuza gönderilecek eksik"
+                tone="red"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+              <div className="rounded-2xl border border-emerald-100 bg-white p-5 shadow-sm">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <h2 className="text-xl font-black text-slate-900">Stoktan Karşılanabilir</h2>
+                    <p className="mt-1 text-sm text-slate-500">
+                      Bu liste stokları düşmez; sadece kullanılabilir stokla eşleşen kalemleri gösterir.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => applyItemStockFilter("stock")}
+                    className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700"
+                  >
+                    Ana Ürünlerde Göster
+                  </button>
+                </div>
+                <div className="mt-5 divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-100">
+                  {stockCoverableItems.slice(0, 8).map((item) => {
+                    const info = stockInfoForItem(item);
+                    return (
+                      <div key={item.id} className="grid grid-cols-[minmax(0,1fr)_auto] gap-4 p-4 text-sm">
+                        <div className="min-w-0">
+                          <div className="truncate font-black text-slate-900" title={item.product_name}>{item.product_name}</div>
+                          <div className="mt-1 text-xs font-semibold text-slate-500">{item.product_code || "-"} · {item.unit || "adet"}</div>
+                        </div>
+                        <div className="text-right text-xs font-bold text-emerald-700">
+                          <div>Stok: {formatQuantity(info.stockQuantity)}</div>
+                          <div>Açık: {formatQuantity(info.openQuantity)}</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {stockCoverableItems.length === 0 && (
+                    <div className="p-6 text-center text-sm font-semibold text-slate-500">Stoktan karşılanabilir kalem yok.</div>
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-red-100 bg-white p-5 shadow-sm">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <h2 className="text-xl font-black text-slate-900">Satınalma Gerekli</h2>
+                    <p className="mt-1 text-sm text-slate-500">
+                      Eksik kalemler satınalma havuzuna veya talep listesine aktarılacak adaylardır.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={purchaseRequiredItems.length === 0}
+                    onClick={createRequestFromNeededItems}
+                    className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 disabled:bg-slate-300"
+                  >
+                    Talep Oluştur
+                  </button>
+                </div>
+                <div className="mt-5 divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-100">
+                  {purchaseRequiredItems.slice(0, 8).map((item) => {
+                    const info = stockInfoForItem(item);
+                    return (
+                      <div key={item.id} className="grid grid-cols-[minmax(0,1fr)_auto] gap-4 p-4 text-sm">
+                        <div className="min-w-0">
+                          <div className="truncate font-black text-slate-900" title={item.product_name}>{item.product_name}</div>
+                          <div className="mt-1 text-xs font-semibold text-slate-500">{item.product_code || "-"} · {item.unit || "adet"}</div>
+                        </div>
+                        <div className="text-right text-xs font-bold text-red-700">
+                          <div>Gerekli: {formatQuantity(info.requiredQuantity)}</div>
+                          <div>Stok: {formatQuantity(info.stockQuantity)}</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {purchaseRequiredItems.length === 0 && (
+                    <div className="p-6 text-center text-sm font-semibold text-slate-500">Satınalma gerektiren kalem yok.</div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
+
         {activeTab === "Malzeme Listesi" && (
           <section className="space-y-6">
             <div className="grid grid-cols-1 gap-6 xl:grid-cols-1">
@@ -5855,7 +5969,7 @@ export default function ProjectDetailPage() {
             <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                 <div>
-                  <h2 className="text-xl font-bold text-slate-900">Malzeme Listesi</h2>
+                  <h2 className="text-xl font-bold text-slate-900">Ana Ürünler</h2>
                   <p className="mt-1 text-sm text-slate-500">
                     Toplam: {formatMoney(totals.itemEstimate, projectCurrencyForDisplay())} · Satınalma gerekli: {purchaseRequiredItems.length} · Kritik stok: {criticalStockItems.length}
                   </p>

@@ -729,7 +729,7 @@ const loadCompanySettings = async () => {
                 Eksik adet kabul et
               </label>
 
-              <div className="mt-8 border-t border-slate-200 pt-6">
+              <div className="hidden">
                 <h3 className="text-xl font-bold text-slate-800">
                   Finansman Profili
                 </h3>
@@ -808,7 +808,7 @@ const loadCompanySettings = async () => {
                 </div>
               </div>
 
-              <div className="mt-8 border-t border-slate-200 pt-6">
+              <div className="hidden">
                 <h3 className="text-xl font-bold text-slate-800">
                   TCO Risk Analizi
                 </h3>
