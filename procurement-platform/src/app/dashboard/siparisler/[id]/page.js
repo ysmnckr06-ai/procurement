@@ -654,6 +654,7 @@ export default function OrderDetailPage() {
     const item = items[index];
     const partner = await findOrCreateBusinessPartner(supabase, user.id, {
       name: order.partner_name || order.supplier_name,
+      allowCreate: false,
       partnerType: order.partner_type || "Tedarikçi",
     });
     const input = receiptInputs[index] || {};

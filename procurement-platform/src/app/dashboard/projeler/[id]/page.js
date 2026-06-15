@@ -1068,6 +1068,19 @@ export default function ProjectDetailPage() {
       }
 
       if (!product) {
+        failedItems.push(item);
+        console.warn("Ürün kartı otomatik oluşturulmadı. Kullanıcı onayı gerekli:", {
+          projectId,
+          itemId: item?.id || null,
+          itemName,
+          itemCode: item?.product_code || "",
+          brand: item?.brand || "",
+          unit: item?.unit || "",
+        });
+        continue;
+      }
+
+      if (!product) {
         const productPayload = {
             user_id: userId,
             product_code: safeProductCode,
@@ -1172,7 +1185,7 @@ export default function ProjectDetailPage() {
     }
 
     if (failedItems.length > 0) {
-      const warning = `${failedItems.length} ürün kartı oluşturulamadı. Detay için konsolu kontrol edin.`;
+      const warning = `${failedItems.length} ürün stok kartlarında bulunamadı. Yeni ürün kartı oluşturmak için Stok sayfasından onaylı kayıt açın.`;
       setProductCardWarning(warning);
       setMessage((current) => current || warning);
     } else {

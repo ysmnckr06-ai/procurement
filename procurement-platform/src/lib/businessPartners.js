@@ -177,6 +177,7 @@ export async function findOrCreateBusinessPartner(
     city = "",
     address = "",
     notes = "",
+    allowCreate = true,
   } = {},
 ) {
   const cleanName = String(name || "").trim().replace(/\s+/g, " ");
@@ -217,6 +218,10 @@ export async function findOrCreateBusinessPartner(
     }
 
     return normalizePartnerRecord({ ...existing, ...patch });
+  }
+
+  if (!allowCreate) {
+    return null;
   }
 
   const payload = {
@@ -382,6 +387,7 @@ export async function backfillProjectCustomerPartners(supabase, userId, projects
     } else {
       partner = await findOrCreateBusinessPartner(supabase, userId, {
         name: customerName,
+        allowCreate: false,
         partnerType: "Müşteri",
       });
       if (partner) createdCustomers += 1;

@@ -410,6 +410,7 @@ const loadCompanySettings = async () => {
               findOrCreateBusinessPartner(supabase, user.id, {
                 name,
                 partnerType: "Tedarikçi",
+                allowCreate: false,
               }),
             ),
           );

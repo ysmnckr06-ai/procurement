@@ -782,10 +782,24 @@ export default function OrdersPage() {
     }
 
     const items = normalizeItems(formData.items);
-    const partner = await findOrCreateBusinessPartner(supabase, user.id, {
+    let partner = await findOrCreateBusinessPartner(supabase, user.id, {
       name: formData.company,
+      allowCreate: false,
       partnerType: "Tedarikçi",
     });
+    if (!partner && formData.company?.trim()) {
+      const shouldCreatePartner = window.confirm(
+        "Bu firma iş ortakları arasında bulunamadı. Yeni iş ortağı oluşturmak ister misiniz?",
+      );
+      if (shouldCreatePartner) {
+        partner = await findOrCreateBusinessPartner(supabase, user.id, {
+          name: formData.company,
+          partnerType: "Tedarikçi",
+          allowCreate: true,
+        });
+      }
+    }
+
     const orderTotal = Number(formData.totalAmount || calculateOrderTotal(items));
     const baseCurrency = getBaseCurrency(companySettings);
     const baseAmount = calculateBaseAmount(orderTotal, formData.currency, companySettings, formData.exchangeRate);

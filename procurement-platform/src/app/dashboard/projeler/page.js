@@ -377,6 +377,7 @@ export default function ProjectsPage() {
       source_type: row.source_type || "",
       raw_item_id: row.raw_item_id || row.id || "",
       item_type: itemType,
+      product_id: row.product_id || null,
       ...(parent ? hierarchyQuantityFields(parent, quantity) : {}),
       updated_at: new Date().toISOString(),
     };
@@ -403,7 +404,34 @@ export default function ProjectsPage() {
       body: formData,
     });
     const data = await response.json();
-    const rows = (data.rows || []).map((row, index) => ({ ...row, preview_id: row.preview_id || `new-project-preview-${index}` }));
+    const { data: productRows } = await supabase
+      .from("products")
+      .select("id,product_code,product_name,brand,unit,category")
+      .eq("user_id", userId);
+    const productByCode = new Map(
+      (productRows || [])
+        .filter((product) => product.product_code)
+        .map((product) => [String(product.product_code).trim().toUpperCase().replace(/\s+/g, ""), product]),
+    );
+    const missingProductCodes = new Set();
+    const rows = (data.rows || []).map((row, index) => {
+      const productCode = String(row.product_code || "").trim().toUpperCase();
+      const product = productByCode.get(productCode.replace(/\s+/g, ""));
+      if (product) {
+        return {
+          ...row,
+          product_id: product.id,
+          product_code: product.product_code || productCode,
+          product_name: product.product_name || row.product_name,
+          brand: product.brand || row.brand || "",
+          unit: product.unit || row.unit || "adet",
+          category: product.category || row.category || "",
+          preview_id: row.preview_id || `new-project-preview-${index}`,
+        };
+      }
+      if (productCode) missingProductCodes.add(productCode);
+      return { ...row, preview_id: row.preview_id || `new-project-preview-${index}` };
+    });
     const sections = data.sections || [];
     const warnings = data.warnings || [];
 
@@ -502,7 +530,12 @@ export default function ProjectsPage() {
       parents: insertedParents.length,
       children: insertedChildren.length,
       standalone: insertedStandalone.length,
-      warnings,
+      warnings: [
+        ...warnings,
+        ...(missingProductCodes.size > 0
+          ? [`${missingProductCodes.size} ürün kodu stok kartlarında bulunamadı; ürün kartı otomatik oluşturulmadı.`]
+          : []),
+      ],
     };
   }
 
@@ -520,10 +553,24 @@ export default function ProjectsPage() {
       return;
     }
 
-    const customerPartner = await findOrCreateBusinessPartner(supabase, user.id, {
+    let customerPartner = await findOrCreateBusinessPartner(supabase, user.id, {
       name: form.customer_name,
+      allowCreate: false,
       partnerType: "Müşteri",
     });
+
+    if (!customerPartner && form.customer_name?.trim()) {
+      const shouldCreatePartner = window.confirm(
+        "Bu firma iş ortakları arasında bulunamadı. Yeni iş ortağı oluşturmak ister misiniz?",
+      );
+      if (shouldCreatePartner) {
+        customerPartner = await findOrCreateBusinessPartner(supabase, user.id, {
+          name: form.customer_name,
+          partnerType: "Müşteri",
+          allowCreate: true,
+        });
+      }
+    }
 
     const payload = {
       user_id: user.id,
