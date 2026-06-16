@@ -982,7 +982,11 @@ export default function ProjectDetailPage() {
 
     const rowsToCreate = uniqueMissingProductItems(targetItems.map((item) => item.sourceItem || item), products);
     if (rowsToCreate.length === 0) {
-      updateMissingProductWarning([], products);
+      const remainingItems = uniqueMissingProductItems(
+        missingProductCardItems.map((item) => item.sourceItem || item),
+        products,
+      );
+      updateMissingProductWarning(remainingItems.map((item) => item.sourceItem || item), products);
       return;
     }
 
@@ -990,6 +994,7 @@ export default function ProjectDetailPage() {
     const createdProducts = [];
     const linkedProjectItems = [];
     const failedRows = [];
+    const targetKeys = new Set(rowsToCreate.map((item) => item.key));
     const now = new Date().toISOString();
 
     for (const missingItem of rowsToCreate) {
@@ -1062,7 +1067,11 @@ export default function ProjectDetailPage() {
       setItems((prev) => prev.map((item) => linkedById.get(item.id) || item));
     }
 
-    const failedMissingItems = updateMissingProductWarning(failedRows, [...products, ...createdProducts]);
+    const failedKeys = new Set(uniqueMissingProductItems(failedRows, [...products, ...createdProducts]).map((item) => item.key));
+    const remainingRows = missingProductCardItems
+      .filter((item) => !targetKeys.has(item.key) || failedKeys.has(item.key))
+      .map((item) => item.sourceItem || item);
+    const failedMissingItems = updateMissingProductWarning(remainingRows, [...products, ...createdProducts]);
     setCreatingMissingProducts(false);
     setMessage(
       failedMissingItems.length > 0
