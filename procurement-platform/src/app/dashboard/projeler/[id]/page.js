@@ -976,7 +976,7 @@ export default function ProjectDetailPage() {
     setMessage(`${item.product_name} talep listesi seçimine eklendi.`);
   }
 
-  async function createProductCardsFromMissing(targetItems) {
+  async function createProductCardsFromMissing(targetItems, options = {}) {
     const user = await getUserOrRedirect();
     if (!user) return;
 
@@ -995,6 +995,7 @@ export default function ProjectDetailPage() {
     const linkedProjectItems = [];
     const failedRows = [];
     const targetKeys = new Set(rowsToCreate.map((item) => item.key));
+    const createAsMainProduct = options.productType === "main_product";
     const now = new Date().toISOString();
 
     for (const missingItem of rowsToCreate) {
@@ -1013,7 +1014,8 @@ export default function ProjectDetailPage() {
         last_unit_price: 0,
         manual_unit_price: 0,
         last_currency: safeCurrency,
-        category: projectItemCategory(sourceItem),
+        product_type: createAsMainProduct ? "main_product" : "component",
+        category: createAsMainProduct ? "Ana Ürün" : projectItemCategory(sourceItem),
         source: "Proje malzeme listesi",
         notes: `Proje: ${project?.project_code || projectId}`,
       };
@@ -1041,9 +1043,20 @@ export default function ProjectDetailPage() {
       }
 
       const idsToLink = missingItem.projectItemIds?.length ? missingItem.projectItemIds : [sourceItem.id].filter(Boolean);
+      const projectItemUpdatePayload = {
+        product_id: product.id,
+        updated_at: now,
+      };
+
+      if (createAsMainProduct) {
+        projectItemUpdatePayload.item_type = "main";
+        projectItemUpdatePayload.parent_item_id = null;
+        projectItemUpdatePayload.status = sourceItem.status || "Bekliyor";
+      }
+
       const { data: updatedItems, error: updateError } = await supabase
         .from("project_items")
-        .update({ product_id: product.id, updated_at: now })
+        .update(projectItemUpdatePayload)
         .in("id", idsToLink)
         .eq("project_id", projectId)
         .eq("user_id", user.id)
@@ -1188,6 +1201,7 @@ export default function ProjectDetailPage() {
       "last_movement_at",
       "source",
       "notes",
+      "product_type",
     ];
 
     console.warn("Product insert full payload failed, retrying basic payload:", {
@@ -2145,7 +2159,7 @@ export default function ProjectDetailPage() {
   }
 
   function toggleProjectItemSelection(itemId) {
-    setSelectedProjectItemIds(() => {
+    setSelectedProjectItemIds((prev) => {
       if (prev.includes(itemId)) {
         return prev.filter((id) => id !== itemId);
       }
@@ -4982,18 +4996,19 @@ export default function ProjectDetailPage() {
                   disabled={creatingMissingProducts || selectedMissingProductKeys.length === 0}
                   onClick={() => createProductCardsFromMissing(
                     missingProductCardItems.filter((item) => selectedMissingProductKeys.includes(item.key)),
+                    { productType: "main_product" },
                   )}
                   className="rounded-lg bg-red-600 px-3 py-2 text-xs font-black text-white hover:bg-red-700 disabled:bg-slate-300"
                 >
-                  Seçilenleri stok kartı olarak oluştur
+                  Seçilenleri ana ürün olarak ekle
                 </button>
                 <button
                   type="button"
                   disabled={creatingMissingProducts || missingProductCardItems.length === 0}
-                  onClick={() => createProductCardsFromMissing(missingProductCardItems)}
+                  onClick={() => createProductCardsFromMissing(missingProductCardItems, { productType: "main_product" })}
                   className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-black text-white hover:bg-slate-800 disabled:bg-slate-300"
                 >
-                  Tüm eksikleri stok kartı olarak oluştur
+                  Tüm eksikleri ana ürün olarak ekle
                 </button>
               </div>
             </div>
@@ -5045,10 +5060,10 @@ export default function ProjectDetailPage() {
                             <button
                               type="button"
                               disabled={creatingMissingProducts}
-                              onClick={() => createProductCardsFromMissing([item])}
+                              onClick={() => createProductCardsFromMissing([item], { productType: "main_product" })}
                               className="rounded-lg bg-blue-50 px-3 py-2 text-[11px] font-black text-blue-700 hover:bg-blue-100 disabled:bg-slate-100 disabled:text-slate-400"
                             >
-                              Stok kartı aç
+                              Ana ürün olarak ekle
                             </button>
                             <button
                               type="button"
@@ -5608,6 +5623,7 @@ export default function ProjectDetailPage() {
         {activeTab === "Malzeme Listesi" && (
           <section className="space-y-6">
             <div className="grid grid-cols-1 gap-6 xl:grid-cols-1">
+              {(items.length === 0 || previewRows.length > 0 || isParsing) && (
               <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
                 <h2 className="text-xl font-bold text-slate-900">Excel / PDF ile Ürünleri Yükle</h2>
                 <p className="mt-2 text-sm text-slate-500">Projeye sadece Excel veya PDF malzeme listesi yüklenir. Okunan satırlar önce önizlemeye alınır, kontrol ettikten sonra projeye aktarılır.</p>
@@ -6390,6 +6406,7 @@ export default function ProjectDetailPage() {
                   </div>
                 )}
               </div>
+              )}
             </div>
 
             <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
