@@ -6,7 +6,7 @@ export function rateFromSettings(currency, settings = {}) {
 }
 
 export async function fetchLiveTryRates() {
-  const response = await fetch("https://api.frankfurter.app/latest?from=TRY&to=USD,EUR,GBP", {
+  const response = await fetch("/api/live-rates", {
     cache: "no-store",
   });
 
@@ -14,20 +14,7 @@ export async function fetchLiveTryRates() {
     throw new Error("Canlı kur bilgisi alınamadı.");
   }
 
-  const data = await response.json();
-  const rates = { TRY: 1 };
-  liveCurrencyOptions.forEach((currency) => {
-    const tryToCurrency = Number(data.rates?.[currency] || 0);
-    if (tryToCurrency > 0) {
-      rates[currency] = 1 / tryToCurrency;
-    }
-  });
-
-  return {
-    date: data.date || new Date().toISOString().slice(0, 10),
-    source: "Frankfurter / ECB",
-    rates,
-  };
+  return response.json();
 }
 
 export function liveRateFor(currency, liveRates) {

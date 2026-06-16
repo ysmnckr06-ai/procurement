@@ -411,6 +411,20 @@ export default function ProjectDetailPage() {
     );
   }
 
+  function ratesFromCompanySettings() {
+    return {
+      date: "Kayıtlı kur",
+      source: "Ayarlar",
+      fallback: true,
+      rates: {
+        TRY: 1,
+        USD: Number(companySettings.usd_rate || 0),
+        EUR: Number(companySettings.eur_rate || 0),
+        GBP: Number(companySettings.gbp_rate || 0),
+      },
+    };
+  }
+
   useEffect(() => {
     if (typeof window !== "undefined" && projectId) {
       try {
@@ -426,8 +440,8 @@ export default function ProjectDetailPage() {
   useEffect(() => {
     fetchLiveTryRates()
       .then(setLiveRates)
-      .catch(() => setLiveRates(null));
-  }, []);
+      .catch(() => setLiveRates(ratesFromCompanySettings()));
+  }, [companySettings.usd_rate, companySettings.eur_rate, companySettings.gbp_rate]);
 
   async function getUserOrRedirect() {
     const {
@@ -4480,6 +4494,10 @@ export default function ProjectDetailPage() {
     return items.filter((item) => stockInfoForItem(item).needsPurchase);
   }, [items, products, childItemsByParent]);
 
+  const purchaseRequiredQuantity = useMemo(() => {
+    return purchaseRequiredItems.reduce((sum, item) => sum + Number(stockInfoForItem(item).requiredQuantity || 0), 0);
+  }, [purchaseRequiredItems, products, childItemsByParent]);
+
   const criticalStockItems = useMemo(() => {
     return items.filter((item) => stockInfoForItem(item).isCritical);
   }, [items, products, childItemsByParent]);
@@ -4722,8 +4740,11 @@ export default function ProjectDetailPage() {
     if (projectKpis.openOrders > 0) {
       warnings.push({ tone: "red", text: `${projectKpis.openOrders} adet acik siparis bulunmaktadir.` });
     }
+    if (purchaseRequiredQuantity > 0) {
+      warnings.push({ tone: "red", text: `Eksik malzeme toplamı: ${formatQuantity(purchaseRequiredQuantity)} adet.` });
+    }
     if (criticalStockItems.length > 0) {
-      warnings.push({ tone: "orange", text: `${criticalStockItems.length} adet kritik stok seviyesi uyarisi.` });
+      warnings.push({ tone: "orange", text: `${criticalStockItems.length} kalemde kritik stok uyarısı var.` });
     }
     if (totals.budgetVariance > 0) {
       warnings.push({ tone: "amber", text: `${formatMoney(totals.budgetVariance, projectCurrencyForDisplay())} bütçe aşımı riski tespit edildi.` });
@@ -4745,7 +4766,7 @@ export default function ProjectDetailPage() {
     }
 
     return warnings;
-  }, [criticalStockItems.length, projectKpis.openOrders, projectOrders, totals.budgetVariance]);
+  }, [criticalStockItems.length, projectKpis.openOrders, projectOrders, purchaseRequiredQuantity, totals.budgetVariance]);
 
   function overviewWarningClass(tone) {
     const classes = {
@@ -5113,6 +5134,11 @@ export default function ProjectDetailPage() {
                     {liveRates.date}
                   </span>
                 )}
+                {liveRates?.source && (
+                  <span className={`rounded-xl px-3 py-2 text-xs font-bold ${liveRates.fallback ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"}`}>
+                    {liveRates.fallback ? "Kayıtlı kur kullanılıyor" : liveRates.source}
+                  </span>
+                )}
               </div>
             </div>
             <div className="grid min-w-0 grid-cols-1 gap-2 text-xs font-bold text-slate-700 sm:grid-cols-2 lg:min-w-[420px]">
@@ -5257,59 +5283,24 @@ export default function ProjectDetailPage() {
 
               <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
                 <h2 className="text-xl font-black text-slate-900">Finans Özeti</h2>
-                <div className="mt-6 overflow-hidden rounded-xl border border-slate-100">
-                  <div className="border-b border-slate-100 p-4">
-                    <div className="text-xs font-bold text-slate-500">Sözleşme Bedeli</div>
-                    <div className="mt-1 text-xl font-black text-slate-950">{formatMoney(totals.contract, projectCurrencyForDisplay())}</div>
-                  </div>
-                  <div className="border-b border-slate-100 p-4">
-                    <div className="text-xs font-bold text-slate-500">Tahmini Maliyet</div>
-                    <div className="mt-1 text-xl font-black text-slate-950">{formatMoney(totals.estimatedBudget, projectCurrencyForDisplay())}</div>
-                  </div>
-                  <div className="border-b border-slate-100 p-4">
-                    <div className="text-xs font-bold text-slate-500">Gerçekleşen Maliyet</div>
-                    <div className="mt-1 text-xl font-black text-slate-950">{formatMoney(totals.actualCost, projectCurrencyForDisplay())}</div>
-                  </div>
-                  <div className="border-b border-slate-100 p-4">
-                    <div className="text-xs font-bold text-slate-500">Tahsil Edilen</div>
-                    <div className="mt-1 text-xl font-black text-emerald-700">{formatMoney(totals.paidTotal, projectCurrencyForDisplay())}</div>
-                  </div>
-                  <div className="border-b border-slate-100 p-4">
-                    <div className="text-xs font-bold text-slate-500">Kalan Tahsilat</div>
-                    <div className="mt-1 text-xl font-black text-blue-700">{formatMoney(totals.remainingCollection, projectCurrencyForDisplay())}</div>
-                  </div>
-                  <div className="border-b border-slate-100 p-4">
-                    <div className="text-xs font-bold text-slate-500">Malzeme Maliyeti</div>
-                    <div className="mt-1 text-xl font-black text-slate-950">{formatMoney(totals.materialCost, projectCurrencyForDisplay())}</div>
-                  </div>
-                  <div className="border-b border-slate-100 p-4">
-                    <div className="text-xs font-bold text-slate-500">Sipariş Toplamı</div>
-                    <div className="mt-1 text-xl font-black text-slate-950">{formatMoney(totals.orderTotal, projectCurrencyForDisplay())}</div>
-                  </div>
-                  <div className="border-b border-slate-100 p-4">
-                    <div className="text-xs font-bold text-slate-500">Stok Hareket Değeri</div>
-                    <div className="mt-1 text-xl font-black text-slate-950">{formatMoney(totals.stockCost, projectCurrencyForDisplay())}</div>
-                  </div>
-                  <div className="border-b border-slate-100 p-4">
-                    <div className="text-xs font-bold text-slate-500">Ek Giderler</div>
-                    <div className="mt-1 text-xl font-black text-slate-950">{formatMoney(totals.expenseTotal, projectCurrencyForDisplay())}</div>
-                  </div>
-                  <div className="border-b border-slate-100 p-4">
-                    <div className="text-xs font-bold text-slate-500">Revizyon Gelir / Maliyet</div>
-                    <div className="mt-1 text-xl font-black text-slate-950">{formatMoney(totals.revisionRevenue, projectCurrencyForDisplay())} / {formatMoney(totals.revisionCost, projectCurrencyForDisplay())}</div>
-                  </div>
-                  <div className="border-b border-slate-100 p-4">
-                    <div className="text-xs font-bold text-slate-500">Toplam Maliyet</div>
-                    <div className="mt-1 text-xl font-black text-slate-950">{formatMoney(totals.totalCost, projectCurrencyForDisplay())}</div>
-                  </div>
-                  <div className="border-b border-slate-100 p-4">
-                    <div className="text-xs font-bold text-slate-500">Net Kâr / Zarar</div>
-                    <div className={`mt-1 text-xl font-black ${totals.netProfitLoss >= 0 ? "text-emerald-700" : "text-red-600"}`}>{formatMoney(totals.netProfitLoss, projectCurrencyForDisplay())}</div>
-                  </div>
-                  <div className="p-4">
-                    <div className="text-xs font-bold text-slate-500">Bütçe Sapması</div>
-                    <div className={`mt-1 text-xl font-black ${totals.budgetVariance > 0 ? "text-red-600" : "text-emerald-700"}`}>{formatMoney(totals.budgetVariance, projectCurrencyForDisplay())}</div>
-                  </div>
+                <div className="mt-6 space-y-3">
+                  {[
+                    ["Sözleşme", totals.contract, "text-slate-950"],
+                    ["Tahsil edilen", totals.paidTotal, "text-emerald-700"],
+                    ["Kalan tahsilat", totals.remainingCollection, "text-blue-700"],
+                  ].map(([label, value, color]) => (
+                    <div key={label} className="rounded-xl border border-slate-100 bg-slate-50 p-4">
+                      <div className="text-xs font-bold text-slate-500">{label}</div>
+                      <div className={`mt-1 break-words text-xl font-black ${color}`}>{formatMoney(value, projectCurrencyForDisplay())}</div>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab("Ödemeler")}
+                    className="w-full rounded-xl bg-slate-900 px-4 py-3 text-sm font-black text-white hover:bg-slate-800"
+                  >
+                    Detaylı finans hareketlerini gör
+                  </button>
                 </div>
               </div>
             </div>
