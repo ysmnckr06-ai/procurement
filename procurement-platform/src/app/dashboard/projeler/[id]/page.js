@@ -303,6 +303,10 @@ export default function ProjectDetailPage() {
   const [previewActionMessage, setPreviewActionMessage] = useState("");
   const [message, setMessage] = useState("");
   const [productCardWarning, setProductCardWarning] = useState("");
+  const [missingProductCardItems, setMissingProductCardItems] = useState([]);
+  const [missingProductDetailsOpen, setMissingProductDetailsOpen] = useState(false);
+  const [selectedMissingProductKeys, setSelectedMissingProductKeys] = useState([]);
+  const [creatingMissingProducts, setCreatingMissingProducts] = useState(false);
   const [loading, setLoading] = useState(true);
   const visiblePreviewSections = useMemo(() => {
     const seen = new Set();
@@ -884,6 +888,189 @@ export default function ProjectDetailPage() {
     return safe ? `PRJ-${safe}` : `PRJ-URUN-${Date.now()}`;
   }
 
+  function missingProductKey(item) {
+    const code = normalizeCode(item?.product_code);
+    if (code) return `code:${code}`;
+    return `name:${normalizeText(item?.product_name || item?.description)}|${normalizeText(item?.brand)}|${normalizeText(item?.unit || "adet")}`;
+  }
+
+  function productExistsForProjectItem(item, productRows = products) {
+    return (productRows || []).some((product) => productMatchesProjectItem(product, item));
+  }
+
+  function uniqueMissingProductItems(rows, productRows = products) {
+    const grouped = new Map();
+
+    (rows || []).forEach((item) => {
+      if (!item || productExistsForProjectItem(item, productRows)) return;
+
+      const key = missingProductKey(item);
+      const existing = grouped.get(key);
+      const quantity = Number(item.estimated_quantity || item.quantity || 0) || 0;
+
+      if (existing) {
+        grouped.set(key, {
+          ...existing,
+          quantity: Number(existing.quantity || 0) + quantity,
+          projectItemIds: Array.from(new Set([...(existing.projectItemIds || []), item.id].filter(Boolean))),
+        });
+        return;
+      }
+
+      grouped.set(key, {
+        key,
+        id: item.id,
+        product_code: item.product_code || "",
+        brand: item.brand || "",
+        product_name: item.product_name || item.description || "",
+        unit: item.unit || "adet",
+        quantity,
+        sourceItem: item,
+        projectItemIds: [item.id].filter(Boolean),
+      });
+    });
+
+    return Array.from(grouped.values()).filter((item) => item.product_name);
+  }
+
+  function updateMissingProductWarning(rows, productRows = products) {
+    const nextMissingItems = uniqueMissingProductItems(rows, productRows);
+    setMissingProductCardItems(nextMissingItems);
+    setSelectedMissingProductKeys((prev) => prev.filter((key) => nextMissingItems.some((item) => item.key === key)));
+
+    if (nextMissingItems.length > 0) {
+      const warning = `${nextMissingItems.length} ürün stok kartlarında bulunamadı. Detayları görüntüleyip stok kartı oluşturabilirsiniz.`;
+      setProductCardWarning(warning);
+      setMessage((current) => current || warning);
+    } else {
+      setProductCardWarning("");
+      setMissingProductDetailsOpen(false);
+    }
+
+    return nextMissingItems;
+  }
+
+  useEffect(() => {
+    if (missingProductCardItems.length === 0) return;
+    const filtered = uniqueMissingProductItems(missingProductCardItems.map((item) => item.sourceItem || item), products);
+    if (filtered.length !== missingProductCardItems.length) {
+      updateMissingProductWarning(filtered.map((item) => item.sourceItem || item), products);
+    }
+  }, [products, missingProductCardItems]);
+
+  function ignoreMissingProduct(key) {
+    const nextItems = missingProductCardItems.filter((item) => item.key !== key);
+    setMissingProductCardItems(nextItems);
+    setSelectedMissingProductKeys((prev) => prev.filter((itemKey) => itemKey !== key));
+    if (nextItems.length === 0) {
+      setProductCardWarning("");
+      setMissingProductDetailsOpen(false);
+    } else {
+      setProductCardWarning(`${nextItems.length} ürün stok kartlarında bulunamadı. Detayları görüntüleyip stok kartı oluşturabilirsiniz.`);
+    }
+  }
+
+  function transferMissingProductToRequest(item) {
+    const ids = item.projectItemIds || [item.id].filter(Boolean);
+    setSelectedPurchaseItemIds((prev) => Array.from(new Set([...prev, ...ids])));
+    setMessage(`${item.product_name} talep listesi seçimine eklendi.`);
+  }
+
+  async function createProductCardsFromMissing(targetItems) {
+    const user = await getUserOrRedirect();
+    if (!user) return;
+
+    const rowsToCreate = uniqueMissingProductItems(targetItems.map((item) => item.sourceItem || item), products);
+    if (rowsToCreate.length === 0) {
+      updateMissingProductWarning([], products);
+      return;
+    }
+
+    setCreatingMissingProducts(true);
+    const createdProducts = [];
+    const linkedProjectItems = [];
+    const failedRows = [];
+    const now = new Date().toISOString();
+
+    for (const missingItem of rowsToCreate) {
+      const sourceItem = missingItem.sourceItem || missingItem;
+      const safeCurrency = sourceItem.currency || projectCurrencyForDisplay() || "TRY";
+      const identity = normalizeProductIdentityForStock(sourceItem);
+      const productPayload = {
+        user_id: user.id,
+        product_code: safeProductCodeForItem(sourceItem),
+        brand: identity.brand || sourceItem.brand || "",
+        product_name: identity.product_name || sourceItem.product_name || sourceItem.description || "",
+        unit: sourceItem.unit || "adet",
+        current_stock: 0,
+        min_stock: 0,
+        critical_stock: 0,
+        last_unit_price: 0,
+        manual_unit_price: 0,
+        last_currency: safeCurrency,
+        category: projectItemCategory(sourceItem),
+        source: "Proje malzeme listesi",
+        notes: `Proje: ${project?.project_code || projectId}`,
+      };
+
+      let product = products.find((candidate) => productMatchesProjectItem(candidate, sourceItem));
+      if (!product) {
+        const { data: existingByCode } = await supabase
+          .from("products")
+          .select("*")
+          .eq("user_id", user.id)
+          .eq("product_code", productPayload.product_code)
+          .maybeSingle();
+        product = existingByCode || null;
+      }
+
+      if (!product) {
+        const { data, error } = await insertProductWithFallback(productPayload);
+        if (error || !data) {
+          failedRows.push(sourceItem);
+          logProductCardError(error, sourceItem, productPayload, "manual-create");
+          continue;
+        }
+        product = data;
+        createdProducts.push(data);
+      }
+
+      const idsToLink = missingItem.projectItemIds?.length ? missingItem.projectItemIds : [sourceItem.id].filter(Boolean);
+      const { data: updatedItems, error: updateError } = await supabase
+        .from("project_items")
+        .update({ product_id: product.id, updated_at: now })
+        .in("id", idsToLink)
+        .eq("project_id", projectId)
+        .eq("user_id", user.id)
+        .select("*");
+
+      if (updateError) {
+        failedRows.push(sourceItem);
+        logProductCardError(updateError, sourceItem, productPayload, "manual-link");
+        continue;
+      }
+
+      linkedProjectItems.push(...(updatedItems || []));
+    }
+
+    if (createdProducts.length > 0) {
+      setProducts((prev) => [...prev, ...createdProducts]);
+    }
+
+    if (linkedProjectItems.length > 0) {
+      const linkedById = new Map(linkedProjectItems.map((item) => [item.id, item]));
+      setItems((prev) => prev.map((item) => linkedById.get(item.id) || item));
+    }
+
+    const failedMissingItems = updateMissingProductWarning(failedRows, [...products, ...createdProducts]);
+    setCreatingMissingProducts(false);
+    setMessage(
+      failedMissingItems.length > 0
+        ? `${linkedProjectItems.length} kalem stok kartına bağlandı. ${failedMissingItems.length} ürün hâlâ kontrol bekliyor.`
+        : `${linkedProjectItems.length} kalem stok kartına bağlandı.`,
+    );
+  }
+
   function logProductCardError(error, item, payload, stage = "insert") {
     const details = {
       stage,
@@ -1019,7 +1206,7 @@ export default function ProjectDetailPage() {
     );
 
     if (subItems.length === 0) {
-      setProductCardWarning("");
+      updateMissingProductWarning([], productRows);
       return projectItemRows;
     }
 
@@ -1185,11 +1372,9 @@ export default function ProjectDetailPage() {
     }
 
     if (failedItems.length > 0) {
-      const warning = `${failedItems.length} ürün stok kartlarında bulunamadı. Yeni ürün kartı oluşturmak için Stok sayfasından onaylı kayıt açın.`;
-      setProductCardWarning(warning);
-      setMessage((current) => current || warning);
+      updateMissingProductWarning(failedItems, [...(productRows || []), ...createdProducts]);
     } else {
-      setProductCardWarning("");
+      updateMissingProductWarning([], [...(productRows || []), ...createdProducts]);
     }
 
     if (createdProducts.length > 0) {
@@ -4770,8 +4955,114 @@ export default function ProjectDetailPage() {
 
         {productCardWarning && (
           <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-800">
-            <div className="font-black">Bazı ürün kartları oluşturulamadı.</div>
-            <div className="mt-1">{productCardWarning}</div>
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <div className="font-black">Bazı ürün kartları stok kartlarında bulunamadı.</div>
+                <div className="mt-1">{productCardWarning}</div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setMissingProductDetailsOpen((open) => !open)}
+                  className="rounded-lg border border-red-200 bg-white px-3 py-2 text-xs font-black text-red-700 hover:bg-red-100"
+                >
+                  {missingProductDetailsOpen ? "Detayları gizle" : "Detayları göster"}
+                </button>
+                <button
+                  type="button"
+                  disabled={creatingMissingProducts || selectedMissingProductKeys.length === 0}
+                  onClick={() => createProductCardsFromMissing(
+                    missingProductCardItems.filter((item) => selectedMissingProductKeys.includes(item.key)),
+                  )}
+                  className="rounded-lg bg-red-600 px-3 py-2 text-xs font-black text-white hover:bg-red-700 disabled:bg-slate-300"
+                >
+                  Seçilenleri stok kartı olarak oluştur
+                </button>
+                <button
+                  type="button"
+                  disabled={creatingMissingProducts || missingProductCardItems.length === 0}
+                  onClick={() => createProductCardsFromMissing(missingProductCardItems)}
+                  className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-black text-white hover:bg-slate-800 disabled:bg-slate-300"
+                >
+                  Tüm eksikleri stok kartı olarak oluştur
+                </button>
+              </div>
+            </div>
+            {missingProductDetailsOpen && (
+              <div className="mt-4 overflow-x-auto rounded-xl border border-red-100 bg-white">
+                <table className="min-w-[920px] w-full text-left text-xs text-slate-700">
+                  <thead className="bg-red-50 text-[11px] font-black uppercase text-red-800">
+                    <tr>
+                      <th className="w-10 p-3">
+                        <input
+                          type="checkbox"
+                          checked={missingProductCardItems.length > 0 && selectedMissingProductKeys.length === missingProductCardItems.length}
+                          onChange={(event) => setSelectedMissingProductKeys(event.target.checked ? missingProductCardItems.map((item) => item.key) : [])}
+                        />
+                      </th>
+                      <th className="p-3">Ürün kodu</th>
+                      <th className="p-3">Marka</th>
+                      <th className="p-3">Ürün açıklaması</th>
+                      <th className="p-3">Birim</th>
+                      <th className="p-3 text-right">Miktar</th>
+                      <th className="p-3 text-right">İşlem</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-red-50">
+                    {missingProductCardItems.map((item) => (
+                      <tr key={item.key} className="bg-white">
+                        <td className="p-3">
+                          <input
+                            type="checkbox"
+                            checked={selectedMissingProductKeys.includes(item.key)}
+                            onChange={() => setSelectedMissingProductKeys((prev) =>
+                              prev.includes(item.key)
+                                ? prev.filter((key) => key !== item.key)
+                                : [...prev, item.key]
+                            )}
+                          />
+                        </td>
+                        <td className="p-3 font-black text-slate-900">{item.product_code || "-"}</td>
+                        <td className="p-3 font-bold">{item.brand || "-"}</td>
+                        <td className="p-3">
+                          <div className="whitespace-normal break-words font-bold text-slate-900" title={item.product_name}>
+                            {item.product_name}
+                          </div>
+                        </td>
+                        <td className="p-3 font-bold">{item.unit || "adet"}</td>
+                        <td className="p-3 text-right font-black">{formatQuantity(item.quantity || 0)}</td>
+                        <td className="p-3">
+                          <div className="flex flex-wrap justify-end gap-2">
+                            <button
+                              type="button"
+                              disabled={creatingMissingProducts}
+                              onClick={() => createProductCardsFromMissing([item])}
+                              className="rounded-lg bg-blue-50 px-3 py-2 text-[11px] font-black text-blue-700 hover:bg-blue-100 disabled:bg-slate-100 disabled:text-slate-400"
+                            >
+                              Stok kartı aç
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => transferMissingProductToRequest(item)}
+                              className="rounded-lg bg-emerald-50 px-3 py-2 text-[11px] font-black text-emerald-700 hover:bg-emerald-100"
+                            >
+                              Talebe aktar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => ignoreMissingProduct(item.key)}
+                              className="rounded-lg bg-slate-100 px-3 py-2 text-[11px] font-black text-slate-700 hover:bg-slate-200"
+                            >
+                              Yok say
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
 

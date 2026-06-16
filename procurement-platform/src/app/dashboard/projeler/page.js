@@ -153,6 +153,7 @@ export default function ProjectsPage() {
   const [message, setMessage] = useState("");
   const [settings, setSettings] = useState({ default_currency: "TRY", base_currency: "TRY" });
   const [liveRates, setLiveRates] = useState(null);
+  const [liveRateWarning, setLiveRateWarning] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [projectView, setProjectView] = useState("active");
@@ -163,7 +164,15 @@ export default function ProjectsPage() {
       const params = new URLSearchParams(window.location.search);
       setCustomerFilter(params.get("musteri") || "");
     }
-    fetchLiveTryRates().then(setLiveRates).catch(() => setLiveRates(null));
+    fetchLiveTryRates()
+      .then((rates) => {
+        setLiveRates(rates);
+        setLiveRateWarning("");
+      })
+      .catch(() => {
+        setLiveRates(null);
+        setLiveRateWarning("Canlı kur alınamadı, manuel giriniz.");
+      });
   }, []);
 
   async function loadProjects() {
@@ -279,6 +288,64 @@ export default function ProjectsPage() {
   function updateForm(field, value) {
     setForm((prev) => ({ ...prev, [field]: value }));
   }
+
+  function normalizeRateInput(value) {
+    return String(value ?? "").replace(",", ".");
+  }
+
+  function rateForProjectCurrency(currency) {
+    if (!currency || currency === "TRY") {
+      return { rate: 1, liveMissing: false };
+    }
+
+    const liveRate = liveRateFor(currency, liveRates);
+    if (liveRate > 1) {
+      return { rate: Number(liveRate.toFixed(6)), liveMissing: false };
+    }
+
+    const fallbackRate = Number(getExchangeRate(currency, settings) || 1);
+    return { rate: fallbackRate > 0 ? fallbackRate : 1, liveMissing: true };
+  }
+
+  function updateCurrencyWithLiveRate(currencyField, rateField, nextCurrency) {
+    const { rate, liveMissing } = rateForProjectCurrency(nextCurrency);
+    setForm((prev) => ({
+      ...prev,
+      [currencyField]: nextCurrency,
+      [rateField]: rate,
+    }));
+    setLiveRateWarning(liveMissing ? "Canlı kur alınamadı, manuel giriniz." : "");
+  }
+
+  function syncProjectFormLiveRates(rates = liveRates) {
+    setForm((prev) => {
+      const contractCurrency = prev.contract_currency || "TRY";
+      const budgetCurrency = prev.estimated_budget_currency || "TRY";
+      const nextContractRate = contractCurrency === "TRY" ? 1 : liveRateFor(contractCurrency, rates);
+      const nextBudgetRate = budgetCurrency === "TRY" ? 1 : liveRateFor(budgetCurrency, rates);
+
+      return {
+        ...prev,
+        contract_exchange_rate:
+          nextContractRate > 1
+            ? Number(nextContractRate.toFixed(6))
+            : contractCurrency === "TRY"
+              ? 1
+              : prev.contract_exchange_rate || getExchangeRate(contractCurrency, settings) || 1,
+        estimated_budget_exchange_rate:
+          nextBudgetRate > 1
+            ? Number(nextBudgetRate.toFixed(6))
+            : budgetCurrency === "TRY"
+              ? 1
+              : prev.estimated_budget_exchange_rate || getExchangeRate(budgetCurrency, settings) || 1,
+      };
+    });
+  }
+
+  useEffect(() => {
+    if (!showForm || !liveRates) return;
+    syncProjectFormLiveRates(liveRates);
+  }, [showForm, liveRates]);
 
   function updateProjectFiles(event) {
     const files = Array.from(event.target.files || []);
@@ -572,6 +639,17 @@ export default function ProjectsPage() {
       }
     }
 
+    const contractCurrency = form.contract_currency || getBaseCurrency(settings);
+    const budgetCurrency = form.estimated_budget_currency || getBaseCurrency(settings);
+    const contractExchangeRate = contractCurrency === "TRY" ? 1 : Number(normalizeRateInput(form.contract_exchange_rate || getExchangeRate(contractCurrency, settings)));
+    const budgetExchangeRate = budgetCurrency === "TRY" ? 1 : Number(normalizeRateInput(form.estimated_budget_exchange_rate || getExchangeRate(budgetCurrency, settings)));
+
+    if ((contractCurrency !== "TRY" && (!contractExchangeRate || contractExchangeRate <= 1)) || (budgetCurrency !== "TRY" && (!budgetExchangeRate || budgetExchangeRate <= 1))) {
+      setMessage("TRY dışındaki para birimlerinde canlı kur 1 kalmış görünüyor. Lütfen güncel kuru kontrol edip manuel giriniz.");
+      setSaving(false);
+      return;
+    }
+
     const payload = {
       user_id: user.id,
       project_code: form.project_code || nextProjectCode(projects),
@@ -581,13 +659,13 @@ export default function ProjectsPage() {
       customer_partner_name: customerPartner?.name || form.customer_name.trim(),
       description: form.description.trim(),
       contract_amount: Number(form.contract_amount || 0),
-      contract_currency: form.contract_currency || getBaseCurrency(settings),
-      contract_exchange_rate: Number(form.contract_exchange_rate || getExchangeRate(form.contract_currency, settings)),
-      contract_base_amount: calculateBaseAmount(form.contract_amount, form.contract_currency, settings, form.contract_exchange_rate),
+      contract_currency: contractCurrency,
+      contract_exchange_rate: contractExchangeRate,
+      contract_base_amount: calculateBaseAmount(form.contract_amount, contractCurrency, settings, contractExchangeRate),
       estimated_budget: Number(form.estimated_budget || 0),
-      estimated_budget_currency: form.estimated_budget_currency || getBaseCurrency(settings),
-      estimated_budget_exchange_rate: Number(form.estimated_budget_exchange_rate || getExchangeRate(form.estimated_budget_currency, settings)),
-      estimated_budget_base_amount: calculateBaseAmount(form.estimated_budget, form.estimated_budget_currency, settings, form.estimated_budget_exchange_rate),
+      estimated_budget_currency: budgetCurrency,
+      estimated_budget_exchange_rate: budgetExchangeRate,
+      estimated_budget_base_amount: calculateBaseAmount(form.estimated_budget, budgetCurrency, settings, budgetExchangeRate),
       start_date: form.start_date || null,
       planned_end_date: form.planned_end_date || null,
       project_owner: form.project_owner.trim(),
@@ -863,15 +941,14 @@ export default function ProjectsPage() {
                 Sözleşme Para Birimi
                 <select className="mt-2 w-full rounded-xl border border-slate-300 p-3" value={form.contract_currency} onChange={(e) => {
                   const nextCurrency = e.target.value;
-                  updateForm("contract_currency", nextCurrency);
-                  updateForm("contract_exchange_rate", liveRateFor(nextCurrency, liveRates) || getExchangeRate(nextCurrency, settings));
+                  updateCurrencyWithLiveRate("contract_currency", "contract_exchange_rate", nextCurrency);
                 }}>
                   {currencyOptions.map((currency) => <option key={currency}>{currency}</option>)}
                 </select>
               </label>
               <label className="text-sm font-bold text-slate-700">
                 Sözleşme Kuru
-                <input type="number" className="mt-2 w-full rounded-xl border border-slate-300 p-3" value={form.contract_exchange_rate} onChange={(e) => updateForm("contract_exchange_rate", e.target.value)} />
+                <input type="number" step="0.000001" className="mt-2 w-full rounded-xl border border-slate-300 p-3" value={form.contract_exchange_rate} onChange={(e) => updateForm("contract_exchange_rate", normalizeRateInput(e.target.value))} />
               </label>
               <label className="text-sm font-bold text-slate-700">
                 Tahmini Bütçe / Maliyet
@@ -881,18 +958,22 @@ export default function ProjectsPage() {
                 Bütçe Para Birimi
                 <select className="mt-2 w-full rounded-xl border border-slate-300 p-3" value={form.estimated_budget_currency} onChange={(e) => {
                   const nextCurrency = e.target.value;
-                  updateForm("estimated_budget_currency", nextCurrency);
-                  updateForm("estimated_budget_exchange_rate", liveRateFor(nextCurrency, liveRates) || getExchangeRate(nextCurrency, settings));
+                  updateCurrencyWithLiveRate("estimated_budget_currency", "estimated_budget_exchange_rate", nextCurrency);
                 }}>
                   {currencyOptions.map((currency) => <option key={currency}>{currency}</option>)}
                 </select>
               </label>
               <label className="text-sm font-bold text-slate-700">
                 Bütçe Kuru
-                <input type="number" className="mt-2 w-full rounded-xl border border-slate-300 p-3" value={form.estimated_budget_exchange_rate} onChange={(e) => updateForm("estimated_budget_exchange_rate", e.target.value)} />
+                <input type="number" step="0.000001" className="mt-2 w-full rounded-xl border border-slate-300 p-3" value={form.estimated_budget_exchange_rate} onChange={(e) => updateForm("estimated_budget_exchange_rate", normalizeRateInput(e.target.value))} />
               </label>
               <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4 text-sm md:col-span-3">
                 <div className="font-black text-blue-900">Canlı kur takibi</div>
+                {liveRateWarning && (
+                  <div className="mt-2 rounded-lg border border-yellow-200 bg-yellow-50 px-3 py-2 text-xs font-black text-yellow-800">
+                    {liveRateWarning}
+                  </div>
+                )}
                 <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
                   {[
                     ["Sözleşme", form.contract_currency, form.contract_exchange_rate],
