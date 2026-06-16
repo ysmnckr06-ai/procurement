@@ -184,6 +184,7 @@ function mergeProductGroups(items) {
       groupKey: key,
       duplicateIds: [...existing.duplicateIds, normalizedProduct.id],
       duplicateCount: existing.duplicateCount + 1,
+      is_virtual_project_main: Boolean(existing.is_virtual_project_main && normalizedProduct.is_virtual_project_main),
       current_stock: Number(existing.current_stock || 0) + Number(normalizedProduct.current_stock || 0),
       reserved_stock: Number(existing.reserved_stock || 0) + Number(normalizedProduct.reserved_stock || 0),
       product_type: isMainProduct(existing) || isMainProduct(normalizedProduct) ? PRODUCT_TYPES.MAIN : PRODUCT_TYPES.COMPONENT,
@@ -197,6 +198,58 @@ function mergeProductGroups(items) {
   return Array.from(grouped.values()).sort((a, b) =>
     String(a.product_name || "").localeCompare(String(b.product_name || ""), "tr-TR"),
   );
+}
+
+function projectMainItemsAsProducts(projectItems = [], productRows = []) {
+  const existingKeys = new Set(productRows.map((product) => productGroupKey(normalizeProductIdentity(product))));
+  const parentIdsWithChildren = new Set(projectItems.map((item) => item.parent_item_id).filter(Boolean));
+  const grouped = new Map();
+
+  projectItems.forEach((item) => {
+    const isParent = item.item_type === "main" || parentIdsWithChildren.has(item.id);
+    const productName = String(item.product_name || item.description || "").trim();
+    if (!isParent || !productName) return;
+
+    const virtualProduct = normalizeProductIdentity({
+      id: item.product_id || `project-main-${item.id}`,
+      product_code: item.product_code || item.code || "",
+      brand: item.brand || "",
+      product_name: productName,
+      unit: item.unit || "adet",
+      category: item.category || "Ana Ürün",
+      product_type: PRODUCT_TYPES.MAIN,
+      current_stock: 0,
+      reserved_stock: 0,
+      source: "Proje ana kalemi",
+      notes: "Proje malzeme listesinden gelen ana ürün",
+      created_at: item.created_at,
+      updated_at: item.updated_at || item.created_at,
+      is_virtual_project_main: true,
+    });
+    const key = productGroupKey(virtualProduct);
+    if (existingKeys.has(key)) return;
+
+    const existing = grouped.get(key);
+    if (!existing) {
+      grouped.set(key, {
+        ...virtualProduct,
+        groupKey: key,
+        duplicateIds: [virtualProduct.id],
+        duplicateCount: 1,
+        virtualProjectItemIds: [item.id],
+      });
+      return;
+    }
+
+    grouped.set(key, {
+      ...existing,
+      duplicateIds: [...existing.duplicateIds, virtualProduct.id],
+      duplicateCount: existing.duplicateCount + 1,
+      virtualProjectItemIds: [...existing.virtualProjectItemIds, item.id],
+    });
+  });
+
+  return Array.from(grouped.values());
 }
 
 function movementStatus(movement) {
@@ -716,6 +769,11 @@ export default function StockPage() {
   async function deleteProductGroup(product) {
     if (!product) return;
 
+    if (product.is_virtual_project_main) {
+      setMessage("Bu ana ürün proje malzeme listesinden geliyor. Silmek için ilgili proje kalemini düzenleyin.");
+      return;
+    }
+
     const approved = window.confirm(`${product.product_name} ürün kartını silmek istiyor musunuz?`);
 
     if (!approved) return;
@@ -780,6 +838,11 @@ export default function StockPage() {
   async function deleteSelectedProducts() {
     const selectedGroups = productGroups.filter((product) => selectedProductKeys.includes(product.groupKey));
     if (selectedGroups.length === 0) return;
+
+    if (selectedGroups.some((product) => product.is_virtual_project_main)) {
+      setMessage("Proje malzeme listesinden gelen ana ürünler stok kartı gibi silinemez. İlgili proje kalemini düzenleyin.");
+      return;
+    }
 
     const blocked = selectedGroups.find((product) => movements.some((movement) => movementMatchesProduct(movement, product)));
     if (blocked) {
@@ -1145,7 +1208,10 @@ setMessage(
     event.target.value = "";
   }
 }
-  const productGroups = useMemo(() => mergeProductGroups(products), [products]);
+  const productGroups = useMemo(() => {
+    const projectMainProducts = projectMainItemsAsProducts(projectItems, products);
+    return mergeProductGroups([...products, ...projectMainProducts]);
+  }, [products, projectItems]);
   const productTypeCounts = useMemo(() => ({
     main: productGroups.filter(isMainProduct).length,
     component: productGroups.filter((product) => !isMainProduct(product)).length,
@@ -1421,7 +1487,7 @@ setMessage(
             />
           </div>
 
-          <div className="grid grid-cols-1 gap-6 xl:grid-cols-[520px_minmax(0,1fr)]">
+          <div className={`grid grid-cols-1 gap-6 ${selectedProduct ? "xl:grid-cols-[520px_minmax(0,1fr)]" : ""}`}>
             <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
               <div className="border-b border-slate-100 p-5">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -1561,8 +1627,9 @@ setMessage(
               </div>
             </div>
 
+            {selectedProduct && (
             <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              {selectedProduct ? (
+              {(
                 <>
                   {(() => {
                     const breakdown = stockBreakdown(selectedProduct, movements);
@@ -1894,95 +1961,10 @@ setMessage(
                       </div>
                     )}
                   </div>
-                </>              ) : (
-                <>
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <h2 className="text-xl font-bold text-slate-900">Son Stok Hareketleri</h2>
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={exportMovementsExcel}
-                        className="rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs font-black text-emerald-700 hover:bg-emerald-50"
-                      >
-                        Hareket Excel
-                      </button>
-                      <button
-                        type="button"
-                        onClick={exportMovementsPdf}
-                        className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50"
-                      >
-                        Hareket PDF
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setSelectedMovementIds(allVisibleMovementsSelected ? [] : visibleMovementIds)}
-                        className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50"
-                      >
-                        {allVisibleMovementsSelected ? "Seçimi Temizle" : "Tümünü Seç"}
-                      </button>
-                      <button
-                        type="button"
-                        disabled={selectedMovementIds.length === 0 || bulkDeletingMovements}
-                        onClick={deleteSelectedMovements}
-                        className="rounded-lg bg-red-600 px-3 py-2 text-xs font-black text-white hover:bg-red-700 disabled:bg-slate-300"
-                      >
-                        Hareketleri Sil ({selectedMovementIds.length})
-                      </button>
-                    </div>
-                  </div>
-                  <div className="mt-4 space-y-3">
-                    {movements.map((movement) => {
-                      const status = movementStatus(movement);
-                      const movementProject = projects.find((project) => project.id === movement.project_id);
-                      const movementFlow = movementFlowInfo(movement, movementProject);
-                      return (
-                        <div key={movement.id} className="rounded-xl border border-slate-100 p-4">
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="flex min-w-0 items-start gap-3">
-                              <input
-                                type="checkbox"
-                                checked={selectedMovementIds.includes(movement.id)}
-                                onChange={() => toggleMovementSelection(movement.id)}
-                                className="mt-1 h-4 w-4 rounded border-slate-300"
-                                aria-label={`${movement.product_name || status} hareketini seç`}
-                              />
-                              <div className="min-w-0">
-                                <div className="whitespace-normal break-words font-bold text-slate-900" title={movement.product_name || "-"}>{movement.product_name}</div>
-                                <div className="mt-2 grid grid-cols-1 gap-2 text-xs sm:grid-cols-3">
-                                  <div className="rounded-lg bg-emerald-50 p-2">
-                                    <div className="font-bold text-emerald-700">Giriş kaynağı</div>
-                                    <div className="whitespace-normal break-words font-black text-emerald-900">{movementFlow.source}</div>
-                                  </div>
-                                  <div className="rounded-lg bg-blue-50 p-2">
-                                    <div className="font-bold text-blue-700">Çıkış hedefi</div>
-                                    <div className="whitespace-normal break-words font-black text-blue-900">{movementFlow.target}</div>
-                                  </div>
-                                  <div className="rounded-lg bg-slate-50 p-2">
-                                    <div className="font-bold text-slate-500">Belge / referans</div>
-                                    <div className="whitespace-normal break-words font-black text-slate-900">{movementFlow.reference}</div>
-                                  </div>
-                                </div>
-                                <div className="mt-1 whitespace-normal break-words text-xs text-slate-500" title={`${movement.partner_name || movement.supplier_name || "-"} · ${formatDate(movement.movement_date)} · ${movement.source || "-"}`}>
-                                {movement.partner_name || movement.supplier_name || "-"} · {formatDate(movement.movement_date)} · {movement.source || "-"}
-                                </div>
-                              </div>
-                            </div>
-                            <span className={`rounded-full px-3 py-1 text-xs font-bold ${movementStatusClass(status)}`}>
-                              {status}
-                            </span>
-                          </div>
-                        </div>
-                      );
-                    })}
-                    {!loading && movements.length === 0 && (
-                      <div className="rounded-xl bg-slate-50 p-4 text-sm text-slate-500">
-                        Henüz stok hareketi yok.
-                      </div>
-                    )}
-                  </div>
                 </>
               )}
             </div>
+            )}
           </div>
         </div>
       </main>
