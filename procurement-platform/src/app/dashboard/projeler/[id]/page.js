@@ -1048,12 +1048,6 @@ export default function ProjectDetailPage() {
         updated_at: now,
       };
 
-      if (createAsMainProduct) {
-        projectItemUpdatePayload.item_type = "main";
-        projectItemUpdatePayload.parent_item_id = null;
-        projectItemUpdatePayload.status = sourceItem.status || "Bekliyor";
-      }
-
       const { data: updatedItems, error: updateError } = await supabase
         .from("project_items")
         .update(projectItemUpdatePayload)
@@ -4998,17 +4992,20 @@ export default function ProjectDetailPage() {
                     missingProductCardItems.filter((item) => selectedMissingProductKeys.includes(item.key)),
                     { productType: "main_product" },
                   )}
-                  className="rounded-lg bg-red-600 px-3 py-2 text-xs font-black text-white hover:bg-red-700 disabled:bg-slate-300"
+                  className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-black text-white hover:bg-blue-700 disabled:bg-slate-300"
                 >
-                  Seçilenleri ana ürün olarak ekle
+                  Seçilenleri ana ürün kartı yap
                 </button>
                 <button
                   type="button"
-                  disabled={creatingMissingProducts || missingProductCardItems.length === 0}
-                  onClick={() => createProductCardsFromMissing(missingProductCardItems, { productType: "main_product" })}
+                  disabled={creatingMissingProducts || selectedMissingProductKeys.length === 0}
+                  onClick={() => createProductCardsFromMissing(
+                    missingProductCardItems.filter((item) => selectedMissingProductKeys.includes(item.key)),
+                    { productType: "component" },
+                  )}
                   className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-black text-white hover:bg-slate-800 disabled:bg-slate-300"
                 >
-                  Tüm eksikleri ana ürün olarak ekle
+                  Seçilenleri alt ürün kartı yap
                 </button>
               </div>
             </div>
@@ -5063,7 +5060,15 @@ export default function ProjectDetailPage() {
                               onClick={() => createProductCardsFromMissing([item], { productType: "main_product" })}
                               className="rounded-lg bg-blue-50 px-3 py-2 text-[11px] font-black text-blue-700 hover:bg-blue-100 disabled:bg-slate-100 disabled:text-slate-400"
                             >
-                              Ana ürün olarak ekle
+                              Ana ürün kartı
+                            </button>
+                            <button
+                              type="button"
+                              disabled={creatingMissingProducts}
+                              onClick={() => createProductCardsFromMissing([item], { productType: "component" })}
+                              className="rounded-lg bg-slate-100 px-3 py-2 text-[11px] font-black text-slate-700 hover:bg-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+                            >
+                              Alt ürün kartı
                             </button>
                             <button
                               type="button"
