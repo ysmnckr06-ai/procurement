@@ -6510,8 +6510,8 @@ export default function ProjectDetailPage() {
                   const priceLivesOnParent = allChildren.length > 0 && quoteTotal > 0 && childResolvedTotal === 0;
 
                   return (
-                    <div key={item.id} className="rounded-2xl border border-slate-200">
-                      <div className="grid grid-cols-1 gap-3 p-4 md:grid-cols-[1fr_auto_auto_auto] md:items-center">
+                    <div key={item.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                      <div className="flex flex-col gap-4 p-5">
                         <div className="flex items-start gap-3">
                           <input
                             type="checkbox"
@@ -6528,9 +6528,12 @@ export default function ProjectDetailPage() {
                               className="mt-1 h-4 w-4"
                             />
                           )}
-                          <div>
-                            <div className="font-black text-slate-900">{item.product_name}</div>
-                            <div className="text-xs text-slate-500">{item.product_code || "-"} · {Number(item.estimated_quantity || 0)} {item.unit || "adet"}</div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="rounded-full bg-slate-900 px-2.5 py-1 text-[11px] font-black text-white">Ana ürün</span>
+                              <span className="text-xs font-bold text-slate-500">{item.product_code || "-"} · {Number(item.estimated_quantity || 0)} {item.unit || "adet"}</span>
+                            </div>
+                            <div className="mt-2 text-lg font-black text-slate-950">{item.product_name}</div>
                             <div className="mt-1 flex flex-wrap items-center gap-2 text-xs font-bold">
                               {productCardLabel(item) && (
                                 <span className={`rounded-full px-2 py-1 ${productCardLabelClass(item)}`}>{productCardLabel(item)}</span>
@@ -6547,12 +6550,24 @@ export default function ProjectDetailPage() {
                               <span className={`rounded-full px-2 py-1 ${priceSourceClass(itemPrice.source)}`}>{itemPrice.source}</span>
                             </div>
                             {stockInfo.isMainItem ? (
-                              <div className="mt-2 space-y-2 text-xs font-bold text-slate-600">
-                                <div>
-                                  Alt kalem: {allChildren.length} bileşen · Toplam ana kalem: {formatQuantity(parentProcess.parentQuantity)} {item.unit || "adet"} · İşlenen: {formatQuantity(parentProcess.producedParentQuantity)} · Kalan: {formatQuantity(parentProcess.remainingParentQuantity)}
-                                </div>
-                                <div className="text-slate-500">
-                                  Girilen ana kalem miktarına göre alt kalemlerin kullanılan ve bekleyen miktarları hesaplanır.
+                              <div className="mt-3 space-y-3">
+                                <div className="grid grid-cols-2 gap-2 text-xs md:grid-cols-4">
+                                  <div className="rounded-xl bg-slate-50 px-3 py-2">
+                                    <div className="font-bold text-slate-500">Toplam</div>
+                                    <div className="mt-1 font-black text-slate-950">{formatQuantity(parentProcess.parentQuantity)} {item.unit || "adet"}</div>
+                                  </div>
+                                  <div className="rounded-xl bg-blue-50 px-3 py-2">
+                                    <div className="font-bold text-blue-700">İşlenen</div>
+                                    <div className="mt-1 font-black text-blue-950">{formatQuantity(parentProcess.producedParentQuantity)}</div>
+                                  </div>
+                                  <div className="rounded-xl bg-emerald-50 px-3 py-2">
+                                    <div className="font-bold text-emerald-700">Kalan</div>
+                                    <div className="mt-1 font-black text-emerald-950">{formatQuantity(parentProcess.remainingParentQuantity)}</div>
+                                  </div>
+                                  <div className="rounded-xl bg-indigo-50 px-3 py-2">
+                                    <div className="font-bold text-indigo-700">Alt ürün</div>
+                                    <div className="mt-1 font-black text-indigo-950">{allChildren.length}</div>
+                                  </div>
                                 </div>
                                 {allChildren.length > 0 && (
                                   <div className="flex flex-wrap items-center gap-2">
@@ -6606,18 +6621,18 @@ export default function ProjectDetailPage() {
                             )}
                           </div>
                         </div>
-                        <span className={`rounded-full px-3 py-1 text-xs font-bold ${itemStatusClass(item.status)}`}>{item.status || "Bekliyor"}</span>
-                        <span className={`rounded-full px-3 py-1 text-xs font-bold ${
-                          stock.tone === "green" ? "bg-green-100 text-green-700" :
-                          stock.tone === "yellow" ? "bg-yellow-100 text-yellow-700" :
-                          stock.tone === "red" ? "bg-red-100 text-red-700" :
-                          "bg-slate-100 text-slate-700"
-                        }`}>
-                          Stok: {stock.available} · {stock.text}
-                        </span>
-                        <div className="flex flex-wrap gap-2">
-                          <button type="button" onClick={() => setExpandedItems((prev) => ({ ...prev, [item.id]: !prev[item.id] }))} className="rounded-lg bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700 hover:bg-blue-100">
-                            Alt Malzemeleri Gör / Ekle
+                        <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+                          <span className={`rounded-full px-3 py-1 text-xs font-bold ${itemStatusClass(item.status)}`}>{item.status || "Bekliyor"}</span>
+                          <span className={`rounded-full px-3 py-1 text-xs font-bold ${
+                            stock.tone === "green" ? "bg-green-100 text-green-700" :
+                            stock.tone === "yellow" ? "bg-yellow-100 text-yellow-700" :
+                            stock.tone === "red" ? "bg-red-100 text-red-700" :
+                            "bg-slate-100 text-slate-700"
+                          }`}>
+                            {stock.text}
+                          </span>
+                          <button type="button" onClick={() => setExpandedItems((prev) => ({ ...prev, [item.id]: !prev[item.id] }))} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-black text-white hover:bg-blue-700">
+                            {expandedItems[item.id] ? "Alt ürünleri gizle" : `Alt ürünleri göster (${allChildren.length})`}
                           </button>
                           <button type="button" onClick={() => downloadProjectItemChildren(item, "xlsx")} className="rounded-lg bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700 hover:bg-emerald-100">
                             Excel indir
@@ -6639,8 +6654,17 @@ export default function ProjectDetailPage() {
                         </div>
                       </div>
                       {expandedItems[item.id] && (
-                        <div className="border-t border-slate-100 bg-slate-50 p-4">
-                          {children.length === 0 && <div className="text-sm text-slate-500">Alt malzeme yok.</div>}
+                        <div className="border-t border-blue-100 bg-blue-50/40 p-4">
+                          <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                              <div className="text-sm font-black text-blue-950">Bu ana ürünün alt ürünleri</div>
+                              <div className="text-xs font-semibold text-blue-700">{item.product_name} altında {children.length} kalem gösteriliyor.</div>
+                            </div>
+                            <span className="w-fit rounded-full bg-white px-3 py-1 text-xs font-black text-blue-700">
+                              Ana ürün bağlantılı
+                            </span>
+                          </div>
+                          {children.length === 0 && <div className="rounded-xl bg-white p-4 text-sm font-semibold text-slate-500">Bu ana ürüne bağlı alt ürün yok.</div>}
                           <div className="space-y-2">
                             {children.map((child) => {
                               const childStock = stockWarning(child);
@@ -6648,7 +6672,7 @@ export default function ProjectDetailPage() {
                               const childPrice = resolveProjectItemPrice(child);
                               const relation = componentRelationForItem(child, items);
                               return (
-                                <div key={child.id} className="grid grid-cols-1 gap-3 rounded-xl bg-white p-3 text-sm md:grid-cols-[1fr_auto_auto_auto] md:items-center">
+                                <div key={child.id} className="grid grid-cols-1 gap-3 rounded-xl border border-blue-100 border-l-4 border-l-blue-500 bg-white p-3 text-sm shadow-sm md:grid-cols-[1fr_auto_auto_auto] md:items-center">
                                   <div className="flex items-start gap-3">
                                     <input
                                       type="checkbox"
@@ -6666,7 +6690,11 @@ export default function ProjectDetailPage() {
                                       />
                                     )}
                                     <div>
-                                      <div className="font-bold text-slate-900">{child.product_name}</div>
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <span className="rounded-full bg-blue-100 px-2 py-1 text-[11px] font-black text-blue-700">Alt ürün</span>
+                                        <span className="text-xs font-bold text-slate-500">Ana ürün: {item.product_name}</span>
+                                      </div>
+                                      <div className="mt-1 font-bold text-slate-900">{child.product_name}</div>
                                       <div className="text-xs text-slate-500">{child.product_code || "-"} · {Number(child.estimated_quantity || 0)} {child.unit || "adet"}</div>
                                       <div className="mt-1 flex flex-wrap items-center gap-2 text-xs font-bold">
                                         <span className={`rounded-full px-2 py-1 ${productCardLabelClass(child)}`}>{productCardLabel(child)}</span>
