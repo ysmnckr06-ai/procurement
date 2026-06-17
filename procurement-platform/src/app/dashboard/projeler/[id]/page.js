@@ -3692,27 +3692,18 @@ export default function ProjectDetailPage() {
     setMessage(`${movementPayload.length} kalem stoğa aktarıldı.${skippedCount > 0 ? ` ${skippedCount} kalem daha önce aktarıldığı için atlandı.` : ""}${updateWarnings.length > 0 ? " Bazı kart güncellemeleri kontrol edilmeli." : ""}`);
   }
 
-  async function coverItemFromStock(item) {
-    setMessage("");
-
-    const user = await getUserOrRedirect();
-    if (!user) return;
-
+  async function reserveItemFromStock(user, item) {
     const info = stockInfoForItem(item);
     const product = info.matchedProducts?.find((candidate) => {
       const total = Number(candidate.current_stock || 0);
       const reserved = Number(candidate.reserved_stock || 0);
       return Math.max(total - reserved, 0) > 0;
     });
-    const coverQuantity = Math.min(Number(item.estimated_quantity || 0), Number(info.stockQuantity || 0));
+    const coverQuantity = Math.min(Number(info.openQuantity || item.estimated_quantity || 0), Number(info.stockQuantity || 0));
 
     if (!product || coverQuantity <= 0) {
-      setMessage("Bu kalem için stoktan karşılanabilecek uygun ürün bulunamadı.");
-      return;
+      return { ok: false, item, message: "Stoktan karşılanabilecek uygun ürün bulunamadı." };
     }
-
-    const approved = window.confirm(`${item.product_name} için ${coverQuantity} ${item.unit || "adet"} stoktan projeye ayrılsın mı?`);
-    if (!approved) return;
 
     const now = new Date().toISOString();
     const today = now.slice(0, 10);
@@ -3731,8 +3722,7 @@ export default function ProjectDetailPage() {
       .eq("user_id", user.id);
 
     if (productError) {
-      setMessage(productError.message || "Stok kartı rezerve edilemedi.");
-      return;
+      return { ok: false, item, message: productError.message || "Stok kartı rezerve edilemedi." };
     }
 
     const { error: itemError } = await supabase
@@ -3748,8 +3738,7 @@ export default function ProjectDetailPage() {
       .eq("user_id", user.id);
 
     if (itemError) {
-      setMessage(itemError.message || "Proje kalemi stoktan karşılandı olarak güncellenemedi.");
-      return;
+      return { ok: false, item, message: itemError.message || "Proje kalemi stoktan karşılandı olarak güncellenemedi." };
     }
 
     const { error: movementError } = await supabase
@@ -3772,15 +3761,73 @@ export default function ProjectDetailPage() {
         currency: product.last_currency || projectCurrencyForDisplay(item.currency),
         movement_date: today,
         source: "Projeye stoktan karşılandı",
-        notes: `${project?.project_code || project?.project_name || "Proje"} için stok rezervasyonu`,
+        notes: (project?.project_code || project?.project_name || "Proje") + " için stok rezervasyonu",
       });
 
     if (movementError) {
       console.warn("Stok rezervasyonu hareketi kaydedilemedi:", movementError);
     }
 
+    return { ok: true, item, quantity: coverQuantity };
+  }
+
+  async function coverItemFromStock(item) {
+    setMessage("");
+
+    const user = await getUserOrRedirect();
+    if (!user) return;
+
+    const info = stockInfoForItem(item);
+    const coverQuantity = Math.min(Number(info.openQuantity || item.estimated_quantity || 0), Number(info.stockQuantity || 0));
+
+    if (coverQuantity <= 0) {
+      setMessage("Bu kalem için stoktan karşılanabilecek uygun ürün bulunamadı.");
+      return;
+    }
+
+    const approved = window.confirm(`${item.product_name} için ${coverQuantity} ${item.unit || "adet"} stoktan projeye ayrılsın mı?`);
+    if (!approved) return;
+
+    const result = await reserveItemFromStock(user, item);
+    if (!result.ok) {
+      setMessage(result.message || "Stoktan karşılama yapılamadı.");
+      return;
+    }
+
     await loadProject();
-    setMessage(`${item.product_name} için ${coverQuantity} ${item.unit || "adet"} stoktan karşılandı.`);
+    setMessage(`${item.product_name} için ${result.quantity} ${item.unit || "adet"} stoktan karşılandı.`);
+  }
+
+  async function coverSelectedItemsFromStock() {
+    setMessage("");
+
+    const user = await getUserOrRedirect();
+    if (!user) return;
+
+    const selectedItems = items.filter((item) => selectedPurchaseItemIds.includes(item.id) && !stockInfoForItem(item).isMainItem);
+    const coverableItems = selectedItems.filter((item) => {
+      const info = stockInfoForItem(item);
+      return info.openQuantity > 0 && info.stockQuantity > 0;
+    });
+
+    if (coverableItems.length === 0) {
+      setMessage("Stoktan karşılamak için en az bir uygun alt ürün seçin.");
+      return;
+    }
+
+    const approved = window.confirm(`Seçili ${coverableItems.length} kalem stoktan projeye ayrılsın mı?`);
+    if (!approved) return;
+
+    const results = [];
+    for (const item of coverableItems) {
+      results.push(await reserveItemFromStock(user, item));
+    }
+
+    const successCount = results.filter((result) => result.ok).length;
+    const failedCount = results.length - successCount;
+    setSelectedPurchaseItemIds((prev) => prev.filter((id) => !coverableItems.some((item) => item.id === id)));
+    await loadProject();
+    setMessage(`${successCount} kalem stoktan karşılandı.${failedCount > 0 ? ` ${failedCount} kalem kontrol edilmeli.` : ""}`);
   }
 
   async function processParentItem(parent) {
@@ -4329,7 +4376,9 @@ export default function ProjectDetailPage() {
       return;
     }
 
-    const requestItems = summarizeRequestItems(selectedItems.map(mapItemToRequestLine));
+    const requestItems = summarizeRequestItems(
+      selectedItems.map((item) => mapItemToRequestLine(item, stockInfoForItem(item).requiredQuantity || Number(item.estimated_quantity || 0))),
+    );
     const title = `${project.project_code || "PRJ"} - Satınalma Talebi`;
 
     const { data, error } = await supabase
@@ -5466,100 +5515,82 @@ export default function ProjectDetailPage() {
               </div>
             </div>
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-              <div className="flex items-center justify-between gap-3">
-                <h2 className="text-xl font-black text-slate-900">Ana Kalem Durum Takibi</h2>
-                <button type="button" onClick={() => setActiveTab("Malzeme Listesi")} className="text-sm font-bold text-blue-700 hover:underline">Tümünü gör</button>
-              </div>
-              <div className="mt-5 overflow-x-auto rounded-xl border border-slate-100">
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-slate-50 text-xs font-bold text-slate-500">
-                    <tr>
-                      <th className="p-3">Ana Kalem Kodu</th>
-                      <th className="p-3">Ana Kalem Adı</th>
-                      <th className="p-3">Tamamlanma</th>
-                      <th className="p-3">Eksik Malzeme</th>
-                      <th className="p-3">İşlenen</th>
-                      <th className="p-3">Durum</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {parentItems.map((item) => {
-                      const stats = mainItemStats(item, childItemsByParent);
-                      const status = overviewStatusForMainItem(stats);
-                      return (
-                        <tr key={item.id} className="border-t border-slate-100">
-                          <td className="p-3 font-black text-slate-900">{item.product_code || "-"}</td>
-                          <td className="p-3 font-bold text-slate-800">{item.product_name}</td>
-                          <td className="p-3">
-                            <div className="flex items-center gap-3">
-                              <div className="h-2 w-32 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-blue-600" style={{ width: `${stats.completion}%` }} /></div>
-                              <span className="text-xs font-bold text-slate-600">%{stats.completion}</span>
-                            </div>
-                          </td>
-                          <td className="p-3 font-bold text-slate-900">{stats.missing}</td>
-                          <td className="p-3 font-bold text-slate-900">{stats.inProgress}</td>
-                          <td className="p-3"><span className={`rounded-full px-3 py-1 text-xs font-bold ${status.className}`}>{status.text}</span></td>
-                        </tr>
-                      );
-                    })}
-                    {parentItems.length === 0 && (
-                      <tr><td colSpan={6} className="p-4 text-center text-sm text-slate-500">Henüz ana kalem yok.</td></tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
           </section>
         )}
         {activeTab === "İhtiyaç Analizi" && (
           <section className="space-y-6">
             <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-              <SummaryCard
-                title="Ana Ürün"
-                value={parentItems.length}
-                text="Projeye bağlı ana kalem"
-                tone="blue"
-              />
-              <SummaryCard
-                title="Stoktan Karşılanabilir"
-                value={stockCoverableItems.length}
-                text="Stok düşmeden ayrılabilecek"
-                tone="green"
-              />
-              <SummaryCard
-                title="Satınalma Gerekli"
-                value={purchaseRequiredItems.length}
-                text="Havuza gönderilecek eksik"
-                tone="red"
-              />
+              <SummaryCard title="Ana Ürün" value={parentItems.length} text="Takip edilen ana kalem" tone="blue" />
+              <SummaryCard title="Stoktan Karşılanabilir" value={stockCoverableItems.length} text="Rezervasyona uygun alt ürün" tone="green" />
+              <SummaryCard title="Satınalma / Kritik" value={purchaseRequiredItems.length} text="Talep veya kontrol bekleyen alt ürün" tone="red" />
             </div>
 
             <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-              <div className="rounded-2xl border border-emerald-100 bg-white p-5 shadow-sm">
-                <div className="flex items-start justify-between gap-4">
+              <div className="rounded-2xl border border-red-100 bg-white p-5 shadow-sm">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                   <div>
-                    <h2 className="text-xl font-black text-slate-900">Stoktan Karşılanabilir</h2>
-                    <p className="mt-1 text-sm text-slate-500">
-                      Bu liste stokları düşmez; sadece kullanılabilir stokla eşleşen kalemleri gösterir.
-                    </p>
+                    <h2 className="text-xl font-black text-slate-900">Satınalma / Kritik</h2>
+                    <p className="mt-1 text-sm text-slate-500">Stokla kapanmayan veya kritik görünen alt ürünler burada talebe dönüştürülür.</p>
                   </div>
                   <button
                     type="button"
-                    onClick={() => applyItemStockFilter("stock")}
-                    className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700"
+                    disabled={purchaseRequiredItems.length === 0 && selectedPurchaseItemIds.length === 0}
+                    onClick={selectedPurchaseItemIds.length > 0 ? createRequestFromSelectedItems : createRequestFromNeededItems}
+                    className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 disabled:bg-slate-300"
                   >
-                    Ana Ürünlerde Göster
+                    {selectedPurchaseItemIds.length > 0 ? "Seçilenlerden Talep Oluştur (" + selectedPurchaseItemIds.length + ")" : "Tüm Eksikler İçin Talep Oluştur"}
                   </button>
                 </div>
                 <div className="mt-5 divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-100">
-                  {stockCoverableItems.slice(0, 8).map((item) => {
+                  {purchaseRequiredItems.map((item) => {
                     const info = stockInfoForItem(item);
                     return (
-                      <div key={item.id} className="grid grid-cols-[minmax(0,1fr)_auto] gap-4 p-4 text-sm">
+                      <div key={item.id} className="grid grid-cols-[auto_minmax(0,1fr)_auto] gap-3 p-4 text-sm">
+                        <input type="checkbox" checked={selectedPurchaseItemIds.includes(item.id)} onChange={() => togglePurchaseItem(item.id)} className="mt-1 h-4 w-4" />
                         <div className="min-w-0">
                           <div className="truncate font-black text-slate-900" title={item.product_name}>{item.product_name}</div>
                           <div className="mt-1 text-xs font-semibold text-slate-500">{item.product_code || "-"} · {item.unit || "adet"}</div>
+                          <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-bold">
+                            <span className="rounded-full bg-red-50 px-2 py-1 text-red-700">Eksik: {formatQuantity(info.requiredQuantity)}</span>
+                            {info.isCritical && <span className="rounded-full bg-amber-50 px-2 py-1 text-amber-700">Kritik stok</span>}
+                          </div>
+                        </div>
+                        <div className="text-right text-xs font-bold text-slate-600">
+                          <div>İhtiyaç: {formatQuantity(info.openQuantity)}</div>
+                          <div>Stok: {formatQuantity(info.stockQuantity)}</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {purchaseRequiredItems.length === 0 && <div className="p-6 text-center text-sm font-semibold text-slate-500">Satınalma veya kritik stok gerektiren kalem yok.</div>}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-emerald-100 bg-white p-5 shadow-sm">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                  <div>
+                    <h2 className="text-xl font-black text-slate-900">Stoktan Karşılanabilir</h2>
+                    <p className="mt-1 text-sm text-slate-500">Bu alt ürünler depoda var. Seçilenleri projeye rezerve edebilirsiniz.</p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={!selectedPurchaseItemIds.some((id) => stockCoverableItems.some((item) => item.id === id))}
+                    onClick={coverSelectedItemsFromStock}
+                    className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700 disabled:bg-slate-300"
+                  >
+                    Seçilenleri Stoktan Karşıla
+                  </button>
+                </div>
+                <div className="mt-5 divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-100">
+                  {stockCoverableItems.map((item) => {
+                    const info = stockInfoForItem(item);
+                    return (
+                      <div key={item.id} className="grid grid-cols-[auto_minmax(0,1fr)_auto] gap-3 p-4 text-sm">
+                        <input type="checkbox" checked={selectedPurchaseItemIds.includes(item.id)} onChange={() => togglePurchaseItem(item.id)} className="mt-1 h-4 w-4" />
+                        <div className="min-w-0">
+                          <div className="truncate font-black text-slate-900" title={item.product_name}>{item.product_name}</div>
+                          <div className="mt-1 text-xs font-semibold text-slate-500">{item.product_code || "-"} · {item.unit || "adet"}</div>
+                          <div className="mt-2 w-fit rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-700">Karşılanabilir: {formatQuantity(Math.min(Number(info.openQuantity || 0), Number(info.stockQuantity || 0)))}</div>
                         </div>
                         <div className="text-right text-xs font-bold text-emerald-700">
                           <div>Stok: {formatQuantity(info.stockQuantity)}</div>
@@ -5568,48 +5599,7 @@ export default function ProjectDetailPage() {
                       </div>
                     );
                   })}
-                  {stockCoverableItems.length === 0 && (
-                    <div className="p-6 text-center text-sm font-semibold text-slate-500">Stoktan karşılanabilir kalem yok.</div>
-                  )}
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-red-100 bg-white p-5 shadow-sm">
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <h2 className="text-xl font-black text-slate-900">Satınalma Gerekli</h2>
-                    <p className="mt-1 text-sm text-slate-500">
-                      Eksik kalemler satınalma havuzuna veya talep listesine aktarılacak adaylardır.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    disabled={purchaseRequiredItems.length === 0}
-                    onClick={createRequestFromNeededItems}
-                    className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 disabled:bg-slate-300"
-                  >
-                    Talep Oluştur
-                  </button>
-                </div>
-                <div className="mt-5 divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-100">
-                  {purchaseRequiredItems.slice(0, 8).map((item) => {
-                    const info = stockInfoForItem(item);
-                    return (
-                      <div key={item.id} className="grid grid-cols-[minmax(0,1fr)_auto] gap-4 p-4 text-sm">
-                        <div className="min-w-0">
-                          <div className="truncate font-black text-slate-900" title={item.product_name}>{item.product_name}</div>
-                          <div className="mt-1 text-xs font-semibold text-slate-500">{item.product_code || "-"} · {item.unit || "adet"}</div>
-                        </div>
-                        <div className="text-right text-xs font-bold text-red-700">
-                          <div>Gerekli: {formatQuantity(info.requiredQuantity)}</div>
-                          <div>Stok: {formatQuantity(info.stockQuantity)}</div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                  {purchaseRequiredItems.length === 0 && (
-                    <div className="p-6 text-center text-sm font-semibold text-slate-500">Satınalma gerektiren kalem yok.</div>
-                  )}
+                  {stockCoverableItems.length === 0 && <div className="p-6 text-center text-sm font-semibold text-slate-500">Stoktan karşılanabilir kalem yok.</div>}
                 </div>
               </div>
             </div>
@@ -6413,97 +6403,15 @@ export default function ProjectDetailPage() {
                     Toplam: {formatMoney(totals.itemEstimate, projectCurrencyForDisplay())} · Satınalma gerekli: {purchaseRequiredItems.length} · Kritik stok: {criticalStockItems.length}
                   </p>
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => applyItemStockFilter("all")}
-                    className={`rounded-xl px-4 py-2.5 text-sm font-bold ${itemStockFilter === "all" ? "bg-slate-900 text-white" : "bg-slate-50 text-slate-700 hover:bg-slate-100"}`}
-                  >
-                    Tüm Kalemler
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => applyItemStockFilter("purchase")}
-                    className={`rounded-xl px-4 py-2.5 text-sm font-bold ${itemStockFilter === "purchase" ? "bg-red-600 text-white" : "bg-red-50 text-red-700 hover:bg-red-100"}`}
-                  >
-                    Satınalma Gerekli
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => applyItemStockFilter("critical")}
-                    className={`rounded-xl px-4 py-2.5 text-sm font-bold ${itemStockFilter === "critical" ? "bg-amber-500 text-white" : "bg-amber-50 text-amber-700 hover:bg-amber-100"}`}
-                  >
-                    Kritik Stok
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => applyItemStockFilter("stock")}
-                    className={`rounded-xl px-4 py-2.5 text-sm font-bold ${itemStockFilter === "stock" ? "bg-emerald-600 text-white" : "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"}`}
-                  >
-                    Stoktan Karşılanabilir
-                  </button>
-                  <button
-                    type="button"
-                    disabled={purchaseRequiredItems.length === 0 && selectedPurchaseItemIds.length === 0}
-                    onClick={selectedPurchaseItemIds.length > 0 ? createRequestFromSelectedItems : createRequestFromNeededItems}
-                    className="rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-emerald-700 disabled:bg-slate-300"
-                  >
-                    {selectedPurchaseItemIds.length > 0 ? `Seçili ${selectedPurchaseItemIds.length} Kalemden Talep Oluştur` : "Satınalma Talebi Oluştur"}
-                  </button>
-                  <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm font-bold text-slate-700">
-                    <input
-                      type="checkbox"
-                      checked={allProjectItemsSelected}
-                      disabled={items.length === 0}
-                      onChange={toggleAllProjectItemsSelection}
-                      className="h-4 w-4"
-                    />
-                    Tümünü Seç
-                  </label>
-                  <span className="rounded-xl bg-blue-50 px-4 py-2.5 text-sm font-bold text-blue-700">
-                    {selectedProjectItemDeleteIds.length} seçili
-                  </span>
-                  <button
-                    type="button"
-                    disabled={selectedProjectItemDeleteIds.length === 0}
-                    onClick={deleteSelectedProjectItems}
-                    className="rounded-xl bg-red-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-red-700 disabled:bg-slate-300"
-                  >
-                    Seçilenleri Sil
-                  </button>
+                <div className="rounded-xl bg-slate-50 px-4 py-3 text-sm font-bold text-slate-600">
+                  Bu ekran ana kalem takibi içindir. Satınalma ve stoktan karşılama işlemleri İhtiyaç Analizi sekmesinden yapılır.
                 </div>
               </div>
-              {itemStockFilter !== "all" && (
-                <div className="mt-4 flex flex-col gap-3 rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm text-blue-900 md:flex-row md:items-center md:justify-between">
-                  <div>
-                    <div className="font-black">
-                      {itemStockFilter === "purchase"
-                        ? "Satınalma gerekenler filtresi aktif"
-                        : itemStockFilter === "critical"
-                          ? "Kritik stok filtresi aktif"
-                          : "Stoktan karşılanabilir filtresi aktif"}
-                    </div>
-                    <div className="mt-1 text-xs font-semibold">
-                      {activeStockFilterCount} kalem, {visibleParentItems.length} ana ürün altında gösteriliyor. Eşleşen ana ürünlerin alt malzemeleri otomatik açıldı.
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => applyItemStockFilter(itemStockFilter)}
-                    className="rounded-lg bg-white px-4 py-2 text-xs font-bold text-blue-700 shadow-sm hover:bg-blue-100"
-                  >
-                    Filtreyi temizle
-                  </button>
-                </div>
-              )}
-
               <div className="mt-5 space-y-3">
-                {visibleParentItems.map((item) => {
+                {parentItems.map((item) => {
                   const allChildren = childItemsByParent[item.id] || [];
                   const parentProcess = parentProcessInfo(item);
-                  const children = itemStockFilter === "all"
-                    ? allChildren
-                    : allChildren.filter(itemMatchesStockFilter);
+                  const children = allChildren;
                   const stock = stockWarning(item);
                   const stockInfo = stockInfoForItem(item);
                   const itemPrice = resolveProjectItemPrice(item);
