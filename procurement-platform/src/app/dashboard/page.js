@@ -389,9 +389,9 @@ export default function DashboardPage() {
         tone: "orange",
       },
       {
-        title: "Kritik stok limiti olmayan ürün",
+        title: "Stok limiti tanımsız ürün",
         count: productsWithoutStockLimit.length,
-        text: "Minimum stok tanımlanmadığı için uyarı üretilemez.",
+        text: "Minimum veya kritik stok limiti girilmediği için stok uyarısı üretilemez.",
         href: "/dashboard/stok",
         tone: "blue",
       },
