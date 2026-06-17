@@ -64,6 +64,36 @@ const lifecycleItemStatuses = [
   "Tamamland\u0131",
 ];
 
+const mainItemStatuses = [
+  "Bekliyor",
+  "\u0130\u015fleme al\u0131nd\u0131",
+  "\u0130\u015flemde",
+  "Malzeme bekliyor",
+  "Uygulamada",
+  "Haz\u0131r",
+  "Sevke haz\u0131r",
+  "Sevk edildi",
+  "Tamamland\u0131",
+  "Durduruldu",
+];
+
+const componentItemStatuses = [
+  "Bekliyor",
+  "Sat\u0131nalma gerekli",
+  "Talep olu\u015fturuldu",
+  "Teklif bekleniyor",
+  "Sipari\u015f verildi",
+  "Tedarik\u00e7iden bekleniyor",
+  "K\u0131smi geldi",
+  "Depoda",
+  "Eksik geldi",
+  "Fazla geldi",
+  "Hatal\u0131 / ar\u0131zal\u0131 geldi",
+  "Projeye rezerve edildi",
+  "Kullan\u0131ld\u0131",
+  "Tamamland\u0131",
+];
+
 const emptyItem = {
   parent_item_id: "",
   product_code: "",
@@ -202,6 +232,11 @@ function statusClass(status) {
 function itemStatusClass(status) {
   const classes = {
     Bekliyor: "bg-slate-100 text-slate-700",
+    "Malzeme bekliyor": "bg-amber-100 text-amber-800",
+    Haz\u0131r: "bg-emerald-100 text-emerald-700",
+    "Sevke haz\u0131r": "bg-green-100 text-green-700",
+    Durduruldu: "bg-red-100 text-red-700",
+    Kullan\u0131ld\u0131: "bg-teal-100 text-teal-700",
     "Talep oluşturuldu": "bg-blue-100 text-blue-700",
     "Teklif bekleniyor": "bg-indigo-100 text-indigo-700",
     "Tedarikçiden bekleniyor": "bg-sky-100 text-sky-700",
@@ -4855,6 +4890,11 @@ export default function ProjectDetailPage() {
   const projectKpis = useMemo(() => {
     const mainItems = items.filter((item) => !item.parent_item_id);
     const childItems = items.filter((item) => item.parent_item_id);
+    const countByStatus = (rows, statuses) =>
+      statuses.reduce((acc, status) => {
+        acc[status] = rows.filter((row) => (row.status || "Bekliyor") === status).length;
+        return acc;
+      }, {});
     const completedItems = items.filter((item) =>
       ["Tamamlandı", "Sevk edildi", "Depoda"].includes(item.status),
     ).length;
@@ -4883,6 +4923,13 @@ export default function ProjectDetailPage() {
       openOrders,
       receivedItems,
       missingItems,
+      mainStatusCounts: countByStatus(mainItems, mainItemStatuses),
+      componentStatusCounts: countByStatus(childItems, componentItemStatuses),
+      readyMainItems: mainItems.filter((item) => ["Haz\u0131r", "Sevke haz\u0131r"].includes(item.status)).length,
+      shippedMainItems: mainItems.filter((item) => item.status === "Sevk edildi").length,
+      waitingMaterialMainItems: mainItems.filter((item) => item.status === "Malzeme bekliyor").length,
+      orderedComponents: childItems.filter((item) => ["Sipari\u015f verildi", "Tedarik\u00e7iden bekleniyor"].includes(item.status)).length,
+      receivedComponents: childItems.filter((item) => ["Depoda", "K\u0131smi geldi", "Projeye rezerve edildi", "Kullan\u0131ld\u0131", "Tamamland\u0131"].includes(item.status)).length,
       actualCost: totals.actualCost,
       profitLoss,
       budgetVariance: totals.budgetVariance,
@@ -5425,6 +5472,19 @@ export default function ProjectDetailPage() {
                   ))}
                   <div className="rounded-xl bg-blue-50 p-4 text-sm text-blue-800">
                     Proje ilerleme oranları, tamamlanan malzeme, sipariş ve tahsilat verilerine göre hesaplanır.
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    {[
+                      ["Haz\u0131r / sevke haz\u0131r", projectKpis.readyMainItems, "bg-emerald-50 text-emerald-800"],
+                      ["Malzeme bekliyor", projectKpis.waitingMaterialMainItems, "bg-amber-50 text-amber-800"],
+                      ["Sevk edilen", projectKpis.shippedMainItems, "bg-slate-900 text-white"],
+                      ["Sipari\u015fteki alt \u00fcr\u00fcn", projectKpis.orderedComponents, "bg-blue-50 text-blue-800"],
+                    ].map(([label, value, className]) => (
+                      <div key={label} className={`rounded-xl p-3 ${className}`}>
+                        <div className="text-xs font-bold opacity-80">{label}</div>
+                        <div className="mt-1 text-xl font-black">{value}</div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               </div>
@@ -6674,6 +6734,16 @@ export default function ProjectDetailPage() {
                                     <div className="mt-1 font-black text-indigo-950">{allChildren.length}</div>
                                   </div>
                                 </div>
+                                <label className="flex max-w-xs flex-col gap-1 text-[11px] font-bold text-slate-500">
+                                  Ana kalem durumu
+                                  <select
+                                    className="rounded-lg border border-slate-200 bg-white p-2 text-xs font-bold text-slate-800"
+                                    value={item.status || "Bekliyor"}
+                                    onChange={(e) => updateItemStatus(item.id, e.target.value)}
+                                  >
+                                    {mainItemStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
+                                  </select>
+                                </label>
                                 {allChildren.length > 0 && (
                                   <div className="flex flex-wrap items-center gap-2">
                                     <input
@@ -6836,9 +6906,9 @@ export default function ProjectDetailPage() {
                                     </div>
                                   </div>
                                   <label className="flex min-w-40 flex-col gap-1 text-[11px] font-bold text-slate-500">
-                                    Süreç durumu
+                                    Alt \u00fcr\u00fcn s\u00fcreci
                                     <select className="rounded-lg border border-slate-200 p-2 text-xs font-bold text-slate-800" value={child.status || "Bekliyor"} onChange={(e) => updateItemStatus(child.id, e.target.value)}>
-                                      {lifecycleItemStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
+                                      {componentItemStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
                                     </select>
                                   </label>
                                   <span className={`rounded-full px-3 py-1 text-xs font-bold ${
@@ -6881,7 +6951,7 @@ export default function ProjectDetailPage() {
                                 <input type="number" className="rounded-xl border border-slate-300 p-3" placeholder="Miktar" value={itemForm.estimated_quantity} onChange={(e) => updateItemForm("estimated_quantity", e.target.value)} />
                                 <input type="number" className="rounded-xl border border-slate-300 p-3" placeholder="Birim fiyat" value={itemForm.estimated_unit_price} onChange={(e) => updateItemForm("estimated_unit_price", e.target.value)} />
                                 <select className="rounded-xl border border-slate-300 p-3" value={itemForm.status} onChange={(e) => updateItemForm("status", e.target.value)}>
-                                  {lifecycleItemStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
+                                  {componentItemStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
                                 </select>
                                 <textarea className="rounded-xl border border-slate-300 p-3 md:col-span-2" rows={2} placeholder="Not" value={itemForm.note} onChange={(e) => updateItemForm("note", e.target.value)} />
                               </div>
