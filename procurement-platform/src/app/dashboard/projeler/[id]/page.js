@@ -747,6 +747,13 @@ export default function ProjectDetailPage() {
     return `${normalizeCode(code)}|${normalizeText(name)}|${normalizeGroupName(category)}`;
   }
 
+  function projectItemProductKey(item) {
+    const code = normalizeCode(item?.product_code);
+    if (code) return `code:${code}`;
+    const name = normalizeText(item?.product_name);
+    return name ? `name:${name}` : "";
+  }
+
   function stockInfoForItem(item) {
     const code = normalizeCode(item.product_code);
     const name = normalizeText(item.product_name);
@@ -4609,6 +4616,40 @@ export default function ProjectDetailPage() {
     });
   }, [items, products, childItemsByParent]);
 
+  const productUsageSummaryByKey = useMemo(() => {
+    const summary = {};
+
+    items.forEach((item) => {
+      const info = stockInfoForItem(item);
+      if (info.isMainItem) return;
+
+      const key = projectItemProductKey(item);
+      if (!key) return;
+
+      const parentName = projectItemCategory(item);
+      if (!summary[key]) {
+        summary[key] = {
+          rowCount: 0,
+          parentMap: {},
+          totalOpenQuantity: 0,
+          totalRequiredQuantity: 0,
+        };
+      }
+
+      summary[key].rowCount += 1;
+      summary[key].totalOpenQuantity += Number(info.openQuantity || 0);
+      summary[key].totalRequiredQuantity += Number(info.requiredQuantity || 0);
+      summary[key].parentMap[parentName] = (summary[key].parentMap[parentName] || 0) + Number(info.openQuantity || 0);
+    });
+
+    Object.values(summary).forEach((entry) => {
+      entry.parentNames = Object.keys(entry.parentMap);
+      entry.parentCount = entry.parentNames.length;
+    });
+
+    return summary;
+  }, [items, products, childItemsByParent]);
+
   const selectedPurchaseRequiredIds = useMemo(() => {
     const purchaseIds = new Set(purchaseRequiredItems.map((item) => item.id));
     return selectedPurchaseItemIds.filter((id) => purchaseIds.has(id));
@@ -5623,6 +5664,7 @@ export default function ProjectDetailPage() {
                 <div className="mt-5 divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-100">
                   {purchaseRequiredItems.map((item) => {
                     const info = stockInfoForItem(item);
+                    const usage = productUsageSummaryByKey[projectItemProductKey(item)];
                     return (
                       <div key={item.id} className="grid grid-cols-[auto_minmax(0,1fr)_auto] gap-3 p-4 text-sm">
                         <input type="checkbox" checked={selectedPurchaseItemIds.includes(item.id)} onChange={() => togglePurchaseItem(item.id)} className="mt-1 h-4 w-4" />
@@ -5630,6 +5672,14 @@ export default function ProjectDetailPage() {
                           <div className="truncate font-black text-slate-900" title={item.product_name}>{item.product_name}</div>
                           <div className="mt-1 text-xs font-semibold text-slate-500">{item.product_code || "-"} · {item.unit || "adet"}</div>
                           <div className="mt-1 text-[11px] font-bold text-slate-500">Ana ürün: {projectItemCategory(item)}</div>
+                          {usage && (
+                            <div className="mt-1 text-[11px] font-semibold text-slate-500">
+                              {usage.parentCount > 1
+                                ? `Bu kod ${usage.parentCount} ana üründe var: ${usage.parentNames.slice(0, 3).join(", ")}${usage.parentCount > 3 ? "..." : ""}`
+                                : "Bu kod sadece bu ana üründe görünüyor."}
+                              {" "}Toplam ihtiyaç: {formatQuantity(usage.totalOpenQuantity)}
+                            </div>
+                          )}
                           <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-bold">
                             <span className="rounded-full bg-red-50 px-2 py-1 text-red-700">Eksik: {formatQuantity(info.requiredQuantity)}</span>
                             {info.isCritical && <span className="rounded-full bg-amber-50 px-2 py-1 text-amber-700">Kritik stok</span>}
@@ -5676,6 +5726,7 @@ export default function ProjectDetailPage() {
                 <div className="mt-5 divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-100">
                   {stockCoverableItems.map((item) => {
                     const info = stockInfoForItem(item);
+                    const usage = productUsageSummaryByKey[projectItemProductKey(item)];
                     return (
                       <div key={item.id} className="grid grid-cols-[auto_minmax(0,1fr)_auto] gap-3 p-4 text-sm">
                         <input type="checkbox" checked={selectedStockCoverItemIds.includes(item.id)} onChange={() => toggleStockCoverItem(item.id)} className="mt-1 h-4 w-4" />
@@ -5683,6 +5734,14 @@ export default function ProjectDetailPage() {
                           <div className="truncate font-black text-slate-900" title={item.product_name}>{item.product_name}</div>
                           <div className="mt-1 text-xs font-semibold text-slate-500">{item.product_code || "-"} · {item.unit || "adet"}</div>
                           <div className="mt-1 text-[11px] font-bold text-slate-500">Ana ürün: {projectItemCategory(item)}</div>
+                          {usage && (
+                            <div className="mt-1 text-[11px] font-semibold text-slate-500">
+                              {usage.parentCount > 1
+                                ? `Bu kod ${usage.parentCount} ana üründe var: ${usage.parentNames.slice(0, 3).join(", ")}${usage.parentCount > 3 ? "..." : ""}`
+                                : "Bu kod sadece bu ana üründe görünüyor."}
+                              {" "}Toplam ihtiyaç: {formatQuantity(usage.totalOpenQuantity)}
+                            </div>
+                          )}
                           <div className="mt-2 w-fit rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-700">Karşılanabilir: {formatQuantity(Math.min(Number(info.openQuantity || 0), Number(info.stockQuantity || 0)))}</div>
                         </div>
                         <div className="text-right text-xs font-bold text-emerald-700">
