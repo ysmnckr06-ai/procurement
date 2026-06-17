@@ -843,7 +843,9 @@ export default function ProjectDetailPage() {
     const relation = componentRelationForItem(item, items);
     const estimatedQuantity = Number(item.estimated_quantity || 0);
     const openQuantity = Math.max(estimatedQuantity - relation.consumedChildQuantity, 0);
-    const requiredQuantity = Math.max(0, openQuantity - relation.reservedChildQuantity - stockQuantity);
+    const reservedQuantity = Math.max(Number(item.reserved_child_quantity ?? item.reserved_quantity ?? 0), 0);
+    const pendingQuantity = Math.max(openQuantity - reservedQuantity, 0);
+    const requiredQuantity = Math.max(0, pendingQuantity - stockQuantity);
     const isMainItem = isMainProjectItem(item);
     const needsPurchase = !isMainItem && requiredQuantity > 0;
     const isCritical = !isMainItem && (criticalStock > 0 ? stockQuantity < criticalStock : requiredQuantity > 0);
@@ -854,7 +856,8 @@ export default function ProjectDetailPage() {
       criticalStock,
       estimatedQuantity,
       consumedQuantity: relation.consumedChildQuantity,
-      reservedQuantity: relation.reservedChildQuantity,
+      reservedQuantity,
+      pendingQuantity,
       openQuantity,
       requiredQuantity,
       needsPurchase,
@@ -4109,7 +4112,7 @@ export default function ProjectDetailPage() {
         source: "Ana kalem tamamlanan miktar kaydı",
         reserved_quantity: reservedToRelease,
         issued_to_production_quantity: quantityToConsume,
-        notes: `${parent.product_name} için ${processQuantity} ${parent.unit || "adet"} tamamlanan ana kalem karşılığı kullanıldı | Birim kullanım: ${relation.childQuantityPerParent} | Stoktan karşılanan: ${quantityToConsume} | Bekleyen/rezerve kalan: ${Math.max(Number(child.reserved_quantity || 0) - reservedToRelease, 0)}`,
+        notes: `${parent.product_name} için ${processQuantity} ${parent.unit || "adet"} tamamlanan ana kalem karşılığı kullanıldı | Birim kullanım: ${relation.childQuantityPerParent} | Stoktan karşılanan: ${quantityToConsume} | Projeye ayrılan kalan: ${Math.max(Number(child.reserved_quantity || 0) - reservedToRelease, 0)}`,
       });
     }
 
@@ -6987,7 +6990,7 @@ export default function ProjectDetailPage() {
                                         <span className={`rounded-full px-2 py-1 ${priceSourceClass(childPrice.source)}`}>{childPrice.source}</span>
                                       </div>
                                       <div className="mt-1 text-xs font-bold text-slate-600">
-                                        Toplam ihtiyaç: {formatQuantity(childStockInfo.estimatedQuantity)} {child.unit || "adet"} · Birim kullanım: {formatQuantity(relation.childQuantityPerParent)} · Kullanılan: {formatQuantity(childStockInfo.consumedQuantity)} · Bekleyen/rezerve: {formatQuantity(relation.remainingChildQuantity)} · Eksik: {formatQuantity(childStockInfo.requiredQuantity)}
+                                        Toplam ihtiyaç: {formatQuantity(childStockInfo.estimatedQuantity)} {child.unit || "adet"} · Birim kullanım: {formatQuantity(relation.childQuantityPerParent)} · Kullanılan: {formatQuantity(childStockInfo.consumedQuantity)} · Projeye ayrılan: {formatQuantity(childStockInfo.reservedQuantity)} · Bekleyen: {formatQuantity(childStockInfo.pendingQuantity)} · Satınalma gereken: {formatQuantity(childStockInfo.requiredQuantity)}
                                       </div>
                                       <div className="mt-3 flex flex-wrap items-end gap-2 rounded-xl bg-slate-50 p-3">
                                         <div className="pb-2 text-xs font-black text-slate-600">Miktar düzelt</div>
@@ -7016,7 +7019,7 @@ export default function ProjectDetailPage() {
                                     </div>
                                   </div>
                                   <label className="flex min-w-40 flex-col gap-1 text-[11px] font-bold text-slate-500">
-                                    Alt \u00fcr\u00fcn s\u00fcreci
+                                    Alt ürün süreci
                                     <select className="rounded-lg border border-slate-200 p-2 text-xs font-bold text-slate-800" value={child.status || "Bekliyor"} onChange={(e) => updateItemStatus(child.id, e.target.value)}>
                                       {componentItemStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
                                     </select>
