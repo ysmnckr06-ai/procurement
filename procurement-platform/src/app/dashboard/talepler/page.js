@@ -34,6 +34,47 @@ function Step({ no, title, text }) {
   );
 }
 
+function parseRequestItemArray(value) {
+  if (Array.isArray(value)) return value;
+  if (!value || typeof value !== "string") return [];
+
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    console.warn("Talep kalemleri okunamadı:", error);
+    return [];
+  }
+}
+
+function getRequestItems(request) {
+  const candidates = [
+    parseRequestItemArray(request?.items),
+    parseRequestItemArray(request?.rows),
+    parseRequestItemArray(request?.analysis),
+  ];
+
+  return candidates.find((items) => items.length > 0) || [];
+}
+
+function readItemField(item, keys, fallback = "") {
+  for (const key of keys) {
+    const value = item?.[key];
+    if (value !== undefined && value !== null && String(value).trim() !== "") return value;
+  }
+  return fallback;
+}
+
+function formatRequestMoney(value, currency) {
+  const amount = Number(value || 0);
+  if (!amount) return "-";
+
+  return `${amount.toLocaleString("tr-TR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })} ${currency || "TRY"}`;
+}
+
 export default function TaleplerPage() {
   const router = useRouter();
   const API_URL = process.env.NEXT_PUBLIC_API_URL;
@@ -44,6 +85,7 @@ export default function TaleplerPage() {
   const [rows, setRows] = useState([]);
   const [savedRequests, setSavedRequests] = useState([]);
   const [showAllRequests, setShowAllRequests] = useState(false);
+  const [expandedRequestId, setExpandedRequestId] = useState("");
   const isAnalyzingRef = useRef(false);
 
   const totalQty = useMemo(() => {
@@ -366,53 +408,138 @@ export default function TaleplerPage() {
               </div>
             ) : (
               <div className="space-y-3">
-                {(showAllRequests ? savedRequests : savedRequests.slice(0, 5)).map((req, index) => (
-                  <div
-                    key={req.id}
-                    className="grid grid-cols-1 gap-4 rounded-xl border border-slate-200 p-4 md:grid-cols-[80px_1fr_auto]"
-                  >
-                    <div>
-                      <div className="text-xs font-semibold text-slate-500">Sıra No</div>
-                      <div className="mt-1 font-bold text-slate-900">{index + 1}</div>
-                    </div>
+                {(showAllRequests ? savedRequests : savedRequests.slice(0, 5)).map((req, index) => {
+                  const requestItems = getRequestItems(req);
+                  const isExpanded = expandedRequestId === req.id;
 
-                    <div>
-                      <div className="text-xs font-semibold text-slate-500">Talep</div>
-                      <div className="mt-1 font-bold text-slate-900">{req.ad || "Talep Listesi"}</div>
-                      <div className="mt-1 text-xs font-semibold text-slate-500">
-                        {req.durum || "Oluşturuldu"} · {req.totalitems || 0} kalem
-                      </div>
-                      <div className="mt-2 text-xs font-semibold text-slate-500">Oluşturulma Tarihi</div>
-                      <div className="mt-1 font-semibold text-slate-900">
-                        {formatDateTime(req.created_at || req.tarih)}
-                      </div>
-                    </div>
+                  return (
+                    <div
+                      key={req.id}
+                      className="rounded-xl border border-slate-200 bg-white p-4"
+                    >
+                      <div className="grid grid-cols-1 gap-4 md:grid-cols-[80px_1fr_auto]">
+                        <div>
+                          <div className="text-xs font-semibold text-slate-500">Sıra No</div>
+                          <div className="mt-1 font-bold text-slate-900">{index + 1}</div>
+                        </div>
 
-                    <div className="flex gap-2">
-                      {req.filepath && (
-                        <button
-                          onClick={() => handleSavedRequestDownload(req.filepath)}
-                          className="rounded-lg bg-green-600 px-3 py-2 text-sm font-semibold text-white"
-                        >
-                          Excel İndir
-                        </button>
+                        <div>
+                          <div className="text-xs font-semibold text-slate-500">Talep</div>
+                          <div className="mt-1 font-bold text-slate-900">{req.ad || "Talep Listesi"}</div>
+                          <div className="mt-1 text-xs font-semibold text-slate-500">
+                            {req.durum || "Oluşturuldu"} · {req.totalitems || requestItems.length || 0} kalem
+                          </div>
+                          <div className="mt-2 text-xs font-semibold text-slate-500">Oluşturulma Tarihi</div>
+                          <div className="mt-1 font-semibold text-slate-900">
+                            {formatDateTime(req.created_at || req.tarih)}
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap items-start gap-2 md:justify-end">
+                          <button
+                            onClick={() => setExpandedRequestId(isExpanded ? "" : req.id)}
+                            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                          >
+                            {isExpanded ? "Detayı Gizle" : "Detay"}
+                          </button>
+
+                          {req.filepath && (
+                            <button
+                              onClick={() => handleSavedRequestDownload(req.filepath)}
+                              className="rounded-lg bg-green-600 px-3 py-2 text-sm font-semibold text-white"
+                            >
+                              Excel İndir
+                            </button>
+                          )}
+
+                          <button
+                            onClick={() => router.push(`/dashboard/teklifler?requestId=${req.id}${req.project_id ? `&projectId=${req.project_id}` : ""}`)}
+                            className="rounded-lg bg-purple-600 px-3 py-2 text-sm font-semibold text-white"
+                          >
+                            Tekliflere Aktar
+                          </button>
+                          <button
+                            onClick={() => deleteRequest(req.id)}
+                            className="rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white"
+                          >
+                            sil
+                          </button>
+                        </div>
+                      </div>
+
+                      {isExpanded && (
+                        <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                              <div className="text-sm font-bold text-slate-900">Talep Kalemleri</div>
+                              <div className="text-xs font-medium text-slate-500">
+                                Bu talep içinde satınalma için hazırlanan ürünler listelenir.
+                              </div>
+                            </div>
+                            <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-bold text-blue-700">
+                              {requestItems.length} kalem
+                            </span>
+                          </div>
+
+                          {requestItems.length === 0 ? (
+                            <div className="mt-3 rounded-lg border border-dashed border-slate-300 bg-white p-4 text-sm font-semibold text-slate-500">
+                              Bu talep kaydında kalem detayı bulunamadı.
+                            </div>
+                          ) : (
+                            <div className="mt-3 overflow-x-auto rounded-lg border border-slate-200 bg-white">
+                              <table className="min-w-full text-left text-sm">
+                                <thead className="bg-slate-100 text-xs font-bold uppercase text-slate-500">
+                                  <tr>
+                                    <th className="px-3 py-3">#</th>
+                                    <th className="px-3 py-3">Ürün kodu</th>
+                                    <th className="px-3 py-3">Açıklama</th>
+                                    <th className="px-3 py-3 text-right">Miktar</th>
+                                    <th className="px-3 py-3">Birim</th>
+                                    <th className="px-3 py-3 text-right">Birim fiyat</th>
+                                    <th className="px-3 py-3 text-right">Toplam</th>
+                                    <th className="px-3 py-3">Not</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                  {requestItems.map((item, itemIndex) => {
+                                    const quantity = readItemField(item, ["talepEdilenAdet", "quantity", "qty", "estimated_quantity"], 0);
+                                    const currency = readItemField(item, ["paraBirimi", "currency"], "TRY");
+                                    return (
+                                      <tr key={`${readItemField(item, ["urunKodu", "product_code", "code"], "kod-yok")}-${itemIndex}`} className="align-top">
+                                        <td className="px-3 py-3 font-semibold text-slate-500">{itemIndex + 1}</td>
+                                        <td className="px-3 py-3 font-bold text-slate-900">
+                                          {readItemField(item, ["urunKodu", "product_code", "code"], "-")}
+                                        </td>
+                                        <td className="max-w-[420px] px-3 py-3 font-semibold text-slate-800">
+                                          {readItemField(item, ["urunAciklamasi", "product_name", "description", "name"], "Ürün açıklaması yok")}
+                                        </td>
+                                        <td className="px-3 py-3 text-right font-bold text-blue-700">
+                                          {Number(quantity || 0).toLocaleString("tr-TR")}
+                                        </td>
+                                        <td className="px-3 py-3 font-semibold text-slate-600">
+                                          {readItemField(item, ["birim", "unit"], "adet")}
+                                        </td>
+                                        <td className="px-3 py-3 text-right font-semibold text-slate-700">
+                                          {formatRequestMoney(readItemField(item, ["birimFiyat", "unit_price", "estimated_unit_price"], 0), currency)}
+                                        </td>
+                                        <td className="px-3 py-3 text-right font-bold text-slate-900">
+                                          {formatRequestMoney(readItemField(item, ["toplam", "total", "estimated_total"], 0), currency)}
+                                        </td>
+                                        <td className="max-w-[260px] px-3 py-3 text-xs font-medium text-slate-500">
+                                          {readItemField(item, ["not", "note"], "-")}
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
                       )}
-
-                      <button
-                        onClick={() => router.push(`/dashboard/teklifler?requestId=${req.id}${req.project_id ? `&projectId=${req.project_id}` : ""}`)}
-                        className="rounded-lg bg-purple-600 px-3 py-2 text-sm font-semibold text-white"
-                      >
-                        Tekliflere Aktar
-                      </button>
-                      <button
-                        onClick={() => deleteRequest(req.id)}
-                        className="rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white"
-                      >
-                        sil
-                    </button>
                     </div>
-                  </div>
-                ))}     
+                  );
+                })}     
 <div className="flex justify-center pt-2">
   <button
     onClick={() => setShowAllRequests(!showAllRequests)}
