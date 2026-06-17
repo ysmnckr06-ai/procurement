@@ -896,7 +896,10 @@ export default function ProjectDetailPage() {
 
   function canCreatePurchaseRequest(item) {
     const info = stockInfoForItem(item);
-    return !info.isMainItem && Number(info.requiredQuantity || 0) > 0 && !purchaseActionLockedStatuses.includes(item.status || "Bekliyor");
+    return !info.isMainItem
+      && Number(info.requiredQuantity || 0) > 0
+      && !purchaseActionLockedStatuses.includes(item.status || "Bekliyor")
+      && !requestedProjectItemIds.has(item.id);
   }
 
   function canCoverFromStock(item) {
@@ -3592,6 +3595,7 @@ export default function ProjectDetailPage() {
     const item = items.find((entry) => entry.id === itemId);
     if (item && !canCreatePurchaseRequest(item)) return;
 
+    setSelectedStockCoverItemIds([]);
     setSelectedPurchaseItemIds((prev) =>
       prev.includes(itemId)
         ? prev.filter((id) => id !== itemId)
@@ -3603,6 +3607,7 @@ export default function ProjectDetailPage() {
     const ids = groupItems.filter((item) => canCreatePurchaseRequest(item)).map((item) => item.id).filter(Boolean);
     if (ids.length === 0) return;
 
+    setSelectedStockCoverItemIds([]);
     setSelectedPurchaseItemIds((prev) => {
       const selected = new Set(prev);
       const allSelected = ids.every((id) => selected.has(id));
@@ -3621,6 +3626,7 @@ export default function ProjectDetailPage() {
     const item = items.find((entry) => entry.id === itemId);
     if (item && !canCoverFromStock(item)) return;
 
+    setSelectedPurchaseItemIds([]);
     setSelectedStockCoverItemIds((prev) =>
       prev.includes(itemId)
         ? prev.filter((id) => id !== itemId)
@@ -3632,6 +3638,7 @@ export default function ProjectDetailPage() {
     const ids = groupItems.filter((item) => canCoverFromStock(item)).map((item) => item.id).filter(Boolean);
     if (ids.length === 0) return;
 
+    setSelectedPurchaseItemIds([]);
     setSelectedStockCoverItemIds((prev) => {
       const selected = new Set(prev);
       const allSelected = ids.every((id) => selected.has(id));
@@ -4512,6 +4519,12 @@ export default function ProjectDetailPage() {
     if (!user) return;
 
     const selectedItems = items.filter((item) => selectedPurchaseItemIds.includes(item.id) && canCreatePurchaseRequest(item));
+    const selectedPurchaseBlocked = selectedPurchaseItemIds.length > 0 && selectedItems.length === 0;
+
+    if (selectedPurchaseBlocked) {
+      setMessage("Secili kalemler icin talep daha once olusturulmus veya islem baslamis. Ayni kalem icin ikinci talep acilamaz.");
+      return;
+    }
 
     if (selectedItems.length === 0) {
       setMessage("Talep oluşturmak için en az bir ürün seçin.");
@@ -4545,12 +4558,21 @@ export default function ProjectDetailPage() {
     await supabase
       .from("project_items")
       .update({ status: "Talep olu\u015fturuldu", updated_at: new Date().toISOString() })
-      .in("id", selectedItems.map((item) => item.id));
+      .in("id", selectedItems.map((item) => item.id))
+      .eq("project_id", projectId)
+      .eq("user_id", user.id);
 
     setProjectRequests((prev) => [data, ...prev]);
+    setItems((prev) =>
+      prev.map((item) =>
+        selectedItems.some((selected) => selected.id === item.id)
+          ? { ...item, status: "Talep olu\u015fturuldu", updated_at: new Date().toISOString() }
+          : item,
+      ),
+    );
     setSelectedPurchaseItemIds([]);
     setCreatedRequestId(data.id);
-    setMessage("Proje satınalma talebi oluşturuldu.");
+    setMessage(`${requestItems.length} kalem icin proje satinalma talebi olusturuldu. Bu kalemler tekrar talep edilemez.`);
   }
 
   async function createRequestFromNeededItems() {
@@ -4565,7 +4587,15 @@ export default function ProjectDetailPage() {
       .filter(({ item, stock }) => !stock.isMainItem && stock.requiredQuantity > 0 && canCreatePurchaseRequest(item));
 
     if (neededItems.length === 0) {
-      setMessage("Satınalma gereken ürün bulunamadı.");
+      const lockedNeededCount = items.filter((item) => {
+        const stock = stockInfoForItem(item);
+        return !stock.isMainItem && stock.requiredQuantity > 0 && !canCreatePurchaseRequest(item);
+      }).length;
+      setMessage(
+        lockedNeededCount > 0
+          ? "Satinalma gereken kalemlerin talebi daha once olusturulmus veya islem baslamis. Ayni kalemler icin ikinci talep acilamaz."
+          : "Satinalma gereken urun bulunamadi.",
+      );
       return;
     }
 
@@ -4581,66 +4611,16 @@ export default function ProjectDetailPage() {
       items: requestItems,
     };
 
-    console.log("Otomatik talep payload:", fullPayload);
-    let localRequestPayload = fullPayload;
-
-    let { data, error } = await supabase
+    const { data, error } = await supabase
       .from("requests")
       .insert(fullPayload)
       .select("*")
       .single();
 
     if (error) {
-      console.warn("Otomatik talep tam payload insert uyarısı:", error);
-
-      const projectLinkedPayload = {
-        user_id: user.id,
-        project_id: projectId,
-        ad: title,
-        durum: "Proje Talebi",
-        filepath: null,
-        totalitems: requestItems.length,
-      };
-
-      console.log("Otomatik talep proje ba\u011flant\u0131l\u0131 fallback payload:", projectLinkedPayload);
-
-      const projectLinkedResult = await supabase
-        .from("requests")
-        .insert(projectLinkedPayload)
-        .select("*")
-        .single();
-
-      if (!projectLinkedResult.error) {
-        data = projectLinkedResult.data;
-        localRequestPayload = { ...projectLinkedPayload, items: requestItems };
-      } else {
-        console.warn("Otomatik talep proje ba\u011flant\u0131l\u0131 fallback uyar\u0131s\u0131:", projectLinkedResult.error);
-
-        const fallbackPayload = {
-          user_id: user.id,
-          ad: title,
-          durum: "Proje Talebi",
-          filepath: null,
-          totalitems: requestItems.length,
-        };
-
-        console.log("Otomatik talep fallback payload:", fallbackPayload);
-
-        const fallbackResult = await supabase
-          .from("requests")
-          .insert(fallbackPayload)
-          .select("*")
-          .single();
-
-        if (fallbackResult.error) {
-          console.error("Otomatik talep fallback insert hatası:", fallbackResult.error);
-          setMessage(fallbackResult.error.message || projectLinkedResult.error.message || error.message || "Satınalma gerekenlerden talep oluşturulamadı.");
-          return;
-        }
-
-        data = fallbackResult.data;
-        localRequestPayload = { ...fallbackPayload, project_id: projectId, items: requestItems };
-      }
+      console.error("Otomatik talep insert hatasi:", error);
+      setMessage(error.message || "Satinalma gerekenlerden talep olusturulamadi.");
+      return;
     }
 
     if (!data?.id) {
@@ -4650,11 +4630,13 @@ export default function ProjectDetailPage() {
 
     await supabase
       .from("project_items")
-      .update({ status: "Talep oluşturuldu", updated_at: new Date().toISOString() })
-      .in("id", neededItems.map(({ item }) => item.id));
+      .update({ status: "Talep olu\u015fturuldu", updated_at: new Date().toISOString() })
+      .in("id", neededItems.map(({ item }) => item.id))
+      .eq("project_id", projectId)
+      .eq("user_id", user.id);
 
     const localRequest = {
-      ...localRequestPayload,
+      ...fullPayload,
       ...data,
       project_id: data.project_id || projectId,
       items: data.items || requestItems,
@@ -4664,9 +4646,17 @@ export default function ProjectDetailPage() {
     };
 
     setProjectRequests((prev) => [localRequest, ...prev.filter((request) => request.id !== localRequest.id)]);
+    setItems((prev) =>
+      prev.map((item) =>
+        neededItems.some(({ item: neededItem }) => neededItem.id === item.id)
+          ? { ...item, status: "Talep olu\u015fturuldu", updated_at: new Date().toISOString() }
+          : item,
+      ),
+    );
+    setSelectedPurchaseItemIds([]);
     setCreatedRequestId(localRequest.id);
     setActiveTab("Talepler");
-    setMessage("Talep başarıyla oluşturuldu. Proje taleplerinde listelendi.");
+    setMessage(`${requestItems.length} kalem icin talep olusturuldu. Bu kalemler tekrar talep edilemez.`);
     await loadProjectItems();
   }
   const parentItems = useMemo(() => items.filter((item) => !item.parent_item_id), [items]);
@@ -4679,6 +4669,19 @@ export default function ProjectDetailPage() {
     });
     return grouped;
   }, [items]);
+
+  const requestedProjectItemIds = useMemo(() => {
+    const ids = new Set();
+
+    projectRequests.forEach((request) => {
+      parseRequestItems(request).forEach((line) => {
+        if (line.projectItemId) ids.add(line.projectItemId);
+        (line.projectItemIds || []).forEach((id) => ids.add(id));
+      });
+    });
+
+    return ids;
+  }, [projectRequests, items, products, childItemsByParent]);
 
 
   const purchaseRequiredItems = useMemo(() => {
@@ -4702,7 +4705,7 @@ export default function ProjectDetailPage() {
 
   const actionablePurchaseItems = useMemo(() => {
     return purchaseRequiredItems.filter((item) => canCreatePurchaseRequest(item));
-  }, [purchaseRequiredItems, products, childItemsByParent]);
+  }, [purchaseRequiredItems, products, childItemsByParent, requestedProjectItemIds]);
 
   const actionableStockCoverItems = useMemo(() => {
     return stockCoverableItems.filter((item) => canCoverFromStock(item));
@@ -5827,6 +5830,7 @@ export default function ProjectDetailPage() {
                   {purchaseRequiredItems.map((item) => {
                     const info = stockInfoForItem(item);
                     const purchaseActionable = canCreatePurchaseRequest(item);
+                    const requestLocked = requestedProjectItemIds.has(item.id);
                     const usageKey = projectItemProductKey(item);
                     const usage = productUsageSummaryByKey[usageKey];
                     const usageExpanded = Boolean(expandedUsageKeys[usageKey]);
@@ -5839,7 +5843,7 @@ export default function ProjectDetailPage() {
                           <input type="checkbox" checked={selectedPurchaseItemIds.includes(item.id)} onChange={() => togglePurchaseItem(item.id)} className="mt-1 h-4 w-4" />
                         ) : (
                           <span className="mt-1 rounded-full bg-blue-50 px-2 py-1 text-[11px] font-black text-blue-700">
-                            {item.status === "Talep olu\u015fturuldu" ? "Talep olu\u015fturuldu" : item.status || "\u0130\u015flemde"}
+                            {requestLocked || item.status === "Talep olu\u015fturuldu" ? "Talep olu\u015fturuldu" : item.status || "\u0130\u015flemde"}
                           </span>
                         )}
                         <div className="min-w-0">
