@@ -151,6 +151,7 @@ export default function ProjectsPage() {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [message, setMessage] = useState("");
+  const [deleteBlocker, setDeleteBlocker] = useState(null);
   const [settings, setSettings] = useState({ default_currency: "TRY", base_currency: "TRY" });
   const [liveRates, setLiveRates] = useState(null);
   const [liveRateWarning, setLiveRateWarning] = useState("");
@@ -790,7 +791,13 @@ export default function ProjectsPage() {
         .filter(([, count]) => count > 0)
         .map(([label, count]) => `${label}: ${count}`)
         .join(", ");
-      setMessage(`Bu proje silinemez çünkü bağlı kayıtlar var. Önce proje detayından ilgili kayıtları silin. ${blockers}`);
+      setDeleteBlocker({
+        projectId: project.id,
+        projectName: project.project_name,
+        stockMovementCount: metrics.dependencyDetails["stok hareketi"] || 0,
+        blockers,
+      });
+      setMessage(`Bu proje silinemez çünkü bağlı kayıtlar var. ${blockers}`);
       return;
     }
 
@@ -808,6 +815,7 @@ export default function ProjectsPage() {
       return;
     }
 
+    setDeleteBlocker(null);
     setMessage("Proje silindi.");
     await loadProjects();
   }
@@ -879,7 +887,34 @@ export default function ProjectsPage() {
 
         {message && (
           <div className="rounded-xl border border-yellow-200 bg-yellow-50 p-4 text-sm font-semibold text-yellow-900">
-            {message}
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <div>{message}</div>
+                {deleteBlocker && (
+                  <div className="mt-1 text-xs font-bold text-yellow-800">
+                    Stoktan karşılanan veya rezerve edilen kayıtları proje detayındaki Stok Hareketleri sekmesinden silebilirsiniz.
+                  </div>
+                )}
+              </div>
+              {deleteBlocker && (
+                <div className="flex flex-wrap gap-2">
+                  {deleteBlocker.stockMovementCount > 0 && (
+                    <Link
+                      href={`/dashboard/projeler/${deleteBlocker.projectId}?tab=${encodeURIComponent("Stok Hareketleri")}`}
+                      className="rounded-lg bg-slate-900 px-4 py-2 text-center text-xs font-black text-white hover:bg-slate-800"
+                    >
+                      Stok hareketlerini aç ({deleteBlocker.stockMovementCount})
+                    </Link>
+                  )}
+                  <Link
+                    href={`/dashboard/projeler/${deleteBlocker.projectId}`}
+                    className="rounded-lg border border-yellow-300 bg-white px-4 py-2 text-center text-xs font-black text-yellow-900 hover:bg-yellow-100"
+                  >
+                    Proje detayına git
+                  </Link>
+                </div>
+              )}
+            </div>
           </div>
         )}
 

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import { calculateBaseAmount, currencyOptions, getBaseCurrency, getExchangeRate } from "@/lib/currency";
@@ -26,6 +26,7 @@ const tabs = [
   "İhtiyaç Analizi",
   "Talepler",
   "Siparişler",
+  "Stok Hareketleri",
   "Ödemeler",
   "Revizyonlar",
   "Raporlar",
@@ -37,6 +38,7 @@ const tabLabels = {
   "İhtiyaç Analizi": "İhtiyaç Analizi",
   Talepler: "Satınalma Listeleri",
   Siparişler: "Siparişler",
+  "Stok Hareketleri": "Stok Hareketleri",
   Ödemeler: "Ödemeler",
   Revizyonlar: "Revizyonlar",
   Raporlar: "Raporlar",
@@ -297,6 +299,7 @@ function SummaryCard({ title, value, text, tone = "slate" }) {
 export default function ProjectDetailPage() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const projectId = params.id;
   const previewResultsRef = useRef(null);
 
@@ -425,6 +428,12 @@ export default function ProjectDetailPage() {
   useEffect(() => {
     if (!projectId || typeof window === "undefined") return;
 
+    const requestedTab = searchParams?.get("tab");
+    if (requestedTab && tabs.includes(requestedTab)) {
+      setActiveTab(requestedTab);
+      return;
+    }
+
     const savedTab = window.localStorage.getItem(`project-detail-active-tab-${projectId}`);
     const savedExpandedItems = window.localStorage.getItem(`project-detail-expanded-items-${projectId}`);
 
@@ -439,7 +448,7 @@ export default function ProjectDetailPage() {
         window.localStorage.removeItem(`project-detail-expanded-items-${projectId}`);
       }
     }
-  }, [projectId]);
+  }, [projectId, searchParams]);
 
   useEffect(() => {
     if (!projectId || typeof window === "undefined") return;
@@ -5115,6 +5124,40 @@ export default function ProjectDetailPage() {
       .eq("user_id", userId);
   }
 
+  async function reverseProjectItemStockMovement(movement, userId) {
+    if (!movement.project_item_id) return;
+
+    const { data: item, error: itemError } = await supabase
+      .from("project_items")
+      .select("id,estimated_quantity,received_quantity,reserved_quantity,status")
+      .eq("id", movement.project_item_id)
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (itemError || !item) return;
+
+    const quantity = Number(movement.quantity || 0);
+    const reservedQuantity = Number(movement.reserved_quantity || 0) || quantity;
+    const updatePayload = { updated_at: new Date().toISOString() };
+
+    if (movement.movement_type === "in") {
+      updatePayload.received_quantity = Math.max(Number(item.received_quantity || 0) - quantity, 0);
+    } else {
+      const nextReserved = Math.max(Number(item.reserved_quantity || 0) - reservedQuantity, 0);
+      updatePayload.reserved_quantity = nextReserved;
+
+      if (["Projeye rezerve edildi", "Kullanıldı", "Tamamlandı"].includes(item.status || "")) {
+        updatePayload.status = nextReserved > 0 ? item.status : "Satınalma gerekli";
+      }
+    }
+
+    await supabase
+      .from("project_items")
+      .update(updatePayload)
+      .eq("id", item.id)
+      .eq("user_id", userId);
+  }
+
   async function deleteStockMovement(movement) {
     const approved = window.confirm(`${movement.product_name || "Stok hareketi"} kaydı silinsin mi? Stok toplamları ters hareketle güncellenecek.`);
     if (!approved) return;
@@ -5123,6 +5166,7 @@ export default function ProjectDetailPage() {
     if (!user) return;
 
     await reverseStockMovementTotals(movement, user.id);
+    await reverseProjectItemStockMovement(movement, user.id);
 
     const { error } = await supabase
       .from("stock_movements")
