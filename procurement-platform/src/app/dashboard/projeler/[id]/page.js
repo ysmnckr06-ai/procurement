@@ -6684,38 +6684,42 @@ export default function ProjectDetailPage() {
                               </div>
                             )}
                             {!stockInfo.isMainItem && (
-                              <div className="mt-3 flex flex-wrap items-center gap-2">
-                                <button type="button" onClick={() => updateProjectItemQuantity(item, -1)} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50">
-                                  -1
+                              <div className="mt-3 flex flex-wrap items-end gap-2 rounded-xl bg-slate-50 p-3">
+                                <div className="pb-2 text-xs font-black text-slate-600">Miktar düzelt</div>
+                                <button type="button" onClick={() => updateProjectItemQuantity(item, -1)} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50">
+                                  1 azalt
                                 </button>
-                                <button type="button" onClick={() => updateProjectItemQuantity(item, 1)} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50">
-                                  +1
+                                <button type="button" onClick={() => updateProjectItemQuantity(item, 1)} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50">
+                                  1 artır
                                 </button>
-                                <input
-                                  type="number"
-                                  min="0"
-                                  step="0.01"
-                                  value={itemPriceDrafts[item.id] ?? item.estimated_unit_price ?? ""}
-                                  onChange={(event) => setItemPriceDrafts((prev) => ({ ...prev, [item.id]: event.target.value }))}
-                                  className="w-28 rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold"
-                                  placeholder="Birim fiyat"
-                                />
+                                <label className="flex flex-col gap-1">
+                                  <span className="text-[11px] font-bold text-slate-500">Birim fiyat</span>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={itemPriceDrafts[item.id] ?? item.estimated_unit_price ?? ""}
+                                    onChange={(event) => setItemPriceDrafts((prev) => ({ ...prev, [item.id]: event.target.value }))}
+                                    className="w-28 rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold"
+                                    placeholder="Birim fiyat"
+                                  />
+                                </label>
                                 <button type="button" onClick={() => updateProjectItemUnitPrice(item)} className="rounded-lg bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700 hover:bg-blue-100">
-                                  Fiyatı Güncelle
+                                  Fiyatı kaydet
                                 </button>
                               </div>
                             )}
                           </div>
                         </div>
                         <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
-                          <span className={`rounded-full px-3 py-1 text-xs font-bold ${itemStatusClass(item.status)}`}>{item.status || "Bekliyor"}</span>
+                          <span className={`rounded-full px-3 py-1 text-xs font-bold ${itemStatusClass(item.status)}`}>Süreç: {item.status || "Bekliyor"}</span>
                           <span className={`rounded-full px-3 py-1 text-xs font-bold ${
                             stock.tone === "green" ? "bg-green-100 text-green-700" :
                             stock.tone === "yellow" ? "bg-yellow-100 text-yellow-700" :
                             stock.tone === "red" ? "bg-red-100 text-red-700" :
                             "bg-slate-100 text-slate-700"
                           }`}>
-                            {stock.text}
+                            {stockInfo.isMainItem ? "Ana kalem takibi" : `Stok bilgisi: ${stock.available}`}
                           </span>
                           <button type="button" onClick={() => setExpandedItems((prev) => ({ ...prev, [item.id]: !prev[item.id] }))} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-black text-white hover:bg-blue-700">
                             {expandedItems[item.id] ? "Alt ürünleri gizle" : `Alt ürünleri göster (${allChildren.length})`}
@@ -6729,11 +6733,6 @@ export default function ProjectDetailPage() {
                           <button type="button" onClick={() => startAddingChildItem(item)} className="rounded-lg bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-100">
                             Malzeme ekle
                           </button>
-                          {!stockInfo.isMainItem && stockInfo.stockQuantity > 0 && (
-                            <button type="button" onClick={() => coverItemFromStock(item)} className="rounded-lg bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700 hover:bg-emerald-100">
-                              Stoktan Karşıla
-                            </button>
-                          )}
                           <button type="button" onClick={() => deleteProjectItem(item.id)} className="rounded-lg bg-red-50 px-3 py-2 text-xs font-bold text-red-700 hover:bg-red-100">
                             Sil
                           </button>
@@ -6791,47 +6790,49 @@ export default function ProjectDetailPage() {
                                       <div className="mt-1 text-xs font-bold text-slate-600">
                                         Toplam ihtiyaç: {formatQuantity(childStockInfo.estimatedQuantity)} {child.unit || "adet"} · Birim kullanım: {formatQuantity(relation.childQuantityPerParent)} · Kullanılan: {formatQuantity(childStockInfo.consumedQuantity)} · Bekleyen/rezerve: {formatQuantity(relation.remainingChildQuantity)} · Eksik: {formatQuantity(childStockInfo.requiredQuantity)}
                                       </div>
-                                      <div className="mt-3 flex flex-wrap items-center gap-2">
-                                        <button type="button" onClick={() => updateProjectItemQuantity(child, -1)} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50">
-                                          -1
+                                      <div className="mt-3 flex flex-wrap items-end gap-2 rounded-xl bg-slate-50 p-3">
+                                        <div className="pb-2 text-xs font-black text-slate-600">Miktar düzelt</div>
+                                        <button type="button" onClick={() => updateProjectItemQuantity(child, -1)} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50">
+                                          1 azalt
                                         </button>
-                                        <button type="button" onClick={() => updateProjectItemQuantity(child, 1)} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50">
-                                          +1
+                                        <button type="button" onClick={() => updateProjectItemQuantity(child, 1)} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50">
+                                          1 artır
                                         </button>
-                                        <input
-                                          type="number"
-                                          min="0"
-                                          step="0.01"
-                                          value={itemPriceDrafts[child.id] ?? child.estimated_unit_price ?? ""}
-                                          onChange={(event) => setItemPriceDrafts((prev) => ({ ...prev, [child.id]: event.target.value }))}
-                                          className="w-28 rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold"
-                                          placeholder="Birim fiyat"
-                                        />
+                                        <label className="flex flex-col gap-1">
+                                          <span className="text-[11px] font-bold text-slate-500">Birim fiyat</span>
+                                          <input
+                                            type="number"
+                                            min="0"
+                                            step="0.01"
+                                            value={itemPriceDrafts[child.id] ?? child.estimated_unit_price ?? ""}
+                                            onChange={(event) => setItemPriceDrafts((prev) => ({ ...prev, [child.id]: event.target.value }))}
+                                            className="w-28 rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold"
+                                            placeholder="Birim fiyat"
+                                          />
+                                        </label>
                                         <button type="button" onClick={() => updateProjectItemUnitPrice(child)} className="rounded-lg bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700 hover:bg-blue-100">
-                                          Fiyatı Güncelle
+                                          Fiyatı kaydet
                                         </button>
                                       </div>
                                     </div>
                                   </div>
-                                  <select className="rounded-lg border border-slate-200 p-2 text-xs font-bold" value={child.status || "Bekliyor"} onChange={(e) => updateItemStatus(child.id, e.target.value)}>
-                                    {lifecycleItemStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
-                                  </select>
+                                  <label className="flex min-w-40 flex-col gap-1 text-[11px] font-bold text-slate-500">
+                                    Süreç durumu
+                                    <select className="rounded-lg border border-slate-200 p-2 text-xs font-bold text-slate-800" value={child.status || "Bekliyor"} onChange={(e) => updateItemStatus(child.id, e.target.value)}>
+                                      {lifecycleItemStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
+                                    </select>
+                                  </label>
                                   <span className={`rounded-full px-3 py-1 text-xs font-bold ${
                                     childStock.tone === "green" ? "bg-green-100 text-green-700" :
                                     childStock.tone === "yellow" ? "bg-yellow-100 text-yellow-700" :
                                     childStock.tone === "red" ? "bg-red-100 text-red-700" :
                                     "bg-slate-100 text-slate-700"
                                   }`}>
-                                    Stok: {childStock.available} · {childStock.text}
+                                    Stok bilgisi: {childStock.available}
                                   </span>
                                   <button type="button" onClick={() => deleteProjectItem(child.id)} className="rounded-lg bg-red-50 px-3 py-2 text-xs font-bold text-red-700 hover:bg-red-100">
                                     Sil
                                   </button>
-                                  {childStockInfo.stockQuantity > 0 && (
-                                    <button type="button" onClick={() => coverItemFromStock(child)} className="rounded-lg bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700 hover:bg-emerald-100">
-                                      Stoktan Karşıla
-                                    </button>
-                                  )}
                                 </div>
                               );
                             })}
