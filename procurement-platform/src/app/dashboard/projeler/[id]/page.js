@@ -4645,6 +4645,9 @@ export default function ProjectDetailPage() {
     Object.values(summary).forEach((entry) => {
       entry.parentNames = Object.keys(entry.parentMap);
       entry.parentCount = entry.parentNames.length;
+      entry.parentDistribution = Object.entries(entry.parentMap)
+        .map(([name, quantity]) => ({ name, quantity }))
+        .sort((a, b) => b.quantity - a.quantity);
     });
 
     return summary;
@@ -5673,11 +5676,21 @@ export default function ProjectDetailPage() {
                           <div className="mt-1 text-xs font-semibold text-slate-500">{item.product_code || "-"} · {item.unit || "adet"}</div>
                           <div className="mt-1 text-[11px] font-bold text-slate-500">Ana ürün: {projectItemCategory(item)}</div>
                           {usage && (
-                            <div className="mt-1 text-[11px] font-semibold text-slate-500">
-                              {usage.parentCount > 1
-                                ? `Bu kod ${usage.parentCount} ana üründe var: ${usage.parentNames.slice(0, 3).join(", ")}${usage.parentCount > 3 ? "..." : ""}`
-                                : "Bu kod sadece bu ana üründe görünüyor."}
-                              {" "}Toplam ihtiyaç: {formatQuantity(usage.totalOpenQuantity)}
+                            <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] font-bold">
+                              <span className="text-slate-500">Dağılım:</span>
+                              {usage.parentDistribution.slice(0, 4).map((parent) => (
+                                <span key={parent.name} className="rounded-full bg-slate-100 px-2 py-1 text-slate-700">
+                                  {parent.name} ({formatQuantity(parent.quantity)} {item.unit || "adet"})
+                                </span>
+                              ))}
+                              {usage.parentDistribution.length > 4 && (
+                                <span className="rounded-full bg-slate-50 px-2 py-1 text-slate-500">
+                                  +{usage.parentDistribution.length - 4} ana ürün
+                                </span>
+                              )}
+                              <span className="rounded-full bg-blue-50 px-2 py-1 text-blue-700">
+                                Toplam: {formatQuantity(usage.totalOpenQuantity)} {item.unit || "adet"}
+                              </span>
                             </div>
                           )}
                           <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-bold">
@@ -5735,11 +5748,21 @@ export default function ProjectDetailPage() {
                           <div className="mt-1 text-xs font-semibold text-slate-500">{item.product_code || "-"} · {item.unit || "adet"}</div>
                           <div className="mt-1 text-[11px] font-bold text-slate-500">Ana ürün: {projectItemCategory(item)}</div>
                           {usage && (
-                            <div className="mt-1 text-[11px] font-semibold text-slate-500">
-                              {usage.parentCount > 1
-                                ? `Bu kod ${usage.parentCount} ana üründe var: ${usage.parentNames.slice(0, 3).join(", ")}${usage.parentCount > 3 ? "..." : ""}`
-                                : "Bu kod sadece bu ana üründe görünüyor."}
-                              {" "}Toplam ihtiyaç: {formatQuantity(usage.totalOpenQuantity)}
+                            <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] font-bold">
+                              <span className="text-slate-500">Dağılım:</span>
+                              {usage.parentDistribution.slice(0, 4).map((parent) => (
+                                <span key={parent.name} className="rounded-full bg-slate-100 px-2 py-1 text-slate-700">
+                                  {parent.name} ({formatQuantity(parent.quantity)} {item.unit || "adet"})
+                                </span>
+                              ))}
+                              {usage.parentDistribution.length > 4 && (
+                                <span className="rounded-full bg-slate-50 px-2 py-1 text-slate-500">
+                                  +{usage.parentDistribution.length - 4} ana ürün
+                                </span>
+                              )}
+                              <span className="rounded-full bg-blue-50 px-2 py-1 text-blue-700">
+                                Toplam: {formatQuantity(usage.totalOpenQuantity)} {item.unit || "adet"}
+                              </span>
                             </div>
                           )}
                           <div className="mt-2 w-fit rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-700">Karşılanabilir: {formatQuantity(Math.min(Number(info.openQuantity || 0), Number(info.stockQuantity || 0)))}</div>
