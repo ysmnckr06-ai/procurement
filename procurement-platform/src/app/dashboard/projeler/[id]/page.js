@@ -267,6 +267,7 @@ export default function ProjectDetailPage() {
   const [expenseForm, setExpenseForm] = useState(emptyExpense);
   const [editingPaymentId, setEditingPaymentId] = useState(null);
   const [expandedItems, setExpandedItems] = useState({});
+  const [expandedUsageKeys, setExpandedUsageKeys] = useState({});
   const [expandedRequestIds, setExpandedRequestIds] = useState([]);
   const [addingItemParentId, setAddingItemParentId] = useState("");
   const [selectedPurchaseItemIds, setSelectedPurchaseItemIds] = useState([]);
@@ -5667,26 +5668,35 @@ export default function ProjectDetailPage() {
                 <div className="mt-5 divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-100">
                   {purchaseRequiredItems.map((item) => {
                     const info = stockInfoForItem(item);
-                    const usage = productUsageSummaryByKey[projectItemProductKey(item)];
+                    const usageKey = projectItemProductKey(item);
+                    const usage = productUsageSummaryByKey[usageKey];
+                    const usageExpanded = Boolean(expandedUsageKeys[usageKey]);
+                    const visibleUsageParents = usage
+                      ? (usageExpanded ? usage.parentDistribution : usage.parentDistribution.slice(0, 4))
+                      : [];
                     return (
                       <div key={item.id} className="grid grid-cols-[auto_minmax(0,1fr)_auto] gap-3 p-4 text-sm">
                         <input type="checkbox" checked={selectedPurchaseItemIds.includes(item.id)} onChange={() => togglePurchaseItem(item.id)} className="mt-1 h-4 w-4" />
                         <div className="min-w-0">
                           <div className="truncate font-black text-slate-900" title={item.product_name}>{item.product_name}</div>
                           <div className="mt-1 text-xs font-semibold text-slate-500">{item.product_code || "-"} · {item.unit || "adet"}</div>
-                          <div className="mt-1 text-[11px] font-bold text-slate-500">Ana ürün: {projectItemCategory(item)}</div>
                           {usage && (
                             <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] font-bold">
-                              <span className="text-slate-500">Dağılım:</span>
-                              {usage.parentDistribution.slice(0, 4).map((parent) => (
+                              <span className="text-slate-500">İcmal:</span>
+                              {visibleUsageParents.map((parent) => (
                                 <span key={parent.name} className="rounded-full bg-slate-100 px-2 py-1 text-slate-700">
                                   {parent.name} ({formatQuantity(parent.quantity)} {item.unit || "adet"})
                                 </span>
                               ))}
-                              {usage.parentDistribution.length > 4 && (
-                                <span className="rounded-full bg-slate-50 px-2 py-1 text-slate-500">
+                              {usage.parentDistribution.length > 4 && !usageExpanded && (
+                                <button type="button" onClick={() => setExpandedUsageKeys((prev) => ({ ...prev, [usageKey]: true }))} className="rounded-full bg-slate-50 px-2 py-1 text-slate-500 hover:bg-slate-100">
                                   +{usage.parentDistribution.length - 4} ana ürün
-                                </span>
+                                </button>
+                              )}
+                              {usage.parentDistribution.length > 4 && usageExpanded && (
+                                <button type="button" onClick={() => setExpandedUsageKeys((prev) => ({ ...prev, [usageKey]: false }))} className="rounded-full bg-slate-50 px-2 py-1 text-slate-500 hover:bg-slate-100">
+                                  Daralt
+                                </button>
                               )}
                               <span className="rounded-full bg-blue-50 px-2 py-1 text-blue-700">
                                 Toplam: {formatQuantity(usage.totalOpenQuantity)} {item.unit || "adet"}
@@ -5739,26 +5749,35 @@ export default function ProjectDetailPage() {
                 <div className="mt-5 divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-100">
                   {stockCoverableItems.map((item) => {
                     const info = stockInfoForItem(item);
-                    const usage = productUsageSummaryByKey[projectItemProductKey(item)];
+                    const usageKey = projectItemProductKey(item);
+                    const usage = productUsageSummaryByKey[usageKey];
+                    const usageExpanded = Boolean(expandedUsageKeys[usageKey]);
+                    const visibleUsageParents = usage
+                      ? (usageExpanded ? usage.parentDistribution : usage.parentDistribution.slice(0, 4))
+                      : [];
                     return (
                       <div key={item.id} className="grid grid-cols-[auto_minmax(0,1fr)_auto] gap-3 p-4 text-sm">
                         <input type="checkbox" checked={selectedStockCoverItemIds.includes(item.id)} onChange={() => toggleStockCoverItem(item.id)} className="mt-1 h-4 w-4" />
                         <div className="min-w-0">
                           <div className="truncate font-black text-slate-900" title={item.product_name}>{item.product_name}</div>
                           <div className="mt-1 text-xs font-semibold text-slate-500">{item.product_code || "-"} · {item.unit || "adet"}</div>
-                          <div className="mt-1 text-[11px] font-bold text-slate-500">Ana ürün: {projectItemCategory(item)}</div>
                           {usage && (
                             <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] font-bold">
-                              <span className="text-slate-500">Dağılım:</span>
-                              {usage.parentDistribution.slice(0, 4).map((parent) => (
+                              <span className="text-slate-500">İcmal:</span>
+                              {visibleUsageParents.map((parent) => (
                                 <span key={parent.name} className="rounded-full bg-slate-100 px-2 py-1 text-slate-700">
                                   {parent.name} ({formatQuantity(parent.quantity)} {item.unit || "adet"})
                                 </span>
                               ))}
-                              {usage.parentDistribution.length > 4 && (
-                                <span className="rounded-full bg-slate-50 px-2 py-1 text-slate-500">
+                              {usage.parentDistribution.length > 4 && !usageExpanded && (
+                                <button type="button" onClick={() => setExpandedUsageKeys((prev) => ({ ...prev, [usageKey]: true }))} className="rounded-full bg-slate-50 px-2 py-1 text-slate-500 hover:bg-slate-100">
                                   +{usage.parentDistribution.length - 4} ana ürün
-                                </span>
+                                </button>
+                              )}
+                              {usage.parentDistribution.length > 4 && usageExpanded && (
+                                <button type="button" onClick={() => setExpandedUsageKeys((prev) => ({ ...prev, [usageKey]: false }))} className="rounded-full bg-slate-50 px-2 py-1 text-slate-500 hover:bg-slate-100">
+                                  Daralt
+                                </button>
                               )}
                               <span className="rounded-full bg-blue-50 px-2 py-1 text-blue-700">
                                 Toplam: {formatQuantity(usage.totalOpenQuantity)} {item.unit || "adet"}
