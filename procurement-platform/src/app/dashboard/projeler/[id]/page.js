@@ -94,6 +94,25 @@ const componentItemStatuses = [
   "Tamamland\u0131",
 ];
 
+const purchaseActionLockedStatuses = [
+  "Talep olu\u015fturuldu",
+  "Teklif bekleniyor",
+  "Sipari\u015f verildi",
+  "Tedarik\u00e7iden bekleniyor",
+  "K\u0131smi geldi",
+  "Depoda",
+  "Projeye rezerve edildi",
+  "Kullan\u0131ld\u0131",
+  "Tamamland\u0131",
+];
+
+const stockCoverLockedStatuses = [
+  "Projeye rezerve edildi",
+  "Kullan\u0131ld\u0131",
+  "Tamamland\u0131",
+  "Sevk edildi",
+];
+
 const emptyItem = {
   parent_item_id: "",
   product_code: "",
@@ -856,6 +875,24 @@ export default function ProjectDetailPage() {
     if (item.productCardStatus === "Ürün kartı oluşturuldu") return "bg-emerald-100 text-emerald-700";
     if (item.product_id) return "bg-blue-100 text-blue-700";
     return "bg-slate-100 text-slate-600";
+  }
+
+  function remainingStockCoverQuantity(item) {
+    const info = stockInfoForItem(item);
+    return Math.max(Number(info.openQuantity || 0) - Number(info.reservedQuantity || 0), 0);
+  }
+
+  function canCreatePurchaseRequest(item) {
+    const info = stockInfoForItem(item);
+    return !info.isMainItem && Number(info.requiredQuantity || 0) > 0 && !purchaseActionLockedStatuses.includes(item.status || "Bekliyor");
+  }
+
+  function canCoverFromStock(item) {
+    const info = stockInfoForItem(item);
+    return !info.isMainItem
+      && remainingStockCoverQuantity(item) > 0
+      && Number(info.stockQuantity || 0) > 0
+      && !stockCoverLockedStatuses.includes(item.status || "Bekliyor");
   }
 
   function readFirstValue(source, keys) {
@@ -3540,6 +3577,9 @@ export default function ProjectDetailPage() {
   }
 
   function togglePurchaseItem(itemId) {
+    const item = items.find((entry) => entry.id === itemId);
+    if (item && !canCreatePurchaseRequest(item)) return;
+
     setSelectedPurchaseItemIds((prev) =>
       prev.includes(itemId)
         ? prev.filter((id) => id !== itemId)
@@ -3548,7 +3588,7 @@ export default function ProjectDetailPage() {
   }
 
   function togglePurchaseItemGroup(groupItems) {
-    const ids = groupItems.map((item) => item.id).filter(Boolean);
+    const ids = groupItems.filter((item) => canCreatePurchaseRequest(item)).map((item) => item.id).filter(Boolean);
     if (ids.length === 0) return;
 
     setSelectedPurchaseItemIds((prev) => {
@@ -3566,6 +3606,9 @@ export default function ProjectDetailPage() {
   }
 
   function toggleStockCoverItem(itemId) {
+    const item = items.find((entry) => entry.id === itemId);
+    if (item && !canCoverFromStock(item)) return;
+
     setSelectedStockCoverItemIds((prev) =>
       prev.includes(itemId)
         ? prev.filter((id) => id !== itemId)
@@ -3574,7 +3617,7 @@ export default function ProjectDetailPage() {
   }
 
   function toggleStockCoverItemGroup(groupItems) {
-    const ids = groupItems.map((item) => item.id).filter(Boolean);
+    const ids = groupItems.filter((item) => canCoverFromStock(item)).map((item) => item.id).filter(Boolean);
     if (ids.length === 0) return;
 
     setSelectedStockCoverItemIds((prev) => {
@@ -3790,7 +3833,7 @@ export default function ProjectDetailPage() {
       const reserved = Number(candidate.reserved_stock || 0);
       return Math.max(total - reserved, 0) > 0;
     });
-    const coverQuantity = Math.min(Number(info.openQuantity || item.estimated_quantity || 0), Number(info.stockQuantity || 0));
+    const coverQuantity = Math.min(remainingStockCoverQuantity(item), Number(info.stockQuantity || 0));
 
     if (!product || coverQuantity <= 0) {
       return { ok: false, item, message: "Stoktan karşılanabilecek uygun ürün bulunamadı." };
@@ -3869,7 +3912,7 @@ export default function ProjectDetailPage() {
     if (!user) return;
 
     const info = stockInfoForItem(item);
-    const coverQuantity = Math.min(Number(info.openQuantity || item.estimated_quantity || 0), Number(info.stockQuantity || 0));
+    const coverQuantity = Math.min(remainingStockCoverQuantity(item), Number(info.stockQuantity || 0));
 
     if (coverQuantity <= 0) {
       setMessage("Bu kalem için stoktan karşılanabilecek uygun ürün bulunamadı.");
@@ -3895,21 +3938,14 @@ export default function ProjectDetailPage() {
     const user = await getUserOrRedirect();
     if (!user) return;
 
-    const selectedItems = items.filter((item) => {
-      const info = stockInfoForItem(item);
-      return selectedStockCoverItemIds.includes(item.id) && !info.isMainItem && Number(info.requiredQuantity || 0) > 0;
-    });
-    const coverableItems = selectedItems.filter((item) => {
-      const info = stockInfoForItem(item);
-      return info.openQuantity > 0 && info.stockQuantity > 0;
-    });
+    const coverableItems = items.filter((item) => selectedStockCoverItemIds.includes(item.id) && canCoverFromStock(item));
 
     if (coverableItems.length === 0) {
       setMessage("Stoktan karşılamak için en az bir uygun alt ürün seçin.");
       return;
     }
 
-    const approved = window.confirm(`Seçili ${coverableItems.length} kalem stoktan projeye ayrılsın mı?`);
+    const approved = window.confirm(`Seçili ${selectedStockCoverItemIds.length} satırdan ${coverableItems.length} uygun kalem stoktan projeye ayrılsın mı?`);
     if (!approved) return;
 
     const results = [];
@@ -4463,7 +4499,7 @@ export default function ProjectDetailPage() {
     const user = await getUserOrRedirect();
     if (!user) return;
 
-    const selectedItems = items.filter((item) => selectedPurchaseItemIds.includes(item.id) && !stockInfoForItem(item).isMainItem);
+    const selectedItems = items.filter((item) => selectedPurchaseItemIds.includes(item.id) && canCreatePurchaseRequest(item));
 
     if (selectedItems.length === 0) {
       setMessage("Talep oluşturmak için en az bir ürün seçin.");
@@ -4496,7 +4532,7 @@ export default function ProjectDetailPage() {
 
     await supabase
       .from("project_items")
-      .update({ status: "Satınalma gerekli", updated_at: new Date().toISOString() })
+      .update({ status: "Talep olu\u015fturuldu", updated_at: new Date().toISOString() })
       .in("id", selectedItems.map((item) => item.id));
 
     setProjectRequests((prev) => [data, ...prev]);
@@ -4514,7 +4550,7 @@ export default function ProjectDetailPage() {
 
     const neededItems = items
       .map((item) => ({ item, stock: stockInfoForItem(item) }))
-      .filter(({ stock }) => !stock.isMainItem && stock.requiredQuantity > 0);
+      .filter(({ item, stock }) => !stock.isMainItem && stock.requiredQuantity > 0 && canCreatePurchaseRequest(item));
 
     if (neededItems.length === 0) {
       setMessage("Satınalma gereken ürün bulunamadı.");
@@ -4652,6 +4688,14 @@ export default function ProjectDetailPage() {
     });
   }, [items, products, childItemsByParent]);
 
+  const actionablePurchaseItems = useMemo(() => {
+    return purchaseRequiredItems.filter((item) => canCreatePurchaseRequest(item));
+  }, [purchaseRequiredItems, products, childItemsByParent]);
+
+  const actionableStockCoverItems = useMemo(() => {
+    return stockCoverableItems.filter((item) => canCoverFromStock(item));
+  }, [stockCoverableItems, products, childItemsByParent]);
+
   const productUsageSummaryByKey = useMemo(() => {
     const summary = {};
 
@@ -4690,20 +4734,20 @@ export default function ProjectDetailPage() {
   }, [items, products, childItemsByParent]);
 
   const selectedPurchaseRequiredIds = useMemo(() => {
-    const purchaseIds = new Set(purchaseRequiredItems.map((item) => item.id));
+    const purchaseIds = new Set(actionablePurchaseItems.map((item) => item.id));
     return selectedPurchaseItemIds.filter((id) => purchaseIds.has(id));
-  }, [purchaseRequiredItems, selectedPurchaseItemIds]);
+  }, [actionablePurchaseItems, selectedPurchaseItemIds]);
 
   const selectedStockCoverableIds = useMemo(() => {
-    const stockIds = new Set(stockCoverableItems.map((item) => item.id));
+    const stockIds = new Set(actionableStockCoverItems.map((item) => item.id));
     return selectedStockCoverItemIds.filter((id) => stockIds.has(id));
-  }, [stockCoverableItems, selectedStockCoverItemIds]);
+  }, [actionableStockCoverItems, selectedStockCoverItemIds]);
 
-  const allPurchaseRequiredSelected = purchaseRequiredItems.length > 0
-    && purchaseRequiredItems.every((item) => selectedPurchaseItemIds.includes(item.id));
+  const allPurchaseRequiredSelected = actionablePurchaseItems.length > 0
+    && actionablePurchaseItems.every((item) => selectedPurchaseItemIds.includes(item.id));
 
-  const allStockCoverableSelected = stockCoverableItems.length > 0
-    && stockCoverableItems.every((item) => selectedStockCoverItemIds.includes(item.id));
+  const allStockCoverableSelected = actionableStockCoverItems.length > 0
+    && actionableStockCoverItems.every((item) => selectedStockCoverItemIds.includes(item.id));
 
   function itemMatchesFilter(item, filter = itemStockFilter) {
     const info = stockInfoForItem(item);
@@ -5709,7 +5753,7 @@ export default function ProjectDetailPage() {
                       <input
                         type="checkbox"
                         checked={allPurchaseRequiredSelected}
-                        disabled={purchaseRequiredItems.length === 0}
+                        disabled={actionablePurchaseItems.length === 0}
                         onChange={() => togglePurchaseItemGroup(purchaseRequiredItems)}
                         className="h-4 w-4"
                       />
@@ -5717,7 +5761,7 @@ export default function ProjectDetailPage() {
                     </label>
                     <button
                       type="button"
-                      disabled={purchaseRequiredItems.length === 0 && selectedPurchaseRequiredIds.length === 0}
+                      disabled={actionablePurchaseItems.length === 0 && selectedPurchaseRequiredIds.length === 0}
                       onClick={selectedPurchaseRequiredIds.length > 0 ? createRequestFromSelectedItems : createRequestFromNeededItems}
                       className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 disabled:bg-slate-300"
                     >
@@ -5728,6 +5772,7 @@ export default function ProjectDetailPage() {
                 <div className="mt-5 divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-100">
                   {purchaseRequiredItems.map((item) => {
                     const info = stockInfoForItem(item);
+                    const purchaseActionable = canCreatePurchaseRequest(item);
                     const usageKey = projectItemProductKey(item);
                     const usage = productUsageSummaryByKey[usageKey];
                     const usageExpanded = Boolean(expandedUsageKeys[usageKey]);
@@ -5736,7 +5781,13 @@ export default function ProjectDetailPage() {
                       : [];
                     return (
                       <div key={item.id} className="grid grid-cols-[auto_minmax(0,1fr)_auto] gap-3 p-4 text-sm">
-                        <input type="checkbox" checked={selectedPurchaseItemIds.includes(item.id)} onChange={() => togglePurchaseItem(item.id)} className="mt-1 h-4 w-4" />
+                        {purchaseActionable ? (
+                          <input type="checkbox" checked={selectedPurchaseItemIds.includes(item.id)} onChange={() => togglePurchaseItem(item.id)} className="mt-1 h-4 w-4" />
+                        ) : (
+                          <span className="mt-1 rounded-full bg-blue-50 px-2 py-1 text-[11px] font-black text-blue-700">
+                            {item.status === "Talep olu\u015fturuldu" ? "Talep olu\u015fturuldu" : item.status || "\u0130\u015flemde"}
+                          </span>
+                        )}
                         <div className="min-w-0">
                           <div className="truncate font-black text-slate-900" title={item.product_name}>{item.product_name}</div>
                           <div className="mt-1 text-xs font-semibold text-slate-500">{item.product_code || "-"} · {item.unit || "adet"}</div>
@@ -5790,7 +5841,7 @@ export default function ProjectDetailPage() {
                       <input
                         type="checkbox"
                         checked={allStockCoverableSelected}
-                        disabled={stockCoverableItems.length === 0}
+                        disabled={actionableStockCoverItems.length === 0}
                         onChange={() => toggleStockCoverItemGroup(stockCoverableItems)}
                         className="h-4 w-4"
                       />
@@ -5809,6 +5860,8 @@ export default function ProjectDetailPage() {
                 <div className="mt-5 divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-100">
                   {stockCoverableItems.map((item) => {
                     const info = stockInfoForItem(item);
+                    const stockActionable = canCoverFromStock(item);
+                    const stockCovered = !stockActionable && (stockCoverLockedStatuses.includes(item.status || "") || Number(info.reservedQuantity || 0) >= Number(info.openQuantity || 0));
                     const usageKey = projectItemProductKey(item);
                     const usage = productUsageSummaryByKey[usageKey];
                     const usageExpanded = Boolean(expandedUsageKeys[usageKey]);
@@ -5817,7 +5870,13 @@ export default function ProjectDetailPage() {
                       : [];
                     return (
                       <div key={item.id} className="grid grid-cols-[auto_minmax(0,1fr)_auto] gap-3 p-4 text-sm">
-                        <input type="checkbox" checked={selectedStockCoverItemIds.includes(item.id)} onChange={() => toggleStockCoverItem(item.id)} className="mt-1 h-4 w-4" />
+                        {stockActionable ? (
+                          <input type="checkbox" checked={selectedStockCoverItemIds.includes(item.id)} onChange={() => toggleStockCoverItem(item.id)} className="mt-1 h-4 w-4" />
+                        ) : (
+                          <span className="mt-1 rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-black text-emerald-700">
+                            {stockCovered ? "Stoktan kar\u015f\u0131land\u0131" : item.status || "\u0130\u015flemde"}
+                          </span>
+                        )}
                         <div className="min-w-0">
                           <div className="truncate font-black text-slate-900" title={item.product_name}>{item.product_name}</div>
                           <div className="mt-1 text-xs font-semibold text-slate-500">{item.product_code || "-"} · {item.unit || "adet"}</div>
