@@ -6413,37 +6413,44 @@ export default function ProjectDetailPage() {
                     Toplam: {formatMoney(totals.itemEstimate, projectCurrencyForDisplay())} · Satınalma gerekli: {purchaseRequiredItems.length} · Kritik stok: {criticalStockItems.length}
                   </p>
                 </div>
-                <div className="flex flex-wrap items-center gap-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => applyItemStockFilter("all")}
+                    className={`rounded-xl px-4 py-2.5 text-sm font-bold ${itemStockFilter === "all" ? "bg-slate-900 text-white" : "bg-slate-50 text-slate-700 hover:bg-slate-100"}`}
+                  >
+                    Tüm Kalemler
+                  </button>
                   <button
                     type="button"
                     onClick={() => applyItemStockFilter("purchase")}
-                    className={`rounded-xl px-4 py-3 text-sm font-bold ${itemStockFilter === "purchase" ? "bg-red-600 text-white" : "bg-red-50 text-red-700 hover:bg-red-100"}`}
+                    className={`rounded-xl px-4 py-2.5 text-sm font-bold ${itemStockFilter === "purchase" ? "bg-red-600 text-white" : "bg-red-50 text-red-700 hover:bg-red-100"}`}
                   >
-                    {itemStockFilter === "purchase" ? "Tüm Listeyi Göster" : "Satınalma Gerekenleri Göster"}
+                    Satınalma Gerekli
                   </button>
                   <button
                     type="button"
                     onClick={() => applyItemStockFilter("critical")}
-                    className={`rounded-xl px-4 py-3 text-sm font-bold ${itemStockFilter === "critical" ? "bg-amber-500 text-white" : "bg-amber-50 text-amber-700 hover:bg-amber-100"}`}
+                    className={`rounded-xl px-4 py-2.5 text-sm font-bold ${itemStockFilter === "critical" ? "bg-amber-500 text-white" : "bg-amber-50 text-amber-700 hover:bg-amber-100"}`}
                   >
-                    {itemStockFilter === "critical" ? "Tüm Listeyi Göster" : "Kritik Stokları Göster"}
+                    Kritik Stok
                   </button>
                   <button
                     type="button"
                     onClick={() => applyItemStockFilter("stock")}
-                    className={`rounded-xl px-4 py-3 text-sm font-bold ${itemStockFilter === "stock" ? "bg-emerald-600 text-white" : "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"}`}
+                    className={`rounded-xl px-4 py-2.5 text-sm font-bold ${itemStockFilter === "stock" ? "bg-emerald-600 text-white" : "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"}`}
                   >
-                    {itemStockFilter === "stock" ? "Tüm Listeyi Göster" : "Stoktan Karşılanabilir"}
+                    Stoktan Karşılanabilir
                   </button>
                   <button
                     type="button"
-                    disabled={purchaseRequiredItems.length === 0}
-                    onClick={createRequestFromNeededItems}
-                    className="rounded-xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700 disabled:bg-slate-300"
+                    disabled={purchaseRequiredItems.length === 0 && selectedPurchaseItemIds.length === 0}
+                    onClick={selectedPurchaseItemIds.length > 0 ? createRequestFromSelectedItems : createRequestFromNeededItems}
+                    className="rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-emerald-700 disabled:bg-slate-300"
                   >
-                    Satınalma Gerekenlerden Talep Oluştur
+                    {selectedPurchaseItemIds.length > 0 ? `Seçili ${selectedPurchaseItemIds.length} Kalemden Talep Oluştur` : "Satınalma Talebi Oluştur"}
                   </button>
-                  <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-700">
+                  <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm font-bold text-slate-700">
                     <input
                       type="checkbox"
                       checked={allProjectItemsSelected}
@@ -6453,36 +6460,19 @@ export default function ProjectDetailPage() {
                     />
                     Tümünü Seç
                   </label>
-                  <span className="rounded-xl bg-blue-50 px-4 py-3 text-sm font-bold text-blue-700">
+                  <span className="rounded-xl bg-blue-50 px-4 py-2.5 text-sm font-bold text-blue-700">
                     {selectedProjectItemDeleteIds.length} seçili
                   </span>
                   <button
                     type="button"
                     disabled={selectedProjectItemDeleteIds.length === 0}
                     onClick={deleteSelectedProjectItems}
-                    className="rounded-xl bg-red-600 px-5 py-3 text-sm font-bold text-white hover:bg-red-700 disabled:bg-slate-300"
+                    className="rounded-xl bg-red-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-red-700 disabled:bg-slate-300"
                   >
                     Seçilenleri Sil
                   </button>
                 </div>
-                <button
-                  type="button"
-                  disabled={selectedPurchaseItemIds.length === 0}
-                  onClick={createRequestFromSelectedItems}
-                  className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-bold text-white hover:bg-slate-800 disabled:bg-slate-300"
-                >
-                  Seçilenlerden Talep Oluştur ({selectedPurchaseItemIds.length})
-                </button>
-                <button
-                  type="button"
-                  disabled={selectedPurchaseItemIds.length === 0}
-                  onClick={transferSelectedItemsToStock}
-                  className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white hover:bg-emerald-700 disabled:bg-slate-300"
-                >
-                  Seçilenleri Stoğa Aktar ({selectedPurchaseItemIds.length})
-                </button>
               </div>
-
               {itemStockFilter !== "all" && (
                 <div className="mt-4 flex flex-col gap-3 rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm text-blue-900 md:flex-row md:items-center md:justify-between">
                   <div>

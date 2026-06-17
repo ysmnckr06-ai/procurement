@@ -470,11 +470,13 @@ function productProjectAllocations(product, projectItems, projects, movements) {
 
 function mainProductProjectStats(product, projectItems, movements) {
   if (!product) {
-    return { projectQuantity: 0, inProcess: 0, shipped: 0, remainingShipment: 0 };
+    return { projectCount: 0, projectQuantity: 0, inProcess: 0, shipped: 0, remainingShipment: 0 };
   }
 
   const relatedItems = (projectItems || [])
     .filter((item) => projectItemMatchesProduct(item, product) || (item.item_type === "main" && normalizeStockText(item.product_name) === normalizeStockText(product.product_name)));
+  const projectIds = new Set(relatedItems.map((item) => item.project_id).filter(Boolean));
+  const projectCount = projectIds.size || (relatedItems.length > 0 ? 1 : 0);
   const projectQuantity = relatedItems.reduce((sum, item) => sum + Number(item.estimated_quantity || 0), 0);
   const inProcess = relatedItems.reduce(
     (sum, item) => sum + Number(item.produced_parent_quantity || item.issued_to_production_quantity || 0),
@@ -486,6 +488,7 @@ function mainProductProjectStats(product, projectItems, movements) {
     .reduce((sum, movement) => sum + Number(movement.quantity || 0), 0);
 
   return {
+    projectCount,
     projectQuantity,
     inProcess,
     shipped,
@@ -1576,8 +1579,8 @@ setMessage(
                         </div>
                         <div className="grid min-w-0 grid-cols-4 gap-2 text-xs">
                           <div className="min-w-0 rounded-xl bg-slate-50 px-3 py-2">
-                            <div className="truncate font-bold text-slate-500">{mainProduct ? "Proje adedi" : "Stok"}</div>
-                            <div className="mt-1 truncate text-sm font-black text-slate-900">{mainProduct ? mainStats.projectQuantity : breakdown.total}</div>
+                            <div className="truncate font-bold text-slate-500">{mainProduct ? "Proje sayısı" : "Stok"}</div>
+                            <div className="mt-1 truncate text-sm font-black text-slate-900">{mainProduct ? mainStats.projectCount : breakdown.total}</div>
                           </div>
                           <div className="min-w-0 rounded-xl bg-blue-50 px-3 py-2">
                             <div className="truncate font-bold text-blue-700">{mainProduct ? "İşlenen" : "Ayrılan"}</div>
@@ -1672,9 +1675,9 @@ setMessage(
 
                         <div className="mt-5 grid grid-cols-2 gap-3 xl:grid-cols-4">
                           <div className="rounded-xl bg-slate-50 p-4">
-                            <div className="text-xs font-bold text-slate-500">{selectedMainProduct ? "Projelerde Toplam Adet" : "Mevcut Stok"}</div>
+                            <div className="text-xs font-bold text-slate-500">{selectedMainProduct ? "Kullanıldığı Proje" : "Mevcut Stok"}</div>
                             <div className="mt-1 text-xl font-black text-slate-900">
-                              {selectedMainProduct ? selectedMainStats.projectQuantity : breakdown.total} {selectedProduct.unit || "adet"}
+                              {selectedMainProduct ? `${selectedMainStats.projectCount} proje` : `${breakdown.total} ${selectedProduct.unit || "adet"}`}
                             </div>
                           </div>
                           <div className="rounded-xl bg-blue-50 p-4">
