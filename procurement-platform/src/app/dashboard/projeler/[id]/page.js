@@ -5112,7 +5112,14 @@ export default function ProjectDetailPage() {
     if (movement.movement_type === "in") {
       updatePayload.current_stock = Math.max(Number(product.current_stock || 0) - quantity, 0);
     } else if (source.includes("stoktan karsiland") || source.includes("rezerve")) {
-      updatePayload.reserved_stock = Math.max(Number(product.reserved_stock || 0) - reservedQuantity, 0);
+      const currentReserved = Number(product.reserved_stock || 0);
+      const releasedFromReserve = Math.min(currentReserved, reservedQuantity);
+      const quantityToReturnToStock = Math.max(reservedQuantity - releasedFromReserve, 0);
+
+      updatePayload.reserved_stock = Math.max(currentReserved - releasedFromReserve, 0);
+      if (quantityToReturnToStock > 0) {
+        updatePayload.current_stock = Number(product.current_stock || 0) + quantityToReturnToStock;
+      }
     } else if (movement.movement_type === "out") {
       updatePayload.current_stock = Number(product.current_stock || 0) + quantity;
     }
