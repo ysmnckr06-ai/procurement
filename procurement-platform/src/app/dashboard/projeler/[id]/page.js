@@ -3500,6 +3500,24 @@ export default function ProjectDetailPage() {
     );
   }
 
+  function togglePurchaseItemGroup(groupItems) {
+    const ids = groupItems.map((item) => item.id).filter(Boolean);
+    if (ids.length === 0) return;
+
+    setSelectedPurchaseItemIds((prev) => {
+      const selected = new Set(prev);
+      const allSelected = ids.every((id) => selected.has(id));
+
+      if (allSelected) {
+        ids.forEach((id) => selected.delete(id));
+      } else {
+        ids.forEach((id) => selected.add(id));
+      }
+
+      return Array.from(selected);
+    });
+  }
+
   async function transferSelectedItemsToStock() {
     setMessage("");
 
@@ -3804,7 +3822,10 @@ export default function ProjectDetailPage() {
     const user = await getUserOrRedirect();
     if (!user) return;
 
-    const selectedItems = items.filter((item) => selectedPurchaseItemIds.includes(item.id) && !stockInfoForItem(item).isMainItem);
+    const selectedItems = items.filter((item) => {
+      const info = stockInfoForItem(item);
+      return selectedPurchaseItemIds.includes(item.id) && !info.isMainItem && Number(info.requiredQuantity || 0) > 0;
+    });
     const coverableItems = selectedItems.filter((item) => {
       const info = stockInfoForItem(item);
       return info.openQuantity > 0 && info.stockQuantity > 0;
@@ -4557,6 +4578,22 @@ export default function ProjectDetailPage() {
       return !info.isMainItem && info.openQuantity > 0 && info.stockQuantity > 0;
     });
   }, [items, products, childItemsByParent]);
+
+  const selectedPurchaseRequiredIds = useMemo(() => {
+    const purchaseIds = new Set(purchaseRequiredItems.map((item) => item.id));
+    return selectedPurchaseItemIds.filter((id) => purchaseIds.has(id));
+  }, [purchaseRequiredItems, selectedPurchaseItemIds]);
+
+  const selectedStockCoverableIds = useMemo(() => {
+    const stockIds = new Set(stockCoverableItems.map((item) => item.id));
+    return selectedPurchaseItemIds.filter((id) => stockIds.has(id));
+  }, [stockCoverableItems, selectedPurchaseItemIds]);
+
+  const allPurchaseRequiredSelected = purchaseRequiredItems.length > 0
+    && purchaseRequiredItems.every((item) => selectedPurchaseItemIds.includes(item.id));
+
+  const allStockCoverableSelected = stockCoverableItems.length > 0
+    && stockCoverableItems.every((item) => selectedPurchaseItemIds.includes(item.id));
 
   function itemMatchesFilter(item, filter = itemStockFilter) {
     const info = stockInfoForItem(item);
@@ -5532,14 +5569,26 @@ export default function ProjectDetailPage() {
                     <h2 className="text-xl font-black text-slate-900">Satınalma / Kritik</h2>
                     <p className="mt-1 text-sm text-slate-500">Stokla kapanmayan veya kritik görünen alt ürünler burada talebe dönüştürülür.</p>
                   </div>
-                  <button
-                    type="button"
-                    disabled={purchaseRequiredItems.length === 0 && selectedPurchaseItemIds.length === 0}
-                    onClick={selectedPurchaseItemIds.length > 0 ? createRequestFromSelectedItems : createRequestFromNeededItems}
-                    className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 disabled:bg-slate-300"
-                  >
-                    {selectedPurchaseItemIds.length > 0 ? "Seçilenlerden Talep Oluştur (" + selectedPurchaseItemIds.length + ")" : "Tüm Eksikler İçin Talep Oluştur"}
-                  </button>
+                                    <div className="flex flex-wrap items-center gap-2">
+                    <label className="flex items-center gap-2 rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-sm font-bold text-red-700">
+                      <input
+                        type="checkbox"
+                        checked={allPurchaseRequiredSelected}
+                        disabled={purchaseRequiredItems.length === 0}
+                        onChange={() => togglePurchaseItemGroup(purchaseRequiredItems)}
+                        className="h-4 w-4"
+                      />
+                      Tümünü Seç
+                    </label>
+                    <button
+                      type="button"
+                      disabled={purchaseRequiredItems.length === 0 && selectedPurchaseRequiredIds.length === 0}
+                      onClick={selectedPurchaseRequiredIds.length > 0 ? createRequestFromSelectedItems : createRequestFromNeededItems}
+                      className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 disabled:bg-slate-300"
+                    >
+                      {selectedPurchaseRequiredIds.length > 0 ? "Seçilenlerden Talep Oluştur (" + selectedPurchaseRequiredIds.length + ")" : "Tümü İçin Talep Oluştur"}
+                    </button>
+                  </div>
                 </div>
                 <div className="mt-5 divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-100">
                   {purchaseRequiredItems.map((item) => {
@@ -5572,14 +5621,26 @@ export default function ProjectDetailPage() {
                     <h2 className="text-xl font-black text-slate-900">Stoktan Karşılanabilir</h2>
                     <p className="mt-1 text-sm text-slate-500">Bu alt ürünler depoda var. Seçilenleri projeye rezerve edebilirsiniz.</p>
                   </div>
-                  <button
-                    type="button"
-                    disabled={!selectedPurchaseItemIds.some((id) => stockCoverableItems.some((item) => item.id === id))}
-                    onClick={coverSelectedItemsFromStock}
-                    className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700 disabled:bg-slate-300"
-                  >
-                    Seçilenleri Stoktan Karşıla
-                  </button>
+                                    <div className="flex flex-wrap items-center gap-2">
+                    <label className="flex items-center gap-2 rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-700">
+                      <input
+                        type="checkbox"
+                        checked={allStockCoverableSelected}
+                        disabled={stockCoverableItems.length === 0}
+                        onChange={() => togglePurchaseItemGroup(stockCoverableItems)}
+                        className="h-4 w-4"
+                      />
+                      Tümünü Seç
+                    </label>
+                    <button
+                      type="button"
+                      disabled={selectedStockCoverableIds.length === 0}
+                      onClick={coverSelectedItemsFromStock}
+                      className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700 disabled:bg-slate-300"
+                    >
+                      Seçilenleri Stoktan Karşıla ({selectedStockCoverableIds.length})
+                    </button>
+                  </div>
                 </div>
                 <div className="mt-5 divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-100">
                   {stockCoverableItems.map((item) => {
