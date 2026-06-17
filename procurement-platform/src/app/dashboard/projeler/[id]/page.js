@@ -270,6 +270,7 @@ export default function ProjectDetailPage() {
   const [expandedRequestIds, setExpandedRequestIds] = useState([]);
   const [addingItemParentId, setAddingItemParentId] = useState("");
   const [selectedPurchaseItemIds, setSelectedPurchaseItemIds] = useState([]);
+  const [selectedStockCoverItemIds, setSelectedStockCoverItemIds] = useState([]);
   const [selectedProjectItemIds, setSelectedProjectItemIds] = useState([]);
   const [itemStockFilter, setItemStockFilter] = useState("all");
   const [itemPriceDrafts, setItemPriceDrafts] = useState({});
@@ -694,6 +695,7 @@ export default function ProjectDetailPage() {
     setItems(freshItems);
     setSelectedProjectItemIds((prev) => prev.filter((id) => freshItems.some((item) => item.id === id)));
     setSelectedPurchaseItemIds((prev) => prev.filter((id) => freshItems.some((item) => item.id === id)));
+    setSelectedStockCoverItemIds((prev) => prev.filter((id) => freshItems.some((item) => item.id === id)));
     setLoading(false);
     return freshItems;
   }
@@ -2149,6 +2151,7 @@ export default function ProjectDetailPage() {
     }
     setSelectedProjectItemIds((prev) => prev.filter((id) => !removedIds.has(id)));
     setSelectedPurchaseItemIds((prev) => prev.filter((id) => !removedIds.has(id)));
+    setSelectedStockCoverItemIds((prev) => prev.filter((id) => !removedIds.has(id)));
     setItems(nextItems);
     await refreshProjectBudget(nextItems);
     const freshItems = await loadProjectItems();
@@ -2248,6 +2251,7 @@ export default function ProjectDetailPage() {
       }
       setSelectedProjectItemIds([]);
       setSelectedPurchaseItemIds((prev) => prev.filter((id) => !optimisticDeletedIds.includes(id)));
+      setSelectedStockCoverItemIds((prev) => prev.filter((id) => !optimisticDeletedIds.includes(id)));
       setItems(nextItems);
       await refreshProjectBudget(nextItems);
       const freshItems = await loadProjectItems();
@@ -3518,6 +3522,32 @@ export default function ProjectDetailPage() {
     });
   }
 
+  function toggleStockCoverItem(itemId) {
+    setSelectedStockCoverItemIds((prev) =>
+      prev.includes(itemId)
+        ? prev.filter((id) => id !== itemId)
+        : [...prev, itemId],
+    );
+  }
+
+  function toggleStockCoverItemGroup(groupItems) {
+    const ids = groupItems.map((item) => item.id).filter(Boolean);
+    if (ids.length === 0) return;
+
+    setSelectedStockCoverItemIds((prev) => {
+      const selected = new Set(prev);
+      const allSelected = ids.every((id) => selected.has(id));
+
+      if (allSelected) {
+        ids.forEach((id) => selected.delete(id));
+      } else {
+        ids.forEach((id) => selected.add(id));
+      }
+
+      return Array.from(selected);
+    });
+  }
+
   async function transferSelectedItemsToStock() {
     setMessage("");
 
@@ -3824,7 +3854,7 @@ export default function ProjectDetailPage() {
 
     const selectedItems = items.filter((item) => {
       const info = stockInfoForItem(item);
-      return selectedPurchaseItemIds.includes(item.id) && !info.isMainItem && Number(info.requiredQuantity || 0) > 0;
+      return selectedStockCoverItemIds.includes(item.id) && !info.isMainItem && Number(info.requiredQuantity || 0) > 0;
     });
     const coverableItems = selectedItems.filter((item) => {
       const info = stockInfoForItem(item);
@@ -3846,7 +3876,7 @@ export default function ProjectDetailPage() {
 
     const successCount = results.filter((result) => result.ok).length;
     const failedCount = results.length - successCount;
-    setSelectedPurchaseItemIds((prev) => prev.filter((id) => !coverableItems.some((item) => item.id === id)));
+    setSelectedStockCoverItemIds((prev) => prev.filter((id) => !coverableItems.some((item) => item.id === id)));
     await loadProject();
     setMessage(`${successCount} kalem stoktan karşılandı.${failedCount > 0 ? ` ${failedCount} kalem kontrol edilmeli.` : ""}`);
   }
@@ -4586,14 +4616,14 @@ export default function ProjectDetailPage() {
 
   const selectedStockCoverableIds = useMemo(() => {
     const stockIds = new Set(stockCoverableItems.map((item) => item.id));
-    return selectedPurchaseItemIds.filter((id) => stockIds.has(id));
-  }, [stockCoverableItems, selectedPurchaseItemIds]);
+    return selectedStockCoverItemIds.filter((id) => stockIds.has(id));
+  }, [stockCoverableItems, selectedStockCoverItemIds]);
 
   const allPurchaseRequiredSelected = purchaseRequiredItems.length > 0
     && purchaseRequiredItems.every((item) => selectedPurchaseItemIds.includes(item.id));
 
   const allStockCoverableSelected = stockCoverableItems.length > 0
-    && stockCoverableItems.every((item) => selectedPurchaseItemIds.includes(item.id));
+    && stockCoverableItems.every((item) => selectedStockCoverItemIds.includes(item.id));
 
   function itemMatchesFilter(item, filter = itemStockFilter) {
     const info = stockInfoForItem(item);
@@ -5599,6 +5629,7 @@ export default function ProjectDetailPage() {
                         <div className="min-w-0">
                           <div className="truncate font-black text-slate-900" title={item.product_name}>{item.product_name}</div>
                           <div className="mt-1 text-xs font-semibold text-slate-500">{item.product_code || "-"} · {item.unit || "adet"}</div>
+                          <div className="mt-1 text-[11px] font-bold text-slate-500">Ana ürün: {projectItemCategory(item)}</div>
                           <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-bold">
                             <span className="rounded-full bg-red-50 px-2 py-1 text-red-700">Eksik: {formatQuantity(info.requiredQuantity)}</span>
                             {info.isCritical && <span className="rounded-full bg-amber-50 px-2 py-1 text-amber-700">Kritik stok</span>}
@@ -5627,7 +5658,7 @@ export default function ProjectDetailPage() {
                         type="checkbox"
                         checked={allStockCoverableSelected}
                         disabled={stockCoverableItems.length === 0}
-                        onChange={() => togglePurchaseItemGroup(stockCoverableItems)}
+                        onChange={() => toggleStockCoverItemGroup(stockCoverableItems)}
                         className="h-4 w-4"
                       />
                       Tümünü Seç
@@ -5647,10 +5678,11 @@ export default function ProjectDetailPage() {
                     const info = stockInfoForItem(item);
                     return (
                       <div key={item.id} className="grid grid-cols-[auto_minmax(0,1fr)_auto] gap-3 p-4 text-sm">
-                        <input type="checkbox" checked={selectedPurchaseItemIds.includes(item.id)} onChange={() => togglePurchaseItem(item.id)} className="mt-1 h-4 w-4" />
+                        <input type="checkbox" checked={selectedStockCoverItemIds.includes(item.id)} onChange={() => toggleStockCoverItem(item.id)} className="mt-1 h-4 w-4" />
                         <div className="min-w-0">
                           <div className="truncate font-black text-slate-900" title={item.product_name}>{item.product_name}</div>
                           <div className="mt-1 text-xs font-semibold text-slate-500">{item.product_code || "-"} · {item.unit || "adet"}</div>
+                          <div className="mt-1 text-[11px] font-bold text-slate-500">Ana ürün: {projectItemCategory(item)}</div>
                           <div className="mt-2 w-fit rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-700">Karşılanabilir: {formatQuantity(Math.min(Number(info.openQuantity || 0), Number(info.stockQuantity || 0)))}</div>
                         </div>
                         <div className="text-right text-xs font-bold text-emerald-700">
