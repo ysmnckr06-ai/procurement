@@ -75,6 +75,54 @@ function formatRequestMoney(value, currency) {
   })} ${currency || "TRY"}`;
 }
 
+function safeFileName(value) {
+  return String(value || "talep-listesi")
+    .trim()
+    .replace(/[\\/:*?"<>|]/g, "-")
+    .replace(/\s+/g, "-")
+    .slice(0, 80);
+}
+
+function safeSheetName(value, fallback = "Talep") {
+  const name = String(value || fallback)
+    .replace(/[\\/?*[\]:]/g, " ")
+    .trim()
+    .slice(0, 31);
+  return name || fallback;
+}
+
+function cleanRequestNote(value) {
+  const note = String(value || "").trim();
+  if (!note || note === "-") return "";
+
+  const contactPattern = /(\+?\d[\d\s().-]{7,}\d)|(@|www\.|telefon|tel\.?|gsm|fax|faks|e-posta|mail)/i;
+  if (contactPattern.test(note)) return "";
+
+  return note;
+}
+
+function requestItemsToExportRows(request) {
+  const items = getRequestItems(request);
+
+  return items.map((item, index) => {
+    const quantity = readItemField(item, ["talepEdilenAdet", "quantity", "qty", "estimated_quantity"], 0);
+    const currency = readItemField(item, ["paraBirimi", "currency"], "TRY");
+
+    return {
+      "Sıra": index + 1,
+      "Ürün Kodu": readItemField(item, ["urunKodu", "product_code", "code"], ""),
+      "Marka": readItemField(item, ["marka", "brand"], ""),
+      "Açıklama": readItemField(item, ["urunAciklamasi", "product_name", "description", "name"], ""),
+      "Miktar": Number(quantity || 0),
+      "Birim": readItemField(item, ["birim", "unit"], "adet"),
+      "Birim Fiyat": Number(readItemField(item, ["birimFiyat", "unit_price", "estimated_unit_price"], 0) || 0),
+      "Toplam": Number(readItemField(item, ["toplam", "total", "estimated_total"], 0) || 0),
+      "Para Birimi": currency,
+      "Not": cleanRequestNote(readItemField(item, ["not", "note"], "")),
+    };
+  });
+}
+
 export default function TaleplerPage() {
   const router = useRouter();
   const API_URL = process.env.NEXT_PUBLIC_API_URL;
@@ -86,11 +134,20 @@ export default function TaleplerPage() {
   const [savedRequests, setSavedRequests] = useState([]);
   const [showAllRequests, setShowAllRequests] = useState(false);
   const [expandedRequestId, setExpandedRequestId] = useState("");
+  const [selectedRequestIds, setSelectedRequestIds] = useState([]);
   const isAnalyzingRef = useRef(false);
 
   const totalQty = useMemo(() => {
     return rows.reduce((sum, r) => sum + Number(r.talepEdilenAdet || 0), 0);
   }, [rows]);
+
+  const visibleSavedRequests = useMemo(() => {
+    return showAllRequests ? savedRequests : savedRequests.slice(0, 5);
+  }, [savedRequests, showAllRequests]);
+
+  const selectedRequests = useMemo(() => {
+    return savedRequests.filter((request) => selectedRequestIds.includes(request.id));
+  }, [savedRequests, selectedRequestIds]);
     useEffect(() => {
       loadRequests();
     }, []);
@@ -239,6 +296,97 @@ export default function TaleplerPage() {
     }
   };
 
+  const downloadRequestsAsExcel = async (requestsToDownload) => {
+    if (requestsToDownload.length === 0) {
+      setMessage("İndirmek için en az bir talep seçin.");
+      return;
+    }
+
+    const XLSX = await import("xlsx");
+    const workbook = XLSX.utils.book_new();
+
+    requestsToDownload.forEach((request, index) => {
+      const rowsForSheet = requestItemsToExportRows(request);
+      const rowsToWrite = rowsForSheet.length > 0 ? rowsForSheet : [{ Bilgi: "Kalem detayı bulunamadı." }];
+      const worksheet = XLSX.utils.json_to_sheet(rowsToWrite);
+      XLSX.utils.book_append_sheet(
+        workbook,
+        worksheet,
+        safeSheetName(`${index + 1} ${request.ad || "Talep"}`)
+      );
+    });
+
+    const baseName =
+      requestsToDownload.length === 1
+        ? requestsToDownload[0].ad || "talep-listesi"
+        : `secilen-talep-listeleri-${new Date().toISOString().slice(0, 10)}`;
+    XLSX.writeFile(workbook, `${safeFileName(baseName)}.xlsx`);
+  };
+
+  const downloadRequestsAsPdf = async (requestsToDownload) => {
+    if (requestsToDownload.length === 0) {
+      setMessage("İndirmek için en az bir talep seçin.");
+      return;
+    }
+
+    const [{ jsPDF }, autoTableModule] = await Promise.all([
+      import("jspdf"),
+      import("jspdf-autotable"),
+    ]);
+    const autoTable = autoTableModule.default || autoTableModule.autoTable || autoTableModule;
+    const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+
+    requestsToDownload.forEach((request, index) => {
+      if (index > 0) doc.addPage();
+
+      const title = request.ad || "Talep Listesi";
+      doc.setFontSize(14);
+      doc.text(title, 40, 40);
+      doc.setFontSize(9);
+      doc.text(`Olusturma tarihi: ${formatDateTime(request.created_at || request.tarih)}`, 40, 58);
+
+      const rowsForPdf = requestItemsToExportRows(request);
+      const rowsToWrite = rowsForPdf.length > 0 ? rowsForPdf : [{ Bilgi: "Kalem detayi bulunamadi." }];
+      const headers = Object.keys(rowsToWrite[0]);
+      const body = rowsToWrite.map((row) => headers.map((header) => row[header] ?? ""));
+
+      autoTable(doc, {
+        head: [headers],
+        body,
+        startY: 78,
+        styles: { fontSize: 7, cellPadding: 4, overflow: "linebreak" },
+        headStyles: { fillColor: [15, 23, 42] },
+        columnStyles: {
+          3: { cellWidth: 230 },
+          9: { cellWidth: 160 },
+        },
+        margin: { left: 40, right: 40 },
+      });
+    });
+
+    const baseName =
+      requestsToDownload.length === 1
+        ? requestsToDownload[0].ad || "talep-listesi"
+        : `secilen-talep-listeleri-${new Date().toISOString().slice(0, 10)}`;
+    doc.save(`${safeFileName(baseName)}.pdf`);
+  };
+
+  const toggleRequestSelection = (requestId) => {
+    setSelectedRequestIds((prev) =>
+      prev.includes(requestId) ? prev.filter((id) => id !== requestId) : [...prev, requestId]
+    );
+  };
+
+  const toggleVisibleRequestSelection = () => {
+    const visibleIds = visibleSavedRequests.map((request) => request.id);
+    const allVisibleSelected = visibleIds.every((id) => selectedRequestIds.includes(id));
+
+    setSelectedRequestIds((prev) => {
+      if (allVisibleSelected) return prev.filter((id) => !visibleIds.includes(id));
+      return Array.from(new Set([...prev, ...visibleIds]));
+    });
+  };
+
   const handleSendToOffers = () => {
     if (!reportPath) {
       setMessage("Önce talep listesi oluşturmalısınız.");
@@ -278,6 +426,7 @@ export default function TaleplerPage() {
   }
 
   setSavedRequests((prev) => prev.filter((r) => r.id !== requestId));
+  setSelectedRequestIds((prev) => prev.filter((id) => id !== requestId));
 }
 
   return (
@@ -392,14 +541,42 @@ export default function TaleplerPage() {
           </div>
 
           <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="mb-4 flex items-center justify-between">
+            <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <h2 className="text-lg font-bold text-slate-900">Oluşturulan Talep Listeleri</h2>
                 <p className="text-sm text-slate-500">Daha önce oluşturduğunuz talep listeleri burada görünür.</p>
               </div>
-              <span className="rounded-full bg-blue-50 px-3 py-1 text-sm font-semibold text-blue-700">
-                {savedRequests.length} kayıt
-              </span>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-full bg-blue-50 px-3 py-1 text-sm font-semibold text-blue-700">
+                  {savedRequests.length} kayıt
+                </span>
+                {savedRequests.length > 0 && (
+                  <>
+                    <button
+                      onClick={toggleVisibleRequestSelection}
+                      className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
+                    >
+                      {visibleSavedRequests.every((req) => selectedRequestIds.includes(req.id))
+                        ? "Görünen seçimi temizle"
+                        : "Görünenleri seç"}
+                    </button>
+                    <button
+                      onClick={() => downloadRequestsAsExcel(selectedRequests)}
+                      disabled={selectedRequests.length === 0}
+                      className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                    >
+                      Seçilenleri Excel indir ({selectedRequests.length})
+                    </button>
+                    <button
+                      onClick={() => downloadRequestsAsPdf(selectedRequests)}
+                      disabled={selectedRequests.length === 0}
+                      className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+                    >
+                      Seçilenleri PDF indir ({selectedRequests.length})
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
 
             {savedRequests.length === 0 ? (
@@ -408,16 +585,27 @@ export default function TaleplerPage() {
               </div>
             ) : (
               <div className="space-y-3">
-                {(showAllRequests ? savedRequests : savedRequests.slice(0, 5)).map((req, index) => {
+                {visibleSavedRequests.map((req, index) => {
                   const requestItems = getRequestItems(req);
                   const isExpanded = expandedRequestId === req.id;
+                  const isSelected = selectedRequestIds.includes(req.id);
 
                   return (
                     <div
                       key={req.id}
-                      className="rounded-xl border border-slate-200 bg-white p-4"
+                      className={`rounded-xl border bg-white p-4 ${isSelected ? "border-blue-300 ring-2 ring-blue-100" : "border-slate-200"}`}
                     >
-                      <div className="grid grid-cols-1 gap-4 md:grid-cols-[80px_1fr_auto]">
+                      <div className="grid grid-cols-1 gap-4 md:grid-cols-[32px_80px_1fr_auto]">
+                        <div className="pt-1">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => toggleRequestSelection(req.id)}
+                            className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                            aria-label={`${req.ad || "Talep Listesi"} seç`}
+                          />
+                        </div>
+
                         <div>
                           <div className="text-xs font-semibold text-slate-500">Sıra No</div>
                           <div className="mt-1 font-bold text-slate-900">{index + 1}</div>
@@ -448,9 +636,23 @@ export default function TaleplerPage() {
                               onClick={() => handleSavedRequestDownload(req.filepath)}
                               className="rounded-lg bg-green-600 px-3 py-2 text-sm font-semibold text-white"
                             >
-                              Excel İndir
+                              Orijinal Excel
                             </button>
                           )}
+
+                          <button
+                            onClick={() => downloadRequestsAsExcel([req])}
+                            className="rounded-lg bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-100"
+                          >
+                            Excel indir
+                          </button>
+
+                          <button
+                            onClick={() => downloadRequestsAsPdf([req])}
+                            className="rounded-lg bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-200"
+                          >
+                            PDF indir
+                          </button>
 
                           <button
                             onClick={() => router.push(`/dashboard/teklifler?requestId=${req.id}${req.project_id ? `&projectId=${req.project_id}` : ""}`)}
@@ -526,7 +728,7 @@ export default function TaleplerPage() {
                                           {formatRequestMoney(readItemField(item, ["toplam", "total", "estimated_total"], 0), currency)}
                                         </td>
                                         <td className="max-w-[260px] px-3 py-3 text-xs font-medium text-slate-500">
-                                          {readItemField(item, ["not", "note"], "-")}
+                                          {cleanRequestNote(readItemField(item, ["not", "note"], "")) || "-"}
                                         </td>
                                       </tr>
                                     );
