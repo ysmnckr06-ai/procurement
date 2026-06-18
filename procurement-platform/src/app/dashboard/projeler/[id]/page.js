@@ -1049,6 +1049,10 @@ export default function ProjectDetailPage() {
       return { code: manualCode };
     }
 
+    if (options.codeMode === "auto") {
+      return { code: nextAutoProductCode(usedCodes) };
+    }
+
     const existingCode = stockProductCodeForItem(sourceItem);
     if (existingCode) {
       const normalizedExisting = normalizeCode(existingCode);
@@ -5419,7 +5423,7 @@ export default function ProjectDetailPage() {
                   )}
                   className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-black text-white hover:bg-blue-700 disabled:bg-slate-300"
                 >
-                  Seçilenlere kod ata ve ana ürün yap
+                  Seçilenleri ana ürün kartı yap
                 </button>
                 <button
                   type="button"
@@ -5430,7 +5434,7 @@ export default function ProjectDetailPage() {
                   )}
                   className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-black text-white hover:bg-slate-800 disabled:bg-slate-300"
                 >
-                  Seçilenlere kod ata ve alt ürün yap
+                  Seçilenleri alt ürün kartı yap
                 </button>
               </div>
             </div>
@@ -5460,6 +5464,7 @@ export default function ProjectDetailPage() {
                       const sourceCode = stockProductCodeForItem(item.sourceItem || item);
                       const manualCode = manualMissingProductCode(item);
                       const manualCodeDuplicate = Boolean(manualCode && productCodeAlreadyExists(manualCode));
+                      const sourceCodeDuplicate = Boolean(sourceCode && productCodeAlreadyExists(sourceCode));
 
                       return (
                       <tr key={item.key} className="bg-white align-top">
@@ -5476,7 +5481,15 @@ export default function ProjectDetailPage() {
                         </td>
                         <td className="p-3">
                           {sourceCode ? (
-                            <span className="font-black text-slate-900">{sourceCode}</span>
+                            <div>
+                              <span className="font-black text-slate-900">{sourceCode}</span>
+                              <div className="mt-1 text-[10px] font-bold text-slate-500">
+                                Dosyadan gelen ürün kodu
+                              </div>
+                              {sourceCodeDuplicate && (
+                                <div className="mt-1 text-[10px] font-black text-red-700">Bu kodlu ürün zaten var.</div>
+                              )}
+                            </div>
                           ) : (
                             <div>
                               <span className="rounded-full bg-amber-50 px-2 py-1 text-[11px] font-black text-amber-700">Kod yok</span>
@@ -5513,22 +5526,45 @@ export default function ProjectDetailPage() {
                         <td className="p-3 text-right font-black">{formatQuantity(item.quantity || 0)}</td>
                         <td className="p-3">
                           <div className="flex flex-wrap justify-end gap-2">
-                            <button
-                              type="button"
-                              disabled={creatingMissingProducts}
-                              onClick={() => createProductCardsFromMissing([item], { productType: "main_product" })}
-                              className="rounded-lg bg-blue-50 px-3 py-2 text-[11px] font-black text-blue-700 hover:bg-blue-100 disabled:bg-slate-100 disabled:text-slate-400"
-                            >
-                              Otomatik kod + ana
-                            </button>
-                            <button
-                              type="button"
-                              disabled={creatingMissingProducts}
-                              onClick={() => createProductCardsFromMissing([item], { productType: "component" })}
-                              className="rounded-lg bg-slate-100 px-3 py-2 text-[11px] font-black text-slate-700 hover:bg-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
-                            >
-                              Otomatik kod + alt
-                            </button>
+                            {sourceCode ? (
+                              <>
+                                <button
+                                  type="button"
+                                  disabled={creatingMissingProducts || sourceCodeDuplicate}
+                                  onClick={() => createProductCardsFromMissing([item], { productType: "main_product" })}
+                                  className="rounded-lg bg-blue-50 px-3 py-2 text-[11px] font-black text-blue-700 hover:bg-blue-100 disabled:bg-slate-100 disabled:text-slate-400"
+                                >
+                                  Bu kodla ana ürün aç
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={creatingMissingProducts || sourceCodeDuplicate}
+                                  onClick={() => createProductCardsFromMissing([item], { productType: "component" })}
+                                  className="rounded-lg bg-slate-100 px-3 py-2 text-[11px] font-black text-slate-700 hover:bg-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+                                >
+                                  Bu kodla alt ürün aç
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <button
+                                  type="button"
+                                  disabled={creatingMissingProducts}
+                                  onClick={() => createProductCardsFromMissing([item], { productType: "main_product", codeMode: "auto" })}
+                                  className="rounded-lg bg-blue-50 px-3 py-2 text-[11px] font-black text-blue-700 hover:bg-blue-100 disabled:bg-slate-100 disabled:text-slate-400"
+                                >
+                                  Otomatik kod + ana
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={creatingMissingProducts}
+                                  onClick={() => createProductCardsFromMissing([item], { productType: "component", codeMode: "auto" })}
+                                  className="rounded-lg bg-slate-100 px-3 py-2 text-[11px] font-black text-slate-700 hover:bg-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+                                >
+                                  Otomatik kod + alt
+                                </button>
+                              </>
+                            )}
                             <button
                               type="button"
                               disabled={creatingMissingProducts || !manualCode || manualCodeDuplicate}
