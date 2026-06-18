@@ -1726,6 +1726,39 @@ export default function ProjectDetailPage() {
     setItemForm((prev) => ({ ...prev, [field]: value }));
   }
 
+  function findProductCardByCode(code) {
+    const normalizedCode = normalizeCode(code);
+    if (!normalizedCode) return null;
+    return (
+      products.find((product) => normalizeCode(product.product_code || product.code) === normalizedCode) || null
+    );
+  }
+
+  function updateItemProductCode(value) {
+    const productCard = findProductCardByCode(value);
+    setItemForm((prev) => {
+      if (!productCard) {
+        return { ...prev, product_code: value };
+      }
+
+      const unitPrice = Number(
+        productCard.last_unit_price ||
+          productCard.manual_price ||
+          productCard.unit_price ||
+          productCard.purchase_price ||
+          0,
+      );
+
+      return {
+        ...prev,
+        product_code: value,
+        product_name: productCard.product_name || productCard.name || prev.product_name,
+        unit: productCard.unit || prev.unit || "adet",
+        estimated_unit_price: unitPrice > 0 ? String(unitPrice) : prev.estimated_unit_price,
+      };
+    });
+  }
+
   function updatePaymentForm(field, value) {
     setPaymentForm((prev) => ({ ...prev, [field]: value }));
   }
@@ -7469,7 +7502,7 @@ export default function ProjectDetailPage() {
                                 </button>
                               </div>
                               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                                <input className="rounded-xl border border-slate-300 p-3" placeholder="Ürün kodu" value={itemForm.product_code} onChange={(e) => updateItemForm("product_code", e.target.value)} />
+                                <input className="rounded-xl border border-slate-300 p-3" placeholder="Ürün kodu" value={itemForm.product_code} onChange={(e) => updateItemProductCode(e.target.value)} />
                                 <input className="rounded-xl border border-slate-300 p-3" placeholder="Ürün adı" value={itemForm.product_name} onChange={(e) => updateItemForm("product_name", e.target.value)} />
                                 <input className="rounded-xl border border-slate-300 p-3" placeholder="Birim" value={itemForm.unit} onChange={(e) => updateItemForm("unit", e.target.value)} />
                                 <input type="number" className="rounded-xl border border-slate-300 p-3" placeholder="Miktar" value={itemForm.estimated_quantity} onChange={(e) => updateItemForm("estimated_quantity", e.target.value)} />
