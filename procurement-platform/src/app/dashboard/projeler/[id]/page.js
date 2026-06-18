@@ -115,6 +115,22 @@ const stockCoverLockedStatuses = [
   "Sevk edildi",
 ];
 
+function mainStatusBadgeClass(status) {
+  if (["Haz\u0131r", "Sevke haz\u0131r", "Tamamland\u0131"].includes(status)) {
+    return "bg-emerald-50 text-emerald-700 ring-emerald-100";
+  }
+  if (status === "Sevk edildi") {
+    return "bg-slate-900 text-white ring-slate-900";
+  }
+  if (status === "Malzeme bekliyor" || status === "Durduruldu") {
+    return "bg-amber-50 text-amber-700 ring-amber-100";
+  }
+  if (["\u0130\u015fleme al\u0131nd\u0131", "\u0130\u015flemde", "Uygulamada"].includes(status)) {
+    return "bg-blue-50 text-blue-700 ring-blue-100";
+  }
+  return "bg-slate-100 text-slate-700 ring-slate-200";
+}
+
 const emptyItem = {
   parent_item_id: "",
   product_code: "",
@@ -5064,10 +5080,26 @@ export default function ProjectDetailPage() {
     const collection =
       totals.contract > 0 ? Math.round((totals.paidTotal / totals.contract) * 100) : 0;
     const profitLoss = totals.netProfitLoss;
+    const mainStatusCounts = countByStatus(mainItems, mainItemStatuses);
+    const mainStatusSummary = mainItemStatuses
+      .map((status) => ({ status, count: mainStatusCounts[status] || 0 }))
+      .filter((entry) => entry.count > 0);
+    const mainItemStatusRows = mainItems
+      .map((item) => ({
+        id: item.id,
+        code: item.product_code || "",
+        name: item.product_name || item.name || item.description || item.product_code || "Ana \u00fcr\u00fcn",
+        quantity: Number(item.estimated_quantity ?? item.quantity ?? 0),
+        status: item.status || "Bekliyor",
+      }))
+      .sort((a, b) => a.status.localeCompare(b.status, "tr") || a.name.localeCompare(b.name, "tr"));
 
     return {
       mainItems,
       childItems,
+      mainItemTotal: mainItems.length,
+      mainStatusSummary,
+      mainItemStatusRows,
       completion,
       materialCompletion,
       collection,
@@ -5075,7 +5107,7 @@ export default function ProjectDetailPage() {
       openOrders,
       receivedItems,
       missingItems,
-      mainStatusCounts: countByStatus(mainItems, mainItemStatuses),
+      mainStatusCounts,
       componentStatusCounts: countByStatus(childItems, componentItemStatuses),
       readyMainItems: mainItems.filter((item) => ["Haz\u0131r", "Sevke haz\u0131r"].includes(item.status)).length,
       shippedMainItems: mainItems.filter((item) => item.status === "Sevk edildi").length,
@@ -5751,6 +5783,31 @@ export default function ProjectDetailPage() {
                   <div className="rounded-xl bg-blue-50 p-4 text-sm text-blue-800">
                     Proje ilerleme oranları, tamamlanan malzeme, sipariş ve tahsilat verilerine göre hesaplanır.
                   </div>
+                  <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <div className="text-xs font-black uppercase text-slate-500">Ana \u00fcr\u00fcn takibi</div>
+                        <div className="mt-1 text-3xl font-black text-slate-950">{projectKpis.mainItemTotal}</div>
+                        <div className="text-xs font-bold text-slate-500">Toplam ana \u00fcr\u00fcn</div>
+                      </div>
+                      <div className="flex max-w-full flex-wrap justify-end gap-2">
+                        {projectKpis.mainStatusSummary.length > 0 ? (
+                          projectKpis.mainStatusSummary.map((entry) => (
+                            <span
+                              key={entry.status}
+                              className={`rounded-full px-3 py-1 text-xs font-black ring-1 ${mainStatusBadgeClass(entry.status)}`}
+                            >
+                              {entry.status}: {entry.count}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="rounded-full bg-white px-3 py-1 text-xs font-bold text-slate-500 ring-1 ring-slate-200">
+                            Ana \u00fcr\u00fcn yok
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
                   <div className="grid grid-cols-2 gap-3 text-sm">
                     {[
                       ["Haz\u0131r / sevke haz\u0131r", projectKpis.readyMainItems, "bg-emerald-50 text-emerald-800"],
@@ -5802,6 +5859,56 @@ export default function ProjectDetailPage() {
                   </button>
                 </div>
               </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-xl font-black text-slate-900">Ana \u00dcr\u00fcn Durum \u00d6zeti</h2>
+                  <p className="mt-1 text-sm font-semibold text-slate-500">
+                    Projedeki ana \u00fcr\u00fcnlerin toplam adedi ve s\u00fcre\u00e7 a\u015famalar\u0131 burada \u00f6zetlenir.
+                  </p>
+                </div>
+                <span className="rounded-full bg-blue-50 px-4 py-2 text-sm font-black text-blue-700">
+                  {projectKpis.mainItemTotal} ana \u00fcr\u00fcn
+                </span>
+              </div>
+              {projectKpis.mainItemStatusRows.length > 0 ? (
+                <div className="mt-5 divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-100">
+                  {projectKpis.mainItemStatusRows.slice(0, 8).map((item) => (
+                    <div
+                      key={item.id || item.code || item.name}
+                      className="grid grid-cols-1 gap-3 bg-white p-4 md:grid-cols-[1fr_auto_auto] md:items-center"
+                    >
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-black text-slate-950" title={item.name}>{item.name}</div>
+                        <div className="mt-1 text-xs font-bold text-slate-500">
+                          {item.code ? `Kod: ${item.code} · ` : ""}Toplam: {formatQuantity(item.quantity)} adet
+                        </div>
+                      </div>
+                      <span className={`w-fit rounded-full px-3 py-1 text-xs font-black ring-1 ${mainStatusBadgeClass(item.status)}`}>
+                        {item.status}
+                      </span>
+                      <div className="text-xs font-bold text-slate-500 md:text-right">
+                        {item.status === "Malzeme bekliyor" ? "\u00dcr\u00fcnleri bekleniyor" : `S\u00fcre\u00e7: ${item.status}`}
+                      </div>
+                    </div>
+                  ))}
+                  {projectKpis.mainItemStatusRows.length > 8 && (
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab("Malzeme Listesi")}
+                      className="w-full bg-slate-50 px-4 py-3 text-left text-sm font-black text-blue-700 hover:bg-blue-50"
+                    >
+                      +{projectKpis.mainItemStatusRows.length - 8} ana \u00fcr\u00fcn daha var. Ana \u00dcr\u00fcnler sekmesinde g\u00f6r.
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="mt-5 rounded-2xl bg-slate-50 p-5 text-sm font-bold text-slate-500">
+                  Bu projede hen\u00fcz ana \u00fcr\u00fcn yok.
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-1 gap-6 xl:grid-cols-[0.95fr_1.05fr]">
