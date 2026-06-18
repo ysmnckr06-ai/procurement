@@ -4066,26 +4066,149 @@ export default function ProjectDetailPage() {
     const user = await getUserOrRedirect();
     if (!user) return;
 
-    const coverableItems = items.filter((item) => selectedStockCoverItemIds.includes(item.id) && canCoverFromStock(item));
+    const selectedIds = selectedStockCoverableIds.length > 0 ? selectedStockCoverableIds : selectedStockCoverItemIds;
+    const coverableItems = items.filter((item) => selectedIds.includes(item.id) && canCoverFromStock(item));
 
     if (coverableItems.length === 0) {
       setMessage("Stoktan karşılamak için en az bir uygun alt ürün seçin.");
       return;
     }
 
-    const approved = window.confirm(`Seçili ${selectedStockCoverItemIds.length} satırdan ${coverableItems.length} uygun kalem stoktan projeye ayrılsın mı?`);
+    const approved = window.confirm(`Seçili ${selectedIds.length} satırdan ${coverableItems.length} uygun kalem stoktan projeye ayrılsın mı?`);
     if (!approved) return;
 
-    const results = [];
+    const now = new Date().toISOString();
+    const today = now.slice(0, 10);
+    const productPool = new Map(
+      products.map((product) => [
+        product.id,
+        {
+          ...product,
+          current_stock: Number(product.current_stock || 0),
+          reserved_stock: Number(product.reserved_stock || 0),
+        },
+      ])
+    );
+    const productUpdates = new Map();
+    const itemUpdates = [];
+    const movementPayload = [];
+
     for (const item of coverableItems) {
-      results.push(await reserveItemFromStock(user, item));
+      const itemCode = normalizeCode(item.product_code || item.code || "");
+      const itemName = normalizeText(item.product_name || item.name || "");
+      const matchedProducts = Array.from(productPool.values()).filter((product) => {
+        const productCode = normalizeCode(product.product_code || product.code || "");
+        const productName = normalizeText(product.product_name || product.name || "");
+        if (itemCode) return productCode === itemCode && (!itemName || productName === itemName || productName.includes(itemName) || itemName.includes(productName));
+        return itemName && productName === itemName;
+      });
+      const relation = componentRelationForItem(item, items);
+      const openQuantity = Math.max(Number(item.estimated_quantity || 0) - consumedChildQuantity(item), 0);
+      const currentReserved = Number(item.reserved_child_quantity ?? item.reserved_quantity ?? 0) || 0;
+      let quantityToCover = Math.max(openQuantity - currentReserved, 0);
+      let coveredQuantity = 0;
+      let firstProductId = item.product_id || null;
+
+      for (const product of matchedProducts) {
+        if (quantityToCover <= 0) break;
+        const available = Math.max(Number(product.current_stock || 0) - Number(product.reserved_stock || 0), 0);
+        if (available <= 0) continue;
+
+        const allocation = Math.min(quantityToCover, available);
+        product.reserved_stock = Number(product.reserved_stock || 0) + allocation;
+        productUpdates.set(product.id, {
+          id: product.id,
+          reserved_stock: product.reserved_stock,
+          updated_at: now,
+        });
+        if (!firstProductId) firstProductId = product.id;
+        coveredQuantity += allocation;
+        quantityToCover -= allocation;
+
+        movementPayload.push({
+          user_id: user.id,
+          product_id: product.id,
+          project_id: projectId,
+          project_item_id: item.id,
+          parent_item_id: item.parent_item_id || null,
+          product_code: product.product_code || item.product_code || "",
+          product_name: product.product_name || item.product_name,
+          movement_type: "out",
+          quantity: allocation,
+          reserved_quantity: allocation,
+          unit: item.unit || product.unit || "adet",
+          related_project_id: projectId,
+          related_project_name: project?.project_name || "",
+          unit_price: Number(product.last_unit_price || item.estimated_unit_price || 0),
+          currency: product.last_currency || projectCurrencyForDisplay(item.currency),
+          movement_date: today,
+          source: "Projeye stoktan karşılandı",
+          notes: `${project?.project_code || project?.project_name || "Proje"} için stok rezervasyonu${relation.parentName ? ` - ${relation.parentName}` : ""}`,
+        });
+      }
+
+      if (coveredQuantity <= 0) continue;
+
+      const nextReserved = currentReserved + coveredQuantity;
+      const remainingAfterReserve = Math.max(openQuantity - nextReserved, 0);
+      itemUpdates.push({
+        id: item.id,
+        product_id: firstProductId,
+        reserved_quantity: nextReserved,
+        status: remainingAfterReserve <= 0 ? "Projeye rezerve edildi" : "Satınalma gerekli",
+        updated_at: now,
+      });
     }
 
-    const successCount = results.filter((result) => result.ok).length;
-    const failedCount = results.length - successCount;
-    setSelectedStockCoverItemIds((prev) => prev.filter((id) => !coverableItems.some((item) => item.id === id)));
+    if (itemUpdates.length === 0) {
+      setMessage("Seçili kalemler için stoktan karşılanabilecek uygun ürün bulunamadı.");
+      return;
+    }
+
+    const runInBatches = async (records, batchSize, callback) => {
+      for (let index = 0; index < records.length; index += batchSize) {
+        const batch = records.slice(index, index + batchSize);
+        await Promise.all(batch.map(callback));
+      }
+    };
+
+    const updateWarnings = [];
+    await runInBatches(Array.from(productUpdates.values()), 25, async (update) => {
+      const { error } = await supabase
+        .from("products")
+        .update({
+          reserved_stock: update.reserved_stock,
+          updated_at: update.updated_at,
+        })
+        .eq("id", update.id)
+        .eq("user_id", user.id);
+      if (error) updateWarnings.push(error.message);
+    });
+
+    await runInBatches(itemUpdates, 25, async (update) => {
+      const { error } = await supabase
+        .from("project_items")
+        .update({
+          product_id: update.product_id,
+          reserved_quantity: update.reserved_quantity,
+          status: update.status,
+          updated_at: update.updated_at,
+        })
+        .eq("id", update.id)
+        .eq("project_id", projectId)
+        .eq("user_id", user.id);
+      if (error) updateWarnings.push(error.message);
+    });
+
+    for (let index = 0; index < movementPayload.length; index += 100) {
+      const { error } = await supabase.from("stock_movements").insert(movementPayload.slice(index, index + 100));
+      if (error) updateWarnings.push(error.message);
+    }
+
+    const processedIds = new Set(itemUpdates.map((update) => update.id));
+    setSelectedStockCoverItemIds((prev) => prev.filter((id) => !processedIds.has(id)));
     await loadProject();
-    setMessage(`${successCount} kalem stoktan karşılandı.${failedCount > 0 ? ` ${failedCount} kalem kontrol edilmeli.` : ""}`);
+    setMessage(`${itemUpdates.length} kalem stoktan karşılandı.${coverableItems.length - itemUpdates.length > 0 ? ` ${coverableItems.length - itemUpdates.length} kalem için yeterli kullanılabilir stok bulunamadı.` : ""}${updateWarnings.length > 0 ? " Bazı kayıtlar kontrol edilmeli." : ""}`);
   }
 
   async function processParentItem(parent) {
