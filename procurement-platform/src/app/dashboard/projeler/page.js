@@ -6,7 +6,6 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { calculateBaseAmount, currencyOptions, formatMoney, getBaseCurrency, getExchangeRate } from "@/lib/currency";
 import { fetchLiveTryRates, liveCurrencyOptions, liveRateFor } from "@/lib/liveCurrency";
-import { findOrCreateBusinessPartner } from "@/lib/businessPartners";
 import { hierarchyQuantityFields } from "@/lib/projectHierarchy";
 
 const statusOptions = ["Taslak", "Onaylandı", "Devam Ediyor", "Tamamlandı", "Arşivlendi", "İptal"];
@@ -47,6 +46,20 @@ function normalizeProjectFilter(value) {
     .replaceAll("ö", "o")
     .replaceAll("ç", "c")
     .replace(/\s+/g, " ");
+}
+
+function normalizePartnerName(value) {
+  return String(value || "")
+    .trim()
+    .toLocaleLowerCase("tr-TR")
+    .replace(/[.,;:]/g, "")
+    .replace(/\s+/g, " ");
+}
+
+function findBusinessPartnerByName(partners, name) {
+  const normalizedName = normalizePartnerName(name);
+  if (!normalizedName) return null;
+  return (partners || []).find((partner) => normalizePartnerName(partner.name) === normalizedName) || null;
 }
 
 function normalizeGroupName(value) {
@@ -621,23 +634,13 @@ export default function ProjectsPage() {
       return;
     }
 
-    let customerPartner = await findOrCreateBusinessPartner(supabase, user.id, {
-      name: form.customer_name,
-      allowCreate: false,
-      partnerType: "Müşteri",
-    });
+    const customerName = form.customer_name.trim();
+    const customerPartner = customerName ? findBusinessPartnerByName(businessPartners, customerName) : null;
 
-    if (!customerPartner && form.customer_name?.trim()) {
-      const shouldCreatePartner = window.confirm(
-        "Bu firma iş ortakları arasında bulunamadı. Yeni iş ortağı oluşturmak ister misiniz?",
-      );
-      if (shouldCreatePartner) {
-        customerPartner = await findOrCreateBusinessPartner(supabase, user.id, {
-          name: form.customer_name,
-          partnerType: "Müşteri",
-          allowCreate: true,
-        });
-      }
+    if (customerName && !customerPartner) {
+      setMessage("Bu firma iş ortakları arasında bulunamadı. Lütfen önce firma bilgisi oluşturun veya mevcut bir firmayı seçin.");
+      setSaving(false);
+      return;
     }
 
     const contractCurrency = form.contract_currency || getBaseCurrency(settings);
@@ -655,9 +658,9 @@ export default function ProjectsPage() {
       user_id: user.id,
       project_code: form.project_code || nextProjectCode(projects),
       project_name: form.project_name.trim(),
-      customer_name: form.customer_name.trim(),
+      customer_name: customerName,
       customer_partner_id: customerPartner?.id || null,
-      customer_partner_name: customerPartner?.name || form.customer_name.trim(),
+      customer_partner_name: customerPartner?.name || customerName,
       description: form.description.trim(),
       contract_amount: Number(form.contract_amount || 0),
       contract_currency: contractCurrency,
@@ -835,6 +838,11 @@ export default function ProjectsPage() {
       ].join(" ")).includes(needle),
     );
   }, [displayedProjectsBase, customerFilter]);
+  const selectedCustomerPartner = useMemo(
+    () => findBusinessPartnerByName(businessPartners, form.customer_name),
+    [businessPartners, form.customer_name],
+  );
+  const customerNameNeedsPartner = Boolean(form.customer_name.trim()) && !selectedCustomerPartner;
 
   const stats = useMemo(() => {
     const activeStatuses = ["Onaylandı", "Devam Ediyor"];
@@ -963,6 +971,14 @@ export default function ProjectsPage() {
                     </option>
                   ))}
                 </datalist>
+                {customerNameNeedsPartner && (
+                  <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-900">
+                    <p>Bu firma iş ortakları arasında bulunamadı. Sistem firma kaydını otomatik oluşturmaz.</p>
+                    <Link href="/dashboard/tedarikciler" className="mt-2 inline-flex rounded-lg bg-amber-100 px-3 py-2 text-amber-900 hover:bg-amber-200">
+                      Firma bilgisi oluştur
+                    </Link>
+                  </div>
+                )}
               </label>
               <label className="text-sm font-bold text-slate-700 md:col-span-3">
                 Açıklama
