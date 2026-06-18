@@ -48,75 +48,75 @@ const paymentTypes = ["Avans", "Ara ödeme", "Hakediş", "Kapanış ödemesi"];
 
 const lifecycleItemStatuses = [
   "Bekliyor",
-  "Sat\u0131nalma gerekli",
-  "Talep olu\u015fturuldu",
+  "Satınalma gerekli",
+  "Talep oluşturuldu",
   "Teklif bekleniyor",
-  "Sipari\u015f verildi",
-  "Tedarik\u00e7iden bekleniyor",
-  "K\u0131smi geldi",
+  "Sipariş verildi",
+  "Tedarikçiden bekleniyor",
+  "Kısmi geldi",
   "Depoda",
   "Eksik geldi",
   "Fazla geldi",
-  "Hatal\u0131 / ar\u0131zal\u0131 geldi",
+  "Hatalı / arızalı geldi",
   "Projeye rezerve edildi",
-  "\u0130\u015fleme al\u0131nd\u0131",
-  "\u0130\u015flemde",
+  "İşleme alındı",
+  "İşlemde",
   "Uygulamada",
   "Sevk edildi",
-  "Tamamland\u0131",
+  "Tamamlandı",
 ];
 
 const mainItemStatuses = [
   "Bekliyor",
-  "\u0130\u015fleme al\u0131nd\u0131",
-  "\u0130\u015flemde",
+  "İşleme alındı",
+  "İşlemde",
   "Malzeme bekliyor",
   "Uygulamada",
-  "Haz\u0131r",
-  "Sevke haz\u0131r",
+  "Hazır",
+  "Sevke hazır",
   "Sevk edildi",
-  "Tamamland\u0131",
+  "Tamamlandı",
   "Durduruldu",
 ];
 
 const componentItemStatuses = [
   "Bekliyor",
-  "Sat\u0131nalma gerekli",
-  "Talep olu\u015fturuldu",
+  "Satınalma gerekli",
+  "Talep oluşturuldu",
   "Teklif bekleniyor",
-  "Sipari\u015f verildi",
-  "Tedarik\u00e7iden bekleniyor",
-  "K\u0131smi geldi",
+  "Sipariş verildi",
+  "Tedarikçiden bekleniyor",
+  "Kısmi geldi",
   "Depoda",
   "Eksik geldi",
   "Fazla geldi",
-  "Hatal\u0131 / ar\u0131zal\u0131 geldi",
+  "Hatalı / arızalı geldi",
   "Projeye rezerve edildi",
-  "Kullan\u0131ld\u0131",
-  "Tamamland\u0131",
+  "Kullanıldı",
+  "Tamamlandı",
 ];
 
 const purchaseActionLockedStatuses = [
-  "Talep olu\u015fturuldu",
+  "Talep oluşturuldu",
   "Teklif bekleniyor",
-  "Sipari\u015f verildi",
-  "Tedarik\u00e7iden bekleniyor",
-  "K\u0131smi geldi",
+  "Sipariş verildi",
+  "Tedarikçiden bekleniyor",
+  "Kısmi geldi",
   "Depoda",
   "Projeye rezerve edildi",
-  "Kullan\u0131ld\u0131",
-  "Tamamland\u0131",
+  "Kullanıldı",
+  "Tamamlandı",
 ];
 
 const stockCoverLockedStatuses = [
   "Projeye rezerve edildi",
-  "Kullan\u0131ld\u0131",
-  "Tamamland\u0131",
+  "Kullanıldı",
+  "Tamamlandı",
   "Sevk edildi",
 ];
 
 function mainStatusBadgeClass(status) {
-  if (["Haz\u0131r", "Sevke haz\u0131r", "Tamamland\u0131"].includes(status)) {
+  if (["Hazır", "Sevke hazır", "Tamamlandı"].includes(status)) {
     return "bg-emerald-50 text-emerald-700 ring-emerald-100";
   }
   if (status === "Sevk edildi") {
@@ -125,7 +125,7 @@ function mainStatusBadgeClass(status) {
   if (status === "Malzeme bekliyor" || status === "Durduruldu") {
     return "bg-amber-50 text-amber-700 ring-amber-100";
   }
-  if (["\u0130\u015fleme al\u0131nd\u0131", "\u0130\u015flemde", "Uygulamada"].includes(status)) {
+  if (["İşleme alındı", "İşlemde", "Uygulamada"].includes(status)) {
     return "bg-blue-50 text-blue-700 ring-blue-100";
   }
   return "bg-slate-100 text-slate-700 ring-slate-200";
@@ -257,10 +257,10 @@ function textSimilarity(left, right) {
 function statusClass(status) {
   const classes = {
     Taslak: "bg-slate-100 text-slate-700",
-    "Onayland\u0131": "bg-blue-100 text-blue-700",
+    "Onaylandı": "bg-blue-100 text-blue-700",
     "Devam Ediyor": "bg-emerald-100 text-emerald-700",
-    "Tamamland\u0131": "bg-green-100 text-green-700",
-    "\u0130ptal": "bg-red-100 text-red-700",
+    "Tamamlandı": "bg-green-100 text-green-700",
+    "İptal": "bg-red-100 text-red-700",
   };
 
   return classes[status] || "bg-slate-100 text-slate-700";
@@ -270,10 +270,10 @@ function itemStatusClass(status) {
   const classes = {
     Bekliyor: "bg-slate-100 text-slate-700",
     "Malzeme bekliyor": "bg-amber-100 text-amber-800",
-    Haz\u0131r: "bg-emerald-100 text-emerald-700",
-    "Sevke haz\u0131r": "bg-green-100 text-green-700",
+    Hazır: "bg-emerald-100 text-emerald-700",
+    "Sevke hazır": "bg-green-100 text-green-700",
     Durduruldu: "bg-red-100 text-red-700",
-    Kullan\u0131ld\u0131: "bg-teal-100 text-teal-700",
+    Kullanıldı: "bg-teal-100 text-teal-700",
     "Talep oluşturuldu": "bg-blue-100 text-blue-700",
     "Teklif bekleniyor": "bg-indigo-100 text-indigo-700",
     "Tedarikçiden bekleniyor": "bg-sky-100 text-sky-700",
@@ -289,7 +289,7 @@ function itemStatusClass(status) {
     Depoda: "bg-emerald-100 text-emerald-700",
     İşlemde: "bg-purple-100 text-purple-700",
     Uygulamada: "bg-orange-100 text-orange-700",
-    "Tamamland\u0131": "bg-green-100 text-green-700",
+    "Tamamlandı": "bg-green-100 text-green-700",
   };
 
   return classes[status] || "bg-slate-100 text-slate-700";
@@ -389,7 +389,7 @@ export default function ProjectDetailPage() {
 
     return previewSections.filter((section) => {
       const name = String(section.section_name || "").trim().toUpperCase();
-      const compactName = name.replace(/[^A-Z0-9\u00c7\u011e\u0130\u00d6\u015e\u00dc]/g, "");
+      const compactName = name.replace(/[^A-Z0-9ÇĞİÖŞÜ]/g, "");
       const total = Number(section.section_total || 0);
 
       if (!compactName || ["TL", "TRY", "EUR", "USD"].includes(compactName) || total <= 0) {
@@ -411,7 +411,7 @@ export default function ProjectDetailPage() {
     return String(value || "")
       .trim()
       .toLocaleUpperCase("tr-TR")
-      .replace(/[^A-Z0-9\u00c7\u011e\u0130\u00d6\u015e\u00dc]/g, "");
+      .replace(/[^A-Z0-9ÇĞİÖŞÜ]/g, "");
   }
 
   function mergedSectionTotals() {
@@ -1652,14 +1652,14 @@ export default function ProjectDetailPage() {
 
   function priceSourceClass(source) {
     const classes = {
-      "Proje al\u0131m\u0131ndan": "bg-blue-100 text-blue-700",
-      "Son genel al\u0131mdan": "bg-purple-100 text-purple-700",
+      "Proje alımından": "bg-blue-100 text-blue-700",
+      "Son genel alımdan": "bg-purple-100 text-purple-700",
       Tekliften: "bg-emerald-100 text-emerald-700",
-      "\u00dcr\u00fcn kart\u0131ndan": "bg-slate-100 text-slate-700",
-      "Fiyat bulunamad\u0131": "bg-red-100 text-red-700",
+      "Ürün kartından": "bg-slate-100 text-slate-700",
+      "Fiyat bulunamadı": "bg-red-100 text-red-700",
     };
 
-    return classes[source] || classes["Fiyat bulunamad\u0131"];
+    return classes[source] || classes["Fiyat bulunamadı"];
   }
 
   function resolveProjectItemPrice(item, projectOrderRows = projectOrders, allOrderRows = allOrders, movementRows = stockMovements) {
@@ -1677,7 +1677,7 @@ export default function ProjectDetailPage() {
     const projectOrderMatch = bestPurchaseLineForItem(item, projectOrderLines);
     if (projectOrderMatch) {
       const unitPrice = Number(projectOrderMatch.unitPrice || 0);
-      return { unitPrice, total: quantity * unitPrice, source: "Proje al\u0131m\u0131ndan", orderId: projectOrderMatch.orderId, sourceDate: projectOrderMatch.createdAt };
+      return { unitPrice, total: quantity * unitPrice, source: "Proje alımından", orderId: projectOrderMatch.orderId, sourceDate: projectOrderMatch.createdAt };
     }
 
     const movementMatch = (movementRows || [])
@@ -1695,13 +1695,13 @@ export default function ProjectDetailPage() {
       })[0];
     if (movementMatch) {
       const unitPrice = Number(movementMatch.unitPrice || 0);
-      return { unitPrice, total: quantity * unitPrice, source: "Proje al\u0131m\u0131ndan", orderId: movementMatch.orderId, sourceDate: movementMatch.createdAt };
+      return { unitPrice, total: quantity * unitPrice, source: "Proje alımından", orderId: movementMatch.orderId, sourceDate: movementMatch.createdAt };
     }
 
     const generalOrderMatch = bestPurchaseLineForItem(item, allOrderLines);
     if (generalOrderMatch) {
       const unitPrice = Number(generalOrderMatch.unitPrice || 0);
-      return { unitPrice, total: quantity * unitPrice, source: "Son genel al\u0131mdan", orderId: generalOrderMatch.orderId, sourceDate: generalOrderMatch.createdAt };
+      return { unitPrice, total: quantity * unitPrice, source: "Son genel alımdan", orderId: generalOrderMatch.orderId, sourceDate: generalOrderMatch.createdAt };
     }
 
     const productMatch = [...products]
@@ -1717,10 +1717,10 @@ export default function ProjectDetailPage() {
       })[0];
     if (productMatch) {
       const unitPrice = Number(productMatch.last_unit_price || 0);
-      return { unitPrice, total: quantity * unitPrice, source: "\u00dcr\u00fcn kart\u0131ndan", orderId: null, sourceDate: productMatch.updated_at || productMatch.created_at };
+      return { unitPrice, total: quantity * unitPrice, source: "Ürün kartından", orderId: null, sourceDate: productMatch.updated_at || productMatch.created_at };
     }
 
-    return { unitPrice: 0, total: 0, source: "Fiyat bulunamad\u0131", orderId: null, sourceDate: null };
+    return { unitPrice: 0, total: 0, source: "Fiyat bulunamadı", orderId: null, sourceDate: null };
   }
   function updateItemForm(field, value) {
     setItemForm((prev) => ({ ...prev, [field]: value }));
@@ -2405,7 +2405,7 @@ export default function ProjectDetailPage() {
     const token = session?.access_token;
 
     if (!token || !API_URL) {
-      setMessage("Toplu silme i\u00e7in API ba\u011flant\u0131s\u0131 veya oturum bulunamad\u0131.");
+      setMessage("Toplu silme için API bağlantısı veya oturum bulunamadı.");
       return;
     }
 
@@ -2467,7 +2467,7 @@ export default function ProjectDetailPage() {
         setMessage(`${data.deleted_count || deletedIds.length} ürün silindi.`);
       }
     } catch (error) {
-      console.error("Toplu silme ba\u011flant\u0131 hatas\u0131:", error);
+      console.error("Toplu silme bağlantı hatası:", error);
       setMessage(error.message || "Seçili ürünler silinemedi.");
     }
   }
@@ -2531,7 +2531,7 @@ export default function ProjectDetailPage() {
     );
     setPaymentForm(emptyPayment);
     setEditingPaymentId(null);
-    setMessage(editingPaymentId ? "\u00d6deme kayd\u0131 g\u00fcncellendi." : "\u00d6deme kayd\u0131 eklendi.");
+    setMessage(editingPaymentId ? "Ödeme kaydı güncellendi." : "Ödeme kaydı eklendi.");
   }
 
   function editPayment(payment) {
@@ -2544,7 +2544,7 @@ export default function ProjectDetailPage() {
       payment_type: payment.payment_type || "Avans",
       description: payment.description || "",
     });
-    setMessage("\u00d6deme kayd\u0131 d\u00fczenleniyor. De\u011fi\u015fiklikleri formdan kaydedebilirsiniz.");
+    setMessage("Ödeme kaydı düzenleniyor. Değişiklikleri formdan kaydedebilirsiniz.");
   }
 
   function cancelPaymentEdit() {
@@ -2554,7 +2554,7 @@ export default function ProjectDetailPage() {
   }
 
   async function deletePayment(payment) {
-    const approved = window.confirm("Bu \u00f6deme kayd\u0131n\u0131 silmek istedi\u011finize emin misiniz?");
+    const approved = window.confirm("Bu ödeme kaydını silmek istediğinize emin misiniz?");
     if (!approved) return;
 
     setMessage("");
@@ -4666,7 +4666,7 @@ export default function ProjectDetailPage() {
 
     await supabase
       .from("project_items")
-      .update({ status: "Talep olu\u015fturuldu", updated_at: new Date().toISOString() })
+      .update({ status: "Talep oluşturuldu", updated_at: new Date().toISOString() })
       .in("id", selectedItems.map((item) => item.id))
       .eq("project_id", projectId)
       .eq("user_id", user.id);
@@ -4675,7 +4675,7 @@ export default function ProjectDetailPage() {
     setItems((prev) =>
       prev.map((item) =>
         selectedItems.some((selected) => selected.id === item.id)
-          ? { ...item, status: "Talep olu\u015fturuldu", updated_at: new Date().toISOString() }
+          ? { ...item, status: "Talep oluşturuldu", updated_at: new Date().toISOString() }
           : item,
       ),
     );
@@ -4739,7 +4739,7 @@ export default function ProjectDetailPage() {
 
     await supabase
       .from("project_items")
-      .update({ status: "Talep olu\u015fturuldu", updated_at: new Date().toISOString() })
+      .update({ status: "Talep oluşturuldu", updated_at: new Date().toISOString() })
       .in("id", neededItems.map(({ item }) => item.id))
       .eq("project_id", projectId)
       .eq("user_id", user.id);
@@ -4758,7 +4758,7 @@ export default function ProjectDetailPage() {
     setItems((prev) =>
       prev.map((item) =>
         neededItems.some(({ item: neededItem }) => neededItem.id === item.id)
-          ? { ...item, status: "Talep olu\u015fturuldu", updated_at: new Date().toISOString() }
+          ? { ...item, status: "Talep oluşturuldu", updated_at: new Date().toISOString() }
           : item,
       ),
     );
@@ -5088,7 +5088,7 @@ export default function ProjectDetailPage() {
       .map((item) => ({
         id: item.id,
         code: item.product_code || "",
-        name: item.product_name || item.name || item.description || item.product_code || "Ana \u00fcr\u00fcn",
+        name: item.product_name || item.name || item.description || item.product_code || "Ana ürün",
         quantity: Number(item.estimated_quantity ?? item.quantity ?? 0),
         status: item.status || "Bekliyor",
       }))
@@ -5109,11 +5109,11 @@ export default function ProjectDetailPage() {
       missingItems,
       mainStatusCounts,
       componentStatusCounts: countByStatus(childItems, componentItemStatuses),
-      readyMainItems: mainItems.filter((item) => ["Haz\u0131r", "Sevke haz\u0131r"].includes(item.status)).length,
+      readyMainItems: mainItems.filter((item) => ["Hazır", "Sevke hazır"].includes(item.status)).length,
       shippedMainItems: mainItems.filter((item) => item.status === "Sevk edildi").length,
       waitingMaterialMainItems: mainItems.filter((item) => item.status === "Malzeme bekliyor").length,
-      orderedComponents: childItems.filter((item) => ["Sipari\u015f verildi", "Tedarik\u00e7iden bekleniyor"].includes(item.status)).length,
-      receivedComponents: childItems.filter((item) => ["Depoda", "K\u0131smi geldi", "Projeye rezerve edildi", "Kullan\u0131ld\u0131", "Tamamland\u0131"].includes(item.status)).length,
+      orderedComponents: childItems.filter((item) => ["Sipariş verildi", "Tedarikçiden bekleniyor"].includes(item.status)).length,
+      receivedComponents: childItems.filter((item) => ["Depoda", "Kısmi geldi", "Projeye rezerve edildi", "Kullanıldı", "Tamamlandı"].includes(item.status)).length,
       actualCost: totals.actualCost,
       profitLoss,
       budgetVariance: totals.budgetVariance,
@@ -5786,9 +5786,9 @@ export default function ProjectDetailPage() {
                   <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div>
-                        <div className="text-xs font-black uppercase text-slate-500">Ana \u00fcr\u00fcn takibi</div>
+                        <div className="text-xs font-black uppercase text-slate-500">Ana ürün takibi</div>
                         <div className="mt-1 text-3xl font-black text-slate-950">{projectKpis.mainItemTotal}</div>
-                        <div className="text-xs font-bold text-slate-500">Toplam ana \u00fcr\u00fcn</div>
+                        <div className="text-xs font-bold text-slate-500">Toplam ana ürün</div>
                       </div>
                       <div className="flex max-w-full flex-wrap justify-end gap-2">
                         {projectKpis.mainStatusSummary.length > 0 ? (
@@ -5802,7 +5802,7 @@ export default function ProjectDetailPage() {
                           ))
                         ) : (
                           <span className="rounded-full bg-white px-3 py-1 text-xs font-bold text-slate-500 ring-1 ring-slate-200">
-                            Ana \u00fcr\u00fcn yok
+                            Ana ürün yok
                           </span>
                         )}
                       </div>
@@ -5810,10 +5810,10 @@ export default function ProjectDetailPage() {
                   </div>
                   <div className="grid grid-cols-2 gap-3 text-sm">
                     {[
-                      ["Haz\u0131r / sevke haz\u0131r", projectKpis.readyMainItems, "bg-emerald-50 text-emerald-800"],
+                      ["Hazır / sevke hazır", projectKpis.readyMainItems, "bg-emerald-50 text-emerald-800"],
                       ["Malzeme bekliyor", projectKpis.waitingMaterialMainItems, "bg-amber-50 text-amber-800"],
                       ["Sevk edilen", projectKpis.shippedMainItems, "bg-slate-900 text-white"],
-                      ["Sipari\u015fteki alt \u00fcr\u00fcn", projectKpis.orderedComponents, "bg-blue-50 text-blue-800"],
+                      ["Siparişteki alt ürün", projectKpis.orderedComponents, "bg-blue-50 text-blue-800"],
                     ].map(([label, value, className]) => (
                       <div key={label} className={`rounded-xl p-3 ${className}`}>
                         <div className="text-xs font-bold opacity-80">{label}</div>
@@ -5864,13 +5864,13 @@ export default function ProjectDetailPage() {
             <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <h2 className="text-xl font-black text-slate-900">Ana \u00dcr\u00fcn Durum \u00d6zeti</h2>
+                  <h2 className="text-xl font-black text-slate-900">Ana Ürün Durum Özeti</h2>
                   <p className="mt-1 text-sm font-semibold text-slate-500">
-                    Projedeki ana \u00fcr\u00fcnlerin toplam adedi ve s\u00fcre\u00e7 a\u015famalar\u0131 burada \u00f6zetlenir.
+                    Projedeki ana ürünlerin toplam adedi ve süreç aşamaları burada özetlenir.
                   </p>
                 </div>
                 <span className="rounded-full bg-blue-50 px-4 py-2 text-sm font-black text-blue-700">
-                  {projectKpis.mainItemTotal} ana \u00fcr\u00fcn
+                  {projectKpis.mainItemTotal} ana ürün
                 </span>
               </div>
               {projectKpis.mainItemStatusRows.length > 0 ? (
@@ -5890,7 +5890,7 @@ export default function ProjectDetailPage() {
                         {item.status}
                       </span>
                       <div className="text-xs font-bold text-slate-500 md:text-right">
-                        {item.status === "Malzeme bekliyor" ? "\u00dcr\u00fcnleri bekleniyor" : `S\u00fcre\u00e7: ${item.status}`}
+                        {item.status === "Malzeme bekliyor" ? "Ürünleri bekleniyor" : `Süreç: ${item.status}`}
                       </div>
                     </div>
                   ))}
@@ -5900,13 +5900,13 @@ export default function ProjectDetailPage() {
                       onClick={() => setActiveTab("Malzeme Listesi")}
                       className="w-full bg-slate-50 px-4 py-3 text-left text-sm font-black text-blue-700 hover:bg-blue-50"
                     >
-                      +{projectKpis.mainItemStatusRows.length - 8} ana \u00fcr\u00fcn daha var. Ana \u00dcr\u00fcnler sekmesinde g\u00f6r.
+                      +{projectKpis.mainItemStatusRows.length - 8} ana ürün daha var. Ana Ürünler sekmesinde gör.
                     </button>
                   )}
                 </div>
               ) : (
                 <div className="mt-5 rounded-2xl bg-slate-50 p-5 text-sm font-bold text-slate-500">
-                  Bu projede hen\u00fcz ana \u00fcr\u00fcn yok.
+                  Bu projede henüz ana ürün yok.
                 </div>
               )}
             </div>
@@ -6127,7 +6127,7 @@ export default function ProjectDetailPage() {
                           <input type="checkbox" checked={selectedPurchaseItemIds.includes(item.id)} onChange={() => togglePurchaseItem(item.id)} className="mt-1 h-4 w-4" />
                         ) : (
                           <span className="mt-1 rounded-full bg-blue-50 px-2 py-1 text-[11px] font-black text-blue-700">
-                            {requestLocked || item.status === "Talep olu\u015fturuldu" ? "Talep olu\u015fturuldu" : item.status || "\u0130\u015flemde"}
+                            {requestLocked || item.status === "Talep oluşturuldu" ? "Talep oluşturuldu" : item.status || "İşlemde"}
                           </span>
                         )}
                         <div className="min-w-0">
@@ -6216,7 +6216,7 @@ export default function ProjectDetailPage() {
                           <input type="checkbox" checked={selectedStockCoverItemIds.includes(item.id)} onChange={() => toggleStockCoverItem(item.id)} className="mt-1 h-4 w-4" />
                         ) : (
                           <span className="mt-1 rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-black text-emerald-700">
-                            {stockCovered ? "Stoktan kar\u015f\u0131land\u0131" : item.status || "\u0130\u015flemde"}
+                            {stockCovered ? "Stoktan karşılandı" : item.status || "İşlemde"}
                           </span>
                         )}
                         <div className="min-w-0">
@@ -6675,7 +6675,7 @@ export default function ProjectDetailPage() {
                       <div>
                         <h3 className="text-lg font-black text-slate-900">Devre dışı teknik öneriler</h3>
                         <p className="mt-1 text-sm text-slate-500">
-                          Bunlar sistemin raw_items \u00fczerinden \u00fcretti\u011fi sekt\u00f6r ba\u011f\u0131ms\u0131z \u00f6nerilerdir. \u015eimdilik sadece se\u00e7im yap\u0131l\u0131r, kay\u0131t/hiyerar\u015fi olu\u015fturulmaz.
+                          Bunlar sistemin raw_items üzerinden ürettiği sektör bağımsız önerilerdir. Şimdilik sadece seçim yapılır, kayıt/hiyerarşi oluşturulmaz.
                         </p>
                       </div>
                       <div className="rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">
@@ -6873,7 +6873,7 @@ export default function ProjectDetailPage() {
                       <div>
                         <h3 className="text-lg font-black text-slate-900">Ana ürünleri seçiniz</h3>
                         <p className="mt-1 text-sm text-slate-600">
-                          Sistem sadece \u00f6neri \u00fcretir; toplam fiyat, grup ba\u015fl\u0131\u011f\u0131 g\u00f6r\u00fcn\u00fcm\u00fc, k\u0131sa a\u00e7\u0131klama, d\u00fc\u015f\u00fck adet ve \u00e7evresindeki \u00fcr\u00fcn yo\u011funlu\u011fu gibi genel sinyalleri kullan\u0131r. Son karar\u0131 siz verirsiniz.
+                          Sistem sadece öneri üretir; toplam fiyat, grup başlığı görünümü, kısa açıklama, düşük adet ve çevresindeki ürün yoğunluğu gibi genel sinyalleri kullanır. Son kararı siz verirsiniz.
                         </p>
                       </div>
                       <button
