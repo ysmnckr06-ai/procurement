@@ -343,6 +343,7 @@ export default function ProjectDetailPage() {
   const [expandedUsageKeys, setExpandedUsageKeys] = useState({});
   const [expandedRequestIds, setExpandedRequestIds] = useState([]);
   const [addingItemParentId, setAddingItemParentId] = useState("");
+  const [addingMainItem, setAddingMainItem] = useState(false);
   const [selectedPurchaseItemIds, setSelectedPurchaseItemIds] = useState([]);
   const [selectedStockCoverItemIds, setSelectedStockCoverItemIds] = useState([]);
   const [selectedProjectItemIds, setSelectedProjectItemIds] = useState([]);
@@ -2325,6 +2326,7 @@ export default function ProjectDetailPage() {
     setItems(nextItems);
     setItemForm(emptyItem);
     setAddingItemParentId("");
+    setAddingMainItem(false);
     await refreshProjectBudget(nextItems);
     await loadProject();
   }
@@ -2346,11 +2348,24 @@ export default function ProjectDetailPage() {
 
   function startAddingChildItem(parentItem) {
     const willClose = addingItemParentId === parentItem.id;
+    setAddingMainItem(false);
     setAddingItemParentId(willClose ? "" : parentItem.id);
     setExpandedItems((prev) => ({ ...prev, [parentItem.id]: !willClose }));
     setItemForm({
       ...emptyItem,
       parent_item_id: willClose ? "" : parentItem.id,
+      unit: "adet",
+      status: "Bekliyor",
+    });
+  }
+
+  function startAddingMainItem() {
+    const willClose = addingMainItem;
+    setAddingMainItem(!willClose);
+    setAddingItemParentId("");
+    setItemForm({
+      ...emptyItem,
+      parent_item_id: "",
       unit: "adet",
       status: "Bekliyor",
     });
@@ -7214,10 +7229,92 @@ export default function ProjectDetailPage() {
                     Toplam: {formatMoney(totals.itemEstimate, projectCurrencyForDisplay())} · Satınalma gerekli: {purchaseRequiredItems.length} · Kritik stok: {criticalStockItems.length}
                   </p>
                 </div>
-                <div className="rounded-xl bg-slate-50 px-4 py-3 text-sm font-bold text-slate-600">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <div className="rounded-xl bg-slate-50 px-4 py-3 text-sm font-bold text-slate-600">
                   Bu ekran ana kalem takibi içindir. Satınalma ve stoktan karşılama işlemleri İhtiyaç Analizi sekmesinden yapılır.
+                  </div>
+                  <button
+                    type="button"
+                    onClick={startAddingMainItem}
+                    className="rounded-xl bg-slate-900 px-4 py-3 text-sm font-black text-white hover:bg-slate-800"
+                  >
+                    {addingMainItem ? "Ana ürün eklemeyi kapat" : "Ana ürün ekle"}
+                  </button>
                 </div>
               </div>
+              {addingMainItem && (
+                <form onSubmit={addProjectItem} className="mt-5 rounded-xl border border-blue-100 bg-blue-50/50 p-4">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-black text-slate-900">Projeye ana ürün ekle</div>
+                      <div className="text-xs text-slate-500">Ana ürün proje içinde takip edilir; alt ürünleri daha sonra bağlayabilirsiniz.</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAddingMainItem(false);
+                        setItemForm(emptyItem);
+                      }}
+                      className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-200"
+                    >
+                      Vazgeç
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <input
+                      className="rounded-xl border border-slate-300 p-3"
+                      placeholder="Ürün kodu"
+                      value={itemForm.product_code}
+                      onChange={(event) => updateItemProductCode(event.target.value)}
+                    />
+                    <input
+                      className="rounded-xl border border-slate-300 p-3"
+                      placeholder="Ana ürün adı"
+                      value={itemForm.product_name}
+                      onChange={(event) => updateItemForm("product_name", event.target.value)}
+                    />
+                    <input
+                      className="rounded-xl border border-slate-300 p-3"
+                      placeholder="Birim"
+                      value={itemForm.unit}
+                      onChange={(event) => updateItemForm("unit", event.target.value)}
+                    />
+                    <input
+                      type="number"
+                      className="rounded-xl border border-slate-300 p-3"
+                      placeholder="Miktar"
+                      value={itemForm.estimated_quantity}
+                      onChange={(event) => updateItemForm("estimated_quantity", event.target.value)}
+                    />
+                    <input
+                      type="number"
+                      className="rounded-xl border border-slate-300 p-3"
+                      placeholder="Birim fiyat"
+                      value={itemForm.estimated_unit_price}
+                      onChange={(event) => updateItemForm("estimated_unit_price", event.target.value)}
+                    />
+                    <select
+                      className="rounded-xl border border-slate-300 p-3"
+                      value={itemForm.status}
+                      onChange={(event) => updateItemForm("status", event.target.value)}
+                    >
+                      {mainItemStatuses.map((status) => (
+                        <option key={status} value={status}>{status}</option>
+                      ))}
+                    </select>
+                    <textarea
+                      className="rounded-xl border border-slate-300 p-3 md:col-span-2"
+                      rows={2}
+                      placeholder="Not"
+                      value={itemForm.note}
+                      onChange={(event) => updateItemForm("note", event.target.value)}
+                    />
+                  </div>
+                  <button type="submit" className="mt-3 rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white hover:bg-blue-700">
+                    Ana Ürünü Kaydet
+                  </button>
+                </form>
+              )}
               <div className="mt-5 space-y-3">
                 {parentItems.map((item) => {
                   const allChildren = childItemsByParent[item.id] || [];
