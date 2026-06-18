@@ -1158,12 +1158,6 @@ export default function ProjectDetailPage() {
     }
   }
 
-  function transferMissingProductToRequest(item) {
-    const ids = item.projectItemIds || [item.id].filter(Boolean);
-    setSelectedPurchaseItemIds((prev) => Array.from(new Set([...prev, ...ids])));
-    setMessage(`${item.product_name} talep listesi seçimine eklendi.`);
-  }
-
   async function createProductCardsFromMissing(targetItems, options = {}) {
     const user = await getUserOrRedirect();
     if (!user) return;
@@ -5588,13 +5582,6 @@ export default function ProjectDetailPage() {
                               className="rounded-lg bg-slate-700 px-3 py-2 text-[11px] font-black text-white hover:bg-slate-800 disabled:bg-slate-100 disabled:text-slate-400"
                             >
                               Manuel alt
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => transferMissingProductToRequest(item)}
-                              className="rounded-lg bg-emerald-50 px-3 py-2 text-[11px] font-black text-emerald-700 hover:bg-emerald-100"
-                            >
-                              Talebe aktar
                             </button>
                             <button
                               type="button"
