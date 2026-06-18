@@ -1786,7 +1786,14 @@ setMessage(
             </div>
 
             {selectedProduct && (
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/35">
+                <button
+                  type="button"
+                  aria-label="Ürün detay panelini kapat"
+                  onClick={() => setSelectedProduct(null)}
+                  className="absolute inset-0 cursor-default"
+                />
+                <aside className="relative z-10 h-full w-full max-w-5xl overflow-y-auto border-l border-slate-200 bg-white p-5 shadow-2xl">
               {(
                 <>
                   {(() => {
@@ -2128,7 +2135,8 @@ setMessage(
                   </div>
                 </>
               )}
-            </div>
+                </aside>
+              </div>
             )}
           </div>
         </div>
