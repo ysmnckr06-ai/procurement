@@ -9,6 +9,14 @@ const PRODUCT_TYPES = {
   MAIN: "main_product",
   COMPONENT: "component",
 };
+const STOCK_VIEW_FILTERS = {
+  ALL: "all",
+  DEPOT: "depot",
+  AVAILABLE: "available",
+  RESERVED: "reserved",
+  PRODUCTION: "production",
+  LOW: "low",
+};
 
 function productTypeOf(product) {
   const categoryHint = normalizeStockText(product?.category);
@@ -349,6 +357,7 @@ function stockBreakdown(product, movements) {
   const montage = matchedMovements
     .filter((movement) => movementStatus(movement) === "Montaja Verildi")
     .reduce((sum, movement) => sum + Number(movement.quantity || 0), 0);
+  const inProcess = production + montage;
   const shipped = matchedMovements
     .filter((movement) => movementStatus(movement) === "Sevk Edildi")
     .reduce((sum, movement) => sum + Number(movement.quantity || 0), 0);
@@ -357,10 +366,10 @@ function stockBreakdown(product, movements) {
   return {
     total,
     reserved,
-    production,
-    montage,
+    production: inProcess,
+    montage: 0,
     shipped,
-    available: Math.max(total - reserved - production - montage, 0),
+    available: Math.max(total - reserved - inProcess, 0),
   };
 }
 
@@ -540,13 +549,23 @@ function projectDisplayName(project) {
   return projectName;
 }
 
-function StatCard({ title, value, text }) {
+function StatCard({ title, value, text, active = false, onClick }) {
+  const Component = onClick ? "button" : "div";
+
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+    <Component
+      type={onClick ? "button" : undefined}
+      onClick={onClick}
+      className={`rounded-2xl border p-5 text-left shadow-sm transition ${
+        active
+          ? "border-blue-300 bg-blue-50 ring-2 ring-blue-100"
+          : "border-slate-200 bg-white hover:border-blue-200 hover:bg-slate-50"
+      }`}
+    >
       <div className="text-sm font-semibold text-slate-500">{title}</div>
       <div className="mt-2 text-3xl font-black text-slate-900">{value}</div>
       <div className="mt-1 text-sm text-slate-500">{text}</div>
-    </div>
+    </Component>
   );
 }
 
@@ -653,7 +672,6 @@ export default function StockPage() {
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(true);
   const [selectedProduct, setSelectedProduct] = useState(null);
-  const [savedSelectedProductKey, setSavedSelectedProductKey] = useState("");
   const [expandedProjectKeys, setExpandedProjectKeys] = useState([]);
   const [productForm, setProductForm] = useState({
     brand: "",
@@ -666,6 +684,7 @@ export default function StockPage() {
   const [saving, setSaving] = useState(false);
   const [bulkImporting, setBulkImporting] = useState(false);
   const [activeProductType, setActiveProductType] = useState(PRODUCT_TYPES.COMPONENT);
+  const [stockViewFilter, setStockViewFilter] = useState(STOCK_VIEW_FILTERS.ALL);
   const [stockImportType, setStockImportType] = useState(PRODUCT_TYPES.COMPONENT);
   const [selectedProductKeys, setSelectedProductKeys] = useState([]);
   const [selectedMovementIds, setSelectedMovementIds] = useState([]);
@@ -673,15 +692,12 @@ export default function StockPage() {
   const [bulkDeletingMovements, setBulkDeletingMovements] = useState(false);
 
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      setSavedSelectedProductKey(window.localStorage.getItem("stock-selected-product-key") || "");
-    }
     loadStock();
   }, []);
 
   useEffect(() => {
     setProductPage(1);
-  }, [search]);
+  }, [search, stockViewFilter, activeProductType]);
 
   useEffect(() => {
     if (!selectedProduct) {
@@ -906,11 +922,73 @@ export default function StockPage() {
 
   function openProductDetail(product) {
     setSelectedProduct(product);
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem("stock-selected-product-key", product.groupKey || "");
-    }
     setExpandedProjectKeys([]);
     setMessage("");
+  }
+
+  async function createMainProductCard(product) {
+    if (!product) return;
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      router.push("/login");
+      return;
+    }
+
+    const existing = productGroups.find((item) =>
+      !item.is_virtual_project_main &&
+      item.groupKey === product.groupKey
+    );
+
+    if (existing) {
+      setMessage("Bu ana ürün kartı stokta zaten var.");
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const payload = {
+      user_id: user.id,
+      product_code: product.product_code || "",
+      product_name: product.product_name || "",
+      brand: product.brand || "",
+      unit: product.unit || "adet",
+      category: product.category || "Ana Ürün",
+      product_type: PRODUCT_TYPES.MAIN,
+      current_stock: 0,
+      reserved_stock: 0,
+      min_stock: 0,
+      critical_stock: 0,
+      source: "Proje ana kalemi",
+      notes: "Proje malzeme listesinden ana ürün kartı olarak oluşturuldu.",
+      created_at: now,
+      updated_at: now,
+    };
+
+    if (!payload.product_name) {
+      setMessage("Ana ürün kartı oluşturmak için ürün açıklaması gerekli.");
+      return;
+    }
+
+    let { error } = await supabase.from("products").insert(payload);
+
+    if (error && String(error.message || "").includes("product_type")) {
+      const fallbackPayload = { ...payload };
+      delete fallbackPayload.product_type;
+      const fallbackResult = await supabase.from("products").insert(fallbackPayload);
+      error = fallbackResult.error;
+    }
+
+    if (error) {
+      setMessage(error.message || "Ana ürün kartı oluşturulamadı.");
+      return;
+    }
+
+    setSelectedProduct(null);
+    setMessage("Ana ürün kartı genel stok kartlarına eklendi.");
+    await loadStock();
   }
 
   function updateProductForm(field, value) {
@@ -1220,17 +1298,23 @@ setMessage(
     component: productGroups.filter((product) => !isMainProduct(product)).length,
   }), [productGroups]);
 
-  useEffect(() => {
-    if (selectedProduct || !savedSelectedProductKey || productGroups.length === 0) return;
-    const restored = productGroups.find((product) => product.groupKey === savedSelectedProductKey);
-    if (restored) {
-      setSelectedProduct(restored);
-    }
-  }, [productGroups, savedSelectedProductKey, selectedProduct]);
-
   const filteredProducts = useMemo(() => {
     const needle = normalizeStockText(search);
-    const productsByType = productGroups.filter((product) => productTypeOf(product) === activeProductType);
+    const productsByType = productGroups
+      .filter((product) => productTypeOf(product) === activeProductType)
+      .filter((product) => {
+        if (activeProductType === PRODUCT_TYPES.MAIN) return true;
+
+        const breakdown = stockBreakdown(product, movements);
+        const criticalLimit = stockCriticalLimit(product);
+
+        if (stockViewFilter === STOCK_VIEW_FILTERS.DEPOT) return breakdown.total > 0;
+        if (stockViewFilter === STOCK_VIEW_FILTERS.AVAILABLE) return breakdown.available > 0;
+        if (stockViewFilter === STOCK_VIEW_FILTERS.RESERVED) return breakdown.reserved > 0;
+        if (stockViewFilter === STOCK_VIEW_FILTERS.PRODUCTION) return breakdown.production > 0;
+        if (stockViewFilter === STOCK_VIEW_FILTERS.LOW) return criticalLimit > 0 && breakdown.available <= criticalLimit;
+        return true;
+      });
     if (!needle) return productsByType;
 
     return productsByType.filter((product) =>
@@ -1242,7 +1326,7 @@ setMessage(
         product.category,
       ].join(" ")).includes(needle),
     );
-  }, [productGroups, search, activeProductType]);
+  }, [productGroups, movements, search, activeProductType, stockViewFilter]);
 
   const [productPage, setProductPage] = useState(1);
   const productsPerPage = 25;
@@ -1351,10 +1435,9 @@ setMessage(
   const lowStockCount = componentProductGroups.filter(
     (product) => {
       const criticalLimit = stockCriticalLimit(product);
-      return criticalLimit > 0 && Number(product.current_stock || 0) <= criticalLimit;
+      return criticalLimit > 0 && stockBreakdown(product, movements).available <= criticalLimit;
     },
   ).length;
-  const incomingCount = movements.filter((movement) => movement.movement_type === "in").length;
 
   return (
     <div className="min-h-screen bg-slate-100">
@@ -1422,18 +1505,72 @@ setMessage(
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-            <StatCard title="Ürün Kartı" value={productGroups.length} text="Tekilleştirilmiş ürün" />
-            <StatCard title="Toplam Stok" value={stockTotals.total} text="Depo + ayrılan" />
-            <StatCard title="Kullanılabilir" value={stockTotals.available} text="Serbest miktar" />
-            <StatCard title="Rezerve / Üretim" value={stockTotals.reserved + stockTotals.production} text="Projeye bağlı" />
-          </div>
-
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-            <StatCard title="Montajdaki Stok" value={stockTotals.montage} text="Montaja verilmiş" />
-            <StatCard title="Sevk Edilen" value={stockTotals.shipped} text="Projeden çıkmış" />
-            <StatCard title="Düşük Stok" value={lowStockCount} text="Minimum altında" />
-            <StatCard title="Giriş Hareketi" value={incomingCount} text="Son hareketlerde" />
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-6">
+            <StatCard
+              title="Ürün Kartı"
+              value={productGroups.length}
+              text="Tekilleştirilmiş kart"
+              active={stockViewFilter === STOCK_VIEW_FILTERS.ALL}
+              onClick={() => {
+                setStockViewFilter(STOCK_VIEW_FILTERS.ALL);
+                setSelectedProduct(null);
+              }}
+            />
+            <StatCard
+              title="Toplam Depo Stoku"
+              value={stockTotals.total}
+              text="Fiilen depoda duran"
+              active={stockViewFilter === STOCK_VIEW_FILTERS.DEPOT}
+              onClick={() => {
+                setActiveProductType(PRODUCT_TYPES.COMPONENT);
+                setStockViewFilter(STOCK_VIEW_FILTERS.DEPOT);
+                setSelectedProduct(null);
+              }}
+            />
+            <StatCard
+              title="Projeye Ayrılan"
+              value={stockTotals.reserved}
+              text="Rezerve malzeme"
+              active={stockViewFilter === STOCK_VIEW_FILTERS.RESERVED}
+              onClick={() => {
+                setActiveProductType(PRODUCT_TYPES.COMPONENT);
+                setStockViewFilter(STOCK_VIEW_FILTERS.RESERVED);
+                setSelectedProduct(null);
+              }}
+            />
+            <StatCard
+              title="Üretimde"
+              value={stockTotals.production}
+              text="Depodan çıkmış, süreçte"
+              active={stockViewFilter === STOCK_VIEW_FILTERS.PRODUCTION}
+              onClick={() => {
+                setActiveProductType(PRODUCT_TYPES.COMPONENT);
+                setStockViewFilter(STOCK_VIEW_FILTERS.PRODUCTION);
+                setSelectedProduct(null);
+              }}
+            />
+            <StatCard
+              title="Kullanılabilir"
+              value={stockTotals.available}
+              text="Yeni projeye ayrılabilir"
+              active={stockViewFilter === STOCK_VIEW_FILTERS.AVAILABLE}
+              onClick={() => {
+                setActiveProductType(PRODUCT_TYPES.COMPONENT);
+                setStockViewFilter(STOCK_VIEW_FILTERS.AVAILABLE);
+                setSelectedProduct(null);
+              }}
+            />
+            <StatCard
+              title="Düşük Stok"
+              value={lowStockCount}
+              text="Kullanılabilir limit altında"
+              active={stockViewFilter === STOCK_VIEW_FILTERS.LOW}
+              onClick={() => {
+                setActiveProductType(PRODUCT_TYPES.COMPONENT);
+                setStockViewFilter(STOCK_VIEW_FILTERS.LOW);
+                setSelectedProduct(null);
+              }}
+            />
           </div>
 
           {message && (
@@ -1448,6 +1585,7 @@ setMessage(
                 type="button"
                 onClick={() => {
                   setActiveProductType(PRODUCT_TYPES.MAIN);
+                  setStockViewFilter(STOCK_VIEW_FILTERS.ALL);
                   setProductPage(1);
                   setSelectedProduct(null);
                 }}
@@ -1465,6 +1603,7 @@ setMessage(
                 type="button"
                 onClick={() => {
                   setActiveProductType(PRODUCT_TYPES.COMPONENT);
+                  setStockViewFilter(STOCK_VIEW_FILTERS.ALL);
                   setProductPage(1);
                   setSelectedProduct(null);
                 }}
@@ -1490,7 +1629,7 @@ setMessage(
             />
           </div>
 
-          <div className={`grid grid-cols-1 gap-6 ${selectedProduct ? "xl:grid-cols-[520px_minmax(0,1fr)]" : ""}`}>
+          <div className="grid grid-cols-1 gap-6">
             <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
               <div className="border-b border-slate-100 p-5">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -1546,14 +1685,12 @@ setMessage(
                             />
                           </div>
                           <div className="min-w-0 flex-1">
-                            <button
-                              type="button"
-                              onClick={() => openProductDetail(product)}
-                              className="block w-full whitespace-normal break-words text-left text-base font-black leading-6 text-slate-950 hover:text-blue-700"
+                            <h3
+                              className="block w-full whitespace-normal break-words text-left text-base font-black leading-6 text-slate-950"
                               title={product.product_name || ""}
                             >
                               {product.product_name}
-                            </button>
+                            </h3>
                             <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5 text-[11px] font-bold text-slate-500">
                               <span className="max-w-full break-all rounded-full bg-slate-100 px-2.5 py-1 text-slate-700" title={product.product_code || "-"}>
                                 Kod: {product.product_code || "-"}
@@ -1577,6 +1714,24 @@ setMessage(
                             )}
                           </div>
                         </div>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              {product.is_virtual_project_main && (
+                                <button
+                                  type="button"
+                                  onClick={() => createMainProductCard(product)}
+                                  className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-black text-white hover:bg-blue-700"
+                                >
+                                  Ana ürün kartı oluştur
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => openProductDetail(product)}
+                                className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50"
+                              >
+                                Ürün detayını gör
+                              </button>
+                            </div>
                         <div className="grid min-w-0 grid-cols-4 gap-2 text-xs">
                           <div className="min-w-0 rounded-xl bg-slate-50 px-3 py-2">
                             <div className="truncate font-bold text-slate-500">{mainProduct ? "Proje sayısı" : "Stok"}</div>
@@ -1661,6 +1816,13 @@ setMessage(
                               className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50"
                             >
                               Kullanım PDF
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setSelectedProduct(null)}
+                              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50"
+                            >
+                              Kapat
                             </button>
                             <button
                               type="button"
