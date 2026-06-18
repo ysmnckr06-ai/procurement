@@ -365,6 +365,7 @@ export default function ProjectDetailPage() {
   const [missingProductCardItems, setMissingProductCardItems] = useState([]);
   const [missingProductDetailsOpen, setMissingProductDetailsOpen] = useState(false);
   const [selectedMissingProductKeys, setSelectedMissingProductKeys] = useState([]);
+  const [missingProductCodeDrafts, setMissingProductCodeDrafts] = useState({});
   const [creatingMissingProducts, setCreatingMissingProducts] = useState(false);
   const [loading, setLoading] = useState(true);
   const visiblePreviewSections = useMemo(() => {
@@ -985,22 +986,85 @@ export default function ProjectDetailPage() {
     return { brand, product_name: productName };
   }
 
-  function safeProductCodeForItem(item) {
-    const rawCode = String(item?.product_code || "").trim();
-    if (rawCode) return rawCode.toUpperCase();
+  function isProjectSeriesCode(code) {
+    return /^PRJ-\d{3,}$/i.test(String(code || "").trim());
+  }
 
-    const source = `${item?.product_name || item?.description || "URUN"}-${item?.id || Date.now()}`;
-    const safe = normalizeText(source)
-      .toUpperCase()
-      .replace(/[^A-Z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 36);
+  function stockProductCodeForItem(item) {
+    const rawCode = String(item?.product_code || "").trim().toUpperCase();
+    if (!rawCode || isProjectSeriesCode(rawCode)) return "";
+    return rawCode;
+  }
 
-    return safe ? `PRJ-${safe}` : `PRJ-URUN-${Date.now()}`;
+  function normalizedExistingProductCodes(productRows = products) {
+    return new Set((productRows || []).map((product) => normalizeCode(product?.product_code)).filter(Boolean));
+  }
+
+  function nextAutoProductCode(usedCodes) {
+    const dateStamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    for (let index = 1; index <= 9999; index += 1) {
+      const code = `STK-${dateStamp}-${String(index).padStart(4, "0")}`;
+      const normalized = normalizeCode(code);
+      if (!usedCodes.has(normalized)) {
+        usedCodes.add(normalized);
+        return code;
+      }
+    }
+
+    const fallback = `STK-${dateStamp}-${Date.now()}`;
+    usedCodes.add(normalizeCode(fallback));
+    return fallback;
+  }
+
+  function safeProductCodeForItem(item, usedCodes = null) {
+    const existingCode = stockProductCodeForItem(item);
+    if (existingCode) return existingCode;
+
+    return nextAutoProductCode(usedCodes || normalizedExistingProductCodes());
+  }
+
+  function manualMissingProductCode(item) {
+    return String(missingProductCodeDrafts[item?.key] || "").trim().toUpperCase();
+  }
+
+  function productCodeAlreadyExists(code, productRows = products) {
+    const normalized = normalizeCode(code);
+    if (!normalized) return false;
+    return (productRows || []).some((product) => normalizeCode(product?.product_code) === normalized);
+  }
+
+  function productCodeForMissingItem(sourceItem, missingItem, options, usedCodes) {
+    if (options.codeMode === "manual") {
+      const manualCode = String(options.manualCodes?.[missingItem.key] || "").trim().toUpperCase();
+      if (!manualCode) {
+        return { error: "Manuel ürün kodu girilmedi." };
+      }
+
+      const normalizedManual = normalizeCode(manualCode);
+      if (usedCodes.has(normalizedManual)) {
+        return { error: `${manualCode} kodlu ürün zaten var.` };
+      }
+
+      usedCodes.add(normalizedManual);
+      return { code: manualCode };
+    }
+
+    const existingCode = stockProductCodeForItem(sourceItem);
+    if (existingCode) {
+      const normalizedExisting = normalizeCode(existingCode);
+      if (usedCodes.has(normalizedExisting)) {
+        return { error: `${existingCode} kodlu ürün zaten var.` };
+      }
+
+      usedCodes.add(normalizedExisting);
+      return { code: existingCode };
+    }
+
+    return { code: nextAutoProductCode(usedCodes) };
   }
 
   function missingProductKey(item) {
-    const code = normalizeCode(item?.product_code);
+    const code = normalizeCode(stockProductCodeForItem(item));
     if (code) return `code:${code}`;
     return `name:${normalizeText(item?.product_name || item?.description)}|${normalizeText(item?.brand)}|${normalizeText(item?.unit || "adet")}`;
   }
@@ -1048,6 +1112,10 @@ export default function ProjectDetailPage() {
     const nextMissingItems = uniqueMissingProductItems(rows, productRows);
     setMissingProductCardItems(nextMissingItems);
     setSelectedMissingProductKeys((prev) => prev.filter((key) => nextMissingItems.some((item) => item.key === key)));
+    setMissingProductCodeDrafts((prev) => {
+      const allowedKeys = new Set(nextMissingItems.map((item) => item.key));
+      return Object.fromEntries(Object.entries(prev).filter(([key]) => allowedKeys.has(key)));
+    });
 
     if (nextMissingItems.length > 0) {
       const warning = `${nextMissingItems.length} ürün stok kartlarında bulunamadı. Detayları görüntüleyip stok kartı oluşturabilirsiniz.`;
@@ -1073,6 +1141,11 @@ export default function ProjectDetailPage() {
     const nextItems = missingProductCardItems.filter((item) => item.key !== key);
     setMissingProductCardItems(nextItems);
     setSelectedMissingProductKeys((prev) => prev.filter((itemKey) => itemKey !== key));
+    setMissingProductCodeDrafts((prev) => {
+      const nextDrafts = { ...prev };
+      delete nextDrafts[key];
+      return nextDrafts;
+    });
     if (nextItems.length === 0) {
       setProductCardWarning("");
       setMissingProductDetailsOpen(false);
@@ -1107,15 +1180,28 @@ export default function ProjectDetailPage() {
     const failedRows = [];
     const targetKeys = new Set(rowsToCreate.map((item) => item.key));
     const createAsMainProduct = options.productType === "main_product";
+    const usedProductCodes = normalizedExistingProductCodes(products);
     const now = new Date().toISOString();
 
     for (const missingItem of rowsToCreate) {
       const sourceItem = missingItem.sourceItem || missingItem;
       const safeCurrency = sourceItem.currency || projectCurrencyForDisplay() || "TRY";
       const identity = normalizeProductIdentityForStock(sourceItem);
+      const productCodeResult = productCodeForMissingItem(sourceItem, missingItem, options, usedProductCodes);
+      if (productCodeResult.error) {
+        failedRows.push(sourceItem);
+        logProductCardError(
+          { message: productCodeResult.error, code: "duplicate_or_missing_product_code" },
+          sourceItem,
+          { product_code: options.manualCodes?.[missingItem.key] || sourceItem.product_code || "" },
+          "code-validation",
+        );
+        continue;
+      }
+
       const productPayload = {
         user_id: user.id,
-        product_code: safeProductCodeForItem(sourceItem),
+        product_code: productCodeResult.code,
         brand: identity.brand || sourceItem.brand || "",
         product_name: identity.product_name || sourceItem.product_name || sourceItem.description || "",
         unit: sourceItem.unit || "adet",
@@ -1139,7 +1225,16 @@ export default function ProjectDetailPage() {
           .eq("user_id", user.id)
           .eq("product_code", productPayload.product_code)
           .maybeSingle();
-        product = existingByCode || null;
+        if (existingByCode) {
+          failedRows.push(sourceItem);
+          logProductCardError(
+            { message: `${productPayload.product_code} kodlu ürün zaten var.`, code: "duplicate_product_code" },
+            sourceItem,
+            productPayload,
+            "code-validation",
+          );
+          continue;
+        }
       }
 
       if (!product) {
@@ -5324,7 +5419,7 @@ export default function ProjectDetailPage() {
                   )}
                   className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-black text-white hover:bg-blue-700 disabled:bg-slate-300"
                 >
-                  Seçilenleri ana ürün kartı yap
+                  Seçilenlere kod ata ve ana ürün yap
                 </button>
                 <button
                   type="button"
@@ -5335,13 +5430,13 @@ export default function ProjectDetailPage() {
                   )}
                   className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-black text-white hover:bg-slate-800 disabled:bg-slate-300"
                 >
-                  Seçilenleri alt ürün kartı yap
+                  Seçilenlere kod ata ve alt ürün yap
                 </button>
               </div>
             </div>
             {missingProductDetailsOpen && (
               <div className="mt-4 overflow-x-auto rounded-xl border border-red-100 bg-white">
-                <table className="min-w-[920px] w-full text-left text-xs text-slate-700">
+                <table className="min-w-[1160px] w-full text-left text-xs text-slate-700">
                   <thead className="bg-red-50 text-[11px] font-black uppercase text-red-800">
                     <tr>
                       <th className="w-10 p-3">
@@ -5352,6 +5447,7 @@ export default function ProjectDetailPage() {
                         />
                       </th>
                       <th className="p-3">Ürün kodu</th>
+                      <th className="p-3">Manuel kod</th>
                       <th className="p-3">Marka</th>
                       <th className="p-3">Ürün açıklaması</th>
                       <th className="p-3">Birim</th>
@@ -5360,8 +5456,13 @@ export default function ProjectDetailPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-red-50">
-                    {missingProductCardItems.map((item) => (
-                      <tr key={item.key} className="bg-white">
+                    {missingProductCardItems.map((item) => {
+                      const sourceCode = stockProductCodeForItem(item.sourceItem || item);
+                      const manualCode = manualMissingProductCode(item);
+                      const manualCodeDuplicate = Boolean(manualCode && productCodeAlreadyExists(manualCode));
+
+                      return (
+                      <tr key={item.key} className="bg-white align-top">
                         <td className="p-3">
                           <input
                             type="checkbox"
@@ -5373,7 +5474,35 @@ export default function ProjectDetailPage() {
                             )}
                           />
                         </td>
-                        <td className="p-3 font-black text-slate-900">{item.product_code || "-"}</td>
+                        <td className="p-3">
+                          {sourceCode ? (
+                            <span className="font-black text-slate-900">{sourceCode}</span>
+                          ) : (
+                            <div>
+                              <span className="rounded-full bg-amber-50 px-2 py-1 text-[11px] font-black text-amber-700">Kod yok</span>
+                              {item.product_code && (
+                                <div className="mt-1 max-w-36 text-[10px] font-bold text-slate-500">
+                                  {item.product_code} proje/kalem kodu sayıldı.
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                        <td className="p-3">
+                          <input
+                            type="text"
+                            value={missingProductCodeDrafts[item.key] || ""}
+                            onChange={(event) => setMissingProductCodeDrafts((prev) => ({
+                              ...prev,
+                              [item.key]: event.target.value.toUpperCase(),
+                            }))}
+                            placeholder="Manuel ürün kodu"
+                            className="w-40 rounded-lg border border-slate-200 px-2 py-2 text-[11px] font-bold text-slate-900 outline-none focus:border-blue-400"
+                          />
+                          {manualCodeDuplicate && (
+                            <div className="mt-1 text-[10px] font-black text-red-700">Bu kodlu ürün zaten var.</div>
+                          )}
+                        </td>
                         <td className="p-3 font-bold">{item.brand || "-"}</td>
                         <td className="p-3">
                           <div className="whitespace-normal break-words font-bold text-slate-900" title={item.product_name}>
@@ -5390,7 +5519,7 @@ export default function ProjectDetailPage() {
                               onClick={() => createProductCardsFromMissing([item], { productType: "main_product" })}
                               className="rounded-lg bg-blue-50 px-3 py-2 text-[11px] font-black text-blue-700 hover:bg-blue-100 disabled:bg-slate-100 disabled:text-slate-400"
                             >
-                              Ana ürün kartı
+                              Otomatik kod + ana
                             </button>
                             <button
                               type="button"
@@ -5398,7 +5527,31 @@ export default function ProjectDetailPage() {
                               onClick={() => createProductCardsFromMissing([item], { productType: "component" })}
                               className="rounded-lg bg-slate-100 px-3 py-2 text-[11px] font-black text-slate-700 hover:bg-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
                             >
-                              Alt ürün kartı
+                              Otomatik kod + alt
+                            </button>
+                            <button
+                              type="button"
+                              disabled={creatingMissingProducts || !manualCode || manualCodeDuplicate}
+                              onClick={() => createProductCardsFromMissing([item], {
+                                productType: "main_product",
+                                codeMode: "manual",
+                                manualCodes: { [item.key]: manualCode },
+                              })}
+                              className="rounded-lg bg-blue-600 px-3 py-2 text-[11px] font-black text-white hover:bg-blue-700 disabled:bg-slate-100 disabled:text-slate-400"
+                            >
+                              Manuel ana
+                            </button>
+                            <button
+                              type="button"
+                              disabled={creatingMissingProducts || !manualCode || manualCodeDuplicate}
+                              onClick={() => createProductCardsFromMissing([item], {
+                                productType: "component",
+                                codeMode: "manual",
+                                manualCodes: { [item.key]: manualCode },
+                              })}
+                              className="rounded-lg bg-slate-700 px-3 py-2 text-[11px] font-black text-white hover:bg-slate-800 disabled:bg-slate-100 disabled:text-slate-400"
+                            >
+                              Manuel alt
                             </button>
                             <button
                               type="button"
@@ -5417,7 +5570,8 @@ export default function ProjectDetailPage() {
                           </div>
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
