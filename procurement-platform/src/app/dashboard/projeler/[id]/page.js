@@ -7247,7 +7247,7 @@ export default function ProjectDetailPage() {
                   <div className="mb-3 flex items-center justify-between gap-3">
                     <div>
                       <div className="text-sm font-black text-slate-900">Projeye ana ürün ekle</div>
-                      <div className="text-xs text-slate-500">Ana ürün proje içinde takip edilir; alt ürünleri daha sonra bağlayabilirsiniz.</div>
+                      <div className="text-xs text-slate-500">Ana ürün proje içinde takip edilir. İsterseniz kayıttan sonra alt ürünlerini aynı akışta ekleyebilirsiniz.</div>
                     </div>
                     <button
                       type="button"
