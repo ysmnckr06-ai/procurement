@@ -123,6 +123,126 @@ function requestItemsToExportRows(request) {
   });
 }
 
+function buildMergedPurchasePreview(requests) {
+  const grouped = new Map();
+
+  (requests || []).forEach((request) => {
+    getRequestItems(request).forEach((item, itemIndex) => {
+      const productCode = String(
+        readItemField(item, ["product_code", "urunKodu", "code"], ""),
+      ).trim();
+      const productName = String(
+        readItemField(item, ["urunAciklamasi", "product_name", "description", "name"], ""),
+      ).trim();
+      const unit = String(readItemField(item, ["birim", "unit"], "adet")).trim() || "adet";
+      const quantity = Number(
+        readItemField(item, ["talepEdilenAdet", "quantity", "qty", "estimated_quantity"], 0),
+      ) || 0;
+      const normalizedUnit = unit.toLocaleLowerCase("tr-TR");
+      const normalizedCode = productCode.toLocaleUpperCase("tr-TR");
+      const normalizedName = productName.toLocaleLowerCase("tr-TR").replace(/\s+/g, " ");
+      const key = productCode
+        ? `code:${normalizedCode}|unit:${normalizedUnit}`
+        : `name:${normalizedName || `${request.id}-${itemIndex}`}|unit:${normalizedUnit}`;
+
+      if (!grouped.has(key)) {
+        grouped.set(key, {
+          productCode,
+          productName,
+          unit,
+          totalQuantity: 0,
+          requestIds: new Set(),
+          projectQuantities: new Map(),
+          matchedByDescription: !productCode,
+        });
+      }
+
+      const group = grouped.get(key);
+      group.totalQuantity += quantity;
+      group.requestIds.add(request.id);
+
+      if (request.project_id) {
+        group.projectQuantities.set(
+          request.project_id,
+          Number(group.projectQuantities.get(request.project_id) || 0) + quantity,
+        );
+      }
+    });
+  });
+
+  return Array.from(grouped, ([groupKey, group]) => ({
+    ...group,
+    groupKey,
+    requestCount: group.requestIds.size,
+    projectDistribution: Array.from(group.projectQuantities, ([projectId, quantity]) => ({
+      projectId,
+      quantity,
+    })),
+  }));
+}
+
+function MergedPurchasePreview({ rows }) {
+  return (
+    <div className="rounded-2xl border border-blue-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-lg font-bold text-slate-900">Birleşik Satınalma Önizlemesi</h2>
+          <p className="text-sm text-slate-500">Seçili talep listelerindeki aynı ürünler bir araya getirilmiştir.</p>
+        </div>
+        <span className="w-fit rounded-full bg-blue-50 px-3 py-1 text-sm font-bold text-blue-700">
+          {rows.length} birleşik kalem
+        </span>
+      </div>
+
+      <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200">
+        <table className="min-w-full text-left text-sm">
+          <thead className="bg-slate-100 text-xs font-bold uppercase text-slate-500">
+            <tr>
+              <th className="px-3 py-3">Ürün kodu</th>
+              <th className="px-3 py-3">Açıklama</th>
+              <th className="px-3 py-3">Birim</th>
+              <th className="px-3 py-3 text-right">Toplam miktar</th>
+              <th className="px-3 py-3 text-right">Talep listesi</th>
+              <th className="px-3 py-3">Proje dağılımı</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {rows.map((row) => (
+              <tr key={row.groupKey} className="align-top">
+                <td className="px-3 py-3 font-bold text-slate-900">
+                  {row.productCode || "-"}
+                  {row.matchedByDescription && (
+                    <div className="mt-2 rounded-lg bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-800">
+                      Ürün kodu yok, açıklamaya göre eşleştirildi.
+                    </div>
+                  )}
+                </td>
+                <td className="max-w-[360px] px-3 py-3 font-semibold text-slate-800">{row.productName || "-"}</td>
+                <td className="px-3 py-3 text-slate-700">{row.unit}</td>
+                <td className="px-3 py-3 text-right font-black text-blue-700">{row.totalQuantity}</td>
+                <td className="px-3 py-3 text-right font-bold text-slate-700">{row.requestCount}</td>
+                <td className="px-3 py-3">
+                  {row.projectDistribution.length > 0 ? (
+                    <div className="space-y-1">
+                      {row.projectDistribution.map((project) => (
+                        <div key={project.projectId} className="rounded-lg bg-slate-50 px-2 py-1 text-xs font-semibold text-slate-700">
+                          {project.projectId}: {project.quantity} {row.unit}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="text-slate-400">-</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 export default function TaleplerPage() {
   const router = useRouter();
   const API_URL = process.env.NEXT_PUBLIC_API_URL;
@@ -148,6 +268,11 @@ export default function TaleplerPage() {
   const selectedRequests = useMemo(() => {
     return savedRequests.filter((request) => selectedRequestIds.includes(request.id));
   }, [savedRequests, selectedRequestIds]);
+
+  const mergedPurchasePreview = useMemo(
+    () => buildMergedPurchasePreview(selectedRequests),
+    [selectedRequests],
+  );
     useEffect(() => {
       loadRequests();
     }, []);
@@ -753,6 +878,8 @@ export default function TaleplerPage() {
             </div>
           )}
         </div>
+
+          {selectedRequests.length > 0 && <MergedPurchasePreview rows={mergedPurchasePreview} />}
 
           {rows.length > 0 && (
             <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
