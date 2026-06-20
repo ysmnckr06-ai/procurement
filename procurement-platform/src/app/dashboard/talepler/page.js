@@ -181,7 +181,103 @@ function buildMergedPurchasePreview(requests) {
   }));
 }
 
-function MergedPurchasePreview({ rows }) {
+function addStockSimulation(rows, products) {
+  return (rows || []).map((row) => {
+    const normalizedCode = String(row.productCode || "").trim().toLocaleUpperCase("tr-TR");
+    const normalizedName = String(row.productName || "")
+      .trim()
+      .toLocaleLowerCase("tr-TR")
+      .replace(/\s+/g, " ");
+    const matchingProducts = (products || []).filter((product) => {
+      if (normalizedCode) {
+        return String(product.product_code || "").trim().toLocaleUpperCase("tr-TR") === normalizedCode;
+      }
+
+      return normalizedName && String(product.product_name || "")
+        .trim()
+        .toLocaleLowerCase("tr-TR")
+        .replace(/\s+/g, " ") === normalizedName;
+    });
+    const currentStock = matchingProducts.reduce(
+      (sum, product) => sum + Number(product.current_stock || 0),
+      0,
+    );
+    const reservedStock = matchingProducts.reduce(
+      (sum, product) => sum + Number(product.reserved_stock || 0),
+      0,
+    );
+    const freeStock = currentStock - reservedStock;
+    const purchaseQuantity = Math.max(Number(row.totalQuantity || 0) - freeStock, 0);
+    const stockStatus = freeStock >= Number(row.totalQuantity || 0)
+      ? "available"
+      : freeStock > 0
+        ? "partial"
+        : "required";
+
+    return {
+      ...row,
+      currentStock,
+      reservedStock,
+      freeStock,
+      purchaseQuantity,
+      stockStatus,
+    };
+  });
+}
+
+function buildPendingOrderItems(rows) {
+  return (rows || [])
+    .filter((row) => Number(row.purchaseQuantity || 0) > 0)
+    .map((row) => {
+      const purchaseQuantity = Number(row.purchaseQuantity || 0);
+      const projectDistribution = (row.projectDistribution || []).filter(
+        (project) => project.projectId && Number(project.quantity || 0) > 0,
+      );
+      const projectTotal = projectDistribution.reduce(
+        (sum, project) => sum + Number(project.quantity || 0),
+        0,
+      );
+      const sourceRequestIds = Array.from(row.requestIds || []);
+      let allocatedQuantity = 0;
+      const allocations = projectTotal > 0
+        ? projectDistribution.map((project, index) => {
+            const isLast = index === projectDistribution.length - 1;
+            const remainingQuantity = Math.max(purchaseQuantity - allocatedQuantity, 0);
+            const proportionalQuantity = isLast
+              ? remainingQuantity
+              : Math.min(
+                  Number((purchaseQuantity * (Number(project.quantity || 0) / projectTotal)).toFixed(6)),
+                  remainingQuantity,
+                );
+            allocatedQuantity += proportionalQuantity;
+
+            return {
+              type: "project",
+              projectId: project.projectId,
+              quantity: proportionalQuantity,
+              sourceRequestIds,
+            };
+          })
+        : [];
+
+      return {
+        rowId: `merged-request-${row.groupKey}`,
+        productCode: row.productCode || "",
+        productName: row.productName || "",
+        unit: row.unit || "adet",
+        quantity: purchaseQuantity,
+        deliveredQuantity: 0,
+        unitPrice: 0,
+        discount: 0,
+        netUnitPrice: 0,
+        total: 0,
+        currency: "TRY",
+        allocations,
+      };
+    });
+}
+
+function MergedPurchasePreview({ rows, onCreateOrder }) {
   return (
     <div className="rounded-2xl border border-blue-200 bg-white p-5 shadow-sm">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -189,9 +285,18 @@ function MergedPurchasePreview({ rows }) {
           <h2 className="text-lg font-bold text-slate-900">Birleşik Satınalma Önizlemesi</h2>
           <p className="text-sm text-slate-500">Seçili talep listelerindeki aynı ürünler bir araya getirilmiştir.</p>
         </div>
-        <span className="w-fit rounded-full bg-blue-50 px-3 py-1 text-sm font-bold text-blue-700">
-          {rows.length} birleşik kalem
-        </span>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="w-fit rounded-full bg-blue-50 px-3 py-1 text-sm font-bold text-blue-700">
+            {rows.length} birleşik kalem
+          </span>
+          <button
+            type="button"
+            onClick={onCreateOrder}
+            className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700"
+          >
+            Satınalma Siparişi Oluştur
+          </button>
+        </div>
       </div>
 
       <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200">
@@ -201,7 +306,12 @@ function MergedPurchasePreview({ rows }) {
               <th className="px-3 py-3">Ürün kodu</th>
               <th className="px-3 py-3">Açıklama</th>
               <th className="px-3 py-3">Birim</th>
-              <th className="px-3 py-3 text-right">Toplam miktar</th>
+              <th className="px-3 py-3 text-right">Toplam ihtiyaç</th>
+              <th className="px-3 py-3 text-right">Mevcut stok</th>
+              <th className="px-3 py-3 text-right">Ayrılmış stok</th>
+              <th className="px-3 py-3 text-right">Boşta stok</th>
+              <th className="px-3 py-3 text-right">Satın alınacak</th>
+              <th className="px-3 py-3">Stok durumu</th>
               <th className="px-3 py-3 text-right">Talep listesi</th>
               <th className="px-3 py-3">Proje dağılımı</th>
             </tr>
@@ -220,6 +330,27 @@ function MergedPurchasePreview({ rows }) {
                 <td className="max-w-[360px] px-3 py-3 font-semibold text-slate-800">{row.productName || "-"}</td>
                 <td className="px-3 py-3 text-slate-700">{row.unit}</td>
                 <td className="px-3 py-3 text-right font-black text-blue-700">{row.totalQuantity}</td>
+                <td className="px-3 py-3 text-right font-semibold text-slate-700">{row.currentStock}</td>
+                <td className="px-3 py-3 text-right font-semibold text-slate-700">{row.reservedStock}</td>
+                <td className="px-3 py-3 text-right font-bold text-emerald-700">{row.freeStock}</td>
+                <td className="px-3 py-3 text-right font-black text-red-700">{row.purchaseQuantity}</td>
+                <td className="px-3 py-3">
+                  {row.stockStatus === "available" && (
+                    <span className="inline-flex rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-700">
+                      Stoktan karşılanabilir
+                    </span>
+                  )}
+                  {row.stockStatus === "partial" && (
+                    <span className="inline-flex rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-700">
+                      Kısmi stok var
+                    </span>
+                  )}
+                  {row.stockStatus === "required" && (
+                    <span className="inline-flex rounded-full bg-red-100 px-3 py-1 text-xs font-bold text-red-700">
+                      Satınalma gerekli
+                    </span>
+                  )}
+                </td>
                 <td className="px-3 py-3 text-right font-bold text-slate-700">{row.requestCount}</td>
                 <td className="px-3 py-3">
                   {row.projectDistribution.length > 0 ? (
@@ -252,6 +383,7 @@ export default function TaleplerPage() {
   const [reportPath, setReportPath] = useState("");
   const [rows, setRows] = useState([]);
   const [savedRequests, setSavedRequests] = useState([]);
+  const [stockProducts, setStockProducts] = useState([]);
   const [showAllRequests, setShowAllRequests] = useState(false);
   const [expandedRequestId, setExpandedRequestId] = useState("");
   const [selectedRequestIds, setSelectedRequestIds] = useState([]);
@@ -270,11 +402,12 @@ export default function TaleplerPage() {
   }, [savedRequests, selectedRequestIds]);
 
   const mergedPurchasePreview = useMemo(
-    () => buildMergedPurchasePreview(selectedRequests),
-    [selectedRequests],
+    () => addStockSimulation(buildMergedPurchasePreview(selectedRequests), stockProducts),
+    [selectedRequests, stockProducts],
   );
     useEffect(() => {
       loadRequests();
+      loadStockProducts();
     }, []);
 
   const loadRequests = async () => {
@@ -304,6 +437,56 @@ export default function TaleplerPage() {
       console.error(err);
     }
   };
+
+  const loadStockProducts = async () => {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) return;
+
+    const { data, error } = await supabase
+      .from("products")
+      .select("id,product_code,product_name,current_stock,reserved_stock")
+      .eq("user_id", user.id)
+      .limit(5000);
+
+    if (error) {
+      console.error("Stok simülasyonu için ürünler yüklenemedi:", error);
+      return;
+    }
+
+    setStockProducts(data || []);
+  };
+
+  function createOrderFromMergedRequests() {
+    const items = buildPendingOrderItems(mergedPurchasePreview);
+
+    if (items.length === 0) {
+      setMessage("Satın alınacak miktarı bulunan birleşik talep kalemi yok.");
+      return;
+    }
+
+    const projectIds = Array.from(
+      new Set(selectedRequests.map((request) => request.project_id).filter(Boolean)),
+    );
+    const today = new Date();
+    const orderDate = [
+      today.getFullYear(),
+      String(today.getMonth() + 1).padStart(2, "0"),
+      String(today.getDate()).padStart(2, "0"),
+    ].join("-");
+    const pendingOrder = {
+      source: "merged-requests",
+      reportName: "Birleşik Satınalma Talebi",
+      orderDate,
+      projectId: projectIds.length === 1 ? projectIds[0] : "",
+      items,
+    };
+
+    localStorage.setItem("pendingOrder", JSON.stringify(pendingOrder));
+    router.push("/dashboard/siparisler");
+  }
 
   const formatDateTime = (value) => {
   if (!value) return "-";
@@ -879,7 +1062,12 @@ export default function TaleplerPage() {
           )}
         </div>
 
-          {selectedRequests.length > 0 && <MergedPurchasePreview rows={mergedPurchasePreview} />}
+          {selectedRequests.length > 0 && (
+            <MergedPurchasePreview
+              rows={mergedPurchasePreview}
+              onCreateOrder={createOrderFromMergedRequests}
+            />
+          )}
 
           {rows.length > 0 && (
             <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
