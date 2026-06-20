@@ -377,6 +377,15 @@ function calculateAutomaticReceiptSuggestions(
   documentItems,
   orderId,
 ) {
+  const processedDocumentItemIds = new Set(
+    (receipts || [])
+      .map((receipt) => {
+        if (receipt.document_item_id) return String(receipt.document_item_id);
+        const marker = String(receipt.note || "").match(/\[document_item_id:([^\]]+)\]/);
+        return marker?.[1] || null;
+      })
+      .filter(Boolean),
+  );
   const orderRows = (orderItems || []).map((item, index) => ({
     item,
     orderItemId: getOrderItemMatchId(rawOrderItems?.[index] || item, index),
@@ -396,6 +405,8 @@ function calculateAutomaticReceiptSuggestions(
       );
     }
   });
+
+  const suggestionRemainingByOrderItem = new Map();
 
   return (documentItems || [])
     .filter(
@@ -418,7 +429,10 @@ function calculateAutomaticReceiptSuggestions(
         orderRow.receiptQuantity,
       );
       const documentQuantity = Number(documentItem.quantity || 0);
-      const remainingQuantity = orderedQuantity - deliveredQuantity;
+      const baseRemainingQuantity = Math.max(orderedQuantity - deliveredQuantity, 0);
+      const remainingQuantity = suggestionRemainingByOrderItem.has(orderRow.orderItemId)
+        ? suggestionRemainingByOrderItem.get(orderRow.orderItemId)
+        : baseRemainingQuantity;
       const suggestedQuantity = Math.max(
         Math.min(documentQuantity, remainingQuantity),
         0,
@@ -430,9 +444,26 @@ function calculateAutomaticReceiptSuggestions(
           : documentQuantity < remainingQuantity
             ? "Kısmi Teslim"
             : "Tam Uygun";
+      const matchConfidence = Number(documentItem.match_confidence || 0);
+      const alreadyProcessed = processedDocumentItemIds.has(String(documentItem.id));
+      const eligible = documentItem.match_status === "matched"
+        && documentItem.manual_review_required === false
+        && matchConfidence >= 80
+        && !alreadyProcessed
+        && remainingQuantity > 0
+        && suggestedQuantity > 0;
+      if (eligible) {
+        suggestionRemainingByOrderItem.set(
+          orderRow.orderItemId,
+          Math.max(remainingQuantity - suggestedQuantity, 0),
+        );
+      }
 
       return {
         id: documentItem.id,
+        documentItemId: documentItem.id,
+        orderItemId: orderRow.orderItemId,
+        fallbackOrderItemId: orderRow.fallbackOrderItemId,
         productCode: orderRow.item.productCode || documentItem.product_code || "",
         productName: orderRow.item.productName || documentItem.product_name || "",
         unit: orderRow.item.unit || documentItem.unit || "adet",
@@ -441,6 +472,10 @@ function calculateAutomaticReceiptSuggestions(
         documentQuantity,
         remainingQuantity,
         suggestedQuantity,
+        matchConfidence,
+        manualReviewRequired: documentItem.manual_review_required,
+        alreadyProcessed,
+        eligible,
         status,
       };
     })
@@ -569,6 +604,8 @@ export default function OrderDetailPage() {
   const [deliveryInputs, setDeliveryInputs] = useState({});
   const [receiptInputs, setReceiptInputs] = useState({});
   const [receipts, setReceipts] = useState([]);
+  const [automaticReceiptApplying, setAutomaticReceiptApplying] = useState(false);
+  const [automaticReceiptResult, setAutomaticReceiptResult] = useState(null);
   const [payments, setPayments] = useState([]);
   const [documents, setDocuments] = useState([]);
   const [documentItems, setDocumentItems] = useState([]);
@@ -1385,6 +1422,232 @@ export default function OrderDetailPage() {
     await loadOrder();
   }
 
+  async function applyAutomaticReceiptSuggestions() {
+    if (!order || automaticReceiptApplying) return;
+
+    const initialSuggestions = calculateAutomaticReceiptSuggestions(
+      items,
+      order.items || [],
+      receipts,
+      documentItems,
+      order.id,
+    );
+    const initialCandidates = initialSuggestions.filter((suggestion) => suggestion.eligible);
+
+    if (initialCandidates.length === 0) {
+      setMessage("Otomatik teslim almaya uygun, güvenilir bir belge kalemi bulunmuyor.");
+      return;
+    }
+
+    const initialTotal = initialCandidates.reduce(
+      (sum, suggestion) => sum + Number(suggestion.suggestedQuantity || 0),
+      0,
+    );
+    const approved = window.confirm(
+      `${initialCandidates.length} belge kalemi için toplam ${initialTotal} birim teslim alma kaydı oluşturulsun mu?`,
+    );
+    if (!approved) return;
+
+    setAutomaticReceiptApplying(true);
+    setAutomaticReceiptResult(null);
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      setAutomaticReceiptApplying(false);
+      router.push("/login");
+      return;
+    }
+
+    const { data: latestReceiptRows, error: latestReceiptError } = await supabase
+      .from("order_receipts")
+      .select("*")
+      .eq("order_id", order.id)
+      .eq("user_id", user.id);
+
+    if (latestReceiptError) {
+      setAutomaticReceiptApplying(false);
+      setMessage("Mevcut teslim kayıtları doğrulanamadığı için otomatik teslim alma durduruldu.");
+      return;
+    }
+
+    const latestSuggestions = calculateAutomaticReceiptSuggestions(
+      items,
+      order.items || [],
+      latestReceiptRows || [],
+      documentItems,
+      order.id,
+    );
+    const candidates = latestSuggestions.filter((suggestion) => suggestion.eligible);
+    const remainingByOrderItem = new Map();
+    const deliveredByOrderItem = new Map();
+    let processedCount = 0;
+    let processedQuantity = 0;
+    let skippedCount = Math.max(documentItems.length - candidates.length, 0);
+    let errorCount = 0;
+
+    for (const candidate of candidates) {
+      const orderItemKey = candidate.orderItemId || candidate.fallbackOrderItemId;
+      const availableQuantity = remainingByOrderItem.has(orderItemKey)
+        ? remainingByOrderItem.get(orderItemKey)
+        : Math.max(Number(candidate.remainingQuantity || 0), 0);
+      const acceptedQuantity = Math.min(
+        Number(candidate.suggestedQuantity || 0),
+        availableQuantity,
+      );
+
+      if (
+        candidate.matchConfidence < 80
+        || candidate.manualReviewRequired
+        || candidate.alreadyProcessed
+        || acceptedQuantity <= 0
+      ) {
+        skippedCount += 1;
+        continue;
+      }
+
+      const remainingAfterReceipt = Math.max(availableQuantity - acceptedQuantity, 0);
+      const receiptStatus = remainingAfterReceipt <= 0 ? "Depoda" : "Eksik geldi";
+      const referenceNote = `[document_item_id:${candidate.documentItemId}] Otomatik teslim alma; kullanıcı onayı ile oluşturuldu.`;
+      const receiptPayload = {
+        user_id: user.id,
+        order_id: order.id,
+        project_id: order.project_id || null,
+        project_item_id: null,
+        parent_item_id: null,
+        document_item_id: candidate.documentItemId,
+        order_no: order.order_no || "",
+        supplier_name: order.supplier_name || "",
+        partner_id: order.partner_id || null,
+        partner_name: order.partner_name || order.supplier_name || "",
+        partner_type: order.partner_type || "Tedarikçi",
+        product_code: candidate.productCode || "",
+        product_name: candidate.productName || "",
+        unit: candidate.unit || "adet",
+        ordered_quantity: Number(candidate.orderedQuantity || 0),
+        received_quantity: acceptedQuantity,
+        accepted_quantity: acceptedQuantity,
+        missing_quantity: remainingAfterReceipt,
+        excess_quantity: 0,
+        defective_quantity: 0,
+        receipt_status: receiptStatus,
+        received_by: user.email || "Kullanıcı",
+        receipt_date: getToday(),
+        note: referenceNote,
+      };
+
+      let { error: receiptError } = await supabase
+        .from("order_receipts")
+        .insert(receiptPayload);
+
+      if (receiptError?.code === "23505") {
+        skippedCount += 1;
+        continue;
+      }
+
+      const missingDocumentItemColumn = receiptError && (
+        receiptError.code === "PGRST204"
+        || /column[^\n]*document_item_id[^\n]*(does not exist|schema cache)|could not find[^\n]*document_item_id/i.test(
+          receiptError.message || "",
+        )
+      );
+      if (missingDocumentItemColumn) {
+        const { document_item_id: _documentItemId, ...fallbackPayload } = receiptPayload;
+        const fallbackResult = await supabase.from("order_receipts").insert(fallbackPayload);
+        receiptError = fallbackResult.error;
+      }
+
+      if (receiptError?.code === "23505") {
+        skippedCount += 1;
+        continue;
+      }
+
+      if (receiptError) {
+        console.error("Otomatik teslim alma kaydedilemedi:", receiptError);
+        errorCount += 1;
+        continue;
+      }
+
+      remainingByOrderItem.set(orderItemKey, remainingAfterReceipt);
+      deliveredByOrderItem.set(
+        orderItemKey,
+        Number(candidate.orderedQuantity || 0) - remainingAfterReceipt,
+      );
+      processedCount += 1;
+      processedQuantity += acceptedQuantity;
+    }
+
+    if (processedCount > 0) {
+      const nextItems = (order.items || []).map((item, index) => {
+        const rawKey = getOrderItemMatchId(item, index);
+        const normalizedKey = getOrderItemMatchId(items[index], index);
+        const matchingKey = deliveredByOrderItem.has(rawKey)
+          ? rawKey
+          : deliveredByOrderItem.has(normalizedKey)
+            ? normalizedKey
+            : null;
+        if (!matchingKey) return item;
+        return {
+          ...item,
+          deliveredQuantity: Math.min(
+            Number(item.quantity || 0),
+            Number(deliveredByOrderItem.get(matchingKey) || 0),
+          ),
+        };
+      });
+      const totalOrdered = nextItems.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+      const totalDelivered = nextItems.reduce(
+        (sum, item) => sum + Number(item.deliveredQuantity || 0),
+        0,
+      );
+      const nextStatus = totalOrdered > 0 && totalDelivered >= totalOrdered
+        ? "Tam Teslim"
+        : totalDelivered > 0
+          ? "Kısmi Teslim"
+          : order.status;
+      const nextHistory = buildStatusHistory(order, {
+        type: "automatic-document-receipt",
+        title: `${processedCount} belge kaleminden toplam ${processedQuantity} birim teslim alındı.`,
+        actor: user.email || "Kullanıcı",
+        status: nextStatus,
+      });
+      const { error: orderUpdateError } = await updateOrder(
+        {
+          items: nextItems,
+          status: nextStatus,
+          delivery_date: nextStatus === "Tam Teslim" ? getToday() : order.delivery_date,
+          received_total: totalDelivered,
+          status_history: nextHistory,
+        },
+        {
+          items: nextItems,
+          status: nextStatus,
+          delivery_date: nextStatus === "Tam Teslim" ? getToday() : order.delivery_date,
+        },
+      );
+      if (orderUpdateError) {
+        console.error("Otomatik teslim sonrası sipariş özeti güncellenemedi:", orderUpdateError);
+        errorCount += 1;
+      }
+    }
+
+    setAutomaticReceiptResult({
+      processedCount,
+      processedQuantity,
+      skippedCount,
+      errorCount,
+    });
+    setAutomaticReceiptApplying(false);
+    setMessage(
+      processedCount > 0
+        ? `${processedCount} otomatik teslim kaydı oluşturuldu.`
+        : "Uygulanabilir teslim kaydı oluşturulamadı.",
+    );
+    await loadOrder();
+  }
+
   async function savePayment(event) {
     event.preventDefault();
     if (!order) return;
@@ -2056,6 +2319,9 @@ export default function OrderDetailPage() {
           items={items}
           receipts={receipts}
           documentItems={documentItems}
+          applying={automaticReceiptApplying}
+          result={automaticReceiptResult}
+          onApply={applyAutomaticReceiptSuggestions}
         />
 
         <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
@@ -2324,6 +2590,7 @@ function ReceiptSuggestionTable({ rows, emptyMessage }) {
             <th className="p-3 text-right">Belgede Gelen</th>
             <th className="p-3 text-right">Kalan</th>
             <th className="p-3 text-right">Önerilen Teslim</th>
+            <th className="p-3 text-right">Güven</th>
             <th className="p-3">Durum</th>
           </tr>
         </thead>
@@ -2341,6 +2608,7 @@ function ReceiptSuggestionTable({ rows, emptyMessage }) {
               <td className="p-3 text-right font-semibold text-slate-700">{row.documentQuantity}</td>
               <td className="p-3 text-right font-semibold text-slate-700">{row.remainingQuantity}</td>
               <td className="p-3 text-right font-black text-blue-700">{row.suggestedQuantity}</td>
+              <td className="p-3 text-right font-black text-slate-700">%{row.matchConfidence}</td>
               <td className="p-3">
                 <span className={`inline-flex rounded-full px-3 py-1 text-xs font-bold ${statusClasses[row.status]}`}>
                   {row.status}
@@ -2359,7 +2627,15 @@ function ReceiptSuggestionTable({ rows, emptyMessage }) {
   );
 }
 
-function AutomaticReceiptSuggestionsPanel({ order, items, receipts, documentItems }) {
+function AutomaticReceiptSuggestionsPanel({
+  order,
+  items,
+  receipts,
+  documentItems,
+  applying,
+  result,
+  onApply,
+}) {
   const suggestions = calculateAutomaticReceiptSuggestions(
     items,
     order.items || [],
@@ -2368,18 +2644,50 @@ function AutomaticReceiptSuggestionsPanel({ order, items, receipts, documentItem
     order.id,
   );
   const activeSuggestions = suggestions.filter(
-    (suggestion) => suggestion.status !== "Teslim Tamamlanmış",
+    (suggestion) => suggestion.eligible && suggestion.status !== "Teslim Tamamlanmış",
   );
   const completedSuggestions = suggestions.filter(
     (suggestion) => suggestion.status === "Teslim Tamamlanmış",
   );
+  const totalSuggestedQuantity = activeSuggestions.reduce(
+    (sum, suggestion) => sum + Number(suggestion.suggestedQuantity || 0),
+    0,
+  );
+  const skippedCount = Math.max(documentItems.length - activeSuggestions.length, 0);
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-      <h2 className="text-lg font-bold text-slate-900">Otomatik Teslim Alma Önerileri</h2>
-      <p className="mt-1 text-sm text-slate-500">
-        Eşleşmiş belge kalemlerinden yalnızca öneri üretilir; teslim veya stok kaydı oluşturulmaz.
-      </p>
+      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+        <div>
+          <h2 className="text-lg font-bold text-slate-900">Otomatik Teslim Alma Önerileri</h2>
+          <p className="mt-1 text-sm text-slate-500">
+            Yalnızca güveni en az %80 olan, manuel kontrol gerektirmeyen eşleşmeler kullanıcı onayıyla işlenir.
+          </p>
+        </div>
+        <button
+          type="button"
+          disabled={applying || activeSuggestions.length === 0}
+          onClick={onApply}
+          className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-black text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+        >
+          {applying ? "Teslim Alınıyor..." : "Otomatik Teslim Al"}
+        </button>
+      </div>
+      <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+        <Info label="İşlenecek Kayıt" value={activeSuggestions.length} />
+        <Info label="Toplam Teslim Miktarı" value={totalSuggestedQuantity} />
+        <Info label="Atlanan Kayıt" value={result?.skippedCount ?? skippedCount} />
+        <Info label="Hata Sayısı" value={result?.errorCount ?? 0} />
+      </div>
+      {result && (
+        <div className={`mt-4 rounded-xl border p-3 text-sm font-bold ${
+          result.errorCount > 0
+            ? "border-amber-200 bg-amber-50 text-amber-900"
+            : "border-emerald-200 bg-emerald-50 text-emerald-800"
+        }`}>
+          {result.processedCount} kayıt işlendi, toplam {result.processedQuantity} teslim miktarı kaydedildi.
+        </div>
+      )}
       <div className="mt-4">
         <ReceiptSuggestionTable
           rows={activeSuggestions}

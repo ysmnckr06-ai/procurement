@@ -28,6 +28,7 @@ const tabs = [
   "Siparişler",
   "Stok Hareketleri",
   "Ödemeler",
+  "Finans Özeti",
   "Revizyonlar",
   "Raporlar",
 ];
@@ -40,6 +41,7 @@ const tabLabels = {
   Siparişler: "Siparişler",
   "Stok Hareketleri": "Stok Hareketleri",
   Ödemeler: "Ödemeler",
+  "Finans Özeti": "Finans Özeti",
   Revizyonlar: "Revizyonlar",
   Raporlar: "Raporlar",
 };
@@ -331,6 +333,9 @@ export default function ProjectDetailPage() {
   const [projectOffers, setProjectOffers] = useState([]);
   const [projectOrders, setProjectOrders] = useState([]);
   const [allOrders, setAllOrders] = useState([]);
+  const [projectDocuments, setProjectDocuments] = useState([]);
+  const [projectOrderPayments, setProjectOrderPayments] = useState([]);
+  const [financeLoadWarnings, setFinanceLoadWarnings] = useState([]);
   const [stockMovements, setStockMovements] = useState([]);
   const [companySettings, setCompanySettings] = useState({ default_currency: "TRY", base_currency: "TRY" });
   const [liveRates, setLiveRates] = useState(null);
@@ -680,6 +685,60 @@ export default function ProjectDetailPage() {
       return;
     }
 
+    const projectOrderRows = orderRes.data || [];
+    const projectOrderIds = projectOrderRows.map((order) => order.id).filter(Boolean);
+    const nextFinanceWarnings = [];
+    let nextProjectDocuments = [];
+    let nextProjectOrderPayments = [];
+
+    if (projectOrderIds.length > 0) {
+      const [documentLinkRes, orderPaymentRes] = await Promise.all([
+        supabase
+          .from("document_links")
+          .select("document_id,order_id")
+          .in("order_id", projectOrderIds)
+          .eq("user_id", user.id),
+        supabase
+          .from("order_payments")
+          .select("*")
+          .in("order_id", projectOrderIds)
+          .eq("user_id", user.id)
+          .order("payment_date", { ascending: false }),
+      ]);
+
+      if (documentLinkRes.error) {
+        nextFinanceWarnings.push("Sipariş belge bağlantıları okunamadı.");
+      } else {
+        const documentIds = Array.from(
+          new Set((documentLinkRes.data || []).map((link) => link.document_id).filter(Boolean)),
+        );
+
+        if (documentIds.length > 0) {
+          const documentRes = await supabase
+            .from("documents")
+            .select("*")
+            .in("id", documentIds)
+            .eq("user_id", user.id);
+
+          if (documentRes.error) {
+            nextFinanceWarnings.push("Proje faturaları okunamadı.");
+          } else {
+            nextProjectDocuments = documentRes.data || [];
+          }
+        }
+      }
+
+      if (orderPaymentRes.error) {
+        nextFinanceWarnings.push("Tedarikçi ödemeleri okunamadı.");
+      } else {
+        nextProjectOrderPayments = orderPaymentRes.data || [];
+      }
+    }
+
+    setProjectDocuments(nextProjectDocuments);
+    setProjectOrderPayments(nextProjectOrderPayments);
+    setFinanceLoadWarnings(nextFinanceWarnings);
+
     setProject(projectRes.data);
     setPayments(paymentRes.data || []);
     setExpenses(expenseRes.data || []);
@@ -744,7 +803,7 @@ export default function ProjectDetailPage() {
     setProjectRequests(nextProjectRequests);
     setProjectReports(reportRes.data || []);
     setProjectOffers(offerRes.data || []);
-    setProjectOrders(orderRes.data || []);
+    setProjectOrders(projectOrderRows);
     setAllOrders(allOrderRes.data || orderRes.data || []);
     setStockMovements(movementRes.data || []);
     if (settingsRes.data?.[0]) setCompanySettings(settingsRes.data[0]);
@@ -5208,6 +5267,176 @@ export default function ProjectDetailPage() {
     };
   }, [items, payments, expenses, revisions, project, projectOrders, allOrders, stockMovements, products, visiblePreviewSections, storedSectionTotals]);
 
+  const projectFinanceSummary = useMemo(() => {
+    const baseCurrency = getBaseCurrency(companySettings);
+    let estimatedConversionUsed = false;
+    const firstValue = (row, fields) => {
+      for (const field of fields) {
+        const value = row?.[field];
+        if (value !== null && value !== undefined && value !== "") return value;
+      }
+      return null;
+    };
+    const toBaseAmount = (
+      row,
+      amountFields,
+      baseFields,
+      currencyFields = ["currency"],
+      rateFields = ["exchange_rate"],
+    ) => {
+      const savedBaseAmount = firstValue(row, baseFields);
+      if (savedBaseAmount !== null) return Number(savedBaseAmount || 0);
+
+      const amount = Number(firstValue(row, amountFields) || 0);
+      const currency = String(firstValue(row, currencyFields) || baseCurrency).toUpperCase();
+      const savedRate = firstValue(row, rateFields);
+      if (currency !== baseCurrency && savedRate === null) estimatedConversionUsed = true;
+      return calculateBaseAmount(amount, currency, companySettings, savedRate);
+    };
+
+    const contractAmount = toBaseAmount(
+      project,
+      ["contract_amount"],
+      ["contract_base_amount"],
+      ["contract_currency"],
+      ["contract_exchange_rate"],
+    );
+    const estimatedBudget = toBaseAmount(
+      project,
+      ["estimated_budget"],
+      ["estimated_budget_base_amount", "estimated_budget_base"],
+      ["estimated_budget_currency", "contract_currency"],
+      ["estimated_budget_exchange_rate"],
+    );
+    const orderCommitment = projectOrders.reduce(
+      (sum, order) => sum + toBaseAmount(
+        order,
+        ["total_amount", "order_total", "total"],
+        ["order_total_base", "base_amount"],
+      ),
+      0,
+    );
+    const approvedInvoices = projectDocuments.filter((document) =>
+      String(document.document_type || "").toLocaleLowerCase("tr-TR") === "fatura"
+      && String(document.approval_status || "").toLocaleLowerCase("tr-TR") !== "reddedildi"
+    );
+    const approvedInvoiceTotal = approvedInvoices.reduce(
+      (sum, document) => sum + toBaseAmount(
+        document,
+        ["invoice_total"],
+        ["invoice_total_base", "base_amount"],
+        ["currency"],
+        ["exchange_rate"],
+      ),
+      0,
+    );
+    const manualExpenses = expenses.reduce(
+      (sum, expense) => sum + toBaseAmount(
+        expense,
+        ["amount"],
+        ["base_amount"],
+      ),
+      0,
+    );
+    const customerCollections = payments.reduce(
+      (sum, payment) => sum + toBaseAmount(
+        payment,
+        ["amount", "original_amount"],
+        ["base_amount"],
+      ),
+      0,
+    );
+    const supplierPayments = projectOrderPayments.reduce(
+      (sum, payment) => sum + toBaseAmount(
+        payment,
+        ["amount", "original_amount"],
+        ["base_amount"],
+      ),
+      0,
+    );
+    const directOrderIds = new Set(projectOrders.map((order) => String(order.id)));
+    const allocationLinkedOrders = allOrders.filter((order) => {
+      if (directOrderIds.has(String(order.id))) return false;
+      const orderItems = Array.isArray(order.items) ? order.items : [];
+      return orderItems.some((item) =>
+        (Array.isArray(item.allocations) ? item.allocations : []).some((allocation) =>
+          String(allocation.projectId || allocation.project_id || "") === String(projectId)
+        )
+      );
+    });
+    const actualCost = approvedInvoiceTotal + manualExpenses;
+    const remainingCollection = contractAmount - customerCollections;
+    const supplierDebt = approvedInvoiceTotal - supplierPayments;
+    const grossProfit = contractAmount - actualCost;
+    const profitMargin = contractAmount > 0 ? (grossProfit / contractAmount) * 100 : 0;
+    const budgetVariance = estimatedBudget - actualCost;
+    const costRealizationRate = estimatedBudget > 0 ? (actualCost / estimatedBudget) * 100 : null;
+    const profitabilityStatus = contractAmount <= 0
+      ? "Hesaplanamıyor"
+      : profitMargin >= 20
+        ? "Kar yüksek"
+        : profitMargin >= 0
+          ? "Kar düşük"
+          : "Zararda";
+    const budgetExceeded = estimatedBudget > 0 && actualCost > estimatedBudget;
+    const profitabilityWarnings = [];
+    if (contractAmount <= 0) profitabilityWarnings.push("Sözleşme bedeli yoksa kar marjı hesaplanamaz.");
+    if (estimatedBudget <= 0) profitabilityWarnings.push("Tahmini bütçe yoksa bütçe sapması hesaplanamaz.");
+    if (actualCost <= 0) profitabilityWarnings.push("Gerçekleşen maliyet yoksa analiz eksik.");
+    const totalCashOutflow = supplierPayments + manualExpenses;
+    const netCashPosition = customerCollections - totalCashOutflow;
+    const cashFlowStatus = netCashPosition > 0
+      ? "Pozitif Nakit"
+      : netCashPosition < 0
+        ? "Negatif Nakit"
+        : "Dengede";
+    const cashFlowWarnings = [];
+    if (customerCollections <= 0 && supplierPayments > 0) {
+      cashFlowWarnings.push("Risk Uyarısı: Müşteri tahsilatı yokken tedarikçiye ödeme yapılmış.");
+    }
+    if (contractAmount > 0 && remainingCollection / contractAmount > 0.5) {
+      cashFlowWarnings.push("Tahsilat Riski: Bekleyen tahsilat sözleşme bedelinin %50’sinden yüksek.");
+    }
+    const warnings = [...financeLoadWarnings];
+
+    if (contractAmount <= 0) warnings.push("Sözleşme bedeli girilmemiş.");
+    if (approvedInvoiceTotal > 0 && supplierPayments <= 0) warnings.push("Fatura var ama ödeme yok.");
+    if (supplierPayments > 0 && customerCollections <= 0) warnings.push("Tedarikçiye ödeme yapılmış ama müşteriden tahsilat yok.");
+    if (orderCommitment > 0 && approvedInvoiceTotal <= 0) warnings.push("Sipariş var ama fatura yok.");
+    if (estimatedConversionUsed) warnings.push("Çoklu para birimi dönüşümü tahmini olabilir.");
+    if (allocationLinkedOrders.length > 0) {
+      warnings.push(`${allocationLinkedOrders.length} sipariş allocation üzerinden bu projeye bağlı görünüyor; hesaplara dahil edilmedi.`);
+    }
+
+    return {
+      baseCurrency,
+      contractAmount,
+      estimatedBudget,
+      orderCommitment,
+      approvedInvoiceTotal,
+      manualExpenses,
+      actualCost,
+      customerCollections,
+      supplierPayments,
+      remainingCollection,
+      supplierDebt,
+      grossProfit,
+      profitMargin,
+      budgetVariance,
+      costRealizationRate,
+      profitabilityStatus,
+      budgetExceeded,
+      profitabilityWarnings,
+      totalCashOutflow,
+      netCashPosition,
+      cashFlowStatus,
+      cashFlowWarnings,
+      warnings: Array.from(new Set(warnings)),
+      approvedInvoiceCount: approvedInvoices.length,
+      allocationLinkedOrderCount: allocationLinkedOrders.length,
+    };
+  }, [allOrders, companySettings, expenses, financeLoadWarnings, payments, project, projectDocuments, projectId, projectOrderPayments, projectOrders]);
+
   const revisionSummary = useMemo(() => {
     const appliedRevisions = revisions.filter((revision) => !["İptal", "Iptal"].includes(revision.status));
     const impactFor = (revision) => Number(revision.cost_impact ?? revision.cost_base_amount ?? revision.cost_amount ?? 0);
@@ -6245,6 +6474,189 @@ export default function ProjectDetailPage() {
 
           </section>
         )}
+        {activeTab === "Finans Özeti" && (
+          <section className="space-y-6">
+            <div className="rounded-2xl border border-blue-100 bg-blue-50 p-5 text-sm text-blue-900 shadow-sm">
+              <div className="font-black">Proje finans görünümü · Baz para birimi: {projectFinanceSummary.baseCurrency}</div>
+              <p className="mt-1 font-semibold text-blue-700">
+                Siparişler taahhüt, faturalar gerçekleşen maliyet, ödemeler ise nakit hareketi olarak ayrı izlenir.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <SummaryCard title="Sözleşme Bedeli" value={formatMoney(projectFinanceSummary.contractAmount, projectFinanceSummary.baseCurrency)} text="Baz para birimi karşılığı" tone="blue" />
+              <SummaryCard title="Tahmini Bütçe" value={formatMoney(projectFinanceSummary.estimatedBudget, projectFinanceSummary.baseCurrency)} text="Planlanan proje bütçesi" />
+              <SummaryCard title="Sipariş Taahhüdü" value={formatMoney(projectFinanceSummary.orderCommitment, projectFinanceSummary.baseCurrency)} text={`${projectOrders.length} doğrudan bağlı sipariş`} />
+              <SummaryCard title="Onaylı Fatura Toplamı" value={formatMoney(projectFinanceSummary.approvedInvoiceTotal, projectFinanceSummary.baseCurrency)} text={`${projectFinanceSummary.approvedInvoiceCount} reddedilmemiş fatura`} tone="blue" />
+              <SummaryCard title="Manuel Giderler" value={formatMoney(projectFinanceSummary.manualExpenses, projectFinanceSummary.baseCurrency)} text={`${expenses.length} ek gider kaydı`} />
+              <SummaryCard title="Gerçekleşen Maliyet" value={formatMoney(projectFinanceSummary.actualCost, projectFinanceSummary.baseCurrency)} text="Faturalar + manuel giderler" tone={projectFinanceSummary.actualCost > projectFinanceSummary.contractAmount ? "red" : "blue"} />
+              <SummaryCard title="Müşteri Tahsilatı" value={formatMoney(projectFinanceSummary.customerCollections, projectFinanceSummary.baseCurrency)} text={`${payments.length} tahsilat kaydı`} tone="green" />
+              <SummaryCard title="Tedarikçiye Ödenen" value={formatMoney(projectFinanceSummary.supplierPayments, projectFinanceSummary.baseCurrency)} text={`${projectOrderPayments.length} sipariş ödemesi`} />
+              <SummaryCard title="Bekleyen Tahsilat" value={formatMoney(projectFinanceSummary.remainingCollection, projectFinanceSummary.baseCurrency)} text="Sözleşme - müşteri tahsilatı" tone={projectFinanceSummary.remainingCollection < 0 ? "red" : "blue"} />
+              <SummaryCard title="Bekleyen Tedarikçi Borcu" value={formatMoney(projectFinanceSummary.supplierDebt, projectFinanceSummary.baseCurrency)} text="Faturalar - tedarikçi ödemeleri" tone={projectFinanceSummary.supplierDebt < 0 ? "red" : "blue"} />
+              <SummaryCard title="Brüt Kar / Zarar" value={formatMoney(projectFinanceSummary.grossProfit, projectFinanceSummary.baseCurrency)} text="Sözleşme - gerçekleşen maliyet" tone={projectFinanceSummary.grossProfit >= 0 ? "green" : "red"} />
+              <SummaryCard title="Kar Marjı %" value={`%${projectFinanceSummary.profitMargin.toLocaleString("tr-TR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}`} text="Brüt kar / sözleşme bedeli" tone={projectFinanceSummary.profitMargin >= 0 ? "green" : "red"} />
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-black text-slate-900">Karlılık Analizi</h2>
+                  <p className="mt-1 text-sm font-semibold text-slate-500">
+                    Sözleşme, gerçekleşen maliyet ve tahmini bütçenin baz para birimindeki karşılaştırması.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <span className={`rounded-full px-3 py-1 text-xs font-black ${
+                    projectFinanceSummary.profitabilityStatus === "Kar yüksek"
+                      ? "bg-emerald-100 text-emerald-800"
+                      : projectFinanceSummary.profitabilityStatus === "Kar düşük"
+                        ? "bg-amber-100 text-amber-800"
+                        : projectFinanceSummary.profitabilityStatus === "Zararda"
+                          ? "bg-red-100 text-red-800"
+                          : "bg-slate-100 text-slate-700"
+                  }`}>
+                    {projectFinanceSummary.profitabilityStatus}
+                  </span>
+                  {projectFinanceSummary.budgetExceeded && (
+                    <span className="rounded-full bg-red-100 px-3 py-1 text-xs font-black text-red-800">
+                      Bütçe aşıldı
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                {[
+                  ["Sözleşme Bedeli", formatMoney(projectFinanceSummary.contractAmount, projectFinanceSummary.baseCurrency)],
+                  ["Gerçekleşen Maliyet", formatMoney(projectFinanceSummary.actualCost, projectFinanceSummary.baseCurrency)],
+                  ["Tahmini Bütçe", formatMoney(projectFinanceSummary.estimatedBudget, projectFinanceSummary.baseCurrency)],
+                  ["Brüt Kar / Zarar", formatMoney(projectFinanceSummary.grossProfit, projectFinanceSummary.baseCurrency)],
+                  ["Kar Marjı", projectFinanceSummary.contractAmount > 0 ? `%${projectFinanceSummary.profitMargin.toLocaleString("tr-TR", { maximumFractionDigits: 1 })}` : "Hesaplanamaz"],
+                  ["Bütçe Sapması", projectFinanceSummary.estimatedBudget > 0 ? formatMoney(projectFinanceSummary.budgetVariance, projectFinanceSummary.baseCurrency) : "Hesaplanamaz"],
+                  ["Maliyet Gerçekleşme Oranı", projectFinanceSummary.costRealizationRate !== null ? `%${projectFinanceSummary.costRealizationRate.toLocaleString("tr-TR", { maximumFractionDigits: 1 })}` : "Hesaplanamaz"],
+                ].map(([label, value]) => (
+                  <div key={label} className="rounded-xl border border-slate-100 bg-slate-50 p-4">
+                    <div className="text-xs font-bold text-slate-500">{label}</div>
+                    <div className="mt-1 break-words text-lg font-black text-slate-950">{value}</div>
+                  </div>
+                ))}
+              </div>
+
+              {projectFinanceSummary.costRealizationRate !== null && (
+                <div className="mt-5">
+                  <div className="mb-2 flex items-center justify-between text-xs font-black text-slate-600">
+                    <span>Bütçe kullanım oranı</span>
+                    <span>%{projectFinanceSummary.costRealizationRate.toLocaleString("tr-TR", { maximumFractionDigits: 1 })}</span>
+                  </div>
+                  <div className="h-3 overflow-hidden rounded-full bg-slate-100">
+                    <div
+                      className={`h-full rounded-full ${projectFinanceSummary.budgetExceeded ? "bg-red-500" : "bg-blue-600"}`}
+                      style={{ width: `${Math.min(100, Math.max(0, projectFinanceSummary.costRealizationRate))}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {projectFinanceSummary.profitabilityWarnings.length > 0 && (
+                <div className="mt-5 space-y-2">
+                  {projectFinanceSummary.profitabilityWarnings.map((warning) => (
+                    <div key={warning} className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-bold text-amber-900">
+                      {warning}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-black text-slate-900">Nakit Akışı</h2>
+                  <p className="mt-1 text-sm font-semibold text-slate-500">
+                    Gerçekleşen tahsilat ve nakit çıkışlarının baz para birimindeki görünümü.
+                  </p>
+                </div>
+                <span className={`rounded-full px-3 py-1 text-xs font-black ${
+                  projectFinanceSummary.cashFlowStatus === "Pozitif Nakit"
+                    ? "bg-emerald-100 text-emerald-800"
+                    : projectFinanceSummary.cashFlowStatus === "Negatif Nakit"
+                      ? "bg-red-100 text-red-800"
+                      : "bg-slate-100 text-slate-700"
+                }`}>
+                  {projectFinanceSummary.cashFlowStatus}
+                </span>
+              </div>
+
+              <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                {[
+                  ["Toplam Sözleşme Bedeli", projectFinanceSummary.contractAmount],
+                  ["Müşteri Tahsilatı", projectFinanceSummary.customerCollections],
+                  ["Bekleyen Tahsilat", projectFinanceSummary.remainingCollection],
+                  ["Tedarikçiye Ödenen", projectFinanceSummary.supplierPayments],
+                  ["Bekleyen Tedarikçi Borcu", projectFinanceSummary.supplierDebt],
+                  ["Manuel Giderler", projectFinanceSummary.manualExpenses],
+                  ["Toplam Nakit Çıkışı", projectFinanceSummary.totalCashOutflow],
+                  ["Net Nakit Pozisyonu", projectFinanceSummary.netCashPosition],
+                ].map(([label, value]) => (
+                  <div key={label} className="rounded-xl border border-slate-100 bg-slate-50 p-4">
+                    <div className="text-xs font-bold text-slate-500">{label}</div>
+                    <div className={`mt-1 break-words text-lg font-black ${
+                      label === "Net Nakit Pozisyonu"
+                        ? Number(value) >= 0
+                          ? "text-emerald-700"
+                          : "text-red-700"
+                        : "text-slate-950"
+                    }`}>
+                      {formatMoney(value, projectFinanceSummary.baseCurrency)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-5 rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm font-semibold text-blue-900">
+                Net nakit pozisyonu, müşteri tahsilatından tedarikçi ödemeleri ve manuel giderlerin çıkarılmasıyla hesaplanır.
+              </div>
+
+              {projectFinanceSummary.cashFlowWarnings.length > 0 && (
+                <div className="mt-4 space-y-2">
+                  {projectFinanceSummary.cashFlowWarnings.map((warning) => (
+                    <div key={warning} className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-900">
+                      {warning}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-black text-slate-900">Finans Veri Uyarıları</h2>
+                  <p className="mt-1 text-sm font-semibold text-slate-500">Eksik bağlantılar ve yaklaşık kur dönüşümleri burada gösterilir.</p>
+                </div>
+                {projectFinanceSummary.allocationLinkedOrderCount > 0 && (
+                  <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-black text-amber-800">
+                    {projectFinanceSummary.allocationLinkedOrderCount} allocation siparişi hariç
+                  </span>
+                )}
+              </div>
+              <div className="mt-4 space-y-2">
+                {projectFinanceSummary.warnings.map((warning) => (
+                  <div key={warning} className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-bold text-amber-900">
+                    {warning}
+                  </div>
+                ))}
+                {projectFinanceSummary.warnings.length === 0 && (
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-bold text-emerald-800">
+                    Finans özeti için belirgin bir veri uyarısı bulunmuyor.
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
+        )}
+
         {activeTab === "İhtiyaç Analizi" && (
           <section className="space-y-6">
             <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
