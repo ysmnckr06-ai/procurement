@@ -185,6 +185,8 @@ export default function OrderDetailPage() {
   const [documents, setDocuments] = useState([]);
   const [documentUploadOpen, setDocumentUploadOpen] = useState(false);
   const [documentUploading, setDocumentUploading] = useState(false);
+  const [documentApprovalNotes, setDocumentApprovalNotes] = useState({});
+  const [documentApprovalUpdatingId, setDocumentApprovalUpdatingId] = useState(null);
   const [documentForm, setDocumentForm] = useState({
     document_type: "diger",
     document_number: "",
@@ -1036,6 +1038,54 @@ export default function OrderDetailPage() {
     await loadOrderDocuments(order.id, user.id);
   }
 
+  async function updateInvoiceApproval(document, approvalStatus) {
+    if (!order || document.document_type !== "fatura" || documentApprovalUpdatingId) return;
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      router.push("/login");
+      return;
+    }
+
+    setDocumentApprovalUpdatingId(document.id);
+    setMessage("");
+
+    const { error } = await supabase
+      .from("documents")
+      .update({
+        approval_status: approvalStatus,
+        approval_note: String(documentApprovalNotes[document.id] || "").trim(),
+        approved_by: user.id,
+        approved_at: new Date().toISOString(),
+      })
+      .eq("id", document.id)
+      .eq("user_id", user.id)
+      .eq("document_type", "fatura");
+
+    if (error) {
+      console.error(error);
+      setMessage("Fatura onay durumu güncellenemedi.");
+      setDocumentApprovalUpdatingId(null);
+      return;
+    }
+
+    setDocumentApprovalNotes((prev) => {
+      const next = { ...prev };
+      delete next[document.id];
+      return next;
+    });
+    setDocumentApprovalUpdatingId(null);
+    setMessage(
+      approvalStatus === "onaylandi"
+        ? "Fatura farkı kabul edildi."
+        : "Fatura reddedildi.",
+    );
+    await loadOrderDocuments(order.id, user.id);
+  }
+
   if (!order) {
     return (
       <div className="min-h-screen bg-slate-100 p-8">
@@ -1271,12 +1321,20 @@ export default function OrderDetailPage() {
             {activeTab === "documents" && (
               <DocumentsPanel
                 documents={documents}
+                order={order}
+                companySettings={companySettings}
                 form={documentForm}
                 uploadOpen={documentUploadOpen}
                 uploading={documentUploading}
+                approvalNotes={documentApprovalNotes}
+                approvalUpdatingId={documentApprovalUpdatingId}
                 onToggleUpload={() => setDocumentUploadOpen((prev) => !prev)}
                 onFormChange={setDocumentForm}
                 onUpload={uploadDocument}
+                onApprovalNoteChange={(documentId, value) =>
+                  setDocumentApprovalNotes((prev) => ({ ...prev, [documentId]: value }))
+                }
+                onApproval={updateInvoiceApproval}
               />
             )}
             {activeTab === "history" && <HistoryPanel rows={historyRows} />}
@@ -1403,14 +1461,155 @@ function ConnectionsPanel({ items }) {
   );
 }
 
+function calculateInvoiceOrderCheck(order, documents, companySettings) {
+  const invoices = (documents || []).filter(
+    (document) => document.document_type === "fatura",
+  );
+  const baseCurrency = getBaseCurrency(companySettings);
+  const totalsByCurrency = new Map();
+  let invoiceBaseTotal = 0;
+  let hasMissingInvoiceData = false;
+  let hasCurrencyMismatch = false;
+
+  invoices.forEach((invoice) => {
+    const hasTotal = invoice.invoice_total !== null
+      && invoice.invoice_total !== undefined
+      && invoice.invoice_total !== "";
+    const invoiceCurrency = String(invoice.currency || "").trim().toUpperCase();
+
+    if (!hasTotal || !invoiceCurrency) {
+      hasMissingInvoiceData = true;
+      return;
+    }
+
+    const invoiceTotal = Number(invoice.invoice_total || 0);
+    totalsByCurrency.set(
+      invoiceCurrency,
+      Number(totalsByCurrency.get(invoiceCurrency) || 0) + invoiceTotal,
+    );
+    invoiceBaseTotal += calculateBaseAmount(
+      invoiceTotal,
+      invoiceCurrency,
+      companySettings,
+    );
+    if (invoiceCurrency !== String(order.currency || "").toUpperCase()) {
+      hasCurrencyMismatch = true;
+    }
+  });
+
+  const orderBaseTotal = Number(
+    order.order_total_base
+      || order.base_amount
+      || calculateBaseAmount(
+        order.total_amount,
+        order.currency,
+        companySettings,
+        order.exchange_rate,
+      ),
+  );
+  const difference = invoiceBaseTotal - orderBaseTotal;
+  const differencePercent = orderBaseTotal > 0
+    ? (Math.abs(difference) / orderBaseTotal) * 100
+    : invoiceBaseTotal === 0
+      ? 0
+      : 100;
+  const status = differencePercent <= 1
+    ? "matched"
+    : differencePercent <= 5
+      ? "review"
+      : "approval";
+
+  return {
+    invoices,
+    baseCurrency,
+    totalsByCurrency: Array.from(totalsByCurrency, ([currency, total]) => ({ currency, total })),
+    invoiceBaseTotal,
+    orderBaseTotal,
+    difference,
+    differencePercent,
+    status,
+    hasMissingInvoiceData,
+    hasCurrencyMismatch,
+  };
+}
+
+function InvoiceCheckPanel({ order, documents, companySettings }) {
+  const check = calculateInvoiceOrderCheck(order, documents, companySettings);
+
+  if (check.invoices.length === 0) {
+    return (
+      <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+        Henüz fatura yüklenmedi.
+      </div>
+    );
+  }
+
+  const statusDetails = {
+    matched: { label: "Uyumlu", className: "bg-emerald-100 text-emerald-700" },
+    review: { label: "Kontrol önerilir", className: "bg-amber-100 text-amber-700" },
+    approval: { label: "Manuel onay gerekli", className: "bg-red-100 text-red-700" },
+  }[check.status];
+
+  return (
+    <div className="mt-3 rounded-xl border border-blue-100 bg-blue-50 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h4 className="font-bold text-blue-950">Fatura Kontrolü</h4>
+        <span className={`rounded-full px-3 py-1 text-xs font-bold ${statusDetails.className}`}>
+          {statusDetails.label}
+        </span>
+      </div>
+      <div className="mt-4 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+        <Info
+          label="Toplam Fatura"
+          value={
+            check.totalsByCurrency.length > 0
+              ? check.totalsByCurrency.map((row) => formatMoney(row.total, row.currency)).join(" · ")
+              : "-"
+          }
+        />
+        <Info label="Sipariş Toplamı" value={formatMoney(order.total_amount, order.currency)} />
+        <Info
+          label={`Fatura Baz Tutarı (${check.baseCurrency})`}
+          value={formatMoney(check.invoiceBaseTotal, check.baseCurrency)}
+        />
+        <Info
+          label={`Sipariş Baz Tutarı (${check.baseCurrency})`}
+          value={formatMoney(check.orderBaseTotal, check.baseCurrency)}
+        />
+        <Info label="Baz Para Farkı" value={formatMoney(check.difference, check.baseCurrency)} />
+        <Info
+          label="Fark Oranı"
+          value={`%${check.differencePercent.toLocaleString("tr-TR", { maximumFractionDigits: 2 })}`}
+        />
+      </div>
+      {check.hasCurrencyMismatch && (
+        <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-800">
+          Fatura ve sipariş para birimi farklı. Kur kontrolü manuel doğrulanmalıdır.
+        </div>
+      )}
+      {check.hasMissingInvoiceData && (
+        <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-800">
+          Fatura tutarı/para birimi eksik
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DocumentsPanel({
   documents,
+  order,
+  companySettings,
   form,
   uploadOpen,
   uploading,
+  approvalNotes,
+  approvalUpdatingId,
   onToggleUpload,
   onFormChange,
   onUpload,
+  onApprovalNoteChange,
+  onApproval,
 }) {
   const sections = [
     { type: "teklif", label: "Teklif Belgeleri" },
@@ -1515,37 +1714,100 @@ function DocumentsPanel({
           return (
             <div key={section.type} className="rounded-2xl border border-slate-200 p-4">
               <h3 className="font-bold text-slate-900">{section.label}</h3>
+              {section.type === "fatura" && (
+                <InvoiceCheckPanel
+                  order={order}
+                  documents={documents}
+                  companySettings={companySettings}
+                />
+              )}
               {sectionDocuments.length > 0 ? (
                 <div className="mt-3 space-y-3">
-                  {sectionDocuments.map((document) => (
-                    <div key={document.id} className="rounded-xl bg-slate-50 p-4 text-sm">
-                      <div className="font-bold text-slate-900">
-                        {document.original_file_name || "-"}
+                  {sectionDocuments.map((document) => {
+                    const approvalStatus = document.approval_status || "bekliyor";
+                    const approvalClass = approvalStatus === "onaylandi"
+                      ? "bg-emerald-100 text-emerald-700"
+                      : approvalStatus === "reddedildi"
+                        ? "bg-red-100 text-red-700"
+                        : "bg-amber-100 text-amber-700";
+                    const approvalLabel = approvalStatus === "onaylandi"
+                      ? "Onaylandı"
+                      : approvalStatus === "reddedildi"
+                        ? "Reddedildi"
+                        : "Bekliyor";
+                    return (
+                      <div key={document.id} className="rounded-xl bg-slate-50 p-4 text-sm">
+                        <div className="font-bold text-slate-900">
+                          {document.original_file_name || "-"}
+                        </div>
+                        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                          <Info label="Belge No" value={document.document_number || "-"} />
+                          <Info label="Belge Tarihi" value={document.document_date || "-"} />
+                          <Info
+                            label="Tutar"
+                            value={
+                              document.invoice_total === null || document.invoice_total === undefined
+                                ? "-"
+                                : formatMoney(document.invoice_total, document.currency || "TRY")
+                            }
+                          />
+                          <Info
+                            label="Doğrulama Durumu"
+                            value={document.verification_status || "-"}
+                          />
+                          {section.type === "fatura" && (
+                            <Info
+                              label="Onay Durumu"
+                              value={
+                                <span className={`rounded-full px-3 py-1 text-xs font-bold ${approvalClass}`}>
+                                  {approvalLabel}
+                                </span>
+                              }
+                            />
+                          )}
+                        </div>
+                        {section.type === "fatura" && (
+                          <div className="mt-4 rounded-xl border border-slate-200 bg-white p-3">
+                            <label className="block">
+                              <span className="mb-1 block text-xs font-bold text-slate-600">Onay Notu</span>
+                              <input
+                                value={approvalNotes[document.id] || ""}
+                                maxLength={250}
+                                disabled={Boolean(approvalUpdatingId)}
+                                onChange={(event) => onApprovalNoteChange(document.id, event.target.value)}
+                                className="w-full rounded-xl border border-slate-300 p-3 text-sm disabled:bg-slate-100"
+                                placeholder="Kısa not (isteğe bağlı)"
+                              />
+                            </label>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                disabled={Boolean(approvalUpdatingId)}
+                                onClick={() => onApproval(document, "onaylandi")}
+                                className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white disabled:bg-slate-300"
+                              >
+                                Farkı Kabul Et
+                              </button>
+                              <button
+                                type="button"
+                                disabled={Boolean(approvalUpdatingId)}
+                                onClick={() => onApproval(document, "reddedildi")}
+                                className="rounded-xl bg-red-600 px-4 py-2 text-xs font-bold text-white disabled:bg-slate-300"
+                              >
+                                Reddet
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
-                      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                        <Info label="Belge No" value={document.document_number || "-"} />
-                        <Info label="Belge Tarihi" value={document.document_date || "-"} />
-                        <Info
-                          label="Tutar"
-                          value={
-                            document.invoice_total === null || document.invoice_total === undefined
-                              ? "-"
-                              : formatMoney(document.invoice_total, document.currency || "TRY")
-                          }
-                        />
-                        <Info
-                          label="Doğrulama Durumu"
-                          value={document.verification_status || "-"}
-                        />
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
-              ) : (
+              ) : section.type !== "fatura" ? (
                 <div className="mt-3 rounded-xl bg-slate-50 p-4 text-sm text-slate-500">
                   Henüz belge yüklenmedi.
                 </div>
-              )}
+              ) : null}
             </div>
           );
         })}
