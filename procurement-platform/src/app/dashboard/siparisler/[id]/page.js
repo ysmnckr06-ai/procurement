@@ -1142,53 +1142,101 @@ function Info({ label, value }) {
 function ConnectionsPanel({ items }) {
   return (
     <div className="space-y-4">
-      {items.map((item, index) => (
-        <div
-          key={`${item.productCode}-${item.productName}-${index}`}
-          className="rounded-2xl border border-slate-200 p-4"
-        >
-          <div className="font-black text-slate-900">Ürün: {item.productName}</div>
-          <div className="mt-1 text-xs text-slate-500">{item.productCode || "-"}</div>
+      {items.map((item, index) => {
+        const allocatedQuantity = item.allocations.reduce(
+          (sum, allocation) => sum + Number(allocation.quantity || 0),
+          0,
+        );
+        const openQuantity = Math.max(Number(item.quantity || 0) - allocatedQuantity, 0);
+        const isOverAllocated = allocatedQuantity > Number(item.quantity || 0);
+        const hasOpenQuantity = allocatedQuantity < Number(item.quantity || 0);
 
-          {item.allocations.length > 0 ? (
-            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {item.allocations.map((allocation, allocationIndex) => (
-                <div
-                  key={`${allocation.type}-${allocation.projectId || "stock"}-${allocationIndex}`}
-                  className="rounded-xl bg-slate-50 p-4 text-sm"
-                >
-                  {allocation.type === "stock" ? (
-                    <>
-                      <div className="text-xs font-bold text-slate-500">Stok</div>
-                      <div className="mt-1 font-black text-slate-900">
-                        {Number(allocation.quantity || 0)} {item.unit || "adet"}
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <div className="text-xs font-bold text-slate-500">Proje</div>
-                      <div className="mt-1 font-black text-slate-900">
-                        {allocation.projectCode || allocation.projectName || "-"}
-                      </div>
-                      {allocation.projectCode && allocation.projectName && (
-                        <div className="mt-1 text-xs text-slate-500">{allocation.projectName}</div>
-                      )}
-                      <div className="mt-3 text-xs font-bold text-slate-500">Miktar</div>
-                      <div className="mt-1 font-black text-slate-900">
-                        {Number(allocation.quantity || 0)} {item.unit || "adet"}
-                      </div>
-                    </>
-                  )}
+        return (
+          <div
+            key={`${item.productCode}-${item.productName}-${index}`}
+            className="rounded-2xl border border-slate-200 p-4"
+          >
+            <div className="font-black text-slate-900">{item.productName}</div>
+            <div className="mt-1 text-xs text-slate-500">Ürün kodu: {item.productCode || "-"}</div>
+
+            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <div className="rounded-xl bg-slate-50 p-3 text-sm">
+                <div className="text-xs font-bold text-slate-500">Sipariş miktarı</div>
+                <div className="mt-1 font-black text-slate-900">
+                  {Number(item.quantity || 0)} {item.unit || "adet"}
                 </div>
-              ))}
+              </div>
+              <div className="rounded-xl bg-blue-50 p-3 text-sm">
+                <div className="text-xs font-bold text-blue-600">Dağıtılan miktar</div>
+                <div className="mt-1 font-black text-blue-900">
+                  {allocatedQuantity} {item.unit || "adet"}
+                </div>
+              </div>
+              <div className="rounded-xl bg-amber-50 p-3 text-sm">
+                <div className="text-xs font-bold text-amber-600">Açıkta kalan miktar</div>
+                <div className="mt-1 font-black text-amber-900">
+                  {openQuantity} {item.unit || "adet"}
+                </div>
+              </div>
             </div>
-          ) : (
-            <div className="mt-4 rounded-xl bg-slate-50 p-4 text-sm text-slate-500">
-              Bu kalem için bağlantı bulunmuyor.
-            </div>
-          )}
-        </div>
-      ))}
+
+            {item.allocations.length > 0 ? (
+              <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {item.allocations.map((allocation, allocationIndex) => (
+                  <div
+                    key={`${allocation.type}-${allocation.projectId || "stock"}-${allocationIndex}`}
+                    className="rounded-xl border border-slate-200 bg-white p-4 text-sm"
+                  >
+                    {allocation.type === "stock" ? (
+                      <>
+                        <div className="font-bold text-emerald-700">Stok için ayrıldı</div>
+                        <div className="mt-3 text-xs font-bold text-slate-500">Miktar</div>
+                        <div className="mt-1 font-black text-slate-900">
+                          {Number(allocation.quantity || 0)} {item.unit || "adet"}
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="text-xs font-bold text-slate-500">Proje kodu</div>
+                        <div className="mt-1 font-black text-slate-900">
+                          {allocation.projectCode || "-"}
+                        </div>
+                        <div className="mt-3 text-xs font-bold text-slate-500">Proje adı</div>
+                        <div className="mt-1 font-semibold text-slate-900">
+                          {allocation.projectName || "-"}
+                        </div>
+                        <div className="mt-3 text-xs font-bold text-slate-500">Proje kalemi</div>
+                        <div className="mt-1 font-semibold text-slate-900">
+                          {allocation.projectItemName || "-"}
+                        </div>
+                        <div className="mt-3 text-xs font-bold text-slate-500">Miktar</div>
+                        <div className="mt-1 font-black text-slate-900">
+                          {Number(allocation.quantity || 0)} {item.unit || "adet"}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="mt-4 rounded-xl bg-slate-50 p-4 text-sm text-slate-600">
+                Bu kalem henüz projeye veya stoğa dağıtılmamış.
+              </div>
+            )}
+
+            {isOverAllocated && (
+              <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-bold text-red-700">
+                Dağıtım miktarı sipariş miktarını aşıyor.
+              </div>
+            )}
+            {hasOpenQuantity && (
+              <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-bold text-amber-700">
+                Bu kalemde açıkta kalan miktar var.
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
