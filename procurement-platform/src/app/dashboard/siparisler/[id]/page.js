@@ -60,6 +60,59 @@ function formatDateTime(value) {
   }).format(date);
 }
 
+function createMockOCRResult(document) {
+  const documentNumber = document.document_number
+    || `MOCK-${String(document.id || "BELGE").slice(0, 8).toUpperCase()}`;
+  const documentDate = document.document_date || getToday();
+  const supplierName = document.supplier_name || "Örnek Tedarikçi";
+  const supplierTaxNumber = document.supplier_tax_number || "0000000000";
+  const invoiceTotal = Number(document.invoice_total || 0);
+  const currency = document.currency || "TRY";
+  const processedAt = new Date().toISOString();
+
+  return {
+    document_number: documentNumber,
+    document_date: documentDate,
+    supplier_name: supplierName,
+    supplier_tax_number: supplierTaxNumber,
+    invoice_total: invoiceTotal,
+    currency,
+    ocr_status: "completed",
+    ocr_text: [
+      `Belge No: ${documentNumber}`,
+      `Tarih: ${documentDate}`,
+      `Tedarikçi: ${supplierName}`,
+      `Vergi No: ${supplierTaxNumber}`,
+      `Toplam: ${invoiceTotal} ${currency}`,
+    ].join("\n"),
+    ocr_result: {
+      source: "mock",
+      document_number: documentNumber,
+      document_date: documentDate,
+      supplier_name: supplierName,
+      supplier_tax_number: supplierTaxNumber,
+      invoice_total: invoiceTotal,
+      currency,
+    },
+    ocr_confidence: 0.92,
+    ocr_processed_at: processedAt,
+  };
+}
+
+function getOCRDocumentItems(document) {
+  let ocrResult = document?.ocr_result;
+  if (typeof ocrResult === "string") {
+    try {
+      ocrResult = JSON.parse(ocrResult);
+    } catch (error) {
+      console.warn("OCR sonucu okunamadı:", error);
+      return [];
+    }
+  }
+
+  return Array.isArray(ocrResult?.items) ? ocrResult.items : [];
+}
+
 function readOrderMatchField(item, keys) {
   for (const key of keys) {
     const value = item?.[key];
@@ -317,6 +370,83 @@ function calculateDeliveryInvoiceConsistency(
   };
 }
 
+function calculateAutomaticReceiptSuggestions(
+  orderItems,
+  rawOrderItems,
+  receipts,
+  documentItems,
+  orderId,
+) {
+  const orderRows = (orderItems || []).map((item, index) => ({
+    item,
+    orderItemId: getOrderItemMatchId(rawOrderItems?.[index] || item, index),
+    fallbackOrderItemId: getOrderItemMatchId(item, index),
+    receiptQuantity: 0,
+  }));
+
+  (receipts || []).forEach((receipt) => {
+    const match = matchOrderItem(receipt, orderItems);
+    if (!match.matched || match.manualReviewRequired) return;
+    const orderRow = orderRows.find(
+      (row) => row.fallbackOrderItemId === match.orderItemId,
+    );
+    if (orderRow) {
+      orderRow.receiptQuantity += Number(
+        receipt.accepted_quantity ?? receipt.received_quantity ?? 0,
+      );
+    }
+  });
+
+  return (documentItems || [])
+    .filter(
+      (documentItem) =>
+        documentItem.match_status === "matched"
+        && documentItem.matched_order_item_key
+        && (!documentItem.matched_order_id || documentItem.matched_order_id === orderId),
+    )
+    .map((documentItem) => {
+      const orderRow = orderRows.find(
+        (row) =>
+          row.orderItemId === documentItem.matched_order_item_key
+          || row.fallbackOrderItemId === documentItem.matched_order_item_key,
+      );
+      if (!orderRow) return null;
+
+      const orderedQuantity = Number(orderRow.item.quantity || 0);
+      const deliveredQuantity = Math.max(
+        Number(orderRow.item.deliveredQuantity || 0),
+        orderRow.receiptQuantity,
+      );
+      const documentQuantity = Number(documentItem.quantity || 0);
+      const remainingQuantity = orderedQuantity - deliveredQuantity;
+      const suggestedQuantity = Math.max(
+        Math.min(documentQuantity, remainingQuantity),
+        0,
+      );
+      const status = remainingQuantity <= 0
+        ? "Teslim Tamamlanmış"
+        : documentQuantity > remainingQuantity
+          ? "Fazla Teslim"
+          : documentQuantity < remainingQuantity
+            ? "Kısmi Teslim"
+            : "Tam Uygun";
+
+      return {
+        id: documentItem.id,
+        productCode: orderRow.item.productCode || documentItem.product_code || "",
+        productName: orderRow.item.productName || documentItem.product_name || "",
+        unit: orderRow.item.unit || documentItem.unit || "adet",
+        orderedQuantity,
+        deliveredQuantity,
+        documentQuantity,
+        remainingQuantity,
+        suggestedQuantity,
+        status,
+      };
+    })
+    .filter(Boolean);
+}
+
 function normalizeItems(items) {
   return (items || []).map((item) => {
     const quantity = Number(item.quantity || 0);
@@ -441,10 +571,14 @@ export default function OrderDetailPage() {
   const [payments, setPayments] = useState([]);
   const [documents, setDocuments] = useState([]);
   const [documentItems, setDocumentItems] = useState([]);
+  const [documentItemMatchSummary, setDocumentItemMatchSummary] = useState(null);
   const [documentUploadOpen, setDocumentUploadOpen] = useState(false);
   const [documentUploading, setDocumentUploading] = useState(false);
   const [documentItemModalDocument, setDocumentItemModalDocument] = useState(null);
   const [documentItemSaving, setDocumentItemSaving] = useState(false);
+  const [ocrDocumentItemsCreatingId, setOcrDocumentItemsCreatingId] = useState(null);
+  const [ocrDocumentItemsResults, setOcrDocumentItemsResults] = useState({});
+  const [documentOcrProcessingId, setDocumentOcrProcessingId] = useState(null);
   const [documentItemForm, setDocumentItemForm] = useState({
     product_code: "",
     product_name: "",
@@ -483,9 +617,14 @@ export default function OrderDetailPage() {
     loadOrder();
   }, [id]);
 
-  async function loadOrderDocuments(orderId, userId) {
+  async function loadOrderDocuments(
+    orderId,
+    userId,
+    orderItemsForMatching = order?.items || [],
+  ) {
     setDocuments([]);
     setDocumentItems([]);
+    setDocumentItemMatchSummary(null);
 
     const { data: documentLinkRows, error: documentLinkError } = await supabase
       .from("document_links")
@@ -517,12 +656,82 @@ export default function OrderDetailPage() {
     }
 
     setDocuments(documentRows || []);
-    await loadDocumentItems(documentIds, userId);
+    await loadDocumentItems(documentIds, userId, orderItemsForMatching, orderId);
   }
 
-  async function loadDocumentItems(documentIds, userId) {
+  async function persistDocumentItemMatches(rows, orderItemsForMatching, currentOrderId, userId) {
+    const matchRows = (rows || []).map((documentItem) => {
+      const match = matchOrderItem(documentItem, orderItemsForMatching);
+      const payload = {
+        matched_order_item_key:
+          match.matched && !match.manualReviewRequired ? match.orderItemId : null,
+        match_status: !match.matched
+          ? "unmatched"
+          : match.manualReviewRequired
+            ? "review_required"
+            : "matched",
+        match_confidence: match.confidence,
+        match_reason: match.reason,
+        manual_review_required: match.manualReviewRequired,
+      };
+      const changed =
+        String(documentItem.matched_order_item_key || "")
+          !== String(payload.matched_order_item_key || "")
+        || String(documentItem.match_status || "") !== payload.match_status
+        || Number(documentItem.match_confidence || 0) !== payload.match_confidence
+        || String(documentItem.match_reason || "") !== payload.match_reason
+        || Boolean(documentItem.manual_review_required) !== payload.manual_review_required;
+
+      return { documentItem, payload, changed };
+    });
+    const changedRows = matchRows.filter((row) => row.changed);
+    const updateResults = await Promise.all(
+      changedRows.map(async ({ documentItem, payload }) => {
+        const { error } = await supabase
+          .from("document_items")
+          .update(payload)
+          .eq("id", documentItem.id)
+          .eq("user_id", userId);
+        return { id: documentItem.id, payload, error };
+      }),
+    );
+    const successfulUpdates = new Map(
+      updateResults
+        .filter((result) => !result.error)
+        .map((result) => [result.id, result.payload]),
+    );
+    const failedUpdates = updateResults.filter((result) => result.error);
+    failedUpdates.forEach((result) => {
+      console.error("Belge kalemi eşleşmesi kaydedilemedi:", result.error);
+    });
+
+    setDocumentItemMatchSummary({
+      totalCount: matchRows.length,
+      updatedCount: successfulUpdates.size,
+      failedCount: failedUpdates.length,
+      orderId: currentOrderId,
+    });
+
+    return matchRows.map(({ documentItem, payload }) => ({
+      ...documentItem,
+      ...(successfulUpdates.has(documentItem.id) ? payload : {}),
+    }));
+  }
+
+  async function loadDocumentItems(
+    documentIds,
+    userId,
+    orderItemsForMatching = order?.items || [],
+    currentOrderId = order?.id,
+  ) {
     if (!documentIds?.length) {
       setDocumentItems([]);
+      setDocumentItemMatchSummary({
+        totalCount: 0,
+        updatedCount: 0,
+        failedCount: 0,
+        orderId: currentOrderId,
+      });
       return;
     }
 
@@ -540,7 +749,13 @@ export default function OrderDetailPage() {
       return;
     }
 
-    setDocumentItems(data || []);
+    const matchedRows = await persistDocumentItemMatches(
+      data || [],
+      orderItemsForMatching,
+      currentOrderId,
+      userId,
+    );
+    setDocumentItems(matchedRows);
   }
 
   async function loadOrder() {
@@ -593,7 +808,7 @@ export default function OrderDetailPage() {
       .order("payment_date", { ascending: false });
     setPayments(paymentRows || []);
 
-    await loadOrderDocuments(data.id, user.id);
+    await loadOrderDocuments(data.id, user.id, data.items || []);
 
     const { data: settingsRows } = await supabase
       .from("company_settings")
@@ -1389,6 +1604,122 @@ export default function OrderDetailPage() {
     await loadOrderDocuments(order.id, user.id);
   }
 
+  async function analyzeDocumentWithMockOCR(document) {
+    if (!order || documentOcrProcessingId) return;
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      router.push("/login");
+      return;
+    }
+
+    setDocumentOcrProcessingId(document.id);
+    setMessage("");
+
+    const mockResult = createMockOCRResult(document);
+    const { error } = await supabase
+      .from("documents")
+      .update(mockResult)
+      .eq("id", document.id)
+      .eq("user_id", user.id);
+
+    if (error) {
+      console.error(error);
+      setMessage("OCR analizi kaydedilemedi.");
+      setDocumentOcrProcessingId(null);
+      return;
+    }
+
+    setMessage("Mock OCR analizi tamamlandı.");
+    await loadOrderDocuments(order.id, user.id);
+    setDocumentOcrProcessingId(null);
+  }
+
+  async function createDocumentItemsFromOCR(document) {
+    if (ocrDocumentItemsCreatingId) return;
+
+    const ocrItems = getOCRDocumentItems(document);
+    if (ocrItems.length === 0) {
+      setOcrDocumentItemsResults((prev) => ({
+        ...prev,
+        [document.id]: { count: 0, message: "OCR sonucunda belge satırı bulunamadı." },
+      }));
+      return;
+    }
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      router.push("/login");
+      return;
+    }
+
+    setOcrDocumentItemsCreatingId(document.id);
+    setMessage("");
+
+    const { count, error: countError } = await supabase
+      .from("document_items")
+      .select("id", { count: "exact", head: true })
+      .eq("document_id", document.id)
+      .eq("user_id", user.id);
+
+    if (countError) {
+      console.error(countError);
+      setMessage("Belge kalemi kontrolü yapılamadı.");
+      setOcrDocumentItemsCreatingId(null);
+      return;
+    }
+
+    if (Number(count || 0) > 0) {
+      setOcrDocumentItemsResults((prev) => ({
+        ...prev,
+        [document.id]: {
+          count: 0,
+          message: "Bu belge için daha önce belge kalemi oluşturulmuş.",
+        },
+      }));
+      setOcrDocumentItemsCreatingId(null);
+      return;
+    }
+
+    const rows = ocrItems.map((item, index) => ({
+      user_id: user.id,
+      document_id: document.id,
+      line_number: index + 1,
+      product_code: String(item.product_code || "").trim() || null,
+      product_name: String(item.product_name || "").trim() || null,
+      quantity: Number(item.quantity || 0),
+      unit: String(item.unit || "adet").trim() || "adet",
+      unit_price: Number(item.unit_price || 0),
+      total: Number(item.total || 0),
+      currency: item.currency || document.currency || "TRY",
+    }));
+    const { error: insertError } = await supabase.from("document_items").insert(rows);
+
+    if (insertError) {
+      console.error(insertError);
+      setMessage("OCR belge kalemleri oluşturulamadı.");
+      setOcrDocumentItemsCreatingId(null);
+      return;
+    }
+
+    setOcrDocumentItemsResults((prev) => ({
+      ...prev,
+      [document.id]: {
+        count: rows.length,
+        message: `${rows.length} belge kalemi oluşturuldu.`,
+      },
+    }));
+    setMessage(`${rows.length} OCR belge kalemi oluşturuldu.`);
+    await loadDocumentItems(documents.map((row) => row.id), user.id);
+    setOcrDocumentItemsCreatingId(null);
+  }
+
   function openDocumentItemModal(document) {
     setDocumentItemModalDocument(document);
     setDocumentItemForm({
@@ -1634,6 +1965,13 @@ export default function OrderDetailPage() {
           documentItems={documentItems}
         />
 
+        <AutomaticReceiptSuggestionsPanel
+          order={order}
+          items={items}
+          receipts={receipts}
+          documentItems={documentItems}
+        />
+
         <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="flex flex-wrap gap-2 border-b border-slate-100 px-5 pt-4">
             {[
@@ -1712,6 +2050,8 @@ export default function OrderDetailPage() {
                 documents={documents}
                 documentItems={documentItems}
                 orderItems={items}
+                rawOrderItems={order.items || []}
+                matchSummary={documentItemMatchSummary}
                 order={order}
                 companySettings={companySettings}
                 form={documentForm}
@@ -1719,6 +2059,9 @@ export default function OrderDetailPage() {
                 uploading={documentUploading}
                 approvalNotes={documentApprovalNotes}
                 approvalUpdatingId={documentApprovalUpdatingId}
+                ocrProcessingId={documentOcrProcessingId}
+                ocrItemsCreatingId={ocrDocumentItemsCreatingId}
+                ocrItemsResults={ocrDocumentItemsResults}
                 onToggleUpload={() => setDocumentUploadOpen((prev) => !prev)}
                 onFormChange={setDocumentForm}
                 onUpload={uploadDocument}
@@ -1726,6 +2069,8 @@ export default function OrderDetailPage() {
                   setDocumentApprovalNotes((prev) => ({ ...prev, [documentId]: value }))
                 }
                 onApproval={updateInvoiceApproval}
+                onAnalyzeOCR={analyzeDocumentWithMockOCR}
+                onCreateItemsFromOCR={createDocumentItemsFromOCR}
                 onAddDocumentItem={openDocumentItemModal}
               />
             )}
@@ -1861,6 +2206,106 @@ function DeliveryInvoiceConsistencyPanel({
             ))}
           </tbody>
         </table>
+      </div>
+    </div>
+  );
+}
+
+function ReceiptSuggestionTable({ rows, emptyMessage }) {
+  const statusClasses = {
+    "Tam Uygun": "bg-emerald-100 text-emerald-700",
+    "Kısmi Teslim": "bg-amber-100 text-amber-700",
+    "Fazla Teslim": "bg-red-100 text-red-700",
+    "Teslim Tamamlanmış": "bg-slate-200 text-slate-700",
+  };
+
+  if (rows.length === 0) {
+    return (
+      <div className="rounded-xl bg-slate-50 p-4 text-sm text-slate-500">
+        {emptyMessage}
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-x-auto rounded-xl border border-slate-200">
+      <table className="min-w-full text-left text-sm">
+        <thead className="bg-slate-100 text-xs font-bold uppercase text-slate-500">
+          <tr>
+            <th className="p-3">Ürün</th>
+            <th className="p-3 text-right">Sipariş</th>
+            <th className="p-3 text-right">Teslim Edilen</th>
+            <th className="p-3 text-right">Belgede Gelen</th>
+            <th className="p-3 text-right">Kalan</th>
+            <th className="p-3 text-right">Önerilen Teslim</th>
+            <th className="p-3">Durum</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {rows.map((row) => (
+            <tr key={row.id} className={row.status === "Fazla Teslim" ? "bg-red-50" : "bg-white"}>
+              <td className="p-3">
+                <div className="font-bold text-slate-900">{row.productName || "-"}</div>
+                <div className="mt-1 text-xs text-slate-500">
+                  {row.productCode || "-"} · {row.unit}
+                </div>
+              </td>
+              <td className="p-3 text-right font-semibold text-slate-700">{row.orderedQuantity}</td>
+              <td className="p-3 text-right font-semibold text-slate-700">{row.deliveredQuantity}</td>
+              <td className="p-3 text-right font-semibold text-slate-700">{row.documentQuantity}</td>
+              <td className="p-3 text-right font-semibold text-slate-700">{row.remainingQuantity}</td>
+              <td className="p-3 text-right font-black text-blue-700">{row.suggestedQuantity}</td>
+              <td className="p-3">
+                <span className={`inline-flex rounded-full px-3 py-1 text-xs font-bold ${statusClasses[row.status]}`}>
+                  {row.status}
+                </span>
+                {row.status === "Fazla Teslim" && (
+                  <div className="mt-2 text-xs font-bold text-red-700">
+                    Belge miktarı kalan sipariş miktarını aşıyor.
+                  </div>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function AutomaticReceiptSuggestionsPanel({ order, items, receipts, documentItems }) {
+  const suggestions = calculateAutomaticReceiptSuggestions(
+    items,
+    order.items || [],
+    receipts,
+    documentItems,
+    order.id,
+  );
+  const activeSuggestions = suggestions.filter(
+    (suggestion) => suggestion.status !== "Teslim Tamamlanmış",
+  );
+  const completedSuggestions = suggestions.filter(
+    (suggestion) => suggestion.status === "Teslim Tamamlanmış",
+  );
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <h2 className="text-lg font-bold text-slate-900">Otomatik Teslim Alma Önerileri</h2>
+      <p className="mt-1 text-sm text-slate-500">
+        Eşleşmiş belge kalemlerinden yalnızca öneri üretilir; teslim veya stok kaydı oluşturulmaz.
+      </p>
+      <div className="mt-4">
+        <ReceiptSuggestionTable
+          rows={activeSuggestions}
+          emptyMessage="Aktif teslim alma önerisi bulunmuyor."
+        />
+      </div>
+      <div className="mt-6">
+        <h3 className="mb-3 text-sm font-bold text-slate-900">Teslimi Tamamlanmış Kalemler</h3>
+        <ReceiptSuggestionTable
+          rows={completedSuggestions}
+          emptyMessage="Teslimi tamamlanmış eşleşmiş belge kalemi bulunmuyor."
+        />
       </div>
     </div>
   );
@@ -2130,11 +2575,18 @@ function InvoiceCheckPanel({ order, documents, companySettings }) {
   );
 }
 
-function DocumentItemsPanel({ document, items, orderItems, orderCurrency, onAdd }) {
+function DocumentItemsPanel({
+  document,
+  items,
+  orderItems,
+  rawOrderItems,
+  orderCurrency,
+  onAdd,
+}) {
   return (
     <div className="mt-4 rounded-xl border border-slate-200 bg-white p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h4 className="text-sm font-bold text-slate-900">Kalemler</h4>
+        <h4 className="text-sm font-bold text-slate-900">Belge Kalemleri</h4>
         <button
           type="button"
           onClick={() => onAdd(document)}
@@ -2157,11 +2609,12 @@ function DocumentItemsPanel({ document, items, orderItems, orderCurrency, onAdd 
                 <th className="p-2">Para Birimi</th>
                 <th className="p-2">Eşleşen Sipariş Kalemi</th>
                 <th className="p-2 text-right">Güven</th>
+                <th className="p-2">Eşleşme Durumu</th>
                 <th className="p-2">Sebep</th>
                 <th className="p-2 text-right">Sipariş Fiyatı</th>
                 <th className="p-2 text-right">Belge Fiyatı</th>
                 <th className="p-2 text-right">Fark %</th>
-                <th className="p-2">Durum</th>
+                <th className="p-2">Fiyat Durumu</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -2173,14 +2626,33 @@ function DocumentItemsPanel({ document, items, orderItems, orderCurrency, onAdd 
                 const unitPrice = Number(item.unit_price ?? 0);
                 const total = Number(item.total ?? quantity * unitPrice);
                 const currency = item.currency || document.currency || "TRY";
-                const matchResult = matchOrderItem(item, orderItems);
-                const matchedOrderItem = matchResult.matched
-                  ? orderItems.find(
+                const previewMatch = matchOrderItem(item, orderItems);
+                const persistedMatchIndex = item.matched_order_item_key
+                  ? rawOrderItems.findIndex(
                       (orderItem, orderIndex) =>
-                        getOrderItemMatchId(orderItem, orderIndex) === matchResult.orderItemId,
+                        getOrderItemMatchId(orderItem, orderIndex)
+                          === item.matched_order_item_key,
                     )
-                  : null;
-                const priceCheck = calculateItemPriceCheck(matchedOrderItem, item);
+                  : -1;
+                const previewMatchIndex = previewMatch.matched
+                  ? orderItems.findIndex(
+                      (orderItem, orderIndex) =>
+                        getOrderItemMatchId(orderItem, orderIndex) === previewMatch.orderItemId,
+                    )
+                  : -1;
+                const matchedOrderItem = persistedMatchIndex >= 0
+                  ? orderItems[persistedMatchIndex]
+                  : previewMatchIndex >= 0
+                    ? orderItems[previewMatchIndex]
+                    : null;
+                const matchStatus = item.match_status || "unmatched";
+                const matchConfidence = Number(item.match_confidence || 0);
+                const matchReason = item.match_reason || "unmatched";
+                const manualReviewRequired = Boolean(item.manual_review_required);
+                const priceCheck = calculateItemPriceCheck(
+                  matchStatus === "matched" ? matchedOrderItem : null,
+                  item,
+                );
                 const priceStatusDetails = {
                   exact: { label: "Tam Uyum", className: "bg-emerald-100 text-emerald-700" },
                   small: { label: "Küçük Fark", className: "bg-amber-100 text-amber-700" },
@@ -2207,17 +2679,18 @@ function DocumentItemsPanel({ document, items, orderItems, orderCurrency, onAdd 
                       {matchedOrderItem
                         ? `${matchedOrderItem.productCode || "-"} · ${matchedOrderItem.productName || "-"}`
                         : "Eşleşme yok"}
-                      {matchResult.manualReviewRequired && (
+                      {manualReviewRequired && (
                         <div className="mt-1 rounded-lg bg-amber-100 px-2 py-1 text-xs font-bold text-amber-800">
                           Manuel Kontrol Gerekli
                         </div>
                       )}
                     </td>
                     <td className="p-2 text-right font-black text-blue-700">
-                      {matchResult.confidence}
+                      {matchConfidence}
                     </td>
+                    <td className="p-2 font-semibold text-slate-700">{matchStatus}</td>
                     <td className="p-2 font-mono text-[11px] text-slate-600">
-                      {matchResult.reason}
+                      {matchReason}
                     </td>
                     <td className="p-2 text-right font-semibold text-slate-700">
                       {priceCheck.orderUnitPrice === null
@@ -2256,6 +2729,8 @@ function DocumentsPanel({
   documents,
   documentItems,
   orderItems,
+  rawOrderItems,
+  matchSummary,
   order,
   companySettings,
   form,
@@ -2263,11 +2738,16 @@ function DocumentsPanel({
   uploading,
   approvalNotes,
   approvalUpdatingId,
+  ocrProcessingId,
+  ocrItemsCreatingId,
+  ocrItemsResults,
   onToggleUpload,
   onFormChange,
   onUpload,
   onApprovalNoteChange,
   onApproval,
+  onAnalyzeOCR,
+  onCreateItemsFromOCR,
   onAddDocumentItem,
 }) {
   const sections = [
@@ -2292,6 +2772,13 @@ function DocumentsPanel({
           {uploadOpen ? "Formu Kapat" : "Belge Yükle"}
         </button>
       </div>
+
+      {matchSummary && (
+        <div className="rounded-xl border border-indigo-100 bg-indigo-50 p-3 text-sm font-semibold text-indigo-900">
+          Otomatik eşleştirme: {matchSummary.totalCount} kayıt kontrol edildi, {matchSummary.updatedCount} kayıt güncellendi
+          {matchSummary.failedCount > 0 ? `, ${matchSummary.failedCount} kayıt güncellenemedi` : ""}.
+        </div>
+      )}
 
       {uploadOpen && (
         <form onSubmit={onUpload} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
@@ -2384,6 +2871,10 @@ function DocumentsPanel({
                 <div className="mt-3 space-y-3">
                   {sectionDocuments.map((document) => {
                     const approvalStatus = document.approval_status || "bekliyor";
+                    const ocrItems = getOCRDocumentItems(document);
+                    const currentDocumentItems = documentItems.filter(
+                      (item) => item.document_id === document.id,
+                    );
                     const approvalClass = approvalStatus === "onaylandi"
                       ? "bg-emerald-100 text-emerald-700"
                       : approvalStatus === "reddedildi"
@@ -2396,8 +2887,18 @@ function DocumentsPanel({
                         : "Bekliyor";
                     return (
                       <div key={document.id} className="rounded-xl bg-slate-50 p-4 text-sm">
-                        <div className="font-bold text-slate-900">
-                          {document.original_file_name || "-"}
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="font-bold text-slate-900">
+                            {document.original_file_name || "-"}
+                          </div>
+                          <button
+                            type="button"
+                            disabled={Boolean(ocrProcessingId)}
+                            onClick={() => onAnalyzeOCR(document)}
+                            className="rounded-lg bg-violet-600 px-3 py-2 text-xs font-bold text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                          >
+                            {ocrProcessingId === document.id ? "Analiz Ediliyor..." : "OCR Analiz Et"}
+                          </button>
                         </div>
                         <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
                           <Info label="Belge No" value={document.document_number || "-"} />
@@ -2425,12 +2926,65 @@ function DocumentsPanel({
                             />
                           )}
                         </div>
+                        {(document.ocr_result || document.ocr_status === "completed") && (
+                          <div className="mt-4 rounded-xl border border-violet-200 bg-violet-50 p-4">
+                            <h4 className="font-bold text-violet-950">OCR Sonucu</h4>
+                            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                              <Info label="Belge No" value={document.document_number || "-"} />
+                              <Info label="Tarih" value={document.document_date || "-"} />
+                              <Info label="Tedarikçi" value={document.supplier_name || "-"} />
+                              <Info
+                                label="Toplam Tutar"
+                                value={
+                                  document.invoice_total === null || document.invoice_total === undefined
+                                    ? "-"
+                                    : formatMoney(document.invoice_total, document.currency || "TRY")
+                                }
+                              />
+                              <Info label="Para Birimi" value={document.currency || "-"} />
+                              <Info
+                                label="OCR Güven Skoru"
+                                value={
+                                  document.ocr_confidence === null || document.ocr_confidence === undefined
+                                    ? "-"
+                                    : `%${(Number(document.ocr_confidence) * 100).toLocaleString("tr-TR", { maximumFractionDigits: 1 })}`
+                                }
+                              />
+                            </div>
+                            {ocrItems.length > 0 && (
+                              <div className="mt-3 flex flex-wrap items-center gap-2">
+                                <button
+                                  type="button"
+                                  disabled={
+                                    Boolean(ocrItemsCreatingId)
+                                    || currentDocumentItems.length > 0
+                                  }
+                                  onClick={() => onCreateItemsFromOCR(document)}
+                                  className="rounded-lg bg-violet-600 px-3 py-2 text-xs font-bold text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                                >
+                                  {ocrItemsCreatingId === document.id
+                                    ? "Kalemler Oluşturuluyor..."
+                                    : `OCR Kalemlerini Oluştur (${ocrItems.length})`}
+                                </button>
+                                {currentDocumentItems.length > 0 && (
+                                  <span className="text-xs font-semibold text-violet-800">
+                                    Bu belge için belge kalemleri mevcut.
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                            {ocrItemsResults[document.id] && (
+                              <div className="mt-3 rounded-lg bg-white p-3 text-xs font-bold text-violet-800">
+                                {ocrItemsResults[document.id].message}
+                              </div>
+                            )}
+                          </div>
+                        )}
                         <DocumentItemsPanel
                           document={document}
-                          items={documentItems.filter(
-                            (item) => item.document_id === document.id,
-                          )}
+                          items={currentDocumentItems}
                           orderItems={orderItems}
+                          rawOrderItems={rawOrderItems}
                           orderCurrency={order.currency}
                           onAdd={onAddDocumentItem}
                         />
