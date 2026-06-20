@@ -126,6 +126,8 @@ function normalizeItems(items) {
       paymentTerm: item.paymentTerm || item.vade || "",
       deliveryTerm: item.deliveryTerm || item.termin || "",
       currency: item.currency || "TRY",
+      allocations: Array.isArray(item.allocations) ? item.allocations : [],
+    
     };
   });
 }
@@ -706,6 +708,18 @@ export default function OrdersPage() {
       paymentTerm: "",
       deliveryTerm: "",
       currency: projectCurrency,
+      allocations: [
+        {
+          type: "project",
+          projectId: selectedProject.id,
+          projectCode: selectedProject.project_code || "",
+          projectName: selectedProject.project_name || "",
+          projectItemId: item.id,
+          projectItemName: item.product_name || "",
+          quantity: item.addQuantity,
+          deliveredQuantity: 0,
+        },
+      ],
     }])[0]);
 
     setFormData({
