@@ -76,6 +76,7 @@ function normalizeItems(items) {
       unitPrice,
       total,
       paymentTerm: item.paymentTerm || "",
+      allocations: Array.isArray(item.allocations) ? item.allocations : [],
       status:
         deliveredQuantity >= quantity && quantity > 0
           ? "Tam Teslim"
@@ -1048,6 +1049,7 @@ export default function OrderDetailPage() {
           <div className="flex flex-wrap gap-2 border-b border-slate-100 px-5 pt-4">
             {[
               ["items", "Ürün Kalemleri"],
+              ["connections", "Bağlantılar"],
               ["delivery", "Teslimatlar"],
               ["receiving", "Depo Teslim Alma"],
               ["payment", "Ödemeler"],
@@ -1077,6 +1079,7 @@ export default function OrderDetailPage() {
                 onEditDelivery={() => setActiveTab("delivery")}
               />
             )}
+            {activeTab === "connections" && <ConnectionsPanel items={items} />}
             {activeTab === "delivery" && (
               <DeliveryPanel
                 items={items}
@@ -1132,6 +1135,60 @@ function Info({ label, value }) {
     <div className="rounded-xl bg-slate-50 p-4">
       <div className="text-xs font-semibold text-slate-500">{label}</div>
       <div className="mt-1 font-bold text-slate-900">{value || "-"}</div>
+    </div>
+  );
+}
+
+function ConnectionsPanel({ items }) {
+  return (
+    <div className="space-y-4">
+      {items.map((item, index) => (
+        <div
+          key={`${item.productCode}-${item.productName}-${index}`}
+          className="rounded-2xl border border-slate-200 p-4"
+        >
+          <div className="font-black text-slate-900">Ürün: {item.productName}</div>
+          <div className="mt-1 text-xs text-slate-500">{item.productCode || "-"}</div>
+
+          {item.allocations.length > 0 ? (
+            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {item.allocations.map((allocation, allocationIndex) => (
+                <div
+                  key={`${allocation.type}-${allocation.projectId || "stock"}-${allocationIndex}`}
+                  className="rounded-xl bg-slate-50 p-4 text-sm"
+                >
+                  {allocation.type === "stock" ? (
+                    <>
+                      <div className="text-xs font-bold text-slate-500">Stok</div>
+                      <div className="mt-1 font-black text-slate-900">
+                        {Number(allocation.quantity || 0)} {item.unit || "adet"}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="text-xs font-bold text-slate-500">Proje</div>
+                      <div className="mt-1 font-black text-slate-900">
+                        {allocation.projectCode || allocation.projectName || "-"}
+                      </div>
+                      {allocation.projectCode && allocation.projectName && (
+                        <div className="mt-1 text-xs text-slate-500">{allocation.projectName}</div>
+                      )}
+                      <div className="mt-3 text-xs font-bold text-slate-500">Miktar</div>
+                      <div className="mt-1 font-black text-slate-900">
+                        {Number(allocation.quantity || 0)} {item.unit || "adet"}
+                      </div>
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="mt-4 rounded-xl bg-slate-50 p-4 text-sm text-slate-500">
+              Bu kalem için bağlantı bulunmuyor.
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
