@@ -60,6 +60,263 @@ function formatDateTime(value) {
   }).format(date);
 }
 
+function readOrderMatchField(item, keys) {
+  for (const key of keys) {
+    const value = item?.[key];
+    if (value !== undefined && value !== null && String(value).trim()) {
+      return String(value).trim();
+    }
+  }
+  return "";
+}
+
+function normalizeMatchCode(value) {
+  return String(value || "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+}
+
+function normalizeMatchText(value) {
+  return String(value || "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("tr-TR")
+    .replace(/[^a-z0-9çğıöşü]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function descriptionSimilarity(left, right) {
+  const leftTokens = new Set(normalizeMatchText(left).split(" ").filter(Boolean));
+  const rightTokens = new Set(normalizeMatchText(right).split(" ").filter(Boolean));
+  if (leftTokens.size === 0 || rightTokens.size === 0) return 0;
+
+  const intersectionSize = [...leftTokens].filter((token) => rightTokens.has(token)).length;
+  const unionSize = new Set([...leftTokens, ...rightTokens]).size;
+  return unionSize > 0 ? intersectionSize / unionSize : 0;
+}
+
+function getOrderItemMatchId(orderItem, index) {
+  return orderItem.rowId
+    || orderItem.id
+    || orderItem.itemId
+    || `order-item-${index}`;
+}
+
+function matchOrderItem(sourceItem, orderItems = []) {
+  const sourceCode = readOrderMatchField(
+    sourceItem,
+    ["productCode", "product_code", "urunKodu", "code"],
+  );
+  const sourceName = readOrderMatchField(
+    sourceItem,
+    ["productName", "product_name", "urunAdi", "urunAciklamasi", "name"],
+  );
+  const sourceDescription = readOrderMatchField(
+    sourceItem,
+    ["description", "urunAciklamasi", "productName", "product_name", "name"],
+  );
+
+  const candidates = (orderItems || []).map((orderItem, index) => {
+    const candidateCode = readOrderMatchField(
+      orderItem,
+      ["productCode", "product_code", "urunKodu", "code"],
+    );
+    const candidateName = readOrderMatchField(
+      orderItem,
+      ["productName", "product_name", "urunAdi", "urunAciklamasi", "name"],
+    );
+    const candidateDescription = readOrderMatchField(
+      orderItem,
+      ["description", "urunAciklamasi", "productName", "product_name", "name"],
+    );
+    const orderItemId = getOrderItemMatchId(orderItem, index);
+
+    if (sourceCode && candidateCode && sourceCode === candidateCode) {
+      return { confidence: 100, orderItemId, reason: "product_code_exact" };
+    }
+    if (
+      sourceCode
+      && candidateCode
+      && normalizeMatchCode(sourceCode) === normalizeMatchCode(candidateCode)
+    ) {
+      return { confidence: 95, orderItemId, reason: "product_code_normalized" };
+    }
+    if (
+      sourceName
+      && candidateName
+      && normalizeMatchText(sourceName) === normalizeMatchText(candidateName)
+    ) {
+      return { confidence: 80, orderItemId, reason: "product_name_match" };
+    }
+    if (descriptionSimilarity(sourceDescription, candidateDescription) >= 0.6) {
+      return { confidence: 60, orderItemId, reason: "description_similarity" };
+    }
+
+    return { confidence: 0, orderItemId, reason: "unmatched" };
+  });
+  const highestConfidence = candidates.reduce(
+    (highest, candidate) => Math.max(highest, candidate.confidence),
+    0,
+  );
+
+  if (highestConfidence === 0) {
+    return {
+      matched: false,
+      confidence: 0,
+      orderItemId: null,
+      reason: "unmatched",
+      manualReviewRequired: false,
+    };
+  }
+
+  const bestCandidates = candidates.filter(
+    (candidate) => candidate.confidence === highestConfidence,
+  );
+  const selectedCandidate = bestCandidates[0];
+  const manualReviewRequired = bestCandidates.length > 1;
+
+  return {
+    matched: true,
+    confidence: selectedCandidate.confidence,
+    orderItemId: selectedCandidate.orderItemId,
+    reason: selectedCandidate.reason,
+    manualReviewRequired,
+    warning: manualReviewRequired ? "multiple_candidates_same_confidence" : null,
+    ambiguousOrderItemIds: manualReviewRequired
+      ? bestCandidates.map((candidate) => candidate.orderItemId)
+      : [],
+  };
+}
+
+function calculateItemPriceCheck(orderItem, documentItem) {
+  if (!orderItem) {
+    return {
+      orderUnitPrice: null,
+      documentUnitPrice: Number(documentItem?.unit_price ?? 0),
+      priceDifference: null,
+      priceDifferencePercent: null,
+      status: "unavailable",
+    };
+  }
+
+  const orderUnitPrice = Number(orderItem.unitPrice ?? orderItem.unit_price ?? 0);
+  const documentUnitPrice = Number(documentItem?.unit_price ?? 0);
+  const priceDifference = documentUnitPrice - orderUnitPrice;
+  const priceDifferencePercent = orderUnitPrice !== 0
+    ? (priceDifference / orderUnitPrice) * 100
+    : documentUnitPrice === 0
+      ? 0
+      : null;
+  const absoluteDifferencePercent = Math.abs(priceDifferencePercent ?? Infinity);
+  const status = absoluteDifferencePercent <= 3
+    ? "exact"
+    : absoluteDifferencePercent <= 10
+      ? "small"
+      : absoluteDifferencePercent < 25
+        ? "high"
+        : "critical";
+
+  return {
+    orderUnitPrice,
+    documentUnitPrice,
+    priceDifference,
+    priceDifferencePercent,
+    status,
+  };
+}
+
+function calculateDeliveryInvoiceConsistency(
+  orderItems,
+  rawOrderItems,
+  receipts,
+  documents,
+  documentItems,
+  orderId,
+) {
+  const rows = (orderItems || []).map((item, index) => ({
+    orderItemId: getOrderItemMatchId(rawOrderItems?.[index] || item, index),
+    fallbackOrderItemId: getOrderItemMatchId(item, index),
+    productCode: item.productCode || "",
+    productName: item.productName || "",
+    unit: item.unit || "adet",
+    orderedQuantity: Number(item.quantity || 0),
+    deliveredQuantity: Number(item.deliveredQuantity || 0),
+    receiptQuantity: 0,
+    invoicedQuantity: 0,
+  }));
+
+  (receipts || []).forEach((receipt) => {
+    const match = matchOrderItem(receipt, orderItems);
+    if (!match.matched || match.manualReviewRequired) return;
+    const row = rows.find((candidate) => candidate.fallbackOrderItemId === match.orderItemId);
+    if (!row) return;
+    row.receiptQuantity += Number(
+      receipt.accepted_quantity ?? receipt.received_quantity ?? 0,
+    );
+  });
+
+  const invoiceDocumentIds = new Set(
+    (documents || [])
+      .filter(
+        (document) =>
+          document.document_type === "fatura"
+          && document.approval_status !== "reddedildi",
+      )
+      .map((document) => document.id),
+  );
+
+  (documentItems || []).forEach((documentItem) => {
+    if (!invoiceDocumentIds.has(documentItem.document_id)) return;
+    if (documentItem.matched_order_id && documentItem.matched_order_id !== orderId) return;
+
+    let row = documentItem.matched_order_item_key
+      ? rows.find(
+          (candidate) =>
+            candidate.orderItemId === documentItem.matched_order_item_key
+            || candidate.fallbackOrderItemId === documentItem.matched_order_item_key,
+        )
+      : null;
+
+    if (!row) {
+      const match = matchOrderItem(documentItem, orderItems);
+      if (!match.matched || match.manualReviewRequired) return;
+      row = rows.find((candidate) => candidate.fallbackOrderItemId === match.orderItemId);
+    }
+
+    if (row) row.invoicedQuantity += Number(documentItem.quantity || 0);
+  });
+
+  const epsilon = 0.0001;
+  rows.forEach((row) => {
+    row.deliveredQuantity = Math.max(row.deliveredQuantity, row.receiptQuantity);
+
+    if (row.deliveredQuantity > row.orderedQuantity + epsilon) {
+      row.status = "Fazla Teslim";
+    } else if (
+      row.invoicedQuantity > row.orderedQuantity + epsilon
+      || row.invoicedQuantity > row.deliveredQuantity + epsilon
+    ) {
+      row.status = "Fazla Fatura";
+    } else if (row.deliveredQuantity < row.orderedQuantity - epsilon) {
+      row.status = "Kısmi Teslim";
+    } else if (row.invoicedQuantity < row.orderedQuantity - epsilon) {
+      row.status = "Kısmi Fatura";
+    } else {
+      row.status = "Tam Uyum";
+    }
+  });
+
+  return {
+    rows,
+    totalOrdered: rows.reduce((sum, row) => sum + row.orderedQuantity, 0),
+    totalDelivered: rows.reduce((sum, row) => sum + row.deliveredQuantity, 0),
+    totalInvoiced: rows.reduce((sum, row) => sum + row.invoicedQuantity, 0),
+  };
+}
+
 function normalizeItems(items) {
   return (items || []).map((item) => {
     const quantity = Number(item.quantity || 0);
@@ -183,8 +440,20 @@ export default function OrderDetailPage() {
   const [receipts, setReceipts] = useState([]);
   const [payments, setPayments] = useState([]);
   const [documents, setDocuments] = useState([]);
+  const [documentItems, setDocumentItems] = useState([]);
   const [documentUploadOpen, setDocumentUploadOpen] = useState(false);
   const [documentUploading, setDocumentUploading] = useState(false);
+  const [documentItemModalDocument, setDocumentItemModalDocument] = useState(null);
+  const [documentItemSaving, setDocumentItemSaving] = useState(false);
+  const [documentItemForm, setDocumentItemForm] = useState({
+    product_code: "",
+    product_name: "",
+    quantity: "",
+    unit: "adet",
+    unit_price: "",
+    total: "",
+    currency: "TRY",
+  });
   const [documentApprovalNotes, setDocumentApprovalNotes] = useState({});
   const [documentApprovalUpdatingId, setDocumentApprovalUpdatingId] = useState(null);
   const [documentForm, setDocumentForm] = useState({
@@ -216,6 +485,7 @@ export default function OrderDetailPage() {
 
   async function loadOrderDocuments(orderId, userId) {
     setDocuments([]);
+    setDocumentItems([]);
 
     const { data: documentLinkRows, error: documentLinkError } = await supabase
       .from("document_links")
@@ -247,6 +517,30 @@ export default function OrderDetailPage() {
     }
 
     setDocuments(documentRows || []);
+    await loadDocumentItems(documentIds, userId);
+  }
+
+  async function loadDocumentItems(documentIds, userId) {
+    if (!documentIds?.length) {
+      setDocumentItems([]);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("document_items")
+      .select("*")
+      .in("document_id", documentIds)
+      .eq("user_id", userId)
+      .order("line_number", { ascending: true, nullsFirst: false })
+      .order("created_at", { ascending: true });
+
+    if (error) {
+      console.error("Belge kalemleri yüklenemedi:", error);
+      setDocumentItems([]);
+      return;
+    }
+
+    setDocumentItems(data || []);
   }
 
   async function loadOrder() {
@@ -338,11 +632,19 @@ export default function OrderDetailPage() {
     [order],
   );
   const totals = useMemo(() => {
-    const totalQuantity = items.reduce((sum, item) => sum + item.quantity, 0);
+    const totalQuantity = items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
     const deliveredQuantity = items.reduce(
-      (sum, item) => sum + item.deliveredQuantity,
+      (sum, item) => sum + Number(item.deliveredQuantity || 0),
       0,
     );
+    const allCompleted = items.length > 0 && items.every(
+      (item) => Number(item.deliveredQuantity || 0) >= Number(item.quantity || 0),
+    );
+    const deliveryStatus = deliveredQuantity <= 0
+      ? "Bekliyor"
+      : allCompleted
+        ? "Tam Teslim"
+        : "Kısmen Teslim";
 
     return {
       totalQuantity,
@@ -350,8 +652,9 @@ export default function OrderDetailPage() {
       remainingQuantity: Math.max(totalQuantity - deliveredQuantity, 0),
       progress:
         totalQuantity > 0
-          ? Math.round((deliveredQuantity / totalQuantity) * 100)
+          ? Math.min(Math.round((deliveredQuantity / totalQuantity) * 100), 100)
           : 0,
+      deliveryStatus,
     };
   }, [items]);
   const paymentTotals = useMemo(() => {
@@ -1086,6 +1389,82 @@ export default function OrderDetailPage() {
     await loadOrderDocuments(order.id, user.id);
   }
 
+  function openDocumentItemModal(document) {
+    setDocumentItemModalDocument(document);
+    setDocumentItemForm({
+      product_code: "",
+      product_name: "",
+      quantity: "",
+      unit: "adet",
+      unit_price: "",
+      total: "",
+      currency: document.currency || "TRY",
+    });
+  }
+
+  function closeDocumentItemModal() {
+    if (documentItemSaving) return;
+    setDocumentItemModalDocument(null);
+  }
+
+  async function saveDocumentItem(event) {
+    event.preventDefault();
+    if (!documentItemModalDocument || documentItemSaving) return;
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      router.push("/login");
+      return;
+    }
+
+    setDocumentItemSaving(true);
+    setMessage("");
+
+    const quantity = documentItemForm.quantity === ""
+      ? null
+      : Number(documentItemForm.quantity);
+    const unitPrice = documentItemForm.unit_price === ""
+      ? null
+      : Number(documentItemForm.unit_price);
+    const total = documentItemForm.total === ""
+      ? quantity !== null && unitPrice !== null
+        ? quantity * unitPrice
+        : null
+      : Number(documentItemForm.total);
+    const currentLineNumbers = documentItems
+      .filter((item) => item.document_id === documentItemModalDocument.id)
+      .map((item) => Number(item.line_number || 0));
+    const lineNumber = Math.max(0, ...currentLineNumbers) + 1;
+
+    const { error } = await supabase.from("document_items").insert({
+      user_id: user.id,
+      document_id: documentItemModalDocument.id,
+      line_number: lineNumber,
+      product_code: documentItemForm.product_code.trim() || null,
+      product_name: documentItemForm.product_name.trim() || null,
+      quantity,
+      unit: documentItemForm.unit.trim() || "adet",
+      unit_price: unitPrice,
+      total,
+      currency: documentItemForm.currency || "TRY",
+    });
+
+    if (error) {
+      console.error(error);
+      setMessage("Belge kalemi kaydedilemedi.");
+      setDocumentItemSaving(false);
+      return;
+    }
+
+    setDocumentItemSaving(false);
+    setDocumentItemModalDocument(null);
+    setMessage("Belge kalemi eklendi.");
+    await loadDocumentItems(documents.map((document) => document.id), user.id);
+  }
+
   if (!order) {
     return (
       <div className="min-h-screen bg-slate-100 p-8">
@@ -1245,6 +1624,16 @@ export default function OrderDetailPage() {
           </div>
         </div>
 
+        <DeliveryStatusPanel totals={totals} />
+
+        <DeliveryInvoiceConsistencyPanel
+          order={order}
+          items={items}
+          receipts={receipts}
+          documents={documents}
+          documentItems={documentItems}
+        />
+
         <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="flex flex-wrap gap-2 border-b border-slate-100 px-5 pt-4">
             {[
@@ -1321,6 +1710,8 @@ export default function OrderDetailPage() {
             {activeTab === "documents" && (
               <DocumentsPanel
                 documents={documents}
+                documentItems={documentItems}
+                orderItems={items}
                 order={order}
                 companySettings={companySettings}
                 form={documentForm}
@@ -1335,6 +1726,7 @@ export default function OrderDetailPage() {
                   setDocumentApprovalNotes((prev) => ({ ...prev, [documentId]: value }))
                 }
                 onApproval={updateInvoiceApproval}
+                onAddDocumentItem={openDocumentItemModal}
               />
             )}
             {activeTab === "history" && <HistoryPanel rows={historyRows} />}
@@ -1345,6 +1737,16 @@ export default function OrderDetailPage() {
             )}
           </div>
         </div>
+        {documentItemModalDocument && (
+          <DocumentItemModal
+            document={documentItemModalDocument}
+            form={documentItemForm}
+            saving={documentItemSaving}
+            onFormChange={setDocumentItemForm}
+            onClose={closeDocumentItemModal}
+            onSave={saveDocumentItem}
+          />
+        )}
       </div>
     </div>
   );
@@ -1355,6 +1757,111 @@ function Info({ label, value }) {
     <div className="rounded-xl bg-slate-50 p-4">
       <div className="text-xs font-semibold text-slate-500">{label}</div>
       <div className="mt-1 font-bold text-slate-900">{value || "-"}</div>
+    </div>
+  );
+}
+
+function DeliveryStatusPanel({ totals }) {
+  const statusClass = totals.deliveryStatus === "Tam Teslim"
+    ? "bg-emerald-100 text-emerald-700"
+    : totals.deliveryStatus === "Kısmen Teslim"
+      ? "bg-amber-100 text-amber-700"
+      : "bg-slate-100 text-slate-700";
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-lg font-bold text-slate-900">Teslimat Durumu</h2>
+        <span className={`rounded-full px-3 py-1 text-xs font-bold ${statusClass}`}>
+          {totals.deliveryStatus}
+        </span>
+      </div>
+      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <Info label="Toplam Sipariş Miktarı" value={totals.totalQuantity} />
+        <Info label="Teslim Edilen Miktar" value={totals.deliveredQuantity} />
+        <Info label="Kalan Miktar" value={totals.remainingQuantity} />
+        <Info label="Tamamlanma Yüzdesi" value={`%${totals.progress}`} />
+      </div>
+      <div className="mt-4 h-3 rounded-full bg-slate-100">
+        <div
+          className="h-3 rounded-full bg-emerald-500 transition-all"
+          style={{ width: `${totals.progress}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function DeliveryInvoiceConsistencyPanel({
+  order,
+  items,
+  receipts,
+  documents,
+  documentItems,
+}) {
+  const summary = calculateDeliveryInvoiceConsistency(
+    items,
+    order.items || [],
+    receipts,
+    documents,
+    documentItems,
+    order.id,
+  );
+  const statusClasses = {
+    "Tam Uyum": "bg-emerald-100 text-emerald-700",
+    "Kısmi Teslim": "bg-amber-100 text-amber-700",
+    "Kısmi Fatura": "bg-yellow-100 text-yellow-700",
+    "Fazla Fatura": "bg-red-100 text-red-700",
+    "Fazla Teslim": "bg-rose-100 text-rose-700",
+  };
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <h2 className="text-lg font-bold text-slate-900">Teslimat ve Fatura Kontrolü</h2>
+      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <Info label="Toplam Sipariş" value={summary.totalOrdered} />
+        <Info label="Toplam Teslim" value={summary.totalDelivered} />
+        <Info label="Toplam Faturalanan" value={summary.totalInvoiced} />
+      </div>
+      <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200">
+        <table className="min-w-full text-left text-sm">
+          <thead className="bg-slate-100 text-xs font-bold uppercase text-slate-500">
+            <tr>
+              <th className="p-3">Sipariş Kalemi</th>
+              <th className="p-3 text-right">Sipariş</th>
+              <th className="p-3 text-right">Teslim</th>
+              <th className="p-3 text-right">Faturalanan</th>
+              <th className="p-3">Durum</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {summary.rows.map((row) => (
+              <tr key={row.fallbackOrderItemId}>
+                <td className="p-3">
+                  <div className="font-bold text-slate-900">{row.productName || "-"}</div>
+                  <div className="mt-1 text-xs text-slate-500">
+                    {row.productCode || "-"} · {row.unit}
+                  </div>
+                </td>
+                <td className="p-3 text-right font-semibold text-slate-700">
+                  {row.orderedQuantity}
+                </td>
+                <td className="p-3 text-right font-semibold text-slate-700">
+                  {row.deliveredQuantity}
+                </td>
+                <td className="p-3 text-right font-semibold text-slate-700">
+                  {row.invoicedQuantity}
+                </td>
+                <td className="p-3">
+                  <span className={`inline-flex rounded-full px-3 py-1 text-xs font-bold ${statusClasses[row.status]}`}>
+                    {row.status}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -1468,6 +1975,7 @@ function calculateInvoiceOrderCheck(order, documents, companySettings) {
   const baseCurrency = getBaseCurrency(companySettings);
   const totalsByCurrency = new Map();
   let invoiceBaseTotal = 0;
+  let pendingInvoiceBaseTotal = 0;
   let hasMissingInvoiceData = false;
   let hasCurrencyMismatch = false;
 
@@ -1483,11 +1991,7 @@ function calculateInvoiceOrderCheck(order, documents, companySettings) {
     }
 
     const invoiceTotal = Number(invoice.invoice_total || 0);
-    totalsByCurrency.set(
-      invoiceCurrency,
-      Number(totalsByCurrency.get(invoiceCurrency) || 0) + invoiceTotal,
-    );
-    invoiceBaseTotal += calculateBaseAmount(
+    const invoiceBaseAmount = calculateBaseAmount(
       invoiceTotal,
       invoiceCurrency,
       companySettings,
@@ -1495,6 +1999,20 @@ function calculateInvoiceOrderCheck(order, documents, companySettings) {
     if (invoiceCurrency !== String(order.currency || "").toUpperCase()) {
       hasCurrencyMismatch = true;
     }
+
+    const approvalStatus = String(invoice.approval_status || "").trim().toLowerCase();
+    if (approvalStatus === "reddedildi") return;
+    if (approvalStatus === "bekliyor") {
+      pendingInvoiceBaseTotal += invoiceBaseAmount;
+      return;
+    }
+    if (approvalStatus && approvalStatus !== "onaylandi") return;
+
+    totalsByCurrency.set(
+      invoiceCurrency,
+      Number(totalsByCurrency.get(invoiceCurrency) || 0) + invoiceTotal,
+    );
+    invoiceBaseTotal += invoiceBaseAmount;
   });
 
   const orderBaseTotal = Number(
@@ -1508,26 +2026,33 @@ function calculateInvoiceOrderCheck(order, documents, companySettings) {
       ),
   );
   const difference = invoiceBaseTotal - orderBaseTotal;
+  const remainingInvoiceAmount = Math.max(orderBaseTotal - invoiceBaseTotal, 0);
+  const excessInvoiceAmount = Math.max(invoiceBaseTotal - orderBaseTotal, 0);
   const differencePercent = orderBaseTotal > 0
     ? (Math.abs(difference) / orderBaseTotal) * 100
     : invoiceBaseTotal === 0
       ? 0
       : 100;
-  const status = differencePercent <= 1
-    ? "matched"
-    : differencePercent <= 5
-      ? "review"
-      : "approval";
+  const billingStatus = invoices.length === 0
+    ? "none"
+    : excessInvoiceAmount > 0.01
+      ? "over"
+      : remainingInvoiceAmount > 0.01
+        ? "partial"
+        : "full";
 
   return {
     invoices,
     baseCurrency,
     totalsByCurrency: Array.from(totalsByCurrency, ([currency, total]) => ({ currency, total })),
     invoiceBaseTotal,
+    pendingInvoiceBaseTotal,
     orderBaseTotal,
     difference,
     differencePercent,
-    status,
+    remainingInvoiceAmount,
+    excessInvoiceAmount,
+    billingStatus,
     hasMissingInvoiceData,
     hasCurrencyMismatch,
   };
@@ -1535,20 +2060,12 @@ function calculateInvoiceOrderCheck(order, documents, companySettings) {
 
 function InvoiceCheckPanel({ order, documents, companySettings }) {
   const check = calculateInvoiceOrderCheck(order, documents, companySettings);
-
-  if (check.invoices.length === 0) {
-    return (
-      <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
-        Henüz fatura yüklenmedi.
-      </div>
-    );
-  }
-
   const statusDetails = {
-    matched: { label: "Uyumlu", className: "bg-emerald-100 text-emerald-700" },
-    review: { label: "Kontrol önerilir", className: "bg-amber-100 text-amber-700" },
-    approval: { label: "Manuel onay gerekli", className: "bg-red-100 text-red-700" },
-  }[check.status];
+    none: { label: "Fatura yok", className: "bg-slate-200 text-slate-700" },
+    partial: { label: "Kısmi faturalandı", className: "bg-amber-100 text-amber-700" },
+    full: { label: "Tam faturalandı", className: "bg-emerald-100 text-emerald-700" },
+    over: { label: "Fazla faturalandı", className: "bg-red-100 text-red-700" },
+  }[check.billingStatus];
 
   return (
     <div className="mt-3 rounded-xl border border-blue-100 bg-blue-50 p-4">
@@ -1560,7 +2077,7 @@ function InvoiceCheckPanel({ order, documents, companySettings }) {
       </div>
       <div className="mt-4 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
         <Info
-          label="Toplam Fatura"
+          label="Fatura Toplamı"
           value={
             check.totalsByCurrency.length > 0
               ? check.totalsByCurrency.map((row) => formatMoney(row.total, row.currency)).join(" · ")
@@ -1569,19 +2086,36 @@ function InvoiceCheckPanel({ order, documents, companySettings }) {
         />
         <Info label="Sipariş Toplamı" value={formatMoney(order.total_amount, order.currency)} />
         <Info
-          label={`Fatura Baz Tutarı (${check.baseCurrency})`}
+          label={`Fatura Toplamı (${check.baseCurrency})`}
           value={formatMoney(check.invoiceBaseTotal, check.baseCurrency)}
         />
         <Info
-          label={`Sipariş Baz Tutarı (${check.baseCurrency})`}
+          label={`Sipariş Toplamı (${check.baseCurrency})`}
           value={formatMoney(check.orderBaseTotal, check.baseCurrency)}
         />
-        <Info label="Baz Para Farkı" value={formatMoney(check.difference, check.baseCurrency)} />
+        <Info
+          label="Kalan Faturalandırılacak Tutar"
+          value={formatMoney(check.remainingInvoiceAmount, check.baseCurrency)}
+        />
+        <Info
+          label="Fazla Fatura Farkı"
+          value={formatMoney(check.excessInvoiceAmount, check.baseCurrency)}
+        />
+        <Info label="Baz Para Net Farkı" value={formatMoney(check.difference, check.baseCurrency)} />
         <Info
           label="Fark Oranı"
           value={`%${check.differencePercent.toLocaleString("tr-TR", { maximumFractionDigits: 2 })}`}
         />
+        <Info
+          label="Onay Bekleyen Faturalar Toplamı"
+          value={formatMoney(check.pendingInvoiceBaseTotal, check.baseCurrency)}
+        />
       </div>
+      {check.billingStatus === "none" && (
+        <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-500">
+          Henüz fatura yüklenmedi.
+        </div>
+      )}
       {check.hasCurrencyMismatch && (
         <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-800">
           Fatura ve sipariş para birimi farklı. Kur kontrolü manuel doğrulanmalıdır.
@@ -1596,8 +2130,132 @@ function InvoiceCheckPanel({ order, documents, companySettings }) {
   );
 }
 
+function DocumentItemsPanel({ document, items, orderItems, orderCurrency, onAdd }) {
+  return (
+    <div className="mt-4 rounded-xl border border-slate-200 bg-white p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h4 className="text-sm font-bold text-slate-900">Kalemler</h4>
+        <button
+          type="button"
+          onClick={() => onAdd(document)}
+          className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white hover:bg-blue-700"
+        >
+          Kalem Ekle
+        </button>
+      </div>
+      {items.length > 0 ? (
+        <div className="mt-3 overflow-x-auto rounded-lg border border-slate-200">
+          <table className="min-w-full text-left text-xs">
+            <thead className="bg-slate-100 font-bold uppercase text-slate-500">
+              <tr>
+                <th className="p-2">Ürün Kodu</th>
+                <th className="p-2">Ürün Adı</th>
+                <th className="p-2 text-right">Miktar</th>
+                <th className="p-2">Birim</th>
+                <th className="p-2 text-right">Birim Fiyat</th>
+                <th className="p-2 text-right">Toplam</th>
+                <th className="p-2">Para Birimi</th>
+                <th className="p-2">Eşleşen Sipariş Kalemi</th>
+                <th className="p-2 text-right">Güven</th>
+                <th className="p-2">Sebep</th>
+                <th className="p-2 text-right">Sipariş Fiyatı</th>
+                <th className="p-2 text-right">Belge Fiyatı</th>
+                <th className="p-2 text-right">Fark %</th>
+                <th className="p-2">Durum</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {items.map((item) => {
+                const productCode = item.product_code || "";
+                const productName = item.product_name || "";
+                const quantity = Number(item.quantity ?? 0);
+                const unit = item.unit || "adet";
+                const unitPrice = Number(item.unit_price ?? 0);
+                const total = Number(item.total ?? quantity * unitPrice);
+                const currency = item.currency || document.currency || "TRY";
+                const matchResult = matchOrderItem(item, orderItems);
+                const matchedOrderItem = matchResult.matched
+                  ? orderItems.find(
+                      (orderItem, orderIndex) =>
+                        getOrderItemMatchId(orderItem, orderIndex) === matchResult.orderItemId,
+                    )
+                  : null;
+                const priceCheck = calculateItemPriceCheck(matchedOrderItem, item);
+                const priceStatusDetails = {
+                  exact: { label: "Tam Uyum", className: "bg-emerald-100 text-emerald-700" },
+                  small: { label: "Küçük Fark", className: "bg-amber-100 text-amber-700" },
+                  high: { label: "Yüksek Fark", className: "bg-orange-100 text-orange-700" },
+                  critical: { label: "Kritik Fark", className: "bg-red-100 text-red-700" },
+                  unavailable: { label: "Eşleşme Yok", className: "bg-slate-100 text-slate-600" },
+                }[priceCheck.status];
+                const orderItemCurrency = matchedOrderItem?.currency || orderCurrency || "TRY";
+
+                return (
+                  <tr key={item.id}>
+                    <td className="p-2 font-bold text-slate-800">{productCode || "-"}</td>
+                    <td className="p-2 text-slate-700">{productName || "-"}</td>
+                    <td className="p-2 text-right font-semibold text-slate-800">{quantity}</td>
+                    <td className="p-2 text-slate-700">{unit}</td>
+                    <td className="p-2 text-right text-slate-700">
+                      {formatMoney(unitPrice, currency)}
+                    </td>
+                    <td className="p-2 text-right font-bold text-slate-900">
+                      {formatMoney(total, currency)}
+                    </td>
+                    <td className="p-2 font-semibold text-slate-700">{currency}</td>
+                    <td className="min-w-[220px] p-2 text-slate-700">
+                      {matchedOrderItem
+                        ? `${matchedOrderItem.productCode || "-"} · ${matchedOrderItem.productName || "-"}`
+                        : "Eşleşme yok"}
+                      {matchResult.manualReviewRequired && (
+                        <div className="mt-1 rounded-lg bg-amber-100 px-2 py-1 text-xs font-bold text-amber-800">
+                          Manuel Kontrol Gerekli
+                        </div>
+                      )}
+                    </td>
+                    <td className="p-2 text-right font-black text-blue-700">
+                      {matchResult.confidence}
+                    </td>
+                    <td className="p-2 font-mono text-[11px] text-slate-600">
+                      {matchResult.reason}
+                    </td>
+                    <td className="p-2 text-right font-semibold text-slate-700">
+                      {priceCheck.orderUnitPrice === null
+                        ? "-"
+                        : formatMoney(priceCheck.orderUnitPrice, orderItemCurrency)}
+                    </td>
+                    <td className="p-2 text-right font-semibold text-slate-700">
+                      {formatMoney(priceCheck.documentUnitPrice, currency)}
+                    </td>
+                    <td className="p-2 text-right font-black text-slate-900">
+                      {priceCheck.priceDifferencePercent === null
+                        ? "-"
+                        : `%${priceCheck.priceDifferencePercent.toLocaleString("tr-TR", { maximumFractionDigits: 2 })}`}
+                    </td>
+                    <td className="p-2">
+                      <span className={`inline-flex rounded-full px-2 py-1 text-[11px] font-bold ${priceStatusDetails.className}`}>
+                        {priceStatusDetails.label}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="mt-3 rounded-lg bg-slate-50 p-3 text-sm text-slate-500">
+          Henüz belge kalemi eklenmemiş.
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DocumentsPanel({
   documents,
+  documentItems,
+  orderItems,
   order,
   companySettings,
   form,
@@ -1610,6 +2268,7 @@ function DocumentsPanel({
   onUpload,
   onApprovalNoteChange,
   onApproval,
+  onAddDocumentItem,
 }) {
   const sections = [
     { type: "teklif", label: "Teklif Belgeleri" },
@@ -1766,6 +2425,15 @@ function DocumentsPanel({
                             />
                           )}
                         </div>
+                        <DocumentItemsPanel
+                          document={document}
+                          items={documentItems.filter(
+                            (item) => item.document_id === document.id,
+                          )}
+                          orderItems={orderItems}
+                          orderCurrency={order.currency}
+                          onAdd={onAddDocumentItem}
+                        />
                         {section.type === "fatura" && (
                           <div className="mt-4 rounded-xl border border-slate-200 bg-white p-3">
                             <label className="block">
@@ -1812,6 +2480,105 @@ function DocumentsPanel({
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function DocumentItemModal({ document, form, saving, onFormChange, onClose, onSave }) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="document-item-modal-title"
+    >
+      <form
+        onSubmit={onSave}
+        className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl"
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 id="document-item-modal-title" className="text-xl font-black text-slate-900">
+              Belge Kalemi Ekle
+            </h2>
+            <p className="mt-1 text-sm text-slate-500">{document.original_file_name || "Belge"}</p>
+          </div>
+          <button
+            type="button"
+            disabled={saving}
+            onClick={onClose}
+            className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-bold text-slate-600 disabled:bg-slate-100"
+          >
+            Kapat
+          </button>
+        </div>
+
+        <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">
+          <DocumentInput
+            label="Ürün Kodu"
+            value={form.product_code}
+            onChange={(value) => onFormChange((prev) => ({ ...prev, product_code: value }))}
+          />
+          <DocumentInput
+            label="Ürün Adı"
+            value={form.product_name}
+            onChange={(value) => onFormChange((prev) => ({ ...prev, product_name: value }))}
+          />
+          <DocumentInput
+            label="Miktar"
+            type="number"
+            value={form.quantity}
+            onChange={(value) => onFormChange((prev) => ({ ...prev, quantity: value }))}
+          />
+          <DocumentInput
+            label="Birim"
+            value={form.unit}
+            onChange={(value) => onFormChange((prev) => ({ ...prev, unit: value }))}
+          />
+          <DocumentInput
+            label="Birim Fiyat"
+            type="number"
+            value={form.unit_price}
+            onChange={(value) => onFormChange((prev) => ({ ...prev, unit_price: value }))}
+          />
+          <DocumentInput
+            label="Toplam"
+            type="number"
+            value={form.total}
+            onChange={(value) => onFormChange((prev) => ({ ...prev, total: value }))}
+          />
+          <label className="block md:col-span-2">
+            <span className="mb-1 block text-xs font-bold text-slate-600">Para Birimi</span>
+            <select
+              value={form.currency}
+              onChange={(event) => onFormChange((prev) => ({ ...prev, currency: event.target.value }))}
+              className="w-full rounded-xl border border-slate-300 bg-white p-3 text-sm"
+            >
+              {currencyOptions.map((currency) => (
+                <option key={currency} value={currency}>{currency}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <div className="mt-6 flex justify-end gap-2">
+          <button
+            type="button"
+            disabled={saving}
+            onClick={onClose}
+            className="rounded-xl border border-slate-300 px-5 py-3 text-sm font-bold text-slate-700 disabled:bg-slate-100"
+          >
+            İptal
+          </button>
+          <button
+            type="submit"
+            disabled={saving}
+            className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300"
+          >
+            {saving ? "Kaydediliyor..." : "Kaydet"}
+          </button>
+        </div>
+      </form>
     </div>
   );
 }
@@ -2081,24 +2848,56 @@ function ReceivingPanel({
       <div className="space-y-4">
         {items.map((item, index) => {
           const input = inputs[index] || {};
-          const remaining = Math.max(Number(item.quantity || 0) - Number(item.deliveredQuantity || 0), 0);
-          const received = Number(input.receivedQuantity ?? remaining);
+          const orderedQuantity = Number(item.quantity || 0);
+          const deliveredQuantity = Number(item.deliveredQuantity || 0);
+          const remainingQuantity = orderedQuantity - deliveredQuantity;
+          const remainingToReceive = Math.max(remainingQuantity, 0);
+          const isOverDelivered = deliveredQuantity > orderedQuantity;
+          const itemStatus = deliveredQuantity <= 0
+            ? "Bekliyor"
+            : deliveredQuantity >= orderedQuantity
+              ? "Tam Teslim"
+              : "Kısmen Teslim";
+          const rowClass = isOverDelivered
+            ? "border-red-300 bg-red-50"
+            : remainingQuantity <= 0
+              ? "border-emerald-300 bg-emerald-50"
+              : "border-amber-300 bg-amber-50";
+          const received = Number(input.receivedQuantity ?? remainingToReceive);
           const defective = Number(input.defectiveQuantity || 0);
-          const missing = Math.max(Number(item.quantity || 0) - received, 0);
-          const excess = Math.max(received - Number(item.quantity || 0), 0);
+          const missing = Math.max(orderedQuantity - received, 0);
+          const excess = Math.max(received - orderedQuantity, 0);
 
           return (
-            <div key={`${item.productCode}-${item.productName}-${index}`} className="rounded-2xl border border-slate-200 p-4">
+            <div key={`${item.productCode}-${item.productName}-${index}`} className={`rounded-2xl border p-4 ${rowClass}`}>
               <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1.3fr_repeat(4,110px)] lg:items-center">
                 <div>
                   <div className="font-black text-slate-900">{item.productName}</div>
-                  <div className="mt-1 text-xs text-slate-500">
-                    {item.productCode || "-"} · Sipariş: {item.quantity} {item.unit || "adet"} · Önceki teslim: {item.deliveredQuantity}
+                  <div className="mt-1 text-xs text-slate-500">{item.productCode || "-"}</div>
+                  <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+                    <div className="rounded-lg bg-white p-2">
+                      <div className="font-bold text-slate-500">Sipariş</div>
+                      <div className="mt-1 font-black text-slate-900">{orderedQuantity}</div>
+                    </div>
+                    <div className="rounded-lg bg-white p-2">
+                      <div className="font-bold text-slate-500">Teslim</div>
+                      <div className="mt-1 font-black text-slate-900">{deliveredQuantity}</div>
+                    </div>
+                    <div className="rounded-lg bg-white p-2">
+                      <div className="font-bold text-slate-500">Kalan</div>
+                      <div className="mt-1 font-black text-slate-900">{remainingQuantity}</div>
+                    </div>
                   </div>
+                  <div className="mt-2 text-xs font-bold text-slate-700">{itemStatus}</div>
+                  {isOverDelivered && (
+                    <div className="mt-2 rounded-lg bg-red-100 p-2 text-xs font-bold text-red-700">
+                      Teslim edilen miktar sipariş miktarını aşıyor
+                    </div>
+                  )}
                 </div>
                 <NumberInput
                   label="Gelen"
-                  value={input.receivedQuantity ?? remaining}
+                  value={input.receivedQuantity ?? remainingToReceive}
                   disabled={disabled}
                   onChange={(value) => onInputChange(index, "receivedQuantity", value)}
                 />
