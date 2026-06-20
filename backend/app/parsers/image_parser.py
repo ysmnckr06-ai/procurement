@@ -6,13 +6,54 @@ import numpy as np
 import re
 import os
 
-pytesseract.pytesseract.tesseract_cmd = (
-    r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-)
+configured_tesseract_cmd = os.getenv("TESSERACT_CMD")
+windows_tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+
+if configured_tesseract_cmd:
+    pytesseract.pytesseract.tesseract_cmd = configured_tesseract_cmd
+elif os.path.exists(windows_tesseract_cmd):
+    pytesseract.pytesseract.tesseract_cmd = windows_tesseract_cmd
 
 def read_image_unicode(image_path):
     data = np.fromfile(image_path, dtype=np.uint8)
     return cv2.imdecode(data, cv2.IMREAD_COLOR)
+
+
+def ocr_image_text(img):
+    if img is None:
+        return ""
+
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if len(img.shape) == 3 else img
+    gray = cv2.resize(gray, None, fx=2, fy=2)
+    gray = cv2.GaussianBlur(gray, (3, 3), 0)
+    _, threshold = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    adaptive = cv2.adaptiveThreshold(
+        gray,
+        255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY,
+        31,
+        2,
+    )
+    candidates = []
+
+    for image in [gray, threshold, adaptive]:
+        for config in ["--psm 6", "--psm 11"]:
+            try:
+                text_value = pytesseract.image_to_string(image, lang="tur", config=config)
+            except Exception:
+                try:
+                    text_value = pytesseract.image_to_string(image, lang="eng", config=config)
+                except Exception:
+                    text_value = ""
+            if text_value.strip():
+                candidates.append(text_value.strip())
+
+    return max(candidates, key=len) if candidates else ""
+
+
+def extract_image_ocr_text(image_path):
+    return ocr_image_text(read_image_unicode(image_path))
 
 def detect_company_from_image(img, fallback, file_name):
     if fallback:

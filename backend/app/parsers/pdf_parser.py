@@ -2,10 +2,20 @@ import re
 import os
 import unicodedata
 
+import cv2
+import numpy as np
+
+from app.parsers.image_parser import ocr_image_text
+
 try:
     import pdfplumber
 except Exception:
     pdfplumber = None
+
+try:
+    from pdf2image import convert_from_path
+except Exception:
+    convert_from_path = None
 
 
 def clean_text(val):
@@ -15,6 +25,48 @@ def clean_text(val):
     if text.lower() in ["nan", "none", "null"]:
         return ""
     return re.sub(r"\s+", " ", text)
+
+
+def extract_pdf_ocr_text(file_path):
+    if pdfplumber is None:
+        raise RuntimeError("PDF okuma kütüphanesi yüklenemedi: pdfplumber")
+
+    extracted_parts = []
+    with pdfplumber.open(file_path) as pdf:
+        for page in pdf.pages:
+            page_text = page.extract_text() or ""
+            if page_text.strip():
+                extracted_parts.append(page_text.strip())
+
+            for table in page.extract_tables() or []:
+                for row in table or []:
+                    row_text = " | ".join(
+                        clean_text(cell) for cell in (row or []) if clean_text(cell)
+                    )
+                    if row_text:
+                        extracted_parts.append(row_text)
+
+    pdf_text = "\n".join(extracted_parts).strip()
+    if pdf_text:
+        return pdf_text, "pdfplumber"
+
+    if convert_from_path is None:
+        raise RuntimeError("Taranmış PDF dönüşümü için pdf2image yüklenemedi")
+
+    page_texts = []
+    try:
+        pages = convert_from_path(file_path, dpi=300)
+    except Exception as error:
+        raise RuntimeError(f"Taranmış PDF görüntüye çevrilemedi: {error}") from error
+
+    for page in pages:
+        rgb_image = np.array(page)
+        bgr_image = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR)
+        text_value = ocr_image_text(bgr_image)
+        if text_value.strip():
+            page_texts.append(text_value.strip())
+
+    return "\n".join(page_texts).strip(), "pdf2image-tesseract"
 
 def normalize_tr(val):
     text = str(val or "").lower()

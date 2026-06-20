@@ -27,10 +27,11 @@ from datetime import datetime
 from fastapi import FastAPI, UploadFile, File, Form, Header, HTTPException, Body
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.concurrency import run_in_threadpool
 
 from app.parsers.excel_parser import parse_excel, parse_excel_with_audit
-from app.parsers.pdf_parser import parse_pdf, parse_pdf_with_audit
-from app.parsers.image_parser import parse_image
+from app.parsers.pdf_parser import parse_pdf, parse_pdf_with_audit, extract_pdf_ocr_text
+from app.parsers.image_parser import parse_image, extract_image_ocr_text
 from app.parsers.request_parser import parse_request_file
 
 from app.services.matcher import match_offers_to_requests, group_rows
@@ -594,6 +595,114 @@ def detect_file_type(filename: str) -> str:
 
     return "unknown"
 
+
+def parse_ocr_date(value: str):
+    raw_value = str(value or "").strip()
+    for date_format in ["%d.%m.%Y", "%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d"]:
+        try:
+            return datetime.strptime(raw_value, date_format).date().isoformat()
+        except ValueError:
+            continue
+    return None
+
+
+def parse_ocr_amount(value: str):
+    raw_value = re.sub(r"\s+", "", str(value or ""))
+    raw_value = re.sub(r"[^0-9,.-]", "", raw_value)
+    if not raw_value:
+        return None
+
+    if "," in raw_value and "." in raw_value:
+        if raw_value.rfind(",") > raw_value.rfind("."):
+            raw_value = raw_value.replace(".", "").replace(",", ".")
+        else:
+            raw_value = raw_value.replace(",", "")
+    elif "," in raw_value:
+        decimal_length = len(raw_value.rsplit(",", 1)[-1])
+        raw_value = raw_value.replace(".", "")
+        raw_value = raw_value.replace(",", "." if decimal_length <= 2 else "")
+    elif "." in raw_value:
+        decimal_length = len(raw_value.rsplit(".", 1)[-1])
+        if decimal_length > 2:
+            raw_value = raw_value.replace(".", "")
+
+    try:
+        return float(raw_value)
+    except ValueError:
+        return None
+
+
+def normalize_ocr_currency(value: str):
+    currency = str(value or "").upper().strip()
+    if currency in ["$", "USD"]:
+        return "USD"
+    if currency in ["€", "EUR"]:
+        return "EUR"
+    if currency in ["£", "GBP"]:
+        return "GBP"
+    return "TRY"
+
+
+def extract_order_document_metadata(ocr_text: str):
+    text_value = str(ocr_text or "")
+    document_number = None
+    document_date = None
+    invoice_total = None
+    currency = "TRY"
+
+    number_match = re.search(
+        r"(?:fatura|irsaliye|belge|invoice|document|seri)\s*"
+        r"(?:no|numarasi|numarası|number|#)?\s*[:\-]?\s*"
+        r"([A-Z0-9][A-Z0-9./\-_]{2,})",
+        text_value,
+        re.IGNORECASE,
+    )
+    if number_match:
+        document_number = number_match.group(1).strip()
+
+    date_match = re.search(
+        r"(?:tarih|date)\s*[:\-]?\s*"
+        r"(\d{1,2}[./-]\d{1,2}[./-]\d{4}|\d{4}-\d{1,2}-\d{1,2})",
+        text_value,
+        re.IGNORECASE,
+    )
+    if not date_match:
+        date_match = re.search(
+            r"\b(\d{1,2}[./-]\d{1,2}[./-]\d{4}|\d{4}-\d{1,2}-\d{1,2})\b",
+            text_value,
+        )
+    if date_match:
+        document_date = parse_ocr_date(date_match.group(1))
+
+    total_matches = list(re.finditer(
+        r"(?:genel\s+toplam|ödenecek\s+tutar|odenecek\s+tutar|"
+        r"fatura\s+toplamı|fatura\s+toplami|grand\s+total|toplam)\s*[:\-]?\s*"
+        r"(?P<prefix>TRY|TL|USD|EUR|GBP|₺|\$|€|£)?\s*"
+        r"(?P<amount>\d[\d\s.,]*\d|\d)\s*"
+        r"(?P<suffix>TRY|TL|USD|EUR|GBP|₺|\$|€|£)?",
+        text_value,
+        re.IGNORECASE,
+    ))
+    total_match = total_matches[-1] if total_matches else None
+    if total_match:
+        invoice_total = parse_ocr_amount(total_match.group("amount"))
+        currency = normalize_ocr_currency(
+            total_match.group("prefix") or total_match.group("suffix") or "TRY"
+        )
+    else:
+        currency_match = re.search(r"\b(TRY|TL|USD|EUR|GBP)\b|[₺$€£]", text_value)
+        if currency_match:
+            currency = normalize_ocr_currency(currency_match.group(0))
+
+    return {
+        "document_number": document_number,
+        "document_date": document_date,
+        "supplier_name": None,
+        "supplier_tax_number": None,
+        "invoice_total": invoice_total,
+        "currency": currency,
+    }
+
 MAX_UPLOAD_FILES = 15
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024
 ALLOWED_UPLOAD_EXTENSIONS = {".pdf", ".xlsx", ".xls", ".xlsm", ".xlsb", ".csv", ".ods", ".png", ".jpg", ".jpeg", ".webp"}
@@ -670,6 +779,65 @@ def find_merge_key(merged: dict, kod_key: str, aciklama_key: str, birim_key: str
 @app.get("/")
 def root():
     return {"status": "ok", "message": "Procurement backend is running"}
+
+
+@app.post("/order-documents/ocr")
+async def analyze_order_document_ocr(
+    file: UploadFile = File(...),
+    authorization: str = Header(None),
+):
+    verify_user_token(authorization)
+    save_path = None
+
+    try:
+        save_path, original_name, upload_error = await save_upload_file(file)
+        if upload_error:
+            raise HTTPException(status_code=400, detail=upload_error)
+
+        extension = os.path.splitext(original_name)[1].lower()
+        if extension not in {".pdf", ".jpg", ".jpeg", ".png"}:
+            raise HTTPException(
+                status_code=400,
+                detail="Sipariş belgesi OCR için yalnızca PDF, JPG ve PNG desteklenir.",
+            )
+
+        file_type = detect_file_type(original_name)
+        if file_type == "pdf":
+            ocr_text, _engine = await run_in_threadpool(extract_pdf_ocr_text, save_path)
+        elif file_type == "image":
+            ocr_text = await run_in_threadpool(extract_image_ocr_text, save_path)
+        else:
+            raise HTTPException(status_code=400, detail="Desteklenmeyen belge türü.")
+
+        if not str(ocr_text or "").strip():
+            raise HTTPException(
+                status_code=422,
+                detail="Belgeden okunabilir metin çıkarılamadı.",
+            )
+
+        metadata = extract_order_document_metadata(ocr_text)
+        return {
+            "source": "tesseract-pdfplumber",
+            "document_type": "unknown",
+            **metadata,
+            "ocr_text": ocr_text,
+            "ocr_confidence": None,
+            "items": [],
+        }
+    except HTTPException:
+        raise
+    except Exception as error:
+        print("ORDER DOCUMENT OCR ERROR:", str(error))
+        raise HTTPException(
+            status_code=422,
+            detail=f"Belge OCR analizi başarısız: {str(error)}",
+        ) from error
+    finally:
+        if save_path and os.path.exists(save_path):
+            try:
+                os.remove(save_path)
+            except OSError:
+                pass
 
 
 @app.post("/suggest-main-products")

@@ -561,6 +561,7 @@ function buildStatusHistory(order, entry) {
 export default function OrderDetailPage() {
   const params = useParams();
   const router = useRouter();
+  const API_URL = process.env.NEXT_PUBLIC_API_URL;
   const id = params.id;
   const [order, setOrder] = useState(null);
   const [activeTab, setActiveTab] = useState("items");
@@ -1638,6 +1639,91 @@ export default function OrderDetailPage() {
     setDocumentOcrProcessingId(null);
   }
 
+  async function analyzeDocumentWithBackendOCR(document) {
+    if (!order || documentOcrProcessingId) return;
+    if (!API_URL) {
+      setMessage("OCR backend adresi tanımlı değil.");
+      return;
+    }
+
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (!session?.access_token) {
+      router.push("/login");
+      return;
+    }
+
+    setDocumentOcrProcessingId(document.id);
+    setMessage("");
+
+    try {
+      const bucketName = document.storage_bucket || "order-documents";
+      const { data: fileBlob, error: downloadError } = await supabase.storage
+        .from(bucketName)
+        .download(document.storage_path);
+
+      if (downloadError || !fileBlob) {
+        throw new Error(downloadError?.message || "Belge dosyası indirilemedi.");
+      }
+
+      const formData = new FormData();
+      formData.append(
+        "file",
+        fileBlob,
+        document.original_file_name || "order-document",
+      );
+      const response = await fetch(`${API_URL}/order-documents/ocr`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: formData,
+      });
+      const ocrResult = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(ocrResult.detail || "Backend OCR analizi başarısız.");
+      }
+
+      const updatePayload = {
+        document_number: ocrResult.document_number || document.document_number || null,
+        document_date: ocrResult.document_date || document.document_date || null,
+        supplier_name: ocrResult.supplier_name || document.supplier_name || null,
+        supplier_tax_number:
+          ocrResult.supplier_tax_number || document.supplier_tax_number || null,
+        invoice_total:
+          ocrResult.invoice_total === null || ocrResult.invoice_total === undefined
+            ? document.invoice_total ?? null
+            : Number(ocrResult.invoice_total),
+        currency: ocrResult.currency || document.currency || "TRY",
+        ocr_status: "completed",
+        ocr_text: ocrResult.ocr_text || "",
+        ocr_result: ocrResult,
+        ocr_confidence: ocrResult.ocr_confidence ?? null,
+        ocr_processed_at: new Date().toISOString(),
+      };
+      const { error: updateError } = await supabase
+        .from("documents")
+        .update(updatePayload)
+        .eq("id", document.id)
+        .eq("user_id", session.user.id);
+
+      if (updateError) {
+        throw new Error(updateError.message || "OCR sonucu kaydedilemedi.");
+      }
+
+      setMessage("Backend OCR analizi tamamlandı.");
+      await loadOrderDocuments(order.id, session.user.id);
+    } catch (error) {
+      console.error(error);
+      setMessage(error.message || "Backend OCR analizi başarısız.");
+    } finally {
+      setDocumentOcrProcessingId(null);
+    }
+  }
+
   async function createDocumentItemsFromOCR(document) {
     if (ocrDocumentItemsCreatingId) return;
 
@@ -2069,7 +2155,7 @@ export default function OrderDetailPage() {
                   setDocumentApprovalNotes((prev) => ({ ...prev, [documentId]: value }))
                 }
                 onApproval={updateInvoiceApproval}
-                onAnalyzeOCR={analyzeDocumentWithMockOCR}
+                onAnalyzeOCR={analyzeDocumentWithBackendOCR}
                 onCreateItemsFromOCR={createDocumentItemsFromOCR}
                 onAddDocumentItem={openDocumentItemModal}
               />
