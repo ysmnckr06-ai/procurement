@@ -182,6 +182,18 @@ export default function OrderDetailPage() {
   const [receiptInputs, setReceiptInputs] = useState({});
   const [receipts, setReceipts] = useState([]);
   const [payments, setPayments] = useState([]);
+  const [documents, setDocuments] = useState([]);
+  const [documentUploadOpen, setDocumentUploadOpen] = useState(false);
+  const [documentUploading, setDocumentUploading] = useState(false);
+  const [documentForm, setDocumentForm] = useState({
+    document_type: "diger",
+    document_number: "",
+    document_date: "",
+    supplier_name: "",
+    invoice_total: "",
+    currency: "TRY",
+    file: null,
+  });
   const [paymentForm, setPaymentForm] = useState({
     amount: "",
     currency: "TRY",
@@ -199,6 +211,41 @@ export default function OrderDetailPage() {
   useEffect(() => {
     loadOrder();
   }, [id]);
+
+  async function loadOrderDocuments(orderId, userId) {
+    setDocuments([]);
+
+    const { data: documentLinkRows, error: documentLinkError } = await supabase
+      .from("document_links")
+      .select("document_id")
+      .eq("order_id", orderId)
+      .eq("user_id", userId);
+
+    if (documentLinkError) {
+      console.error("Sipariş belge bağlantıları yüklenemedi:", documentLinkError);
+      return;
+    }
+
+    const documentIds = Array.from(
+      new Set((documentLinkRows || []).map((link) => link.document_id).filter(Boolean)),
+    );
+
+    if (documentIds.length === 0) return;
+
+    const { data: documentRows, error: documentError } = await supabase
+      .from("documents")
+      .select("*")
+      .in("id", documentIds)
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false });
+
+    if (documentError) {
+      console.error("Sipariş belgeleri yüklenemedi:", documentError);
+      return;
+    }
+
+    setDocuments(documentRows || []);
+  }
 
   async function loadOrder() {
     const {
@@ -232,6 +279,7 @@ export default function OrderDetailPage() {
     setEditableStatus(data.status === "Teslim Edildi" ? "Tam Teslim" : data.status || "Taslak");
     setDeliveryInputs({});
     setReceiptInputs({});
+    setDocuments([]);
 
     const { data: receiptRows } = await supabase
       .from("order_receipts")
@@ -248,6 +296,8 @@ export default function OrderDetailPage() {
       .eq("user_id", user.id)
       .order("payment_date", { ascending: false });
     setPayments(paymentRows || []);
+
+    await loadOrderDocuments(data.id, user.id);
 
     const { data: settingsRows } = await supabase
       .from("company_settings")
@@ -886,6 +936,106 @@ export default function OrderDetailPage() {
     await loadOrder();
   }
 
+  async function uploadDocument(event) {
+    event.preventDefault();
+    if (!order || documentUploading) return;
+
+    const file = documentForm.file;
+    if (!file) {
+      setMessage("Yüklenecek belge dosyasını seçin.");
+      return;
+    }
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      router.push("/login");
+      return;
+    }
+
+    setDocumentUploading(true);
+    setMessage("");
+
+    const safeFileName = String(file.name || "belge")
+      .replace(/[^a-zA-Z0-9._-]/g, "-")
+      .replace(/-+/g, "-");
+    const fileId = typeof crypto !== "undefined" && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const storagePath = `${user.id}/${order.id}/${fileId}-${safeFileName}`;
+    const { error: uploadError } = await supabase.storage
+      .from("order-documents")
+      .upload(storagePath, file, {
+        cacheControl: "3600",
+        contentType: file.type || undefined,
+        upsert: false,
+      });
+
+    if (uploadError) {
+      console.error(uploadError);
+      setMessage("Belge dosyası yüklenemedi.");
+      setDocumentUploading(false);
+      return;
+    }
+
+    const { data: documentData, error: documentError } = await supabase
+      .from("documents")
+      .insert({
+        user_id: user.id,
+        document_type: documentForm.document_type,
+        original_file_name: file.name,
+        storage_bucket: "order-documents",
+        storage_path: storagePath,
+        mime_type: file.type || null,
+        file_size: file.size || null,
+        document_number: documentForm.document_number.trim() || null,
+        document_date: documentForm.document_date || null,
+        supplier_name: documentForm.supplier_name.trim() || null,
+        invoice_total: documentForm.invoice_total === ""
+          ? null
+          : Number(documentForm.invoice_total),
+        currency: documentForm.currency || "TRY",
+      })
+      .select("*")
+      .single();
+
+    if (documentError) {
+      console.error(documentError);
+      setMessage("Belge bilgileri kaydedilemedi.");
+      setDocumentUploading(false);
+      return;
+    }
+
+    const { error: linkError } = await supabase.from("document_links").insert({
+      document_id: documentData.id,
+      order_id: order.id,
+      user_id: user.id,
+    });
+
+    if (linkError) {
+      console.error(linkError);
+      setMessage("Belge kaydedildi ancak sipariş bağlantısı oluşturulamadı.");
+      setDocumentUploading(false);
+      return;
+    }
+
+    setDocumentForm({
+      document_type: "diger",
+      document_number: "",
+      document_date: "",
+      supplier_name: "",
+      invoice_total: "",
+      currency: "TRY",
+      file: null,
+    });
+    setDocumentUploadOpen(false);
+    setDocumentUploading(false);
+    setMessage("Belge siparişe yüklendi.");
+    await loadOrderDocuments(order.id, user.id);
+  }
+
   if (!order) {
     return (
       <div className="min-h-screen bg-slate-100 p-8">
@@ -1053,6 +1203,7 @@ export default function OrderDetailPage() {
               ["delivery", "Teslimatlar"],
               ["receiving", "Depo Teslim Alma"],
               ["payment", "Ödemeler"],
+              ["documents", "Belgeler"],
               ["history", "Tarihçe"],
               ["notes", "Notlar"],
             ].map(([key, label]) => (
@@ -1115,6 +1266,17 @@ export default function OrderDetailPage() {
                 form={paymentForm}
                 onFormChange={setPaymentForm}
                 onSave={savePayment}
+              />
+            )}
+            {activeTab === "documents" && (
+              <DocumentsPanel
+                documents={documents}
+                form={documentForm}
+                uploadOpen={documentUploadOpen}
+                uploading={documentUploading}
+                onToggleUpload={() => setDocumentUploadOpen((prev) => !prev)}
+                onFormChange={setDocumentForm}
+                onUpload={uploadDocument}
               />
             )}
             {activeTab === "history" && <HistoryPanel rows={historyRows} />}
@@ -1238,6 +1400,173 @@ function ConnectionsPanel({ items }) {
         );
       })}
     </div>
+  );
+}
+
+function DocumentsPanel({
+  documents,
+  form,
+  uploadOpen,
+  uploading,
+  onToggleUpload,
+  onFormChange,
+  onUpload,
+}) {
+  const sections = [
+    { type: "teklif", label: "Teklif Belgeleri" },
+    { type: "irsaliye", label: "İrsaliyeler" },
+    { type: "fatura", label: "Faturalar" },
+    { type: "odeme", label: "Ödeme Belgeleri" },
+    { type: "diger", label: "Diğer Belgeler" },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-col gap-3 rounded-xl border border-blue-100 bg-blue-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="text-sm text-blue-900">
+          Bu alanda siparişe bağlı teklif, irsaliye, fatura ve ödeme belgeleri takip edilecek.
+        </div>
+        <button
+          type="button"
+          onClick={onToggleUpload}
+          className="shrink-0 rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700"
+        >
+          {uploadOpen ? "Formu Kapat" : "Belge Yükle"}
+        </button>
+      </div>
+
+      {uploadOpen && (
+        <form onSubmit={onUpload} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <label className="block">
+              <span className="mb-1 block text-xs font-bold text-slate-600">Belge Türü</span>
+              <select
+                value={form.document_type}
+                onChange={(event) => onFormChange((prev) => ({ ...prev, document_type: event.target.value }))}
+                className="w-full rounded-xl border border-slate-300 bg-white p-3 text-sm"
+              >
+                {sections.map((section) => (
+                  <option key={section.type} value={section.type}>{section.label}</option>
+                ))}
+              </select>
+            </label>
+            <DocumentInput
+              label="Belge Numarası"
+              value={form.document_number}
+              onChange={(value) => onFormChange((prev) => ({ ...prev, document_number: value }))}
+            />
+            <DocumentInput
+              label="Belge Tarihi"
+              type="date"
+              value={form.document_date}
+              onChange={(value) => onFormChange((prev) => ({ ...prev, document_date: value }))}
+            />
+            <DocumentInput
+              label="Tedarikçi"
+              value={form.supplier_name}
+              onChange={(value) => onFormChange((prev) => ({ ...prev, supplier_name: value }))}
+            />
+            <DocumentInput
+              label="Belge Tutarı"
+              type="number"
+              value={form.invoice_total}
+              onChange={(value) => onFormChange((prev) => ({ ...prev, invoice_total: value }))}
+            />
+            <label className="block">
+              <span className="mb-1 block text-xs font-bold text-slate-600">Para Birimi</span>
+              <select
+                value={form.currency}
+                onChange={(event) => onFormChange((prev) => ({ ...prev, currency: event.target.value }))}
+                className="w-full rounded-xl border border-slate-300 bg-white p-3 text-sm"
+              >
+                {currencyOptions.map((currency) => (
+                  <option key={currency} value={currency}>{currency}</option>
+                ))}
+              </select>
+            </label>
+            <label className="block md:col-span-2 xl:col-span-3">
+              <span className="mb-1 block text-xs font-bold text-slate-600">Dosya</span>
+              <input
+                type="file"
+                required
+                onChange={(event) => onFormChange((prev) => ({ ...prev, file: event.target.files?.[0] || null }))}
+                className="w-full rounded-xl border border-slate-300 bg-white p-3 text-sm"
+              />
+            </label>
+          </div>
+          <div className="mt-4 flex justify-end">
+            <button
+              type="submit"
+              disabled={uploading}
+              className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300"
+            >
+              {uploading ? "Yükleniyor..." : "Belgeyi Kaydet"}
+            </button>
+          </div>
+        </form>
+      )}
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        {sections.map((section) => {
+          const sectionDocuments = documents.filter(
+            (document) => document.document_type === section.type,
+          );
+
+          return (
+            <div key={section.type} className="rounded-2xl border border-slate-200 p-4">
+              <h3 className="font-bold text-slate-900">{section.label}</h3>
+              {sectionDocuments.length > 0 ? (
+                <div className="mt-3 space-y-3">
+                  {sectionDocuments.map((document) => (
+                    <div key={document.id} className="rounded-xl bg-slate-50 p-4 text-sm">
+                      <div className="font-bold text-slate-900">
+                        {document.original_file_name || "-"}
+                      </div>
+                      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <Info label="Belge No" value={document.document_number || "-"} />
+                        <Info label="Belge Tarihi" value={document.document_date || "-"} />
+                        <Info
+                          label="Tutar"
+                          value={
+                            document.invoice_total === null || document.invoice_total === undefined
+                              ? "-"
+                              : formatMoney(document.invoice_total, document.currency || "TRY")
+                          }
+                        />
+                        <Info
+                          label="Doğrulama Durumu"
+                          value={document.verification_status || "-"}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="mt-3 rounded-xl bg-slate-50 p-4 text-sm text-slate-500">
+                  Henüz belge yüklenmedi.
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function DocumentInput({ label, type = "text", value, onChange }) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-xs font-bold text-slate-600">{label}</span>
+      <input
+        type={type}
+        value={value}
+        min={type === "number" ? "0" : undefined}
+        step={type === "number" ? "0.01" : undefined}
+        onChange={(event) => onChange(event.target.value)}
+        className="w-full rounded-xl border border-slate-300 bg-white p-3 text-sm"
+      />
+    </label>
   );
 }
 
