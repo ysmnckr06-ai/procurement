@@ -55,6 +55,138 @@ def ocr_image_text(img):
 def extract_image_ocr_text(image_path):
     return ocr_image_text(read_image_unicode(image_path))
 
+
+DOCUMENT_ITEM_UNITS = {
+    "ad": "adet",
+    "adet": "adet",
+    "pcs": "adet",
+    "piece": "adet",
+    "kutu": "kutu",
+    "paket": "paket",
+    "set": "set",
+    "kg": "kg",
+    "gr": "gr",
+    "lt": "lt",
+    "litre": "lt",
+    "m": "metre",
+    "mt": "metre",
+    "metre": "metre",
+    "m2": "m2",
+    "m3": "m3",
+}
+
+
+def parse_document_item_number(value):
+    """Parse Turkish or international formatted OCR numbers without changing raw text."""
+    text = str(value or "").strip().replace(" ", "")
+    text = re.sub(r"(?:TRY|TL|USD|EUR|GBP|[$€£₺])", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"[^0-9,.-]", "", text)
+    if not text or text in {"-", ".", ","}:
+        return None
+
+    if "," in text and "." in text:
+        decimal_separator = "," if text.rfind(",") > text.rfind(".") else "."
+        thousands_separator = "." if decimal_separator == "," else ","
+        text = text.replace(thousands_separator, "").replace(decimal_separator, ".")
+    elif "," in text:
+        parts = text.split(",")
+        text = "".join(parts) if len(parts[-1]) == 3 and len(parts) > 1 else ".".join(parts)
+    elif text.count(".") == 1 and len(text.split(".")[-1]) == 3:
+        text = text.replace(".", "")
+    elif text.count(".") > 1:
+        parts = text.split(".")
+        text = "".join(parts[:-1]) + "." + parts[-1]
+
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def normalize_document_item_unit(value):
+    key = normalize_tr(value).replace("²", "2").replace("³", "3")
+    return DOCUMENT_ITEM_UNITS.get(key)
+
+
+def build_document_item(product_code, product_name, quantity, unit, unit_price, total, confidence):
+    quantity_value = parse_document_item_number(quantity)
+    unit_price_value = parse_document_item_number(unit_price)
+    total_value = parse_document_item_number(total)
+    normalized_unit = normalize_document_item_unit(unit)
+    clean_name = clean_text(product_name)
+    clean_code = clean_text(product_code) or None
+
+    if not clean_name or quantity_value is None or quantity_value <= 0 or not normalized_unit:
+        return None
+    if unit_price_value is None and total_value is None:
+        return None
+    if unit_price_value is None and total_value is not None:
+        unit_price_value = total_value / quantity_value
+        confidence -= 10
+    if total_value is None and unit_price_value is not None:
+        total_value = quantity_value * unit_price_value
+        confidence -= 10
+    expected_total = quantity_value * unit_price_value
+    if total_value and abs(expected_total - total_value) / abs(total_value) > 0.03:
+        confidence -= 25
+
+    confidence = max(0, min(100, int(confidence)))
+    return {
+        "product_code": clean_code,
+        "product_name": clean_name,
+        "quantity": quantity_value,
+        "unit": normalized_unit,
+        "unit_price": unit_price_value,
+        "total": total_value,
+        "ocr_confidence": confidence,
+        "review_required": confidence < 75,
+    }
+
+
+def extract_document_items_from_text(ocr_text):
+    """Best-effort invoice/delivery-note row extraction from plain OCR text."""
+    items = []
+    unit_pattern = "|".join(sorted(DOCUMENT_ITEM_UNITS, key=len, reverse=True))
+    number_pattern = r"[-+]?\d[\d.,]*"
+    row_pattern = re.compile(
+        rf"^(?:(?P<code>[A-Z0-9][A-Z0-9._/-]{{1,30}})\s+)?"
+        rf"(?P<name>.+?)\s+(?P<qty>{number_pattern})\s+"
+        rf"(?P<unit>{unit_pattern})\s+(?P<price>{number_pattern})\s+"
+        rf"(?P<total>{number_pattern})(?:\s*(?:TRY|TL|USD|EUR|GBP|[$€£₺]))?$",
+        re.IGNORECASE,
+    )
+
+    for raw_line in str(ocr_text or "").splitlines():
+        line = clean_text(raw_line.replace("|", " "))
+        normalized = normalize_tr(line)
+        if not line or any(label in normalized for label in (
+            "ara toplam", "genel toplam", "toplam tutar", "kdv", "birim fiyat",
+            "urun kodu", "malzeme kodu", "aciklama miktar",
+        )):
+            continue
+        match = row_pattern.match(line)
+        if not match:
+            continue
+        values = match.groupdict()
+        product_code = values.get("code")
+        product_name = values["name"]
+        likely_code = product_code and not product_code.isdigit() and (
+            any(character.isdigit() for character in product_code)
+            or any(character in "._/-" for character in product_code)
+            or (product_code.isupper() and len(product_code) <= 12)
+        )
+        if product_code and not likely_code:
+            product_name = f"{product_code} {product_name}"
+            product_code = None
+        item = build_document_item(
+            product_code, product_name, values["qty"], values["unit"],
+            values["price"], values["total"], 82 if product_code else 70,
+        )
+        if item:
+            items.append(item)
+
+    return items
+
 def detect_company_from_image(img, fallback, file_name):
     if fallback:
         return fallback

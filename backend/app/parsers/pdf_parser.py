@@ -5,7 +5,12 @@ import unicodedata
 import cv2
 import numpy as np
 
-from app.parsers.image_parser import ocr_image_text
+from app.parsers.image_parser import (
+    build_document_item,
+    extract_document_items_from_text,
+    normalize_document_item_unit,
+    ocr_image_text,
+)
 
 try:
     import pdfplumber
@@ -67,6 +72,95 @@ def extract_pdf_ocr_text(file_path):
             page_texts.append(text_value.strip())
 
     return "\n".join(page_texts).strip(), "pdf2image-tesseract"
+
+
+def _normalized_header(value):
+    return normalize_tr(value).replace(" ", "_")
+
+
+def extract_document_items_from_tables(tables):
+    aliases = {
+        "product_code": ("urun_kodu", "malzeme_kodu", "stok_kodu", "kod", "code"),
+        "product_name": ("urun_adi", "malzeme_adi", "aciklama", "description"),
+        "quantity": ("miktar", "adet", "quantity", "qty"),
+        "unit": ("birim", "unit"),
+        "unit_price": ("birim_fiyat", "fiyat", "unit_price"),
+        "total": ("satir_toplami", "tutar", "toplam", "total"),
+    }
+    items = []
+
+    for table in tables or []:
+        rows = [row for row in (table or []) if row and any(clean_text(cell) for cell in row)]
+        if len(rows) < 2:
+            continue
+        headers = [_normalized_header(cell) for cell in rows[0]]
+        mapping = {}
+        for field, names in aliases.items():
+            exact_index = next(
+                (index for index, header in enumerate(headers) if header in names), None
+            )
+            if exact_index is not None:
+                mapping[field] = exact_index
+                continue
+            partial_index = next(
+                (
+                    index
+                    for index, header in enumerate(headers)
+                    if any(len(name) > 3 and name in header for name in names)
+                ),
+                None,
+            )
+            if partial_index is not None:
+                mapping[field] = partial_index
+        required = {"product_name", "quantity", "unit", "unit_price", "total"}
+        if not required.issubset(mapping):
+            continue
+
+        for row in rows[1:]:
+            def cell(field):
+                index = mapping.get(field)
+                return row[index] if index is not None and index < len(row) else None
+
+            confidence = 95 if normalize_document_item_unit(cell("unit")) else 70
+            item = build_document_item(
+                cell("product_code"), cell("product_name"), cell("quantity"),
+                cell("unit"), cell("unit_price"), cell("total"), confidence,
+            )
+            if item:
+                items.append(item)
+
+    return items
+
+
+def extract_pdf_ocr_result(file_path):
+    """Return OCR text plus line items, preferring structured pdfplumber tables."""
+    if pdfplumber is None:
+        raise RuntimeError("PDF okuma kütüphanesi yüklenemedi: pdfplumber")
+
+    extracted_parts = []
+    tables = []
+    with pdfplumber.open(file_path) as pdf:
+        for page in pdf.pages:
+            page_text = page.extract_text() or ""
+            if page_text.strip():
+                extracted_parts.append(page_text.strip())
+            page_tables = page.extract_tables() or []
+            tables.extend(page_tables)
+            for table in page_tables:
+                for row in table or []:
+                    row_text = " | ".join(clean_text(cell) for cell in (row or []) if clean_text(cell))
+                    if row_text:
+                        extracted_parts.append(row_text)
+
+    pdf_text = "\n".join(extracted_parts).strip()
+    table_items = extract_document_items_from_tables(tables)
+    if pdf_text:
+        return pdf_text, "pdfplumber-table" if table_items else "pdfplumber-regex", (
+            table_items or extract_document_items_from_text(pdf_text)
+        )
+
+    ocr_text, engine = extract_pdf_ocr_text(file_path)
+    return ocr_text, f"{engine}-regex", extract_document_items_from_text(ocr_text)
 
 def normalize_tr(val):
     text = str(val or "").lower()

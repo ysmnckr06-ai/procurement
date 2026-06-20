@@ -30,8 +30,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.concurrency import run_in_threadpool
 
 from app.parsers.excel_parser import parse_excel, parse_excel_with_audit
-from app.parsers.pdf_parser import parse_pdf, parse_pdf_with_audit, extract_pdf_ocr_text
-from app.parsers.image_parser import parse_image, extract_image_ocr_text
+from app.parsers.pdf_parser import parse_pdf, parse_pdf_with_audit, extract_pdf_ocr_result
+from app.parsers.image_parser import (
+    parse_image,
+    extract_image_ocr_text,
+    extract_document_items_from_text,
+)
 from app.parsers.request_parser import parse_request_file
 
 from app.services.matcher import match_offers_to_requests, group_rows
@@ -803,9 +807,13 @@ async def analyze_order_document_ocr(
 
         file_type = detect_file_type(original_name)
         if file_type == "pdf":
-            ocr_text, _engine = await run_in_threadpool(extract_pdf_ocr_text, save_path)
+            ocr_text, extraction_method, document_items = await run_in_threadpool(
+                extract_pdf_ocr_result, save_path
+            )
         elif file_type == "image":
             ocr_text = await run_in_threadpool(extract_image_ocr_text, save_path)
+            extraction_method = "tesseract-regex"
+            document_items = extract_document_items_from_text(ocr_text)
         else:
             raise HTTPException(status_code=400, detail="Desteklenmeyen belge türü.")
 
@@ -822,7 +830,9 @@ async def analyze_order_document_ocr(
             **metadata,
             "ocr_text": ocr_text,
             "ocr_confidence": None,
-            "items": [],
+            "items": document_items,
+            "items_extraction_method": extraction_method,
+            "items_count": len(document_items),
         }
     except HTTPException:
         raise
