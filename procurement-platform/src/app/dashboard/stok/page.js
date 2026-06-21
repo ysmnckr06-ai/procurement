@@ -112,7 +112,7 @@ function normalizeStockText(value) {
 }
 
 function normalizeStockCode(value) {
-  return String(value || "").trim().toUpperCase().replace(/\s+/g, "");
+  return String(value || "").trim().toUpperCase();
 }
 
 function normalizeProductIdentity(product) {
@@ -149,9 +149,18 @@ function productGroupKey(product) {
   const code = normalizeStockCode(normalized.product_code);
   const name = normalizeStockText(normalized.product_name);
 
-  if (code && name) return `${code}__${name}`;
   if (code) return `code__${code}`;
   return `name__${name}`;
+}
+
+function productMatchesWithoutCode(product, candidate) {
+  if (normalizeStockCode(product?.product_code) || normalizeStockCode(candidate?.product_code)) return false;
+
+  const productIdentity = normalizeProductIdentity(product);
+  const candidateIdentity = normalizeProductIdentity(candidate);
+  return normalizeStockText(productIdentity.product_name) === normalizeStockText(candidateIdentity.product_name)
+    && normalizeStockText(productIdentity.brand) === normalizeStockText(candidateIdentity.brand)
+    && normalizeStockText(productIdentity.unit || "adet") === normalizeStockText(candidateIdentity.unit || "adet");
 }
 
 function stockCriticalLimit(product) {
@@ -945,10 +954,30 @@ export default function StockPage() {
       return;
     }
 
-    const existing = productGroups.find((item) =>
-      !item.is_virtual_project_main &&
-      item.groupKey === product.groupKey
+    const normalizedProductCode = normalizeStockCode(product.product_code);
+    let existing = productGroups.find((item) =>
+      !item.is_virtual_project_main && (
+        normalizedProductCode
+          ? normalizeStockCode(item.product_code) === normalizedProductCode
+          : productMatchesWithoutCode(item, product)
+      )
     );
+
+    if (!existing && normalizedProductCode) {
+      const { data: existingByCode, error: existingByCodeError } = await supabase
+        .from("products")
+        .select("*")
+        .eq("user_id", user.id)
+        .eq("normalized_product_code", normalizedProductCode)
+        .maybeSingle();
+
+      if (existingByCodeError) {
+        setMessage(existingByCodeError.message || "Ürün kodu kontrol edilemedi.");
+        return;
+      }
+
+      existing = existingByCode || null;
+    }
 
     if (existing) {
       setMessage("Bu ana ürün kartı stokta zaten var.");
@@ -959,6 +988,7 @@ export default function StockPage() {
     const payload = {
       user_id: user.id,
       product_code: product.product_code || "",
+      normalized_product_code: normalizedProductCode || null,
       product_name: product.product_name || "",
       brand: product.brand || "",
       unit: product.unit || "adet",
@@ -1139,27 +1169,32 @@ async function importStockCardsFromFiles(event) {
           unit,
         });
 
-        const rowKey = productGroupKey(rowProduct);
+        const normalizedProductCode = normalizeStockCode(productCode);
+        const candidateProducts = [...productGroups, ...createdProducts];
+        let finalProduct = normalizedProductCode
+          ? candidateProducts.find((product) =>
+              normalizeStockCode(product.normalized_product_code || product.product_code) === normalizedProductCode
+            )
+          : candidateProducts.find((product) => productMatchesWithoutCode(product, rowProduct));
 
-const matchedProduct =
-  productGroups.find((product) => product.groupKey === rowKey) ||
-  createdProducts.find((product) => productGroupKey(product) === rowKey) ||
-  productGroups.find((product) =>
-    productCode &&
-    normalizeStockCode(product.product_code) === normalizeStockCode(productCode)
-  ) ||
-  createdProducts.find((product) =>
-    productCode &&
-    normalizeStockCode(product.product_code) === normalizeStockCode(productCode)
-  ) ||
-  productGroups.find((product) =>
-    normalizeStockText(product.product_name) === normalizeStockText(productName)
-  ) ||
-  createdProducts.find((product) =>
-    normalizeStockText(product.product_name) === normalizeStockText(productName)
-  );
+        if (!finalProduct && normalizedProductCode) {
+          const { data: existingByCode, error: existingByCodeError } = await supabase
+            .from("products")
+            .select("*")
+            .eq("user_id", user.id)
+            .eq("normalized_product_code", normalizedProductCode)
+            .maybeSingle();
 
-let finalProduct = matchedProduct;
+          if (existingByCodeError) {
+            console.error("Normalize ürün kodu kontrol edilemedi:", existingByCodeError);
+            notFoundCount += 1;
+            notFoundRows.push(`${productCode || "-"} - ${productName}`);
+            continue;
+          }
+
+          finalProduct = existingByCode || null;
+        }
+
 let productIds = [];
 let mainProductId = "";
 
@@ -1167,6 +1202,7 @@ if (!finalProduct) {
   const newProductPayload = {
     user_id: user.id,
     product_code: rowProduct.product_code || productCode || "",
+    normalized_product_code: normalizedProductCode || null,
     product_name: rowProduct.product_name || productName,
     brand: rowProduct.brand || brand || "",
     unit,

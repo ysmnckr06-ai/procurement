@@ -133,6 +133,7 @@ create table if not exists public.products (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   product_code text default '',
+  normalized_product_code text,
   product_name text not null,
   brand text default '',
   unit text default 'adet',
@@ -155,6 +156,7 @@ create table if not exists public.products (
 alter table public.products
 add column if not exists user_id uuid references auth.users(id) on delete cascade,
 add column if not exists product_code text default '',
+add column if not exists normalized_product_code text,
 add column if not exists product_name text,
 add column if not exists brand text default '',
 add column if not exists unit text default 'adet',
@@ -177,6 +179,32 @@ add column if not exists updated_at timestamptz not null default now();
 create unique index if not exists products_user_code_idx
 on public.products (user_id, product_code)
 where product_code <> '';
+
+update public.products
+set normalized_product_code = nullif(upper(btrim(product_code)), '')
+where normalized_product_code is distinct from nullif(upper(btrim(product_code)), '');
+
+create or replace function public.set_product_normalized_code()
+returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $$
+begin
+  new.normalized_product_code := nullif(upper(btrim(new.product_code)), '');
+  return new;
+end;
+$$;
+
+drop trigger if exists products_set_normalized_code on public.products;
+create trigger products_set_normalized_code
+before insert or update of product_code, normalized_product_code
+on public.products
+for each row
+execute function public.set_product_normalized_code();
+
+create unique index if not exists products_user_normalized_code_uidx
+on public.products (user_id, normalized_product_code)
+where normalized_product_code is not null;
 
 create index if not exists products_user_code_name_lookup_idx
 on public.products (user_id, upper(product_code), lower(product_name));

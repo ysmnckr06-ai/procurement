@@ -229,6 +229,10 @@ function normalizeCode(value) {
   return String(value || "").trim().toUpperCase().replace(/\s+/g, "");
 }
 
+function normalizeProductCode(value) {
+  return String(value || "").trim().toUpperCase();
+}
+
 function textTokens(value) {
   return normalizeText(value)
     .split(/[^a-z0-9]+/i)
@@ -1025,9 +1029,9 @@ export default function ProjectDetailPage() {
   }
 
   function productMatchesProjectItem(product, item) {
-    const itemCode = normalizeCode(item.product_code);
-    const productCode = normalizeCode(product.product_code);
-    if (itemCode && productCode && itemCode === productCode) return true;
+    const itemCode = normalizeProductCode(item.normalized_product_code || item.product_code);
+    const productCode = normalizeProductCode(product.normalized_product_code || product.product_code);
+    if (itemCode) return Boolean(productCode) && itemCode === productCode;
 
     const unitMatches = normalizeText(product.unit || "adet") === normalizeText(item.unit || "adet");
     const itemIdentity = normalizeProductIdentityForStock(item);
@@ -1067,20 +1071,24 @@ export default function ProjectDetailPage() {
   }
 
   function stockProductCodeForItem(item) {
-    const rawCode = String(item?.product_code || "").trim().toUpperCase();
+    const rawCode = normalizeProductCode(item?.product_code);
     if (!rawCode || isProjectSeriesCode(rawCode)) return "";
     return rawCode;
   }
 
   function normalizedExistingProductCodes(productRows = products) {
-    return new Set((productRows || []).map((product) => normalizeCode(product?.product_code)).filter(Boolean));
+    return new Set(
+      (productRows || [])
+        .map((product) => normalizeProductCode(product?.normalized_product_code || product?.product_code))
+        .filter(Boolean),
+    );
   }
 
   function nextAutoProductCode(usedCodes) {
     const dateStamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
     for (let index = 1; index <= 9999; index += 1) {
       const code = `STK-${dateStamp}-${String(index).padStart(4, "0")}`;
-      const normalized = normalizeCode(code);
+      const normalized = normalizeProductCode(code);
       if (!usedCodes.has(normalized)) {
         usedCodes.add(normalized);
         return code;
@@ -1088,7 +1096,7 @@ export default function ProjectDetailPage() {
     }
 
     const fallback = `STK-${dateStamp}-${Date.now()}`;
-    usedCodes.add(normalizeCode(fallback));
+    usedCodes.add(normalizeProductCode(fallback));
     return fallback;
   }
 
@@ -1104,9 +1112,11 @@ export default function ProjectDetailPage() {
   }
 
   function productCodeAlreadyExists(code, productRows = products) {
-    const normalized = normalizeCode(code);
+    const normalized = normalizeProductCode(code);
     if (!normalized) return false;
-    return (productRows || []).some((product) => normalizeCode(product?.product_code) === normalized);
+    return (productRows || []).some(
+      (product) => normalizeProductCode(product?.normalized_product_code || product?.product_code) === normalized,
+    );
   }
 
   function productCodeForMissingItem(sourceItem, missingItem, options, usedCodes) {
@@ -1116,11 +1126,7 @@ export default function ProjectDetailPage() {
         return { error: "Manuel ürün kodu girilmedi." };
       }
 
-      const normalizedManual = normalizeCode(manualCode);
-      if (usedCodes.has(normalizedManual)) {
-        return { error: `${manualCode} kodlu ürün zaten var.` };
-      }
-
+      const normalizedManual = normalizeProductCode(manualCode);
       usedCodes.add(normalizedManual);
       return { code: manualCode };
     }
@@ -1131,11 +1137,7 @@ export default function ProjectDetailPage() {
 
     const existingCode = stockProductCodeForItem(sourceItem);
     if (existingCode) {
-      const normalizedExisting = normalizeCode(existingCode);
-      if (usedCodes.has(normalizedExisting)) {
-        return { error: `${existingCode} kodlu ürün zaten var.` };
-      }
-
+      const normalizedExisting = normalizeProductCode(existingCode);
       usedCodes.add(normalizedExisting);
       return { code: existingCode };
     }
@@ -1144,7 +1146,7 @@ export default function ProjectDetailPage() {
   }
 
   function missingProductKey(item) {
-    const code = normalizeCode(stockProductCodeForItem(item));
+    const code = normalizeProductCode(stockProductCodeForItem(item));
     if (code) return `code:${code}`;
     return `name:${normalizeText(item?.product_name || item?.description)}|${normalizeText(item?.brand)}|${normalizeText(item?.unit || "adet")}`;
   }
@@ -1276,6 +1278,7 @@ export default function ProjectDetailPage() {
       const productPayload = {
         user_id: user.id,
         product_code: productCodeResult.code,
+        normalized_product_code: normalizeProductCode(productCodeResult.code) || null,
         brand: identity.brand || sourceItem.brand || "",
         product_name: identity.product_name || sourceItem.product_name || sourceItem.description || "",
         unit: sourceItem.unit || "adet",
@@ -1291,23 +1294,28 @@ export default function ProjectDetailPage() {
         notes: `Proje: ${project?.project_code || projectId}`,
       };
 
-      let product = products.find((candidate) => productMatchesProjectItem(candidate, sourceItem));
+      const itemWithResolvedCode = {
+        ...sourceItem,
+        product_code: productCodeResult.code,
+        normalized_product_code: productPayload.normalized_product_code,
+      };
+      let product = products.find((candidate) => productMatchesProjectItem(candidate, itemWithResolvedCode));
       if (!product) {
-        const { data: existingByCode } = await supabase
+        const { data: existingByCode, error: existingByCodeError } = await supabase
           .from("products")
           .select("*")
           .eq("user_id", user.id)
-          .eq("product_code", productPayload.product_code)
+          .eq("normalized_product_code", productPayload.normalized_product_code)
           .maybeSingle();
-        if (existingByCode) {
+
+        if (existingByCodeError) {
           failedRows.push(sourceItem);
-          logProductCardError(
-            { message: `${productPayload.product_code} kodlu ürün zaten var.`, code: "duplicate_product_code" },
-            sourceItem,
-            productPayload,
-            "code-validation",
-          );
+          logProductCardError(existingByCodeError, sourceItem, productPayload, "code-lookup");
           continue;
+        }
+
+        if (existingByCode) {
+          product = existingByCode;
         }
       }
 
@@ -1459,9 +1467,15 @@ export default function ProjectDetailPage() {
   }
 
   async function insertProductWithFallback(payload) {
+    const normalizedCode = normalizeProductCode(payload.product_code);
+    const normalizedPayload = {
+      ...payload,
+      product_code: normalizedCode || "",
+      normalized_product_code: normalizedCode || null,
+    };
     const firstResult = await supabase
       .from("products")
-      .insert(payload)
+      .insert(normalizedPayload)
       .select("*")
       .single();
 
@@ -1484,12 +1498,12 @@ export default function ProjectDetailPage() {
       errorHint: firstResult.error?.hint || null,
       errorCode: firstResult.error?.code || null,
       rawError: firstResult.error || null,
-      payload,
+      payload: normalizedPayload,
     });
 
     return supabase
       .from("products")
-      .insert(stripPayloadFields(payload, fallbackFields))
+      .insert(stripPayloadFields(normalizedPayload, fallbackFields))
       .select("*")
       .single();
   }
@@ -1541,7 +1555,7 @@ export default function ProjectDetailPage() {
           .from("products")
           .select("*")
           .eq("user_id", userId)
-          .eq("product_code", safeProductCode)
+          .eq("normalized_product_code", normalizeProductCode(safeProductCode))
           .maybeSingle();
 
         if (existingByCodeError) {
@@ -1592,7 +1606,7 @@ export default function ProjectDetailPage() {
               .from("products")
               .select("*")
               .eq("user_id", userId)
-              .eq("product_code", safeProductCode)
+              .eq("normalized_product_code", normalizeProductCode(safeProductCode))
               .maybeSingle();
 
             if (duplicateProduct && !duplicateLookupError) {
