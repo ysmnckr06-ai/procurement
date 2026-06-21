@@ -690,6 +690,7 @@ export default function StockPage() {
   const [selectedMovementIds, setSelectedMovementIds] = useState([]);
   const [bulkDeletingProducts, setBulkDeletingProducts] = useState(false);
   const [bulkDeletingMovements, setBulkDeletingMovements] = useState(false);
+  const [movementDeleteModalOpen, setMovementDeleteModalOpen] = useState(false);
 
   useEffect(() => {
     loadStock();
@@ -829,31 +830,6 @@ export default function StockPage() {
     await loadStock();
   }
 
-  async function reverseMovementStockTotals(movement) {
-    if (!movement?.product_id) return;
-
-    const product = products.find((item) => item.id === movement.product_id);
-    if (!product) return;
-
-    const quantity = Number(movement.quantity || 0);
-    const reservedQuantity = Number(movement.reserved_quantity || 0);
-    const productionQuantity = Number(movement.issued_to_production_quantity || 0);
-    const sourceText = normalizeStockText(movement.source || movement.notes || "");
-    const updatePayload = { updated_at: new Date().toISOString() };
-
-    if (movement.movement_type === "in") {
-      updatePayload.current_stock = Math.max(Number(product.current_stock || 0) - quantity, 0);
-    } else if (reservedQuantity > 0 || sourceText.includes("rezerve") || sourceText.includes("projeye")) {
-      updatePayload.reserved_stock = Math.max(Number(product.reserved_stock || 0) - (reservedQuantity || quantity), 0);
-    } else if (productionQuantity > 0) {
-      updatePayload.reserved_stock = Math.max(Number(product.reserved_stock || 0) - productionQuantity, 0);
-    } else {
-      updatePayload.current_stock = Number(product.current_stock || 0) + quantity;
-    }
-
-    await supabase.from("products").update(updatePayload).eq("id", movement.product_id);
-  }
-
   async function deleteSelectedProducts() {
     const selectedGroups = productGroups.filter((product) => selectedProductKeys.includes(product.groupKey));
     if (selectedGroups.length === 0) return;
@@ -893,35 +869,66 @@ export default function StockPage() {
   }
 
   async function deleteSelectedMovements() {
-    const selectedRows = movements.filter((movement) => selectedMovementIds.includes(movement.id));
+    const selectedRows = movements.filter(
+      (movement) =>
+        selectedMovementIds.includes(movement.id) &&
+        (!selectedProduct || movementMatchesProduct(movement, selectedProduct)),
+    );
     if (selectedRows.length === 0) return;
 
-    const approved = window.confirm(`Seçili ${selectedRows.length} stok hareketi silinecek. Emin misiniz?`);
-    if (!approved) return;
-
+    setMovementDeleteModalOpen(false);
     setBulkDeletingMovements(true);
     setMessage("");
 
-    for (const movement of selectedRows) {
-      await reverseMovementStockTotals(movement);
-    }
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
 
-    const { error } = await supabase.from("stock_movements").delete().in("id", selectedRows.map((movement) => movement.id));
-
-    if (error) {
-      setMessage(error.message || "Seçili stok hareketleri silinemedi.");
+    if (!user) {
       setBulkDeletingMovements(false);
+      router.push("/login");
       return;
     }
 
-    setSelectedMovementIds([]);
-    setMessage(`${selectedRows.length} stok hareketi silindi ve sayaçlar yenilendi.`);
+    const deletedIds = [];
+    const failedRows = [];
+
+    for (const movement of selectedRows) {
+      const { error } = await supabase.rpc("delete_stock_movement_with_reversal", {
+        target_movement_id: movement.id,
+      });
+
+      if (error) {
+        failedRows.push({ movement, error });
+      } else {
+        deletedIds.push(movement.id);
+      }
+    }
+
+    setSelectedMovementIds(failedRows.map(({ movement }) => movement.id));
     setBulkDeletingMovements(false);
     await loadStock();
+
+    if (failedRows.length > 0) {
+      const failedLabels = failedRows
+        .map(
+          ({ movement }) =>
+            `${movement.product_name || "Stok hareketi"} (${String(movement.id).slice(0, 8)})`,
+        )
+        .join(", ");
+      setMessage(
+        `${deletedIds.length} hareket silindi. Silinemeyen kayıtlar: ${failedLabels}. ` +
+          `${failedRows[0].error.message || "Yetki veya bağlantı hatası."}`,
+      );
+      return;
+    }
+
+    setMessage(`${deletedIds.length} stok hareketi silindi ve stok toplamları geri alındı.`);
   }
 
   function openProductDetail(product) {
     setSelectedProduct(product);
+    setSelectedMovementIds([]);
     setExpandedProjectKeys([]);
     setMessage("");
   }
@@ -1349,6 +1356,9 @@ setMessage(
 
   const visibleMovementRows = selectedProduct ? selectedMovements : movements;
   const visibleMovementIds = visibleMovementRows.map((movement) => movement.id);
+  const selectedVisibleMovements = visibleMovementRows.filter((movement) =>
+    selectedMovementIds.includes(movement.id),
+  );
   const allFilteredProductsSelected = filteredProducts.length > 0 && filteredProducts.every((product) => selectedProductKeys.includes(product.groupKey));
   const allVisibleMovementsSelected = visibleMovementIds.length > 0 && visibleMovementIds.every((id) => selectedMovementIds.includes(id));
 
@@ -1785,6 +1795,52 @@ setMessage(
               </div>
             </div>
 
+            {movementDeleteModalOpen && (
+              <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/55 p-4">
+                <button
+                  type="button"
+                  aria-label="Silme onayını kapat"
+                  onClick={() => setMovementDeleteModalOpen(false)}
+                  className="absolute inset-0 cursor-default"
+                />
+                <section
+                  role="alertdialog"
+                  aria-modal="true"
+                  aria-labelledby="movement-delete-title"
+                  className="relative z-10 w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
+                >
+                  <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-red-100 text-2xl">
+                    ⚠️
+                  </div>
+                  <h2 id="movement-delete-title" className="mt-4 text-xl font-black text-slate-950">
+                    Stok hareketlerini sil
+                  </h2>
+                  <p className="mt-3 text-sm font-semibold leading-6 text-slate-600">
+                    {selectedVisibleMovements.length} stok hareketi silinecek. Bu işlem geri alınamaz.
+                  </p>
+                  <p className="mt-2 text-xs leading-5 text-slate-500">
+                    İlgili ürün ve proje stok toplamları silinen hareketlerin tersiyle atomik olarak güncellenecek.
+                  </p>
+                  <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                    <button
+                      type="button"
+                      onClick={() => setMovementDeleteModalOpen(false)}
+                      className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-black text-slate-700 hover:bg-slate-50"
+                    >
+                      Vazgeç
+                    </button>
+                    <button
+                      type="button"
+                      onClick={deleteSelectedMovements}
+                      className="rounded-xl bg-red-600 px-4 py-2.5 text-sm font-black text-white hover:bg-red-700"
+                    >
+                      Seçilenleri Sil
+                    </button>
+                  </div>
+                </section>
+              </div>
+            )}
+
             {selectedProduct && (
               <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/35">
                 <button
@@ -2050,11 +2106,13 @@ setMessage(
                       </button>
                       <button
                         type="button"
-                        disabled={selectedMovementIds.length === 0 || bulkDeletingMovements}
-                        onClick={deleteSelectedMovements}
+                        disabled={selectedVisibleMovements.length === 0 || bulkDeletingMovements}
+                        onClick={() => setMovementDeleteModalOpen(true)}
                         className="rounded-lg bg-red-600 px-3 py-2 text-xs font-black text-white hover:bg-red-700 disabled:bg-slate-300"
                       >
-                        Hareketleri Sil ({selectedMovementIds.length})
+                        {bulkDeletingMovements
+                          ? "Siliniyor..."
+                          : `Seçilenleri Sil (${selectedVisibleMovements.length})`}
                       </button>
                     </div>
                   </div>
