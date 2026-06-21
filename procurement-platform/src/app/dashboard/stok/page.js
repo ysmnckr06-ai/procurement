@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL;
@@ -700,6 +700,8 @@ export default function StockPage() {
   const [bulkDeletingProducts, setBulkDeletingProducts] = useState(false);
   const [bulkDeletingMovements, setBulkDeletingMovements] = useState(false);
   const [movementDeleteModalOpen, setMovementDeleteModalOpen] = useState(false);
+  const [productDeleteBlockKey, setProductDeleteBlockKey] = useState("");
+  const movementSectionRef = useRef(null);
 
   useEffect(() => {
     loadStock();
@@ -803,23 +805,25 @@ export default function StockPage() {
       return;
     }
 
-    const approved = window.confirm(`${product.product_name} ürün kartını silmek istiyor musunuz?`);
-
-    if (!approved) return;
-
-    setDeleting(true);
-    setMessage("");
-
     const productIds = product.duplicateIds || [product.id];
     const movementIds = movements
       .filter((movement) => movementMatchesProduct(movement, product))
       .map((movement) => movement.id);
 
     if (movementIds.length > 0) {
-      setMessage("Bu ürün silinemez çünkü bağlı stok hareketleri var. Önce stok hareketlerini silin.");
-      setDeleting(false);
+      setProductDeleteBlockKey(product.groupKey);
+      setMessage(
+        `${product.product_name} ürün kartına bağlı ${movementIds.length} stok hareketi var. ` +
+          "Bağlı hareketleri görüntüleyip sildikten sonra ürün kartını tekrar silebilirsiniz.",
+      );
       return;
     }
+
+    const approved = window.confirm(`${product.product_name} ürün kartını silmek istiyor musunuz?`);
+    if (!approved) return;
+
+    setDeleting(true);
+    setMessage("");
 
     const { error: productDeleteError } = await supabase
       .from("products")
@@ -833,6 +837,7 @@ export default function StockPage() {
     }
 
     setMessage("Ürün kartı silindi.");
+    setProductDeleteBlockKey("");
     setSelectedProduct(null);
     if (typeof window !== "undefined") window.localStorage.removeItem("stock-selected-product-key");
     setDeleting(false);
@@ -850,7 +855,13 @@ export default function StockPage() {
 
     const blocked = selectedGroups.find((product) => movements.some((movement) => movementMatchesProduct(movement, product)));
     if (blocked) {
-      setMessage("Bu ürün silinemez çünkü bağlı stok hareketleri var. Önce stok hareketlerini silin.");
+      const blockedMovementCount = movements.filter((movement) => movementMatchesProduct(movement, blocked)).length;
+      openProductDetail(blocked);
+      setProductDeleteBlockKey(blocked.groupKey);
+      setMessage(
+        `${blocked.product_name} ürün kartına bağlı ${blockedMovementCount} stok hareketi var. ` +
+          "Hareketleri temizledikten sonra toplu ürün silmeyi tekrar deneyin.",
+      );
       return;
     }
 
@@ -871,6 +882,7 @@ export default function StockPage() {
 
     setSelectedProductKeys([]);
     setSelectedProduct(null);
+    setProductDeleteBlockKey("");
     if (typeof window !== "undefined") window.localStorage.removeItem("stock-selected-product-key");
     setMessage(`${selectedGroups.length} ürün kartı silindi.`);
     setBulkDeletingProducts(false);
@@ -938,8 +950,16 @@ export default function StockPage() {
   function openProductDetail(product) {
     setSelectedProduct(product);
     setSelectedMovementIds([]);
+    setProductDeleteBlockKey("");
     setExpandedProjectKeys([]);
     setMessage("");
+  }
+
+  function focusProductMovements({ selectAll = false } = {}) {
+    if (selectAll) setSelectedMovementIds(selectedMovements.map((movement) => movement.id));
+    window.setTimeout(() => {
+      movementSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 0);
   }
 
   async function createMainProductCard(product) {
@@ -1385,6 +1405,15 @@ setMessage(
     if (!selectedProduct) return [];
     return movements.filter((movement) => movementMatchesProduct(movement, selectedProduct));
   }, [movements, selectedProduct]);
+
+  const selectedLinkedProjectItems = useMemo(() => {
+    if (!selectedProduct) return [];
+    return projectItems.filter((item) => projectItemMatchesProduct(item, selectedProduct));
+  }, [projectItems, selectedProduct]);
+
+  const selectedProductDeleteBlocked = Boolean(
+    selectedProduct && productDeleteBlockKey === selectedProduct.groupKey,
+  );
 
   const selectedProjectAllocation = useMemo(() => {
     return productProjectAllocations(selectedProduct, projectItems, projects, movements);
@@ -1934,6 +1963,89 @@ setMessage(
                           </div>
                         </div>
 
+                        <section className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                            <div>
+                              <h3 className="text-sm font-black uppercase tracking-wide text-slate-700">Bağlı kayıtlar</h3>
+                              <p className="mt-1 text-xs leading-5 text-slate-600">
+                                Ürün silme kontrolü stok hareketlerini engel sayar. Proje kalemi bağlantıları bilgi amaçlı gösterilir ve kart silinirse bağlantı alanı boşaltılır.
+                              </p>
+                            </div>
+                            {selectedMovements.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => focusProductMovements()}
+                                className="shrink-0 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-black text-white hover:bg-blue-700"
+                              >
+                                Stok hareketlerini görüntüle
+                              </button>
+                            )}
+                          </div>
+                          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                            <div className={`rounded-xl border p-3 ${selectedMovements.length > 0 ? "border-red-200 bg-red-50" : "border-emerald-200 bg-emerald-50"}`}>
+                              <div className={`text-xs font-black uppercase ${selectedMovements.length > 0 ? "text-red-700" : "text-emerald-700"}`}>
+                                Stok hareketi
+                              </div>
+                              <div className={`mt-1 text-2xl font-black ${selectedMovements.length > 0 ? "text-red-950" : "text-emerald-950"}`}>
+                                {selectedMovements.length}
+                              </div>
+                              <div className="mt-1 text-xs font-semibold text-slate-600">
+                                {selectedMovements.length > 0 ? "Ürün silmeye engel" : "Silme engeli yok"}
+                              </div>
+                            </div>
+                            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+                              <div className="text-xs font-black uppercase text-amber-700">Proje kalemi</div>
+                              <div className="mt-1 text-2xl font-black text-amber-950">{selectedLinkedProjectItems.length}</div>
+                              <div className="mt-1 text-xs font-semibold text-slate-600">Bilgi amaçlı, silme engeli değil</div>
+                            </div>
+                          </div>
+                          <p className="mt-3 text-xs leading-5 text-slate-500">
+                            Sipariş kalemi ve talep/teklif bağlantıları mevcut ürün kartı silme kontrolünde doğrudan engel olarak kullanılmıyor.
+                          </p>
+                        </section>
+
+                        {selectedProductDeleteBlocked && selectedMovements.length > 0 && (
+                          <div role="alert" className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-4">
+                            <div className="text-sm font-black text-red-950">Ürün kartı henüz silinemez</div>
+                            <p className="mt-1 text-sm leading-6 text-red-800">
+                              Bu ürüne bağlı {selectedMovements.length} stok hareketi var. Hareketleri seçip güvenli toplu silme işlemini tamamlayın.
+                            </p>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => focusProductMovements()}
+                                className="rounded-xl bg-red-600 px-4 py-2.5 text-sm font-black text-white hover:bg-red-700"
+                              >
+                                Stok hareketlerini görüntüle
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => focusProductMovements({ selectAll: true })}
+                                className="rounded-xl border border-red-300 bg-white px-4 py-2.5 text-sm font-black text-red-700 hover:bg-red-100"
+                              >
+                                Tüm bağlı hareketleri seç
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {selectedProductDeleteBlocked && selectedMovements.length === 0 && (
+                          <div role="status" className="mt-4 flex flex-col gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                              <div className="text-sm font-black text-emerald-950">Stok hareketi engeli temizlendi</div>
+                              <p className="mt-1 text-sm text-emerald-800">Ürün kartını silme işlemini şimdi tekrar deneyebilirsiniz.</p>
+                            </div>
+                            <button
+                              type="button"
+                              disabled={deleting}
+                              onClick={() => deleteProductGroup(selectedProduct)}
+                              className="rounded-xl bg-red-600 px-4 py-2.5 text-sm font-black text-white hover:bg-red-700 disabled:bg-slate-300"
+                            >
+                              Ürün kartını tekrar sil
+                            </button>
+                          </div>
+                        )}
+
                         <div className="mt-5 grid grid-cols-2 gap-3 xl:grid-cols-4">
                           <div className="rounded-xl bg-slate-50 p-4">
                             <div className="text-xs font-bold text-slate-500">{selectedMainProduct ? "Kullanıldığı Proje" : "Mevcut Stok"}</div>
@@ -2116,8 +2228,18 @@ setMessage(
                     );
                   })()}
 
-                  <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <h3 className="text-sm font-black uppercase tracking-wide text-slate-500">Hareket Geçmişi</h3>
+                  <div
+                    ref={movementSectionRef}
+                    className="mt-6 scroll-mt-6 flex flex-col gap-3 rounded-2xl border border-blue-200 bg-blue-50 p-4 sm:flex-row sm:items-center sm:justify-between"
+                  >
+                    <div>
+                      <h3 className="text-sm font-black uppercase tracking-wide text-blue-900">
+                        Stok hareketleri ({selectedMovements.length})
+                      </h3>
+                      <p className="mt-1 text-xs font-semibold text-blue-700">
+                        Silmek istediğiniz hareketleri işaretleyin veya tüm bağlı hareketleri seçin.
+                      </p>
+                    </div>
                     <div className="flex flex-wrap gap-2">
                       <button
                         type="button"
@@ -2136,9 +2258,11 @@ setMessage(
                       <button
                         type="button"
                         onClick={() => setSelectedMovementIds(allVisibleMovementsSelected ? [] : visibleMovementIds)}
-                        className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50"
+                        className="rounded-lg border border-blue-300 bg-white px-3 py-2 text-xs font-black text-blue-800 hover:bg-blue-100"
                       >
-                        {allVisibleMovementsSelected ? "Seçimi Temizle" : "Tümünü Seç"}
+                        {allVisibleMovementsSelected
+                          ? "Hareket seçimini temizle"
+                          : `Tüm bağlı hareketleri seç (${visibleMovementIds.length})`}
                       </button>
                       <button
                         type="button"
@@ -2169,7 +2293,7 @@ setMessage(
                                 type="checkbox"
                                 checked={selectedMovementIds.includes(movement.id)}
                                 onChange={() => toggleMovementSelection(movement.id)}
-                                className="mt-1 h-4 w-4 rounded border-slate-300"
+                                className="mt-1 h-5 w-5 shrink-0 rounded border-slate-300 accent-blue-600"
                                 aria-label={`${movement.product_name || status} hareketini seç`}
                               />
                               <div className="min-w-0">
