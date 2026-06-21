@@ -20,7 +20,88 @@ const menu = [
   { name: "Ayarlar", icon: "⚙️", href: "/dashboard/ayarlar" },
 ];
 
-export default function DashboardShell({ children }) {
+const dateFormatter = new Intl.DateTimeFormat("tr-TR", {
+  dateStyle: "long",
+  timeZone: "Europe/Istanbul",
+});
+
+function formatLicenseDate(value) {
+  const date = new Date(value || "");
+  return Number.isNaN(date.getTime())
+    ? "Tarih belirtilmemiş"
+    : dateFormatter.format(date);
+}
+
+function LicenseStatusCard({ license, licenseCheckedAt }) {
+  if (license?.license_status === "suspended") {
+    return (
+      <section className="mb-5 flex flex-col gap-2 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div className="text-sm font-black text-red-800">
+            Lisans askıya alındı
+          </div>
+          <div className="mt-1 text-xs font-semibold text-red-600">
+            Kullanıma devam etmek için lisans yöneticinizle iletişime geçin.
+          </div>
+        </div>
+        <span className="w-fit rounded-full bg-red-100 px-3 py-1 text-xs font-black text-red-700">
+          Askıda
+        </span>
+      </section>
+    );
+  }
+
+  if (license?.plan_type === "demo") {
+    const trialEndsAt = Date.parse(license.trial_ends_at || "");
+    const checkedAt = Date.parse(licenseCheckedAt || "");
+    const remainingDays =
+      Number.isFinite(trialEndsAt) && Number.isFinite(checkedAt)
+        ? Math.max(Math.ceil((trialEndsAt - checkedAt) / 86_400_000), 0)
+        : 0;
+
+    return (
+      <section className="mb-5 flex flex-col gap-2 rounded-2xl border border-amber-200 bg-gradient-to-r from-amber-50 to-white px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div className="text-sm font-black text-slate-900">Demo sürümü</div>
+          <div className="mt-1 text-xs font-semibold text-slate-500">
+            Demo bitiş tarihi: {formatLicenseDate(license.trial_ends_at)}
+          </div>
+        </div>
+        <span className="w-fit rounded-full bg-amber-100 px-3 py-1 text-xs font-black text-amber-800">
+          {remainingDays} gün kaldı
+        </span>
+      </section>
+    );
+  }
+
+  if (license?.plan_type === "active") {
+    return (
+      <section className="mb-5 flex flex-col gap-2 rounded-2xl border border-emerald-200 bg-gradient-to-r from-emerald-50 to-white px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div className="text-sm font-black text-slate-900">Aktif lisans</div>
+          <div className="mt-1 text-xs font-semibold text-slate-500">
+            {license.expires_at
+              ? `Bitiş tarihi: ${formatLicenseDate(license.expires_at)}`
+              : "Süresiz kullanım"}
+          </div>
+        </div>
+        <span className="w-fit rounded-full bg-emerald-100 px-3 py-1 text-xs font-black text-emerald-800">
+          {license.expires_at
+            ? formatLicenseDate(license.expires_at)
+            : "Süresiz"}
+        </span>
+      </section>
+    );
+  }
+
+  return null;
+}
+
+export default function DashboardShell({
+  children,
+  license,
+  licenseCheckedAt,
+}) {
   const pathname = usePathname();
   const router = useRouter();
   const [isCheckingSession, setIsCheckingSession] = useState(true);
@@ -162,7 +243,13 @@ export default function DashboardShell({ children }) {
             </button>
           </nav>
         </div>
-        <div className="p-4 sm:p-6 lg:p-8">{children}</div>
+        <div className="p-4 sm:p-6 lg:p-8">
+          <LicenseStatusCard
+            license={license}
+            licenseCheckedAt={licenseCheckedAt}
+          />
+          {children}
+        </div>
       </main>
     </div>
   );

@@ -19,5 +19,12 @@ export default async function DashboardLayout({ children }) {
 
   if (error || !isLicenseActive(license)) redirect("/license-expired");
 
-  return <DashboardShell>{children}</DashboardShell>;
+  return (
+    <DashboardShell
+      license={license}
+      licenseCheckedAt={new Date().toISOString()}
+    >
+      {children}
+    </DashboardShell>
+  );
 }
