@@ -22,7 +22,7 @@ supabase = create_client(
     SUPABASE_SERVICE_ROLE_KEY
 )
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import FastAPI, UploadFile, File, Form, Header, HTTPException, Body
 from fastapi.responses import FileResponse, HTMLResponse
@@ -445,7 +445,64 @@ SUPPLIERS_FILE = os.path.join(TEMP_DIR, "suppliers.json")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
 
-def verify_user_token(authorization: str):
+def parse_license_datetime(value):
+    if not value:
+        return None
+
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+def require_active_license(user_id: str):
+    try:
+        response = (
+            supabase.table("user_licenses")
+            .select("plan_type,license_status,trial_ends_at,expires_at")
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        print("LICENSE CHECK ERROR:", str(exc))
+        raise HTTPException(
+            status_code=503,
+            detail="Lisans bilgisi doğrulanamadı. Lütfen daha sonra tekrar deneyin.",
+        )
+
+    license_row = response.data[0] if response.data else None
+    if not license_row or license_row.get("license_status") != "active":
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "LICENSE_EXPIRED", "message": "Demo veya lisans süresi sona erdi."},
+        )
+
+    now = datetime.now(timezone.utc)
+    plan_type = license_row.get("plan_type")
+
+    if plan_type == "demo":
+        trial_ends_at = parse_license_datetime(license_row.get("trial_ends_at"))
+        is_active = trial_ends_at is not None and trial_ends_at > now
+    elif plan_type == "active":
+        expires_at = parse_license_datetime(license_row.get("expires_at"))
+        is_active = expires_at is None or expires_at > now
+    else:
+        is_active = False
+
+    if not is_active:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "LICENSE_EXPIRED", "message": "Demo veya lisans süresi sona erdi."},
+        )
+
+    return license_row
+
+
+def verify_user_token(authorization: str, enforce_license: bool = True):
     if not authorization:
         raise HTTPException(status_code=401, detail="Authorization header eksik")
 
@@ -483,6 +540,9 @@ def verify_user_token(authorization: str):
 
     if not user.get("id"):
         raise HTTPException(status_code=401, detail="Kullanıcı bilgisi alınamadı")
+
+    if enforce_license:
+        require_active_license(user["id"])
 
     return user
 

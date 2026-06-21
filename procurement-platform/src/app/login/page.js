@@ -1,16 +1,27 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabase";
+import { useEffect, useState } from "react";
+import { migrateLegacySupabaseSession, supabase } from "@/lib/supabase";
 
 export default function LoginPage() {
-  const router = useRouter();
-
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function migrateExistingSession() {
+      const migrated = await migrateLegacySupabaseSession();
+      if (mounted && migrated) window.location.href = "/dashboard";
+    }
+
+    migrateExistingSession();
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -21,7 +32,7 @@ export default function LoginPage() {
     setMessage("");
 
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({
+      const { error } = await supabase.auth.signInWithPassword({
         email: email.trim(),
         password,
       });
@@ -30,7 +41,6 @@ export default function LoginPage() {
         setMessage(error.message);
         return;
       }
-
 
       setMessage("Giriş başarılı");
       window.location.href = "/dashboard";
@@ -87,6 +97,7 @@ export default function LoginPage() {
         <form onSubmit={handleLogin}>
           <div style={{ marginBottom: "16px" }}>
             <label
+              htmlFor="login-email"
               style={{
                 display: "block",
                 marginBottom: "8px",
@@ -96,6 +107,7 @@ export default function LoginPage() {
               E-posta
             </label>
             <input
+              id="login-email"
               type="email"
               placeholder="ornek@mail.com"
               value={email}
@@ -114,6 +126,7 @@ export default function LoginPage() {
 
           <div style={{ marginBottom: "20px" }}>
             <label
+              htmlFor="login-password"
               style={{
                 display: "block",
                 marginBottom: "8px",
@@ -123,6 +136,7 @@ export default function LoginPage() {
               Şifre
             </label>
             <input
+              id="login-password"
               type="password"
               placeholder="Şifrenizi girin"
               value={password}
