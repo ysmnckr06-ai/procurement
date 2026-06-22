@@ -117,7 +117,10 @@ def _build_summary(analyzed_groups):
     }
 
 
-def build_excel_report(analyzed_groups, output_path):
+def build_excel_report(analyzed_groups, output_path, company_info=None):
+    company_info = company_info or {}
+    company_name = str(company_info.get("company_name") or "Firma adı belirtilmedi").strip()
+    product_name = str(company_info.get("product_name") or "Corvian ERP").strip()
     summary = _build_summary(analyzed_groups)
     firms = summary["firmalar"]
 
@@ -307,6 +310,7 @@ def build_excel_report(analyzed_groups, output_path):
         })
 
     ws.write("A1", "TEKLİF KARŞILAŞTIRMA RAPORU", title_fmt)
+    ws.write("A2", f"{company_name} · {product_name}", small_gray)
 
     rapor_tarihi = datetime.now().strftime("%d.%m.%Y %H:%M")
     best_counter = summary["best_counter"]

@@ -16,6 +16,7 @@ import {
   parentProcessInfo,
 } from "@/lib/projectHierarchy";
 import { supabase } from "@/lib/supabase";
+import { CORVIAN_PRODUCT_NAME, fetchCompanyBranding } from "@/lib/companyBranding";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL;
 const UNCATEGORIZED_PREVIEW_CATEGORY = "Kategorisiz Ürünler";
@@ -4640,14 +4641,21 @@ export default function ProjectDetailPage() {
     }));
   }
 
-  function downloadRowsAsExcel(rows, fileName, sheetName = "Liste") {
+  async function downloadRowsAsExcel(rows, fileName, sheetName = "Liste") {
     if (!rows || rows.length === 0) {
       setMessage("İndirilecek kalem bulunamadı.");
       return;
     }
 
+    const { companyName } = await fetchCompanyBranding(supabase);
     const workbook = XLSX.utils.book_new();
-    const worksheet = XLSX.utils.json_to_sheet(rows);
+    const worksheet = XLSX.utils.aoa_to_sheet([
+      [companyName],
+      [CORVIAN_PRODUCT_NAME],
+      [`Rapor: ${sheetName}`, `Oluşturma tarihi: ${new Date().toLocaleString("tr-TR")}`],
+      [],
+    ]);
+    XLSX.utils.sheet_add_json(worksheet, rows, { origin: "A5" });
     XLSX.utils.book_append_sheet(workbook, worksheet, sheetName.slice(0, 31));
     XLSX.writeFile(workbook, `${safeFileName(fileName)}.xlsx`);
   }
@@ -4658,6 +4666,7 @@ export default function ProjectDetailPage() {
       return;
     }
 
+    const { companyName } = await fetchCompanyBranding(supabase);
     const [{ default: jsPDF }, autoTableModule] = await Promise.all([
       import("jspdf"),
       import("jspdf-autotable"),
@@ -4667,9 +4676,15 @@ export default function ProjectDetailPage() {
     const columns = Object.keys(rows[0]);
 
     doc.setFontSize(13);
-    doc.text(title, 40, 36);
+    doc.text(companyName, 40, 30);
+    doc.setFontSize(8);
+    doc.text(CORVIAN_PRODUCT_NAME, 40, 42);
+    doc.setFontSize(12);
+    doc.text(title, 40, 60);
+    doc.setFontSize(8);
+    doc.text(`Oluşturma tarihi: ${new Date().toLocaleString("tr-TR")}`, 40, 74);
     autoTable(doc, {
-      startY: 52,
+      startY: 88,
       head: [columns],
       body: rows.map((row) => columns.map((column) => row[column] ?? "")),
       styles: { fontSize: 7, cellPadding: 4 },

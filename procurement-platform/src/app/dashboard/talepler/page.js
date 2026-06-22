@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { CORVIAN_PRODUCT_NAME, fetchCompanyBranding } from "@/lib/companyBranding";
 import { useState, useMemo, useEffect, useRef } from "react";
 
 function StatCard({ icon, title, value, text }) {
@@ -610,13 +611,20 @@ export default function TaleplerPage() {
       return;
     }
 
+    const { companyName } = await fetchCompanyBranding(supabase);
     const XLSX = await import("xlsx");
     const workbook = XLSX.utils.book_new();
 
     requestsToDownload.forEach((request, index) => {
       const rowsForSheet = requestItemsToExportRows(request);
       const rowsToWrite = rowsForSheet.length > 0 ? rowsForSheet : [{ Bilgi: "Kalem detayı bulunamadı." }];
-      const worksheet = XLSX.utils.json_to_sheet(rowsToWrite);
+      const worksheet = XLSX.utils.aoa_to_sheet([
+        [companyName],
+        [CORVIAN_PRODUCT_NAME],
+        [`Rapor: ${request.ad || "Talep Listesi"}`, `Oluşturma tarihi: ${formatDateTime(request.created_at || request.tarih)}`],
+        [],
+      ]);
+      XLSX.utils.sheet_add_json(worksheet, rowsToWrite, { origin: "A5" });
       XLSX.utils.book_append_sheet(
         workbook,
         worksheet,
@@ -637,6 +645,7 @@ export default function TaleplerPage() {
       return;
     }
 
+    const { companyName } = await fetchCompanyBranding(supabase);
     const [{ jsPDF }, autoTableModule] = await Promise.all([
       import("jspdf"),
       import("jspdf-autotable"),
@@ -648,10 +657,14 @@ export default function TaleplerPage() {
       if (index > 0) doc.addPage();
 
       const title = request.ad || "Talep Listesi";
-      doc.setFontSize(14);
-      doc.text(title, 40, 40);
-      doc.setFontSize(9);
-      doc.text(`Olusturma tarihi: ${formatDateTime(request.created_at || request.tarih)}`, 40, 58);
+      doc.setFontSize(13);
+      doc.text(companyName, 40, 32);
+      doc.setFontSize(8);
+      doc.text(CORVIAN_PRODUCT_NAME, 40, 44);
+      doc.setFontSize(12);
+      doc.text(title, 40, 62);
+      doc.setFontSize(8);
+      doc.text(`Oluşturma tarihi: ${formatDateTime(request.created_at || request.tarih)}`, 40, 76);
 
       const rowsForPdf = requestItemsToExportRows(request);
       const rowsToWrite = rowsForPdf.length > 0 ? rowsForPdf : [{ Bilgi: "Kalem detayi bulunamadi." }];
@@ -661,7 +674,7 @@ export default function TaleplerPage() {
       autoTable(doc, {
         head: [headers],
         body,
-        startY: 78,
+        startY: 90,
         styles: { fontSize: 7, cellPadding: 4, overflow: "linebreak" },
         headStyles: { fillColor: [15, 23, 42] },
         columnStyles: {

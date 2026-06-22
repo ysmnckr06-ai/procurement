@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { CORVIAN_PRODUCT_NAME, fetchCompanyBranding } from "@/lib/companyBranding";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL;
 const PRODUCT_TYPES = {
@@ -60,20 +61,26 @@ function exportDateStamp() {
   return new Date().toISOString().slice(0, 10);
 }
 
-async function downloadExcelWorkbook(fileName, sheets) {
+async function downloadExcelWorkbook(fileName, sheets, companyName) {
   const XLSX = await import("xlsx");
   const workbook = XLSX.utils.book_new();
 
   sheets.forEach((sheet) => {
     const rows = sheet.rows.length > 0 ? sheet.rows : [{ Bilgi: "Kayit bulunamadi" }];
-    const worksheet = XLSX.utils.json_to_sheet(rows);
+    const worksheet = XLSX.utils.aoa_to_sheet([
+      [companyName],
+      [CORVIAN_PRODUCT_NAME],
+      [`Rapor: ${sheet.name}`, `Oluşturma tarihi: ${new Date().toLocaleString("tr-TR")}`],
+      [],
+    ]);
+    XLSX.utils.sheet_add_json(worksheet, rows, { origin: "A5" });
     XLSX.utils.book_append_sheet(workbook, worksheet, sheet.name.slice(0, 31));
   });
 
   XLSX.writeFile(workbook, `${safeFileName(fileName)}.xlsx`);
 }
 
-async function downloadPdfTable(fileName, title, rows) {
+async function downloadPdfTable(fileName, title, rows, companyName) {
   const { jsPDF } = await import("jspdf");
   const autoTableModule = await import("jspdf-autotable");
   const autoTable = autoTableModule.default || autoTableModule.autoTable;
@@ -83,12 +90,16 @@ async function downloadPdfTable(fileName, title, rows) {
     columns.map((column) => String(row[column] ?? "")),
   );
 
-  doc.setFontSize(14);
-  doc.text(title, 40, 36);
-  doc.setFontSize(9);
-  doc.text(`Olusturma tarihi: ${formatDate(new Date())}`, 40, 52);
+  doc.setFontSize(13);
+  doc.text(companyName, 40, 32);
+  doc.setFontSize(8);
+  doc.text(CORVIAN_PRODUCT_NAME, 40, 44);
+  doc.setFontSize(12);
+  doc.text(title, 40, 62);
+  doc.setFontSize(8);
+  doc.text(`Oluşturma tarihi: ${formatDate(new Date())}`, 40, 76);
   autoTable(doc, {
-    startY: 68,
+    startY: 90,
     head: [columns],
     body,
     styles: { fontSize: 7, cellPadding: 4, overflow: "linebreak" },
@@ -1668,49 +1679,56 @@ setMessage(
   }
 
   async function exportProductsExcel() {
+    const { companyName } = await fetchCompanyBranding(supabase);
     const productRows = buildProductExportRows(filteredProducts, movements, projectItems, projects);
     const movementRows = buildMovementExportRows(movements, projects);
     await downloadExcelWorkbook(`stok-kartlari-${exportDateStamp()}`, [
       { name: "Stok Kartlari", rows: productRows },
       { name: "Stok Hareketleri", rows: movementRows },
-    ]);
+    ], companyName);
   }
 
   async function exportProductsPdf() {
+    const { companyName } = await fetchCompanyBranding(supabase);
     const productRows = buildProductExportRows(filteredProducts, movements, projectItems, projects);
-    await downloadPdfTable(`stok-kartlari-${exportDateStamp()}`, "Stok Kartlari ve Depo Sayim Listesi", productRows);
+    await downloadPdfTable(`stok-kartlari-${exportDateStamp()}`, "Stok Kartlari ve Depo Sayim Listesi", productRows, companyName);
   }
 
   async function exportMovementsExcel() {
+    const { companyName } = await fetchCompanyBranding(supabase);
     const movementRows = buildMovementExportRows(visibleMovementRows, projects, selectedProduct);
     await downloadExcelWorkbook(`stok-hareketleri-${exportDateStamp()}`, [
       { name: "Hareketler", rows: movementRows },
-    ]);
+    ], companyName);
   }
 
   async function exportMovementsPdf() {
+    const { companyName } = await fetchCompanyBranding(supabase);
     const movementRows = buildMovementExportRows(visibleMovementRows, projects, selectedProduct);
     const title = selectedProduct ? `${selectedProduct.product_name} - Stok Hareketleri` : "Stok Hareketleri";
-    await downloadPdfTable(`stok-hareketleri-${exportDateStamp()}`, title, movementRows);
+    await downloadPdfTable(`stok-hareketleri-${exportDateStamp()}`, title, movementRows, companyName);
   }
 
   async function exportSelectedProductUsageExcel() {
     if (!selectedProduct) return;
+    const { companyName } = await fetchCompanyBranding(supabase);
     const usageRows = buildProductUsageExportRows(selectedProduct, selectedProjectAllocation);
     const movementRows = buildMovementExportRows(selectedMovements, projects, selectedProduct);
     await downloadExcelWorkbook(`${selectedProduct.product_code || selectedProduct.product_name}-kullanim-${exportDateStamp()}`, [
       { name: "Proje Kullanim", rows: usageRows },
       { name: "Hareketler", rows: movementRows },
-    ]);
+    ], companyName);
   }
 
   async function exportSelectedProductUsagePdf() {
     if (!selectedProduct) return;
+    const { companyName } = await fetchCompanyBranding(supabase);
     const usageRows = buildProductUsageExportRows(selectedProduct, selectedProjectAllocation);
     await downloadPdfTable(
       `${selectedProduct.product_code || selectedProduct.product_name}-proje-kullanim-${exportDateStamp()}`,
       `${selectedProduct.product_name} - Proje Bazli Kullanim`,
       usageRows,
+      companyName,
     );
   }
 

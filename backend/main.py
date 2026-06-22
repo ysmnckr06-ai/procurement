@@ -546,6 +546,52 @@ def verify_user_token(authorization: str, enforce_license: bool = True):
 
     return user
 
+
+def resolve_company_info(user: dict) -> dict:
+    user_id = str(user.get("id") or "").strip()
+    metadata = user.get("user_metadata") or {}
+    metadata_company_name = str(metadata.get("company_name") or "").strip()
+    settings_row = None
+    license_row = None
+
+    if user_id:
+        try:
+            settings_response = (
+                supabase.table("company_settings")
+                .select("company_name,tax_no")
+                .eq("user_id", user_id)
+                .limit(1)
+                .execute()
+            )
+            settings_row = settings_response.data[0] if settings_response.data else None
+        except Exception as exc:
+            print("COMPANY SETTINGS LOOKUP ERROR:", str(exc))
+
+        try:
+            license_response = (
+                supabase.table("user_licenses")
+                .select("company_name")
+                .eq("user_id", user_id)
+                .limit(1)
+                .execute()
+            )
+            license_row = license_response.data[0] if license_response.data else None
+        except Exception as exc:
+            print("LICENSE COMPANY LOOKUP ERROR:", str(exc))
+
+    company_name = (
+        str((settings_row or {}).get("company_name") or "").strip()
+        or metadata_company_name
+        or str((license_row or {}).get("company_name") or "").strip()
+        or "Firma adı belirtilmedi"
+    )
+
+    return {
+        "company_name": company_name,
+        "tax_no": str((settings_row or {}).get("tax_no") or "").strip(),
+        "product_name": "Corvian ERP",
+    }
+
 def load_json(path):
     if not os.path.exists(path):
         return []
@@ -1697,7 +1743,7 @@ async def analyze_offers(
     report_name = f"mukayese_raporu_{report_id}.xlsx"
     report_path = os.path.join(TEMP_DIR, report_name)
 
-    build_excel_report(analyzed, report_path)
+    build_excel_report(analyzed, report_path, resolve_company_info(user))
 
     order_items = []
     for group in analyzed:
@@ -1955,7 +2001,7 @@ async def analyze_requests(
     report_name = f"talep_listesi_{user_id}_{uuid.uuid4()}.xlsx"
     report_path = os.path.join(TEMP_DIR, report_name)
 
-    build_request_excel_report(result_rows, report_path)
+    build_request_excel_report(result_rows, report_path, resolve_company_info(user))
 
     with open(report_path, "rb") as f:
         supabase.storage.from_("request-reports").upload(

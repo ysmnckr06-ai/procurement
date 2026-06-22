@@ -19,9 +19,9 @@ def build_request_excel_report(rows, output_path, company_info=None):
 
     company_info örnek:
     {
-        "company_name": "ASDFFG ELK. ELEKTRONİK SAN. VE TİC. LTD. ŞTİ.",
-        "tax_no": "123 456 7890",
-        "address": "İkitelli OSB Mah. Elektronikçiler San. Sit. No:10 / İstanbul"
+        "company_name": "Kullanıcı Firma Adı",
+        "tax_no": "Vergi numarası",
+        "address": "Firma adresi"
     }
     """
 
@@ -29,15 +29,10 @@ def build_request_excel_report(rows, output_path, company_info=None):
 
     company_info = company_info or {}
 
-    company_name = company_info.get(
-        "company_name",
-        "ASDFFG ELK. ELEKTRONİK SAN. VE TİC. LTD. ŞTİ."
-    )
-    tax_no = company_info.get("tax_no", "123 456 7890")
-    address = company_info.get(
-        "address",
-        "İkitelli OSB Mah. Elektronikçiler San. Sit. No:10"
-    )
+    company_name = str(company_info.get("company_name") or "Firma adı belirtilmedi").strip()
+    tax_no = str(company_info.get("tax_no") or "-").strip()
+    address = str(company_info.get("address") or "-").strip()
+    product_name = str(company_info.get("product_name") or "Corvian ERP").strip()
 
     report_date = datetime.now().strftime("%d.%m.%Y %H:%M")
     report_no = f"TRL-{datetime.now().strftime('%Y%m%d%H%M')}"
@@ -241,8 +236,8 @@ def build_request_excel_report(rows, output_path, company_info=None):
     ws.set_row(1, 28)
     ws.set_row(2, 24)
 
-    ws.merge_range("A1:B2", "PROCURA AI", brand_fmt)
-    ws.merge_range("A3:B3", "PROCUREMENT PLATFORM", brand_sub_fmt)
+    ws.merge_range("A1:B2", company_name, brand_fmt)
+    ws.merge_range("A3:B3", product_name, brand_sub_fmt)
 
     ws.merge_range("C1:E1", "SATINALMA TALEP LİSTESİ", title_fmt)
     ws.merge_range("C2:E2", "Akıllı Satınalma & Teklif Analiz Sistemi", subtitle_fmt)
