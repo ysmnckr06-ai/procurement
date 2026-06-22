@@ -183,7 +183,7 @@ export default function ProcurementSummaryPage() {
       const [projectResult, itemResult, productResult, orderResult] = await Promise.all([
         supabase.from("projects").select("id,project_code,project_name,status").eq("user_id", user.id).in("id", selectedIds),
         supabase.from("project_items").select("*").eq("user_id", user.id).in("project_id", selectedIds),
-        supabase.from("products").select("id,product_code,normalized_product_code,product_name,brand,unit,current_stock,reserved_stock").eq("user_id", user.id),
+        supabase.from("products").select("id,product_code,normalized_product_code,product_name,brand,unit,current_stock,reserved_stock").eq("user_id", user.id).is("archived_at", null),
         supabase.from("orders").select("id,status,items").eq("user_id", user.id),
       ]);
       const error = projectResult.error || itemResult.error || productResult.error || orderResult.error;

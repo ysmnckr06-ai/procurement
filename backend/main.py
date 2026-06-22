@@ -610,6 +610,7 @@ def load_user_products_for_report(user_id: str) -> list[dict]:
             supabase.table("products")
             .select("id,product_code,product_name,current_stock,reserved_stock")
             .eq("user_id", user_id)
+            .is_("archived_at", "null")
             .range(offset, offset + page_size - 1)
             .execute()
         )

@@ -489,7 +489,8 @@ export default function ProjectsPage() {
     const { data: productRows } = await supabase
       .from("products")
       .select("id,product_code,product_name,brand,unit,category")
-      .eq("user_id", userId);
+      .eq("user_id", userId)
+      .is("archived_at", null);
     const productByCode = new Map(
       (productRows || [])
         .filter((product) => product.product_code)

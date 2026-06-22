@@ -241,7 +241,7 @@ export default function DashboardPage() {
         supabase.from("requests").select("*").eq("user_id", user.id),
         supabase.from("reports").select("*").eq("user_id", user.id),
         supabase.from("orders").select("*").eq("user_id", user.id),
-        supabase.from("products").select("*").eq("user_id", user.id),
+        supabase.from("products").select("*").eq("user_id", user.id).is("archived_at", null),
         supabase.from("projects").select("*").eq("user_id", user.id),
         supabase.from("project_payments").select("*").eq("user_id", user.id),
         supabase.from("project_items").select("*").eq("user_id", user.id),
