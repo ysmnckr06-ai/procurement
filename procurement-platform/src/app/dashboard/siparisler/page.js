@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { calculateBaseAmount, currencyOptions, getBaseCurrency, getExchangeRate } from "@/lib/currency";
 import { fetchLiveTryRates, liveCurrencyOptions, liveRateFor, rateDiffPercent } from "@/lib/liveCurrency";
-import { findOrCreateBusinessPartner } from "@/lib/businessPartners";
+import { findOrCreateBusinessPartner, findPartnerMatches } from "@/lib/businessPartners";
 
 const emptyForm = {
   orderNo: "",
@@ -288,6 +288,7 @@ export default function OrdersPage() {
   const [showCompletedProjectItems, setShowCompletedProjectItems] = useState(false);
   const [projectItemsLoading, setProjectItemsLoading] = useState(false);
   const [projectItemsMessage, setProjectItemsMessage] = useState("");
+  const [partnerChoice, setPartnerChoice] = useState(null);
 
   // Initial load should run once; these functions intentionally read current mount state.
   // biome-ignore lint/correctness/useExhaustiveDependencies: initial page hydration only
@@ -508,6 +509,7 @@ export default function OrdersPage() {
 
   function handleSupplierChange(event) {
     setFormData((prev) => ({ ...prev, company: event.target.value }));
+    setPartnerChoice(null);
   }
 
   function updateOrderItem(index, field, value) {
@@ -583,6 +585,7 @@ export default function OrdersPage() {
     setEditingId(null);
     setShowForm(false);
     setMessage("");
+    setPartnerChoice(null);
   }
 
   function startNewOrder() {
@@ -602,6 +605,7 @@ export default function OrdersPage() {
     });
     setShowForm(true);
     setMessage("");
+    setPartnerChoice(null);
   }
 
   async function loadProjectItemsForOrder(projectId) {
@@ -796,22 +800,29 @@ export default function OrdersPage() {
     }
 
     const items = normalizeItems(formData.items);
-    let partner = await findOrCreateBusinessPartner(supabase, user.id, {
-      name: formData.company,
-      allowCreate: false,
-      partnerType: "Tedarikçi",
-    });
-    if (!partner && formData.company?.trim()) {
-      const shouldCreatePartner = window.confirm(
-        "Bu firma iş ortakları arasında bulunamadı. Yeni iş ortağı oluşturmak ister misiniz?",
+    const partnerMatches = findPartnerMatches(suppliers, { name: formData.company });
+    const selectedPartner = partnerChoice?.mode === "existing"
+      ? suppliers.find((supplier) => supplier.id === partnerChoice.partnerId)
+      : partnerMatches.find((match) => match.type === "exact")?.partner;
+    let partner = selectedPartner || null;
+
+    if (!partner && partnerChoice?.mode === "new") {
+      partner = await findOrCreateBusinessPartner(supabase, user.id, {
+        name: formData.company,
+        partnerType: "Tedarikçi",
+        allowCreate: true,
+        forceCreate: true,
+      });
+    }
+
+    if (!partner) {
+      setMessage(
+        partnerMatches.length > 0
+          ? "Benzer iş ortağı bulundu. Mevcut firmayı kullanın veya yeni firma oluşturmayı açıkça seçin."
+          : "Yeni iş ortağı oluşturmak için firma alanındaki onay seçeneğini kullanın.",
       );
-      if (shouldCreatePartner) {
-        partner = await findOrCreateBusinessPartner(supabase, user.id, {
-          name: formData.company,
-          partnerType: "Tedarikçi",
-          allowCreate: true,
-        });
-      }
+      isSubmittingRef.current = false;
+      return;
     }
 
     const orderTotal = Number(formData.totalAmount || calculateOrderTotal(items));
@@ -1065,6 +1076,8 @@ export default function OrdersPage() {
               editingId={editingId}
               onChange={handleChange}
               onSupplierChange={handleSupplierChange}
+              partnerChoice={partnerChoice}
+              onPartnerChoice={setPartnerChoice}
               onItemChange={updateOrderItem}
               onAddItem={addOrderItem}
               onDeleteItem={deleteOrderItem}
@@ -1322,6 +1335,8 @@ function OrderForm({
   editingId,
   onChange,
   onSupplierChange,
+  partnerChoice,
+  onPartnerChoice,
   onItemChange,
   onAddItem,
   onDeleteItem,
@@ -1375,6 +1390,8 @@ function OrderForm({
           value={formData.company}
           onChange={onSupplierChange}
           suppliers={suppliers}
+          partnerChoice={partnerChoice}
+          onPartnerChoice={onPartnerChoice}
           required
         />
         <Input
@@ -1927,7 +1944,9 @@ function Select({ label, name, value, onChange, options }) {
   );
 }
 
-function SupplierInput({ label, name, value, onChange, suppliers, required = false }) {
+function SupplierInput({ label, name, value, onChange, suppliers, partnerChoice, onPartnerChoice, required = false }) {
+  const matches = findPartnerMatches(suppliers, { name: value }, { threshold: 0.65, limit: 3 });
+
   return (
     <label className="block">
       <span className="mb-2 flex items-center gap-2 text-sm font-bold text-slate-700">
@@ -1948,6 +1967,35 @@ function SupplierInput({ label, name, value, onChange, suppliers, required = fal
           </option>
         ))}
       </datalist>
+      {String(value || "").trim().length >= 2 && (
+        <div className="mt-2 rounded-xl border border-blue-200 bg-blue-50 p-3">
+          <div className="text-xs font-black text-blue-900">Benzer iş ortakları</div>
+          <div className="mt-2 space-y-2">
+            {matches.map((match) => (
+              <button
+                key={match.partner.id}
+                type="button"
+                onClick={() => {
+                  onChange({ target: { name, value: match.partner.name } });
+                  onPartnerChoice({ mode: "existing", partnerId: match.partner.id });
+                }}
+                className={`flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left text-xs font-bold ${partnerChoice?.partnerId === match.partner.id ? "border-blue-500 bg-white text-blue-900" : "border-blue-100 bg-white/70 text-slate-700"}`}
+              >
+                <span>{match.partner.name}</span>
+                <span>%{Math.round(match.score * 100)} · Mevcut firmayı kullan</span>
+              </button>
+            ))}
+            {matches.length === 0 && <div className="text-xs text-slate-600">Benzer kayıt bulunamadı.</div>}
+            <button
+              type="button"
+              onClick={() => onPartnerChoice({ mode: "new" })}
+              className={`w-full rounded-lg border px-3 py-2 text-left text-xs font-black ${partnerChoice?.mode === "new" ? "border-amber-500 bg-amber-100 text-amber-900" : "border-amber-200 bg-white text-amber-800"}`}
+            >
+              Yeni firma oluştur
+            </button>
+          </div>
+        </div>
+      )}
     </label>
   );
 }

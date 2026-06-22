@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { CORVIAN_PRODUCT_NAME, fetchCompanyBranding } from "@/lib/companyBranding";
+import { matchProduct } from "@/lib/productMatching";
 import { useState, useMemo, useEffect, useRef } from "react";
 
 function StatCard({ icon, title, value, text }) {
@@ -1118,6 +1119,13 @@ export default function TaleplerPage() {
                                   {requestItems.map((item, itemIndex) => {
                                     const quantity = readItemField(item, ["talepEdilenAdet", "quantity", "qty", "estimated_quantity"], 0);
                                     const currency = readItemField(item, ["paraBirimi", "currency"], "TRY");
+                                    const productMatch = matchProduct(stockProducts, {
+                                      product_id: readItemField(item, ["product_id", "productId"], ""),
+                                      product_code: readItemField(item, ["urunKodu", "product_code", "code"], ""),
+                                      product_name: readItemField(item, ["urunAciklamasi", "product_name", "description", "name"], ""),
+                                      brand: readItemField(item, ["marka", "brand"], ""),
+                                      unit: readItemField(item, ["birim", "unit"], "adet"),
+                                    });
                                     return (
                                       <tr key={`${readItemField(item, ["urunKodu", "product_code", "code"], "kod-yok")}-${itemIndex}`} className="align-top">
                                         <td className="px-3 py-3 font-semibold text-slate-500">{itemIndex + 1}</td>
@@ -1126,6 +1134,11 @@ export default function TaleplerPage() {
                                         </td>
                                         <td className="max-w-[420px] px-3 py-3 font-semibold text-slate-800">
                                           {readItemField(item, ["urunAciklamasi", "product_name", "description", "name"], "Ürün açıklaması yok")}
+                                          {productMatch.type !== "new" && productMatch.match?.product && (
+                                            <div className={`mt-2 rounded-lg border px-2 py-1 text-[10px] font-bold ${productMatch.type === "exact" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : productMatch.type === "conflict" ? "border-red-200 bg-red-50 text-red-800" : "border-blue-200 bg-blue-50 text-blue-800"}`}>
+                                              {productMatch.type === "exact" ? "Eşleşen kart" : productMatch.type === "conflict" ? "Kod çakışması" : "Benzer kart"}: %{Math.round((productMatch.match.score || 0) * 100)} · {productMatch.match.product.product_code || "Kodsuz"} · {productMatch.match.product.product_name}
+                                            </div>
+                                          )}
                                         </td>
                                         <td className="px-3 py-3 text-right font-bold text-blue-700">
                                           {Number(quantity || 0).toLocaleString("tr-TR")}
@@ -1203,15 +1216,30 @@ export default function TaleplerPage() {
                   </thead>
 
                   <tbody>
-                    {rows.map((r, i) => (
+                    {rows.map((r, i) => {
+                      const productMatch = matchProduct(stockProducts, {
+                        product_code: r.urunKodu,
+                        product_name: r.urunAciklamasi,
+                        brand: r.marka,
+                        unit: r.birim,
+                      });
+                      return (
                       <tr key={i} className="border-t border-slate-100">
                         <td className="p-4 font-medium text-slate-600">{i + 1}</td>
                         <td className="p-4 font-bold text-slate-800">{r.urunKodu || "-"}</td>
-                        <td className="p-4 text-slate-700">{r.urunAciklamasi || "-"}</td>
+                        <td className="p-4 text-slate-700">
+                          {r.urunAciklamasi || "-"}
+                          {productMatch.type !== "new" && productMatch.match?.product && (
+                            <div className={`mt-2 rounded-lg border px-2 py-1 text-[10px] font-bold ${productMatch.type === "exact" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : productMatch.type === "conflict" ? "border-red-200 bg-red-50 text-red-800" : "border-blue-200 bg-blue-50 text-blue-800"}`}>
+                              {productMatch.type === "exact" ? "Eşleşen kart" : productMatch.type === "conflict" ? "Kod çakışması" : "Benzer kart"}: %{Math.round((productMatch.match.score || 0) * 100)} · {productMatch.match.product.product_code || "Kodsuz"} · {productMatch.match.product.product_name}
+                            </div>
+                          )}
+                        </td>
                         <td className="p-4 font-bold text-slate-800">{r.talepEdilenAdet || 0}</td>
                         <td className="p-4 text-slate-600">{r.birim || "-"}</td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

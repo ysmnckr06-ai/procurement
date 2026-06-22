@@ -6,6 +6,7 @@ import {
   backfillProjectCustomerPartners,
   deduplicateBusinessPartners,
   findOrCreateBusinessPartner,
+  findPartnerMatches,
   normalizePartnerName,
   normalizePartnerRecord,
   partnerTypes,
@@ -360,6 +361,7 @@ export default function BusinessPartnersPage() {
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [partnerChoice, setPartnerChoice] = useState(null);
 
   async function loadData() {
     setLoading(true);
@@ -668,6 +670,7 @@ export default function BusinessPartnersPage() {
 
   function updateForm(field, value) {
     setForm((prev) => ({ ...prev, [field]: value }));
+    if (field === "name" || field === "tax_number") setPartnerChoice(null);
   }
 
   function startCreate() {
@@ -676,6 +679,7 @@ export default function BusinessPartnersPage() {
     setFormOpen(true);
     setDetailOpen(false);
     setMessage("");
+    setPartnerChoice(null);
   }
 
   function startEdit(partner) {
@@ -696,6 +700,7 @@ export default function BusinessPartnersPage() {
       status: partner.status || "Aktif",
     });
     setMessage("");
+    setPartnerChoice({ mode: "existing", partnerId: partner.id });
   }
 
   async function savePartner(event) {
@@ -739,22 +744,39 @@ export default function BusinessPartnersPage() {
     };
 
     if (!editingId) {
-      const partner = await findOrCreateBusinessPartner(supabase, user.id, {
+      const matches = findPartnerMatches(partners, {
         name: payload.name,
-        partnerType: payload.partner_type,
         taxNumber: payload.tax_number,
         email: payload.email,
         phone: payload.phone,
-        contactPerson: payload.contact_person,
-        city: payload.city,
-        address: payload.address,
-        notes: payload.notes,
       });
+      let partner = partnerChoice?.mode === "existing"
+        ? partners.find((item) => item.id === partnerChoice.partnerId)
+        : matches.find((match) => match.type === "exact")?.partner;
+
+      if (!partner && partnerChoice?.mode === "new") {
+        partner = await findOrCreateBusinessPartner(supabase, user.id, {
+          name: payload.name,
+          partnerType: payload.partner_type,
+          taxNumber: payload.tax_number,
+          email: payload.email,
+          phone: payload.phone,
+          contactPerson: payload.contact_person,
+          city: payload.city,
+          address: payload.address,
+          notes: payload.notes,
+          forceCreate: true,
+        });
+      }
 
       setSaving(false);
 
       if (!partner?.id) {
-        setMessage("İş ortağı kaydedilemedi.");
+        setMessage(
+          matches.length > 0
+            ? "Benzer firma bulundu. Mevcut firmayı kullanın veya yeni firma oluşturmayı açıkça seçin."
+            : "Yeni firma kartı oluşturmak için aşağıdaki onay seçeneğini kullanın.",
+        );
         return;
       }
 
@@ -997,6 +1019,43 @@ export default function BusinessPartnersPage() {
                 value={form.name}
                 onChange={(event) => updateForm("name", event.target.value)}
               />
+              {!editingId && String(form.name || "").trim().length >= 2 && (() => {
+                const matches = findPartnerMatches(partners, {
+                  name: form.name,
+                  taxNumber: form.tax_number,
+                  email: form.email,
+                  phone: form.phone,
+                }, { threshold: 0.65, limit: 3 });
+                return (
+                  <div className="mt-2 rounded-xl border border-blue-200 bg-blue-50 p-3">
+                    <div className="text-xs font-black text-blue-900">Benzer firma önerileri</div>
+                    <div className="mt-2 space-y-2">
+                      {matches.map((match) => (
+                        <button
+                          key={match.partner.id}
+                          type="button"
+                          onClick={() => {
+                            setForm((current) => ({ ...current, name: match.partner.name }));
+                            setPartnerChoice({ mode: "existing", partnerId: match.partner.id });
+                          }}
+                          className={`flex w-full justify-between rounded-lg border bg-white px-3 py-2 text-left text-xs font-bold ${partnerChoice?.partnerId === match.partner.id ? "border-blue-500 text-blue-900" : "border-blue-100 text-slate-700"}`}
+                        >
+                          <span>{match.partner.name}</span>
+                          <span>%{Math.round(match.score * 100)} · Mevcut firmayı kullan</span>
+                        </button>
+                      ))}
+                      {matches.length === 0 && <div className="text-xs text-slate-600">Benzer firma bulunamadı.</div>}
+                      <button
+                        type="button"
+                        onClick={() => setPartnerChoice({ mode: "new" })}
+                        className={`w-full rounded-lg border px-3 py-2 text-left text-xs font-black ${partnerChoice?.mode === "new" ? "border-amber-500 bg-amber-100 text-amber-900" : "border-amber-200 bg-white text-amber-800"}`}
+                      >
+                        Yeni firma oluştur
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
             </label>
             <label className="text-sm font-bold text-slate-700 md:col-span-6">
               Tür

@@ -128,7 +128,7 @@ export function normalizePartnerRecord(partner = {}) {
   };
 }
 
-function partnerMatchScore(candidate, input) {
+export function partnerMatchScore(candidate, input) {
   const partner = normalizePartnerRecord(candidate);
   const inputTax = normalizeTax(input.taxNumber);
   const partnerTax = normalizeTax(partner.tax_number || partner.tax_no);
@@ -147,6 +147,21 @@ function partnerMatchScore(candidate, input) {
   if (inputName && partnerName && inputName === partnerName) return 0.96;
 
   return similarity(partner.name, input.name);
+}
+
+export function findPartnerMatches(partners, input, { threshold = 0.65, limit = 5 } = {}) {
+  return (partners || [])
+    .map((partner) => ({
+      partner: normalizePartnerRecord(partner),
+      score: partnerMatchScore(partner, input || {}),
+    }))
+    .filter((match) => match.score >= threshold)
+    .sort((left, right) => right.score - left.score)
+    .slice(0, limit)
+    .map((match) => ({
+      ...match,
+      type: match.score >= 0.96 ? "exact" : "probable",
+    }));
 }
 
 export function findBestPartnerMatch(partners, input, threshold = 0.9) {
@@ -178,6 +193,8 @@ export async function findOrCreateBusinessPartner(
     address = "",
     notes = "",
     allowCreate = true,
+    forceCreate = false,
+    allowProbableMatch = false,
   } = {},
 ) {
   const cleanName = String(name || "").trim().replace(/\s+/g, " ");
@@ -190,12 +207,18 @@ export async function findOrCreateBusinessPartner(
 
   if (lookupError) console.error("İş ortağı arama hatası:", lookupError);
 
-  const match = findBestPartnerMatch(partners || [], {
-    name: cleanName,
-    taxNumber,
-    email,
-    phone,
-  });
+  const match = forceCreate
+    ? null
+    : findBestPartnerMatch(
+        partners || [],
+        {
+          name: cleanName,
+          taxNumber,
+          email,
+          phone,
+        },
+        allowProbableMatch ? 0.9 : 0.96,
+      );
 
   if (match?.partner) {
     const existing = match.partner;
@@ -389,6 +412,7 @@ export async function backfillProjectCustomerPartners(supabase, userId, projects
         name: customerName,
         allowCreate: false,
         partnerType: "Müşteri",
+        allowProbableMatch: true,
       });
       if (partner) createdCustomers += 1;
     }

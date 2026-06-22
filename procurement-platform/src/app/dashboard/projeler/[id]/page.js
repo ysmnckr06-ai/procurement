@@ -17,6 +17,7 @@ import {
 } from "@/lib/projectHierarchy";
 import { supabase } from "@/lib/supabase";
 import { CORVIAN_PRODUCT_NAME, fetchCompanyBranding } from "@/lib/companyBranding";
+import { findProductMatches, matchProduct } from "@/lib/productMatching";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL;
 const UNCATEGORIZED_PREVIEW_CATEGORY = "Kategorisiz Ürünler";
@@ -1264,7 +1265,12 @@ export default function ProjectDetailPage() {
       const sourceItem = missingItem.sourceItem || missingItem;
       const safeCurrency = sourceItem.currency || projectCurrencyForDisplay() || "TRY";
       const identity = normalizeProductIdentityForStock(sourceItem);
-      const productCodeResult = productCodeForMissingItem(sourceItem, missingItem, options, usedProductCodes);
+      const selectedExistingProduct = options.existingProductId
+        ? products.find((product) => product.id === options.existingProductId)
+        : null;
+      const productCodeResult = selectedExistingProduct
+        ? { code: selectedExistingProduct.product_code || sourceItem.product_code || "" }
+        : productCodeForMissingItem(sourceItem, missingItem, options, usedProductCodes);
       if (productCodeResult.error) {
         failedRows.push(sourceItem);
         logProductCardError(
@@ -1300,8 +1306,10 @@ export default function ProjectDetailPage() {
         product_code: productCodeResult.code,
         normalized_product_code: productPayload.normalized_product_code,
       };
-      let product = products.find((candidate) => productMatchesProjectItem(candidate, itemWithResolvedCode));
-      if (!product) {
+      const sharedMatch = matchProduct(products, itemWithResolvedCode);
+      let product = selectedExistingProduct
+        || (sharedMatch.type === "exact" ? sharedMatch.match?.product : null);
+      if (!product && sharedMatch.type === "new") {
         const { data: existingByCode, error: existingByCodeError } = await supabase
           .from("products")
           .select("*")
@@ -1548,7 +1556,8 @@ export default function ProjectDetailPage() {
       const safeCurrency = item.currency || projectCurrencyForDisplay() || "TRY";
       const normalizedIdentity = normalizeProductIdentityForStock(item);
       const searchableProducts = [...(productRows || []), ...createdProducts];
-      let product = searchableProducts.find((candidate) => productMatchesProjectItem(candidate, item));
+      const sharedMatch = matchProduct(searchableProducts, item);
+      let product = sharedMatch.type === "exact" ? sharedMatch.match?.product : null;
       let productCardStatus = "Ürün kartına bağlı";
 
       if (!product) {
@@ -1563,7 +1572,8 @@ export default function ProjectDetailPage() {
           logProductCardError(existingByCodeError, item, { product_code: safeProductCode }, "existing-lookup");
         }
 
-        product = existingByCode || null;
+        const databaseMatch = existingByCode ? matchProduct([existingByCode], item) : null;
+        product = databaseMatch?.type === "exact" ? existingByCode : null;
       }
 
       if (!product) {
@@ -5920,6 +5930,8 @@ export default function ProjectDetailPage() {
                       const manualCode = manualMissingProductCode(item);
                       const manualCodeDuplicate = Boolean(manualCode && productCodeAlreadyExists(manualCode));
                       const sourceCodeDuplicate = Boolean(sourceCode && productCodeAlreadyExists(sourceCode));
+                      const productSuggestions = findProductMatches(products, item.sourceItem || item, { limit: 3 })
+                        .filter((match) => match.type === "probable" || match.type === "conflict");
 
                       return (
                       <tr key={item.key} className="bg-white align-top">
@@ -5976,6 +5988,22 @@ export default function ProjectDetailPage() {
                           <div className="whitespace-normal break-words font-bold text-slate-900" title={item.product_name}>
                             {item.product_name}
                           </div>
+                          {productSuggestions.length > 0 && (
+                            <div className="mt-2 rounded-lg border border-blue-200 bg-blue-50 p-2">
+                              <div className="text-[10px] font-black text-blue-900">Benzer ürün kartları</div>
+                              {productSuggestions.map((suggestion) => (
+                                <button
+                                  key={suggestion.product.id}
+                                  type="button"
+                                  disabled={creatingMissingProducts}
+                                  onClick={() => createProductCardsFromMissing([item], { existingProductId: suggestion.product.id })}
+                                  className="mt-1 block w-full rounded bg-white px-2 py-1 text-left text-[10px] font-bold text-blue-800"
+                                >
+                                  %{Math.round(suggestion.score * 100)} · {suggestion.product.product_code || "Kodsuz"} · {suggestion.product.product_name} — Mevcut kartı kullan
+                                </button>
+                              ))}
+                            </div>
+                          )}
                         </td>
                         <td className="p-3 font-bold">{item.unit || "adet"}</td>
                         <td className="p-3 text-right font-black">{formatQuantity(item.quantity || 0)}</td>

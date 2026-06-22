@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { calculateBaseAmount, currencyOptions, getBaseCurrency, getExchangeRate } from "@/lib/currency";
 import { findOrCreateBusinessPartner } from "@/lib/businessPartners";
+import { matchProduct } from "@/lib/productMatching";
 
 const statusFlow = [
   "Taslak",
@@ -606,6 +607,8 @@ export default function OrderDetailPage() {
   const [receipts, setReceipts] = useState([]);
   const [automaticReceiptApplying, setAutomaticReceiptApplying] = useState(false);
   const [automaticReceiptResult, setAutomaticReceiptResult] = useState(null);
+  const [receiptProductOverrides, setReceiptProductOverrides] = useState({});
+  const [receiptProductSuggestion, setReceiptProductSuggestion] = useState(null);
   const [payments, setPayments] = useState([]);
   const [documents, setDocuments] = useState([]);
   const [documentItems, setDocumentItems] = useState([]);
@@ -956,151 +959,84 @@ export default function OrderDetailPage() {
       .eq("user_id", user.id);
   }
 
-  async function updateProductFromReceipt(userId, item, addedQuantity, options = {}) {
-    const productName = item.productName || item.productCode || "Urun";
+  async function resolveReceiptProduct(userId, item, projectItem = null) {
+    const productName = item.productName || item.productCode || "Ürün";
     const productCode = String(item.productCode || "").trim().toUpperCase();
-    const receiptDate = options.receiptDate || getToday();
-    let product = null;
+    const receiptProductKey = String(item.id || item.orderItemId || productCode || productName);
 
-    if (options.projectItem?.product_id) {
-      const { data: productById, error: productByIdError } = await supabase
-        .from("products")
-        .select("*")
-        .eq("id", options.projectItem.product_id)
-        .eq("user_id", userId)
-        .maybeSingle();
-
-      if (productByIdError) console.error("?r?n kart? product_id ile bulunamad?:", productByIdError);
-      product = productById || null;
-    }
-
-    if (!product && productCode) {
-      const { data: productByCode, error: productByCodeError } = await supabase
-        .from("products")
-        .select("*")
-        .eq("user_id", userId)
-        .eq("product_code", productCode)
-        .limit(1);
-
-      if (productByCodeError) console.error("?r?n kart? ?r?n kodu ile bulunamad?:", productByCodeError);
-      product = productByCode?.[0] || null;
-    }
-
-    if (!product && productName) {
-      const { data: productByName, error: productByNameError } = await supabase
-        .from("products")
-        .select("*")
-        .eq("user_id", userId)
-        .ilike("product_name", `%${productName}%`)
-        .limit(1);
-
-      if (productByNameError) console.error("?r?n kart? ?r?n ad? ile bulunamad?:", productByNameError);
-      product = productByName?.[0] || null;
-    }
-
-    if (!product?.id) {
-      console.warn("Teslim alma i?in mevcut ?r?n kart? bulunamad?:", {
-        product_code: productCode,
-        product_name: productName,
-        unit: item.unit || "adet",
-      });
+    const { data: tenantProducts, error } = await supabase
+      .from("products")
+      .select("*")
+      .eq("user_id", userId)
+      .limit(5000);
+    if (error) {
+      setMessage("Ürün kartları kontrol edilemedi; teslim alma güvenli şekilde durduruldu.");
       return null;
     }
 
-    const updatePayload = {
-      product_name: product.product_name || productName,
-      unit: item.unit || product.unit || "adet",
-      current_stock: Number(product.current_stock || 0) + Number(addedQuantity || 0),
-      last_supplier: order.partner_name || order.supplier_name || "",
-      last_unit_price: Number(item.unitPrice || 0),
-      last_currency: order.currency || "TRY",
-      last_purchase_date: receiptDate,
-      last_movement_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
+    const overriddenProduct = receiptProductOverrides[receiptProductKey]
+      ? (tenantProducts || []).find((product) => product.id === receiptProductOverrides[receiptProductKey])
+      : null;
+    if (overriddenProduct) return overriddenProduct;
 
-    const updateResult = await supabase
-      .from("products")
-      .update(updatePayload)
-      .eq("id", product.id)
-      .eq("user_id", userId);
+    const result = matchProduct(tenantProducts || [], {
+      product_id: projectItem?.product_id,
+      product_code: productCode,
+      product_name: productName,
+      unit: item.unit || "adet",
+      brand: item.brand || "",
+    });
+    if (result.type === "exact") return result.match?.product || null;
 
-    if (!updateResult.error) return product.id;
-
-    const missingPurchaseDateColumn =
-      updateResult.error.message?.includes("last_purchase_date") ||
-      updateResult.error.code === "PGRST204";
-
-    if (!missingPurchaseDateColumn) {
-      console.error("?r?n kart? teslim alma ile g?ncellenemedi:", updateResult.error);
-      return product.id;
-    }
-
-    const { last_purchase_date: _unused, ...fallbackPayload } = updatePayload;
-    const fallbackResult = await supabase
-      .from("products")
-      .update(fallbackPayload)
-      .eq("id", product.id)
-      .eq("user_id", userId);
-
-    if (fallbackResult.error) {
-      console.error("?r?n kart? teslim alma ile g?ncellenemedi:", fallbackResult.error);
-    }
-
-    return product.id;
+    setReceiptProductSuggestion({ key: receiptProductKey, item, result });
+    setMessage(
+      result.type === "new"
+        ? `${productName} için ürün kartı bulunamadı. Teslim almadan önce stok kartını oluşturun.`
+        : `${productName} için benzer veya çakışan ürün kartı bulundu. Mevcut kartı seçip işlemi tekrar deneyin.`,
+    );
+    return null;
   }
-  async function writeStockMovements(userId, previousItems, nextItems) {
-    const movements = [];
 
-    for (const item of nextItems) {
-      const previousItem = previousItems.find(
-        (previous) =>
-          (item.productCode && previous.productCode === item.productCode) ||
-          previous.productName === item.productName,
-      );
-      const addedQuantity =
-        Number(item.deliveredQuantity || 0) -
-        Number(previousItem?.deliveredQuantity || 0);
+  async function createReceiptProductCard() {
+    if (!receiptProductSuggestion?.item) return;
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      router.push("/login");
+      return;
+    }
 
-      if (addedQuantity <= 0 || !item.productName) continue;
-
-      const matchingProjectItem = projectItems.find(
-        (projectItem) =>
-          (item.productCode && projectItem.product_code === item.productCode) ||
-          projectItem.product_name === item.productName,
-      );
-      const productId = await updateProductFromReceipt(userId, item, addedQuantity, {
-        projectItem: matchingProjectItem,
-        receiptDate: getToday(),
-      });
-
-      movements.push({
-        user_id: userId,
-        product_id: productId,
-        product_code: item.productCode || "",
-        product_name: item.productName,
-        movement_type: "in",
-        quantity: addedQuantity,
+    const item = receiptProductSuggestion.item;
+    const productName = String(item.productName || item.productCode || "").trim();
+    const productCode = String(item.productCode || "").trim().toUpperCase()
+      || `STK-${new Date().toISOString().slice(0, 10).replaceAll("-", "")}-${Date.now()}`;
+    const { data: product, error } = await supabase
+      .from("products")
+      .insert({
+        user_id: user.id,
+        product_code: productCode,
+        normalized_product_code: productCode,
+        product_name: productName,
+        brand: item.brand || "",
         unit: item.unit || "adet",
-        supplier_name: order.supplier_name || order.partner_name || "",
-        partner_id: order.partner_id || null,
-        partner_name: order.partner_name || order.supplier_name || "",
-        partner_type: order.partner_type || "Tedarikçi",
-        order_id: order.id,
-        report_id: order.report_id || null,
-        unit_price: Number(item.unitPrice || 0),
-        currency: order.currency || "TRY",
-        movement_date: getToday(),
-        source: "Sipariş teslimatı",
-        notes: `${order.order_no || "Sipariş"} teslimatı`,
-      });
+        current_stock: 0,
+        reserved_stock: 0,
+        min_stock: 0,
+        critical_stock: 0,
+        source: "Sipariş teslim alma kullanıcı onayı",
+        notes: `${order.order_no || "Sipariş"} teslim alma öncesi oluşturuldu.`,
+      })
+      .select("*")
+      .single();
+
+    if (error || !product) {
+      setMessage(error?.message || "Yeni ürün kartı oluşturulamadı.");
+      return;
     }
 
-    if (movements.length > 0) {
-      await supabase.from("stock_movements").insert(movements);
-    }
+    setReceiptProductOverrides((current) => ({ ...current, [receiptProductSuggestion.key]: product.id }));
+    setReceiptProductSuggestion(null);
+    setMessage("Yeni ürün kartı oluşturuldu. Teslim alma işlemini tekrar çalıştırın.");
   }
-
   async function updateStatus(nextStatus) {
     if (!order) return;
 
@@ -1217,6 +1153,23 @@ export default function OrderDetailPage() {
       delivery_date: deliveryDate,
     };
 
+    for (let index = 0; index < nextItems.length; index += 1) {
+      const item = nextItems[index];
+      const previousItem = items[index];
+      const addedQuantity = Number(item.deliveredQuantity || 0) - Number(previousItem?.deliveredQuantity || 0);
+      if (addedQuantity <= 0) continue;
+      const matchingProjectItem = projectItems.find(
+        (projectItem) =>
+          (item.productCode && projectItem.product_code === item.productCode)
+          || projectItem.product_name === item.productName,
+      );
+      const product = await resolveReceiptProduct(user.id, item, matchingProjectItem || null);
+      if (!product?.id) {
+        setMessage("Ürün kartı kesinleşmediği için teslimat durumu değiştirilmedi.");
+        return;
+      }
+    }
+
     const { error } = await updateOrder(payload, fallbackPayload);
 
     if (error) {
@@ -1224,10 +1177,8 @@ export default function OrderDetailPage() {
       return;
     }
 
-    await writeStockMovements(user.id, items, nextItems);
-
     setDeliveryInputs({});
-    setMessage("Teslimat ve durum bilgisi güncellendi.");
+    setMessage("Teslimat durumu güncellendi. Fiziksel stok girişi yalnızca Depo Teslim Alma üzerinden yapılır.");
     await loadOrder();
   }
 
@@ -1285,6 +1236,9 @@ export default function OrderDetailPage() {
       return;
     }
 
+    const resolvedProduct = await resolveReceiptProduct(user.id, item, selectedProjectItem);
+    if (!resolvedProduct?.id) return;
+
     const receiptPayload = {
       user_id: user.id,
       order_id: order.id,
@@ -1310,67 +1264,6 @@ export default function OrderDetailPage() {
       receipt_date: input.receiptDate || getToday(),
       note: input.note || "",
     };
-
-    const { data: receiptData, error: receiptError } = await supabase
-      .from("order_receipts")
-      .insert(receiptPayload)
-      .select("*")
-      .single();
-
-    if (receiptError) {
-      console.error(receiptError);
-      setMessage("Teslim alma kaydedilemedi. Supabase SQL tarafında order_receipts tablosu çalıştırılmalı.");
-      return;
-    }
-
-    if (acceptedQuantity > 0) {
-      const productId = await updateProductFromReceipt(user.id, item, acceptedQuantity, {
-        projectItem: selectedProjectItem,
-        receiptDate: receiptPayload.receipt_date,
-      });
-      const { error: movementError } = await supabase.from("stock_movements").insert({
-        user_id: user.id,
-        product_id: productId,
-        product_code: item.productCode || "",
-        product_name: item.productName,
-        movement_type: "in",
-        quantity: acceptedQuantity,
-        unit: item.unit || "adet",
-        supplier_name: order.supplier_name || "",
-        partner_id: partner?.id || order.partner_id || null,
-        partner_name: partner?.name || order.partner_name || order.supplier_name || "",
-        partner_type: partner?.partner_type || order.partner_type || "Tedarikçi",
-        order_id: order.id,
-        report_id: order.report_id || null,
-        project_id: order.project_id || null,
-        project_item_id: selectedProjectItem?.id || null,
-        parent_item_id: parentItemId,
-        receipt_id: receiptData.id,
-        unit_price: Number(item.unitPrice || 0),
-        currency: order.currency || "TRY",
-        movement_date: receiptPayload.receipt_date,
-        source: "Depo teslim alma",
-        notes: `${order.order_no || "Sipariş"} - ${receiptStatus}`,
-      });
-
-      if (movementError) {
-        console.error(movementError);
-        setMessage("Teslim kaydı oluştu fakat stok hareketi işlenemedi. SQL şemasındaki yeni stok alanlarını kontrol edin.");
-      }
-    }
-
-    if (selectedProjectItem) {
-      await supabase
-        .from("project_items")
-        .update({
-          status: receiptStatus,
-          received_quantity: Number(selectedProjectItem.received_quantity || 0) + acceptedQuantity,
-          defective_quantity: Number(selectedProjectItem.defective_quantity || 0) + defectiveQuantity,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", selectedProjectItem.id)
-        .eq("user_id", user.id);
-    }
 
     const nextItems = items.map((row, rowIndex) => {
       if (rowIndex !== index) return row;
@@ -1400,22 +1293,48 @@ export default function OrderDetailPage() {
       status: receiptStatus,
     });
 
-    await updateOrder(
-      {
-        items: nextItems,
-        status: nextStatus,
-        delivery_date: nextStatus === "Tam Teslim" ? getToday() : order.delivery_date,
-        receipt_status: receiptStatus,
-        received_total: nextDeliveredQuantity,
-        defective_total: Number(order.defective_total || 0) + defectiveQuantity,
-        status_history: nextHistory,
-      },
-      {
-        items: nextItems,
-        status: nextStatus,
-        delivery_date: nextStatus === "Tam Teslim" ? getToday() : order.delivery_date,
-      },
-    );
+    const { error: receiptError } = await supabase.rpc("record_order_stock_receipt", {
+      p_order_id: order.id,
+      p_product_id: resolvedProduct?.id || null,
+      p_project_id: order.project_id || null,
+      p_project_item_id: selectedProjectItem?.id || null,
+      p_parent_item_id: parentItemId,
+      p_document_item_id: null,
+      p_order_no: receiptPayload.order_no,
+      p_supplier_name: receiptPayload.supplier_name,
+      p_partner_id: receiptPayload.partner_id,
+      p_partner_name: receiptPayload.partner_name,
+      p_partner_type: receiptPayload.partner_type,
+      p_product_code: resolvedProduct?.product_code || item.productCode || "",
+      p_product_name: resolvedProduct?.product_name || item.productName,
+      p_unit: item.unit || resolvedProduct?.unit || "adet",
+      p_ordered_quantity: orderedQuantity,
+      p_received_quantity: receivedQuantity,
+      p_accepted_quantity: acceptedQuantity,
+      p_missing_quantity: missingQuantity,
+      p_excess_quantity: excessQuantity,
+      p_defective_quantity: defectiveQuantity,
+      p_receipt_status: receiptStatus,
+      p_received_by: receiptPayload.received_by,
+      p_receipt_date: receiptPayload.receipt_date,
+      p_note: receiptPayload.note,
+      p_unit_price: Number(item.unitPrice || 0),
+      p_currency: order.currency || "TRY",
+      p_report_id: order.report_id || null,
+      p_order_items: nextItems,
+      p_order_status: nextStatus,
+      p_delivery_date: nextStatus === "Tam Teslim" ? getToday() : order.delivery_date,
+      p_status_history: nextHistory,
+      p_order_receipt_status: receiptStatus,
+      p_received_total: nextDeliveredQuantity,
+      p_defective_total: Number(order.defective_total || 0) + defectiveQuantity,
+    });
+
+    if (receiptError) {
+      console.error(receiptError);
+      setMessage(receiptError.message || "Teslim alma işlemi atomik olarak tamamlanamadı; hiçbir kayıt değiştirilmedi.");
+      return;
+    }
 
     setReceiptInputs((prev) => ({ ...prev, [index]: {} }));
     setMessage("Depo teslim alma kaydedildi ve stok girişine işlendi.");
@@ -1481,6 +1400,24 @@ export default function OrderDetailPage() {
       order.id,
     );
     const candidates = latestSuggestions.filter((suggestion) => suggestion.eligible);
+    const resolvedProducts = new Map();
+
+    for (const candidate of candidates) {
+      const product = await resolveReceiptProduct(user.id, {
+        id: `document-${candidate.documentItemId}`,
+        productCode: candidate.productCode || "",
+        productName: candidate.productName || "",
+        unit: candidate.unit || "adet",
+        brand: candidate.brand || "",
+      });
+      if (!product?.id) {
+        setAutomaticReceiptApplying(false);
+        setMessage("Otomatik teslim alma durduruldu: tüm belge kalemleri için ürün kartı kesinleşmelidir.");
+        return;
+      }
+      resolvedProducts.set(candidate.documentItemId, product);
+    }
+
     const remainingByOrderItem = new Map();
     const deliveredByOrderItem = new Map();
     let processedCount = 0;
@@ -1511,53 +1448,36 @@ export default function OrderDetailPage() {
       const remainingAfterReceipt = Math.max(availableQuantity - acceptedQuantity, 0);
       const receiptStatus = remainingAfterReceipt <= 0 ? "Depoda" : "Eksik geldi";
       const referenceNote = `[document_item_id:${candidate.documentItemId}] Otomatik teslim alma; kullanıcı onayı ile oluşturuldu.`;
-      const receiptPayload = {
-        user_id: user.id,
-        order_id: order.id,
-        project_id: order.project_id || null,
-        project_item_id: null,
-        parent_item_id: null,
-        document_item_id: candidate.documentItemId,
-        order_no: order.order_no || "",
-        supplier_name: order.supplier_name || "",
-        partner_id: order.partner_id || null,
-        partner_name: order.partner_name || order.supplier_name || "",
-        partner_type: order.partner_type || "Tedarikçi",
-        product_code: candidate.productCode || "",
-        product_name: candidate.productName || "",
-        unit: candidate.unit || "adet",
-        ordered_quantity: Number(candidate.orderedQuantity || 0),
-        received_quantity: acceptedQuantity,
-        accepted_quantity: acceptedQuantity,
-        missing_quantity: remainingAfterReceipt,
-        excess_quantity: 0,
-        defective_quantity: 0,
-        receipt_status: receiptStatus,
-        received_by: user.email || "Kullanıcı",
-        receipt_date: getToday(),
-        note: referenceNote,
-      };
-
-      let { error: receiptError } = await supabase
-        .from("order_receipts")
-        .insert(receiptPayload);
-
-      if (receiptError?.code === "23505") {
-        skippedCount += 1;
-        continue;
-      }
-
-      const missingDocumentItemColumn = receiptError && (
-        receiptError.code === "PGRST204"
-        || /column[^\n]*document_item_id[^\n]*(does not exist|schema cache)|could not find[^\n]*document_item_id/i.test(
-          receiptError.message || "",
-        )
-      );
-      if (missingDocumentItemColumn) {
-        const { document_item_id: _documentItemId, ...fallbackPayload } = receiptPayload;
-        const fallbackResult = await supabase.from("order_receipts").insert(fallbackPayload);
-        receiptError = fallbackResult.error;
-      }
+      const resolvedProduct = resolvedProducts.get(candidate.documentItemId);
+      const { error: receiptError } = await supabase.rpc("record_order_stock_receipt", {
+        p_order_id: order.id,
+        p_product_id: resolvedProduct.id,
+        p_project_id: order.project_id || null,
+        p_project_item_id: null,
+        p_parent_item_id: null,
+        p_document_item_id: candidate.documentItemId,
+        p_order_no: order.order_no || "",
+        p_supplier_name: order.supplier_name || "",
+        p_partner_id: order.partner_id || null,
+        p_partner_name: order.partner_name || order.supplier_name || "",
+        p_partner_type: order.partner_type || "Tedarikçi",
+        p_product_code: resolvedProduct.product_code || candidate.productCode || "",
+        p_product_name: resolvedProduct.product_name || candidate.productName || "",
+        p_unit: candidate.unit || resolvedProduct.unit || "adet",
+        p_ordered_quantity: Number(candidate.orderedQuantity || 0),
+        p_received_quantity: acceptedQuantity,
+        p_accepted_quantity: acceptedQuantity,
+        p_missing_quantity: remainingAfterReceipt,
+        p_excess_quantity: 0,
+        p_defective_quantity: 0,
+        p_receipt_status: receiptStatus,
+        p_received_by: user.email || "Kullanıcı",
+        p_receipt_date: getToday(),
+        p_note: referenceNote,
+        p_unit_price: Number(candidate.unitPrice || 0),
+        p_currency: order.currency || "TRY",
+        p_report_id: order.report_id || null,
+      });
 
       if (receiptError?.code === "23505") {
         skippedCount += 1;
@@ -2227,6 +2147,38 @@ export default function OrderDetailPage() {
         {message && (
           <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm font-semibold text-blue-900">
             {message}
+          </div>
+        )}
+
+        {receiptProductSuggestion && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+            <div className="text-sm font-black text-amber-900">Ürün kartı eşleşme kontrolü</div>
+            <div className="mt-1 text-xs font-semibold text-amber-800">
+              {receiptProductSuggestion.item.productName || receiptProductSuggestion.item.productCode || "Sipariş kalemi"}
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {(receiptProductSuggestion.result.suggestions || []).map((suggestion) => (
+                <button
+                  key={suggestion.product.id}
+                  type="button"
+                  onClick={() => {
+                    setReceiptProductOverrides((current) => ({ ...current, [receiptProductSuggestion.key]: suggestion.product.id }));
+                    setReceiptProductSuggestion(null);
+                    setMessage("Mevcut ürün kartı seçildi. Teslim alma işlemini tekrar çalıştırın.");
+                  }}
+                  className="rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-black text-amber-900"
+                >
+                  %{Math.round((suggestion.score || 0) * 100)} · {suggestion.product.product_code || "Kodsuz"} · {suggestion.product.product_name} — Mevcut kartı kullan
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={createReceiptProductCard}
+                className="rounded-lg bg-slate-800 px-3 py-2 text-xs font-black text-white"
+              >
+                Yeni ürün kartı oluştur
+              </button>
+            </div>
           </div>
         )}
 
