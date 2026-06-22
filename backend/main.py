@@ -111,6 +111,13 @@ def normalize_request_items_payload(value):
             "birim": item.get("birim") or item.get("unit") or "adet",
             "kaynakDosya": item.get("kaynakDosya") or item.get("source_file") or "Seçili proje talebi",
             "kaynakTipi": "request_items_json",
+            "productId": item.get("product_id") or item.get("productId"),
+            "normalizedProductCode": item.get("normalized_product_code") or item.get("normalizedProductCode") or "",
+            "currentStock": safe_float_form(item.get("current_stock") or item.get("currentStock")),
+            "reservedStock": safe_float_form(item.get("reserved_stock") or item.get("reservedStock")),
+            "stockCoverableQuantity": safe_float_form(item.get("stock_coverable_quantity") or item.get("stockCoverableQuantity")),
+            "purchaseQuantity": safe_float_form(item.get("purchase_quantity") or item.get("purchaseQuantity") or quantity),
+            "allocations": item.get("allocations") if isinstance(item.get("allocations"), list) else [],
         })
 
     return rows
@@ -1796,6 +1803,11 @@ async def analyze_offers(
             "total": best.get("netToplam") or best.get("netToplamTRY") or best.get("toplamTutar") or 0,
             "paymentTerm": best.get("vade") or "",
             "deliveryTerm": best.get("termin") or "",
+            "currency": best.get("paraBirimi") or "TRY",
+            "exchangeRate": best.get("kur") or 1,
+            "stockCoverableQuantity": group.get("stockCoverableQuantity") or request_item.get("stockCoverableQuantity") or 0,
+            "purchaseQuantity": group.get("purchaseQuantity") or request_item.get("purchaseQuantity") or group.get("talepEdilenAdet") or 0,
+            "allocations": group.get("allocations") or request_item.get("allocations") or [],
         })
         
     print("ORDER ITEMS SAYISI:", len(order_items))

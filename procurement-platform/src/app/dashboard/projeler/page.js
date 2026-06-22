@@ -171,6 +171,7 @@ export default function ProjectsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [projectView, setProjectView] = useState("active");
+  const [selectedProjectIds, setSelectedProjectIds] = useState([]);
 
   useEffect(() => {
     loadProjects();
@@ -844,6 +845,36 @@ export default function ProjectsPage() {
   );
   const customerNameNeedsPartner = Boolean(form.customer_name.trim()) && !selectedCustomerPartner;
 
+  function toggleProjectSelection(projectId) {
+    setSelectedProjectIds((current) =>
+      current.includes(projectId)
+        ? current.filter((id) => id !== projectId)
+        : [...current, projectId],
+    );
+  }
+
+  function toggleVisibleProjects() {
+    const visibleIds = displayedProjects
+      .filter((project) => project.status !== "Arşivlendi" && !project.archived_at)
+      .map((project) => project.id);
+    const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedProjectIds.includes(id));
+    setSelectedProjectIds((current) =>
+      allSelected
+        ? current.filter((id) => !visibleIds.includes(id))
+        : Array.from(new Set([...current, ...visibleIds])),
+    );
+  }
+
+  function openProcurementSummary() {
+    const validIds = selectedProjectIds.filter((id) => activeProjects.some((project) => project.id === id));
+    if (validIds.length === 0) {
+      setMessage("Satınalma icmali için en az bir aktif proje seçin.");
+      return;
+    }
+    localStorage.setItem("procurementSummaryProjectIds", JSON.stringify(validIds));
+    router.push("/dashboard/talepler/icmal");
+  }
+
   const stats = useMemo(() => {
     const activeStatuses = ["Onaylandı", "Devam Ediyor"];
     const active = projects.filter((project) => activeStatuses.includes(project.status)).length;
@@ -881,6 +912,23 @@ export default function ProjectsPage() {
             className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-bold text-white hover:bg-slate-800"
           >
             Yeni Proje
+          </button>
+        </div>
+
+        <div className="flex flex-col gap-3 rounded-2xl border border-blue-200 bg-blue-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="font-black text-blue-950">Çok projeli satınalma icmali</div>
+            <div className="mt-1 text-sm font-semibold text-blue-800">
+              {selectedProjectIds.length} proje seçili. Proje, ihtiyaç ve ana/alt ürün bağlantıları korunur.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={openProcurementSummary}
+            disabled={selectedProjectIds.length === 0}
+            className="rounded-xl bg-blue-700 px-5 py-3 text-sm font-black text-white disabled:cursor-not-allowed disabled:bg-slate-300"
+          >
+            Satınalma İcmali Oluştur
           </button>
         </div>
 
@@ -1158,7 +1206,15 @@ export default function ProjectsPage() {
             <table className="w-full table-fixed text-left text-xs [&_td]:p-2">
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
-                  <th className="w-[20%] p-2">Proje</th>
+                  <th className="w-[4%] p-2">
+                    <input
+                      type="checkbox"
+                      aria-label="Görünen projelerin tümünü seç"
+                      checked={displayedProjects.some((project) => project.status !== "Arşivlendi" && !project.archived_at) && displayedProjects.filter((project) => project.status !== "Arşivlendi" && !project.archived_at).every((project) => selectedProjectIds.includes(project.id))}
+                      onChange={toggleVisibleProjects}
+                    />
+                  </th>
+                  <th className="w-[16%] p-2">Proje</th>
                   <th className="w-[14%] p-2">Müşteri</th>
                   <th className="w-[12%] p-2">Tamamlanma</th>
                   <th className="w-[8%] p-2">Sipariş</th>
@@ -1174,6 +1230,15 @@ export default function ProjectsPage() {
 
                   return (
                     <tr key={project.id} className="border-t border-slate-100 align-top hover:bg-blue-50">
+                      <td className="p-4">
+                        <input
+                          type="checkbox"
+                          aria-label={`${project.project_name || project.project_code} projesini seç`}
+                          checked={selectedProjectIds.includes(project.id)}
+                          onChange={() => toggleProjectSelection(project.id)}
+                          disabled={project.status === "Arşivlendi" || Boolean(project.archived_at)}
+                        />
+                      </td>
                       <td className="p-4">
                         <Link href={`/dashboard/projeler/${project.id}`} className="font-black text-blue-700 hover:underline">
                           {project.project_code || "-"}
@@ -1245,7 +1310,7 @@ export default function ProjectsPage() {
                 })}
                 {!loading && displayedProjects.length === 0 && (
                   <tr>
-                    <td colSpan="8" className="p-8 text-center text-slate-500">
+                    <td colSpan="9" className="p-8 text-center text-slate-500">
                       Henüz proje yok. İlk projeyi oluşturarak başlayın.
                     </td>
                   </tr>

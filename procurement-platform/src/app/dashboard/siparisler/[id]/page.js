@@ -7,6 +7,7 @@ import { supabase } from "@/lib/supabase";
 import { calculateBaseAmount, currencyOptions, getBaseCurrency, getExchangeRate } from "@/lib/currency";
 import { findOrCreateBusinessPartner } from "@/lib/businessPartners";
 import { matchProduct } from "@/lib/productMatching";
+import { CORVIAN_PRODUCT_NAME, fetchCompanyBranding } from "@/lib/companyBranding";
 
 const statusFlow = [
   "Taslak",
@@ -377,7 +378,13 @@ function calculateAutomaticReceiptSuggestions(
   receipts,
   documentItems,
   orderId,
+  documents = [],
 ) {
+  const eligibleDocumentIds = new Set(
+    (documents || [])
+      .filter((document) => ["irsaliye", "depo_giris"].includes(document.document_type) && document.approval_status !== "reddedildi")
+      .map((document) => document.id),
+  );
   const processedDocumentItemIds = new Set(
     (receipts || [])
       .map((receipt) => {
@@ -412,6 +419,8 @@ function calculateAutomaticReceiptSuggestions(
   return (documentItems || [])
     .filter(
       (documentItem) =>
+        eligibleDocumentIds.has(documentItem.document_id)
+        &&
         documentItem.match_status === "matched"
         && documentItem.matched_order_item_key
         && (!documentItem.matched_order_id || documentItem.matched_order_id === orderId),
@@ -447,12 +456,17 @@ function calculateAutomaticReceiptSuggestions(
             : "Tam Uygun";
       const matchConfidence = Number(documentItem.match_confidence || 0);
       const alreadyProcessed = processedDocumentItemIds.has(String(documentItem.id));
+      const projectAllocations = (orderRow.item.allocations || []).filter(
+        (allocation) => allocation.type === "project" && allocation.projectItemId,
+      );
+      const projectAllocation = projectAllocations.length === 1 ? projectAllocations[0] : null;
       const eligible = documentItem.match_status === "matched"
         && documentItem.manual_review_required === false
         && matchConfidence >= 80
         && !alreadyProcessed
         && remainingQuantity > 0
-        && suggestedQuantity > 0;
+        && suggestedQuantity > 0
+        && projectAllocations.length <= 1;
       if (eligible) {
         suggestionRemainingByOrderItem.set(
           orderRow.orderItemId,
@@ -478,6 +492,8 @@ function calculateAutomaticReceiptSuggestions(
         alreadyProcessed,
         eligible,
         status,
+        projectAllocation,
+        allocationReviewRequired: projectAllocations.length > 1,
       };
     })
     .filter(Boolean);
@@ -491,13 +507,18 @@ function normalizeItems(items) {
     const total = Number(item.total || quantity * unitPrice);
 
     return {
+      rowId: item.rowId || item.id || "",
+      productId: item.productId || item.product_id || null,
       productCode: item.productCode || "",
       productName: item.productName || item.product || "",
       unit: item.unit || "adet",
       quantity,
       deliveredQuantity,
       unitPrice,
+      discount: Number(item.discount || 0),
+      netUnitPrice: Number(item.netUnitPrice || unitPrice),
       total,
+      currency: item.currency || "TRY",
       paymentTerm: item.paymentTerm || "",
       allocations: Array.isArray(item.allocations) ? item.allocations : [],
       status:
@@ -632,7 +653,7 @@ export default function OrderDetailPage() {
   const [documentApprovalNotes, setDocumentApprovalNotes] = useState({});
   const [documentApprovalUpdatingId, setDocumentApprovalUpdatingId] = useState(null);
   const [documentForm, setDocumentForm] = useState({
-    document_type: "diger",
+    document_type: "siparis_formu",
     document_number: "",
     document_date: "",
     supplier_name: "",
@@ -858,24 +879,36 @@ export default function OrderDetailPage() {
       .limit(1);
     if (settingsRows?.[0]) setCompanySettings(settingsRows[0]);
 
-    if (data.project_id) {
-      const [{ data: projectData }, { data: projectItemRows }] = await Promise.all([
+    const allocationProjectIds = Array.from(new Set(
+      (Array.isArray(data.items) ? data.items : [])
+        .flatMap((item) => Array.isArray(item.allocations) ? item.allocations : [])
+        .map((allocation) => allocation.projectId)
+        .filter(Boolean),
+    ));
+    const linkedProjectIds = Array.from(new Set([data.project_id, ...allocationProjectIds].filter(Boolean)));
+
+    if (linkedProjectIds.length > 0) {
+      const [{ data: projectRows }, { data: projectItemRows }] = await Promise.all([
         supabase
           .from("projects")
           .select("*")
-          .eq("id", data.project_id)
           .eq("user_id", user.id)
-          .maybeSingle(),
+          .in("id", linkedProjectIds),
         supabase
           .from("project_items")
           .select("*")
-          .eq("project_id", data.project_id)
           .eq("user_id", user.id)
+          .in("project_id", linkedProjectIds)
           .order("created_at", { ascending: true }),
       ]);
 
-      setProject(projectData || null);
-      setProjectItems(projectItemRows || []);
+      const projectMap = new Map((projectRows || []).map((row) => [row.id, row]));
+      setProject(linkedProjectIds.length === 1 ? projectMap.get(linkedProjectIds[0]) || null : null);
+      setProjectItems((projectItemRows || []).map((row) => ({
+        ...row,
+        project_code: projectMap.get(row.project_id)?.project_code || "",
+        project_name: projectMap.get(row.project_id)?.project_name || "",
+      })));
     } else {
       setProject(null);
       setProjectItems([]);
@@ -1242,7 +1275,7 @@ export default function OrderDetailPage() {
     const receiptPayload = {
       user_id: user.id,
       order_id: order.id,
-      project_id: order.project_id || null,
+      project_id: selectedProjectItem?.project_id || order.project_id || null,
       project_item_id: selectedProjectItem?.id || null,
       parent_item_id: parentItemId,
       order_no: order.order_no || "",
@@ -1296,7 +1329,7 @@ export default function OrderDetailPage() {
     const { error: receiptError } = await supabase.rpc("record_order_stock_receipt", {
       p_order_id: order.id,
       p_product_id: resolvedProduct?.id || null,
-      p_project_id: order.project_id || null,
+      p_project_id: selectedProjectItem?.project_id || order.project_id || null,
       p_project_item_id: selectedProjectItem?.id || null,
       p_parent_item_id: parentItemId,
       p_document_item_id: null,
@@ -1350,6 +1383,7 @@ export default function OrderDetailPage() {
       receipts,
       documentItems,
       order.id,
+      documents,
     );
     const initialCandidates = initialSuggestions.filter((suggestion) => suggestion.eligible);
 
@@ -1398,6 +1432,7 @@ export default function OrderDetailPage() {
       latestReceiptRows || [],
       documentItems,
       order.id,
+      documents,
     );
     const candidates = latestSuggestions.filter((suggestion) => suggestion.eligible);
     const resolvedProducts = new Map();
@@ -1452,9 +1487,9 @@ export default function OrderDetailPage() {
       const { error: receiptError } = await supabase.rpc("record_order_stock_receipt", {
         p_order_id: order.id,
         p_product_id: resolvedProduct.id,
-        p_project_id: order.project_id || null,
-        p_project_item_id: null,
-        p_parent_item_id: null,
+        p_project_id: candidate.projectAllocation?.projectId || order.project_id || null,
+        p_project_item_id: candidate.projectAllocation?.projectItemId || null,
+        p_parent_item_id: candidate.projectAllocation?.parentItemId || null,
         p_document_item_id: candidate.documentItemId,
         p_order_no: order.order_no || "",
         p_supplier_name: order.supplier_name || "",
@@ -1726,7 +1761,7 @@ export default function OrderDetailPage() {
     }
 
     setDocumentForm({
-      document_type: "diger",
+      document_type: "siparis_formu",
       document_number: "",
       document_date: "",
       supplier_name: "",
@@ -2065,6 +2100,53 @@ export default function OrderDetailPage() {
     await loadDocumentItems(documents.map((document) => document.id), user.id);
   }
 
+  async function exportOrderExcel() {
+    if (!order) return;
+    const { companyName } = await fetchCompanyBranding(supabase);
+    const XLSX = await import("xlsx");
+    const workbook = XLSX.utils.book_new();
+    const sheet = XLSX.utils.aoa_to_sheet([
+      [companyName], [CORVIAN_PRODUCT_NAME],
+      [`Sipariş No: ${order.order_no || "-"}`, `Tedarikçi: ${order.partner_name || order.supplier_name || "-"}`],
+      [`Sipariş Tarihi: ${order.order_date || "-"}`, `Para Birimi: ${order.currency || "TRY"}`], [],
+    ]);
+    XLSX.utils.sheet_add_json(sheet, items.map((item, index) => ({
+      "Sıra": index + 1, "Ürün Kodu": item.productCode || "-", "Ürün Açıklaması": item.productName,
+      "Birim": item.unit, "Miktar": item.quantity, "Birim Fiyat": item.unitPrice,
+      "İskonto (%)": item.discount || 0, "Net Birim Fiyat": item.netUnitPrice || item.unitPrice,
+      "Toplam": item.total, "Para Birimi": item.currency || order.currency || "TRY",
+      "Proje Dağılımı": (item.allocations || []).map((allocation) => `${allocation.projectCode || allocation.projectId || "Stok"}: ${allocation.quantity}`).join(" | "),
+    })), { origin: "A6" });
+    XLSX.utils.book_append_sheet(workbook, sheet, "Sipariş");
+    XLSX.writeFile(workbook, `${String(order.order_no || "siparis").replace(/[^a-zA-Z0-9_-]/g, "-")}.xlsx`);
+  }
+
+  async function exportOrderPdf() {
+    if (!order) return;
+    const { companyName } = await fetchCompanyBranding(supabase);
+    const [{ jsPDF }, autoTableModule] = await Promise.all([import("jspdf"), import("jspdf-autotable")]);
+    const autoTable = autoTableModule.default || autoTableModule.autoTable || autoTableModule;
+    const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+    doc.setFontSize(16); doc.text(companyName, 40, 34);
+    doc.setFontSize(9); doc.setTextColor(90); doc.text(`${CORVIAN_PRODUCT_NAME} · Sipariş Formu`, 40, 49);
+    doc.setTextColor(20); doc.text(`Sipariş No: ${order.order_no || "-"}`, 40, 68);
+    doc.text(`Tedarikçi: ${order.partner_name || order.supplier_name || "-"}`, 220, 68);
+    doc.text(`Tarih: ${order.order_date || "-"}`, 500, 68);
+    doc.text(`Para Birimi: ${order.currency || "TRY"}`, 650, 68);
+    autoTable(doc, {
+      startY: 82,
+      head: [["Kod", "Ürün", "Birim", "Miktar", "Birim fiyat", "İskonto", "Net fiyat", "Toplam", "Proje dağılımı"]],
+      body: items.map((item) => [item.productCode || "-", item.productName, item.unit, item.quantity,
+        formatMoney(item.unitPrice, item.currency || order.currency), `%${item.discount || 0}`,
+        formatMoney(item.netUnitPrice || item.unitPrice, item.currency || order.currency), formatMoney(item.total, item.currency || order.currency),
+        (item.allocations || []).map((allocation) => `${allocation.projectCode || allocation.projectId || "Stok"}: ${allocation.quantity}`).join(" | ")]),
+      styles: { fontSize: 7, cellPadding: 4 }, headStyles: { fillColor: [15, 23, 42] },
+    });
+    doc.setFontSize(11);
+    doc.text(`Genel Toplam: ${formatMoney(order.total_amount, order.currency || "TRY")}`, 600, (doc.lastAutoTable?.finalY || 100) + 24);
+    doc.save(`${String(order.order_no || "siparis").replace(/[^a-zA-Z0-9_-]/g, "-")}.pdf`);
+  }
+
   if (!order) {
     return (
       <div className="min-h-screen bg-slate-100 p-8">
@@ -2097,6 +2179,8 @@ export default function OrderDetailPage() {
           </div>
 
           <div className="flex flex-wrap justify-start gap-2 lg:justify-end">
+            <button type="button" onClick={exportOrderPdf} className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-bold text-red-700 hover:bg-red-100">PDF İndir</button>
+            <button type="button" onClick={exportOrderExcel} className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-bold text-emerald-700 hover:bg-emerald-100">Excel İndir</button>
             {project && (
               <Link
                 href={`/dashboard/projeler/${project.id}`}
@@ -2271,6 +2355,7 @@ export default function OrderDetailPage() {
           items={items}
           receipts={receipts}
           documentItems={documentItems}
+          documents={documents}
           applying={automaticReceiptApplying}
           result={automaticReceiptResult}
           onApply={applyAutomaticReceiptSuggestions}
@@ -2584,6 +2669,7 @@ function AutomaticReceiptSuggestionsPanel({
   items,
   receipts,
   documentItems,
+  documents,
   applying,
   result,
   onApply,
@@ -2594,12 +2680,16 @@ function AutomaticReceiptSuggestionsPanel({
     receipts,
     documentItems,
     order.id,
+    documents,
   );
   const activeSuggestions = suggestions.filter(
     (suggestion) => suggestion.eligible && suggestion.status !== "Teslim Tamamlanmış",
   );
   const completedSuggestions = suggestions.filter(
     (suggestion) => suggestion.status === "Teslim Tamamlanmış",
+  );
+  const allocationBlockedSuggestions = suggestions.filter(
+    (suggestion) => suggestion.allocationReviewRequired,
   );
   const totalSuggestedQuantity = activeSuggestions.reduce(
     (sum, suggestion) => sum + Number(suggestion.suggestedQuantity || 0),
@@ -2625,6 +2715,14 @@ function AutomaticReceiptSuggestionsPanel({
           {applying ? "Teslim Alınıyor..." : "Otomatik Teslim Al"}
         </button>
       </div>
+      {allocationBlockedSuggestions.length > 0 && (
+        <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm font-bold text-amber-900">
+          Bu kalem birden fazla proje dağılımına sahip olduğu için otomatik depo girişi yapılamaz. Lütfen manuel proje kalemi seçin.
+          <div className="mt-2 text-xs font-semibold">
+            {Array.from(new Set(allocationBlockedSuggestions.map((suggestion) => suggestion.productName))).join(" · ")}
+          </div>
+        </div>
+      )}
       <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
         <Info label="İşlenecek Kayıt" value={activeSuggestions.length} />
         <Info label="Toplam Teslim Miktarı" value={totalSuggestedQuantity} />
@@ -3097,11 +3195,13 @@ function DocumentsPanel({
   onAddDocumentItem,
 }) {
   const sections = [
-    { type: "teklif", label: "Teklif Belgeleri" },
+    { type: "siparis_formu", label: "Sipariş Formu" },
     { type: "irsaliye", label: "İrsaliyeler" },
     { type: "fatura", label: "Faturalar" },
-    { type: "odeme", label: "Ödeme Belgeleri" },
+    { type: "depo_giris", label: "Depo Giriş Belgeleri" },
     { type: "diger", label: "Diğer Belgeler" },
+    { type: "teklif", label: "Teklif Belgeleri (eski kayıtlar)" },
+    { type: "odeme", label: "Ödeme Belgeleri (eski kayıtlar)" },
   ];
 
   return (
@@ -3826,7 +3926,7 @@ function ReceivingPanel({
                   <span className="mb-1 block text-xs font-bold text-slate-500">Ana ürün / pano</span>
                   <select
                     value={input.parentItemId || ""}
-                    disabled={disabled || !project}
+                    disabled={disabled || projectItems.length === 0}
                     onChange={(event) => onInputChange(index, "parentItemId", event.target.value)}
                     className="w-full rounded-xl border border-slate-300 p-3 text-sm disabled:bg-slate-100"
                   >
@@ -3849,7 +3949,7 @@ function ReceivingPanel({
                     <option value="">Otomatik eşleşme yok</option>
                     {projectItems.map((projectItem) => (
                       <option key={projectItem.id} value={projectItem.id}>
-                        {itemLabel(projectItem)}
+                        {projectItem.project_code ? `${projectItem.project_code} · ` : ""}{itemLabel(projectItem)}
                       </option>
                     ))}
                   </select>

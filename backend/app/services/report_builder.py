@@ -356,7 +356,9 @@ def build_excel_report(analyzed_groups, output_path, company_info=None):
         "Ürün Kodu",
         "Ürün Açıklaması",
         "Birim",
-        "Talep Edilen Adet"
+        "Talep Edilen Adet",
+        "Stoktan Karşılanabilir",
+        "Satın Alınacak"
     ]
 
     for col, h in enumerate(base_headers):
@@ -367,6 +369,10 @@ def build_excel_report(analyzed_groups, output_path, company_info=None):
     firm_columns = [
         "Birim Fiyat",
         "İskonto (%)",
+        "Net Birim Fiyat",
+        "Para Birimi",
+        "Kur",
+        "Net Toplam (Döviz)",
         "Net Birim Fiyat (TRY)",
         "Net Toplam (TRY)",
         "TCO (TRY)",
@@ -441,6 +447,8 @@ def build_excel_report(analyzed_groups, output_path, company_info=None):
         ws.write(row, 2, aciklama, text_cell)
         ws.write(row, 3, birim, base_cell)
         ws.write_number(row, 4, talep, base_cell)
+        ws.write_number(row, 5, _safe_num(group.get("stockCoverableQuantity", 0)), base_cell)
+        ws.write_number(row, 6, _safe_num(group.get("purchaseQuantity", talep)), base_cell)
 
         c = len(base_headers)
 
@@ -448,13 +456,17 @@ def build_excel_report(analyzed_groups, output_path, company_info=None):
             o = offer_map.get(firma)
 
             if not o:
-                for j in range(8):
+                for j in range(len(firm_columns)):
                     ws.write(row, c + j, "-", red_cell)
-                c += 8
+                c += len(firm_columns)
                 continue
 
             birim_fiyat = _safe_num(o.get("birimFiyat", 0))
             iskonto = _safe_num(o.get("iskonto", 0))
+            net_birim_original = _safe_num(o.get("netBirimFiyat", 0))
+            currency = _clean(o.get("paraBirimi", "TRY")) or "TRY"
+            exchange_rate = _safe_num(o.get("kur", 1), 1)
+            net_total_original = _safe_num(o.get("netToplam", 0)) or net_birim_original * talep
             net_birim = _safe_num(o.get("netBirimFiyatTRY", 0))
             net_toplam = _safe_num(o.get("netToplamTRY", 0))
             tco = _safe_num(o.get("tcoTRY", 0))
@@ -475,14 +487,18 @@ def build_excel_report(analyzed_groups, output_path, company_info=None):
 
             ws.write_number(row, c + 0, birim_fiyat, price_fmt)
             ws.write_number(row, c + 1, iskonto, green_cell if row_is_best else percent_cell)
-            ws.write_number(row, c + 2, net_birim, price_fmt)
-            ws.write_number(row, c + 3, net_toplam, price_fmt)
-            ws.write_number(row, c + 4, tco, price_fmt)
-            ws.write_number(row, c + 5, evaluated, price_fmt)  
-            ws.write(row, c + 6, vade, normal_fmt)
-            ws.write(row, c + 7, termin, normal_fmt)
+            ws.write_number(row, c + 2, net_birim_original, price_fmt)
+            ws.write(row, c + 3, currency, normal_fmt)
+            ws.write_number(row, c + 4, exchange_rate, base_cell)
+            ws.write_number(row, c + 5, net_total_original, price_fmt)
+            ws.write_number(row, c + 6, net_birim, price_fmt)
+            ws.write_number(row, c + 7, net_toplam, price_fmt)
+            ws.write_number(row, c + 8, tco, price_fmt)
+            ws.write_number(row, c + 9, evaluated, price_fmt)
+            ws.write(row, c + 10, vade, normal_fmt)
+            ws.write(row, c + 11, termin, normal_fmt)
 
-            c += 8
+            c += len(firm_columns)
 
         if best and best.get("uygunMu"):
             reason = (

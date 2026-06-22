@@ -182,6 +182,13 @@ def match_offers_to_requests(offers, requests):
                     or req.get("firmaAdedi")
                     or 0
                 ),
+                "productId": req.get("productId"),
+                "normalizedProductCode": req.get("normalizedProductCode", ""),
+                "currentStock": safe_float(req.get("currentStock", 0)),
+                "reservedStock": safe_float(req.get("reservedStock", 0)),
+                "stockCoverableQuantity": safe_float(req.get("stockCoverableQuantity", 0)),
+                "purchaseQuantity": safe_float(req.get("purchaseQuantity", 0)),
+                "allocations": req.get("allocations", []) if isinstance(req.get("allocations"), list) else [],
             },
             "offers": matched,
         })

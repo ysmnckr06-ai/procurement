@@ -373,6 +373,7 @@ def score_offer(row, exchange_rates, talep_edilen_adet, config=None, constraints
         "iskonto": round(iskonto, 4),
         "firmaAdedi": firma_adedi,
         "netBirimFiyat": round(net_birim, 4),
+        "netToplam": round(net_toplam_try / kur if kur else net_toplam_try, 4),
         "netBirimFiyatTRY": round(net_birim_try, 4),
         "netToplamTRY": round(net_toplam_try, 4),
         "vadeDays": vade_days,
@@ -569,6 +570,13 @@ def analyze_groups(groups, exchange_rates, config=None, constraints=None, prefer
             "kararNedeni": generate_decision(best_offer, offers),
             "enAvantajliNetTutarTRY": best_offer.get("netToplamTRY", 0) if best_offer else 0,
             "enAvantajliTCOTRY": best_offer.get("tcoTRY", 0) if best_offer else 0,
+            "productId": master.get("productId"),
+            "normalizedProductCode": master.get("normalizedProductCode", ""),
+            "currentStock": master.get("currentStock", 0),
+            "reservedStock": master.get("reservedStock", 0),
+            "stockCoverableQuantity": master.get("stockCoverableQuantity", 0),
+            "purchaseQuantity": master.get("purchaseQuantity", talep_edilen_adet),
+            "allocations": master.get("allocations", []),
         })
 
     return analyzed
