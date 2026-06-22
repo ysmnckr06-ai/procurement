@@ -3,7 +3,77 @@ from datetime import datetime
 import xlsxwriter
 
 
-def build_request_excel_report(rows, output_path, company_info=None):
+def normalize_product_code(value):
+    return str(value or "").strip().upper()
+
+
+def normalize_product_name(value):
+    turkish_lower = str(value or "").translate(str.maketrans({"I": "ı", "İ": "i"})).lower()
+    return " ".join(turkish_lower.strip().split())
+
+
+def enrich_request_rows_with_stock(rows, products):
+    remaining_stock = {}
+    enriched_rows = []
+
+    for row in rows or []:
+        product_code = str(row.get("urunKodu") or "").strip()
+        product_name = str(row.get("urunAciklamasi") or "").strip()
+        normalized_code = normalize_product_code(product_code)
+        normalized_name = normalize_product_name(product_name)
+        requested_quantity = float(row.get("talepEdilenAdet") or 0)
+
+        if normalized_code:
+            matching_products = [
+                product for product in products or []
+                if normalize_product_code(product.get("product_code")) == normalized_code
+            ]
+            match_key = f"code:{normalized_code}"
+        else:
+            matching_products = [
+                product for product in products or []
+                if normalized_name and normalize_product_name(product.get("product_name")) == normalized_name
+            ]
+            match_key = f"name:{normalized_name}"
+
+        current_stock = sum(float(product.get("current_stock") or 0) for product in matching_products)
+        reserved_stock = sum(float(product.get("reserved_stock") or 0) for product in matching_products)
+        initial_available_stock = max(current_stock - reserved_stock, 0)
+        available_stock = remaining_stock.get(match_key, initial_available_stock) if matching_products else 0
+        missing_quantity = max(requested_quantity - available_stock, 0) if matching_products else requested_quantity
+        allocated_quantity = min(requested_quantity, available_stock)
+
+        if matching_products:
+            remaining_stock[match_key] = max(available_stock - allocated_quantity, 0)
+
+        if not matching_products:
+            stock_status = "Ürün kartı bulunamadı"
+        elif missing_quantity == 0:
+            stock_status = "Stoktan karşılanabilir"
+        elif available_stock > 0:
+            stock_status = "Kısmi stok var"
+        else:
+            stock_status = "Stokta yok"
+
+        matched_product = " | ".join(
+            f"{product.get('product_code') or 'Kodsuz'} · {product.get('product_name') or 'Ürün kartı'}"
+            for product in matching_products
+        ) or "-"
+
+        enriched_rows.append({
+            **row,
+            "mevcutStok": current_stock,
+            "ayrilmisStok": reserved_stock,
+            "bostaStok": available_stock,
+            "eksikMiktar": missing_quantity,
+            "stokDurumu": stock_status,
+            "eslesenUrun": matched_product,
+        })
+
+    return enriched_rows
+
+
+def build_request_excel_report(rows, output_path, company_info=None, products=None):
     """
     Profesyonel Satınalma Talep Listesi Excel raporu oluşturur.
 
@@ -37,6 +107,7 @@ def build_request_excel_report(rows, output_path, company_info=None):
     report_date = datetime.now().strftime("%d.%m.%Y %H:%M")
     report_no = f"TRL-{datetime.now().strftime('%Y%m%d%H%M')}"
 
+    rows = enrich_request_rows_with_stock(rows, products or [])
     total_items = len(rows)
     total_qty = sum(float(r.get("talepEdilenAdet") or 0) for r in rows)
 
@@ -48,12 +119,14 @@ def build_request_excel_report(rows, output_path, company_info=None):
     ws.center_horizontally()
 
     # Kolon genişlikleri
-    ws.set_column("A:A", 8)
-    ws.set_column("B:B", 18)
-    ws.set_column("C:C", 52)
-    ws.set_column("D:D", 20)
-    ws.set_column("E:E", 14)
-    ws.set_column("F:F", 36)
+    ws.set_column("A:A", 7)
+    ws.set_column("B:B", 17)
+    ws.set_column("C:C", 38)
+    ws.set_column("D:H", 15)
+    ws.set_column("I:I", 24)
+    ws.set_column("J:J", 38)
+    ws.set_column("K:K", 12)
+    ws.set_column("L:L", 28)
 
     # Renkler
     navy = "#062B5F"
@@ -247,7 +320,7 @@ def build_request_excel_report(rows, output_path, company_info=None):
     ws.write("F3", f"Rapor No: {report_no}", meta_value_fmt)
 
     ws.set_row(3, 8)
-    ws.merge_range("A4:F4", "", workbook.add_format({"bg_color": navy}))
+    ws.merge_range("A4:L4", "", workbook.add_format({"bg_color": navy}))
 
     # Kullanıcı firması kartı
     ws.merge_range("A5:B5", "KULLANICI FİRMASI", meta_label_fmt)
@@ -294,7 +367,13 @@ def build_request_excel_report(rows, output_path, company_info=None):
         "SIRA",
         "ÜRÜN KODU",
         "ÜRÜN AÇIKLAMASI",
+        "MEVCUT STOK",
+        "AYRILMIŞ STOK",
+        "BOŞTA STOK",
         "TALEP EDİLEN ADET",
+        "EKSİK MİKTAR",
+        "STOK DURUMU",
+        "EŞLEŞEN ÜRÜN KODU / KARTI",
         "BİRİM",
         "AÇIKLAMA",
     ]
@@ -313,16 +392,22 @@ def build_request_excel_report(rows, output_path, company_info=None):
         ws.write(excel_row, 0, idx, fmt_center)
         ws.write(excel_row, 1, row.get("urunKodu", "-"), fmt_center)
         ws.write(excel_row, 2, row.get("urunAciklamasi", "-"), fmt_left)
-        ws.write_number(excel_row, 3, float(row.get("talepEdilenAdet") or 0), fmt_qty)
-        ws.write(excel_row, 4, row.get("birim", "-"), fmt_center)
-        ws.write(excel_row, 5, "-", fmt_left)
+        ws.write_number(excel_row, 3, float(row.get("mevcutStok") or 0), fmt_qty)
+        ws.write_number(excel_row, 4, float(row.get("ayrilmisStok") or 0), fmt_qty)
+        ws.write_number(excel_row, 5, float(row.get("bostaStok") or 0), fmt_qty)
+        ws.write_number(excel_row, 6, float(row.get("talepEdilenAdet") or 0), fmt_qty)
+        ws.write_number(excel_row, 7, float(row.get("eksikMiktar") or 0), fmt_qty)
+        ws.write(excel_row, 8, row.get("stokDurumu", "-"), fmt_center)
+        ws.write(excel_row, 9, row.get("eslesenUrun", "-"), fmt_left)
+        ws.write(excel_row, 10, row.get("birim", "-"), fmt_center)
+        ws.write(excel_row, 11, "-", fmt_left)
 
     total_row = table_start_row + len(rows) + 1
 
-    ws.merge_range(total_row, 0, total_row, 2, "GENEL TOPLAM", total_fmt)
-    ws.write_number(total_row, 3, total_qty, total_fmt)
-    ws.write(total_row, 4, "", total_fmt)
-    ws.write(total_row, 5, "", total_fmt)
+    ws.merge_range(total_row, 0, total_row, 5, "GENEL TOPLAM", total_fmt)
+    ws.write_number(total_row, 6, total_qty, total_fmt)
+    for column in range(7, 12):
+        ws.write(total_row, column, "", total_fmt)
 
     # Alt bilgi kutuları
     info_row = total_row + 2
@@ -369,14 +454,14 @@ def build_request_excel_report(rows, output_path, company_info=None):
         footer_row,
         0,
         footer_row,
-        5,
-        "🔒 CONFIDENTIAL PROCUREMENT REPORT     |     Bu belge ProcuraAI sistemi tarafından otomatik oluşturulmuştur.     |     © 2026 ProcuraAI Procurement Platform",
+        11,
+        "🔒 GİZLİ SATINALMA RAPORU     |     Bu belge Corvian ERP tarafından otomatik oluşturulmuştur.",
         footer_fmt,
     )
 
     # Yazdırma / sayfa ayarları
     ws.freeze_panes(table_start_row + 1, 0)
-    ws.autofilter(table_start_row, 0, table_start_row + len(rows), 5)
+    ws.autofilter(table_start_row, 0, table_start_row + len(rows), 11)
     ws.set_landscape()
     ws.fit_to_pages(1, 0)
     ws.set_margins(left=0.25, right=0.25, top=0.35, bottom=0.35)

@@ -592,6 +592,29 @@ def resolve_company_info(user: dict) -> dict:
         "product_name": "Corvian ERP",
     }
 
+
+def load_user_products_for_report(user_id: str) -> list[dict]:
+    products = []
+    page_size = 1000
+    offset = 0
+
+    while True:
+        response = (
+            supabase.table("products")
+            .select("id,product_code,product_name,current_stock,reserved_stock")
+            .eq("user_id", user_id)
+            .range(offset, offset + page_size - 1)
+            .execute()
+        )
+        page = response.data or []
+        products.extend(page)
+
+        if len(page) < page_size:
+            break
+        offset += page_size
+
+    return products
+
 def load_json(path):
     if not os.path.exists(path):
         return []
@@ -2001,7 +2024,19 @@ async def analyze_requests(
     report_name = f"talep_listesi_{user_id}_{uuid.uuid4()}.xlsx"
     report_path = os.path.join(TEMP_DIR, report_name)
 
-    build_request_excel_report(result_rows, report_path, resolve_company_info(user))
+    try:
+        report_products = load_user_products_for_report(user_id)
+    except Exception as exc:
+        print("REQUEST REPORT PRODUCT LOOKUP ERROR:", str(exc))
+        warnings.append("Stok kartları okunamadığı için raporda ürünler eşleşmemiş olarak gösterildi.")
+        report_products = []
+
+    build_request_excel_report(
+        result_rows,
+        report_path,
+        resolve_company_info(user),
+        report_products,
+    )
 
     with open(report_path, "rb") as f:
         supabase.storage.from_("request-reports").upload(

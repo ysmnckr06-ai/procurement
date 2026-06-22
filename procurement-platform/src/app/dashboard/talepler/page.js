@@ -102,26 +102,104 @@ function cleanRequestNote(value) {
   return note;
 }
 
-function requestItemsToExportRows(request) {
-  const items = getRequestItems(request);
+function normalizeRequestProductCode(value) {
+  return String(value || "").trim().toUpperCase();
+}
 
-  return items.map((item, index) => {
+function normalizeRequestProductName(value) {
+  return String(value || "").trim().toLocaleLowerCase("tr-TR").replace(/\s+/g, " ");
+}
+
+async function fetchTenantStockProducts(userId) {
+  const products = [];
+  let page = 0;
+
+  while (true) {
+    const from = page * 1000;
+    const { data, error } = await supabase
+      .from("products")
+      .select("id,product_code,product_name,current_stock,reserved_stock")
+      .eq("user_id", userId)
+      .range(from, from + 999);
+
+    if (error) throw error;
+    products.push(...(data || []));
+    if (!data || data.length < 1000) break;
+    page += 1;
+  }
+
+  return products;
+}
+
+function buildStockAwareRequestExportRows(requests, products) {
+  const remainingStock = new Map();
+  const rowsByRequest = new Map();
+
+  (requests || []).forEach((request) => {
+    const rows = getRequestItems(request).map((item, index) => {
     const quantity = readItemField(item, ["talepEdilenAdet", "quantity", "qty", "estimated_quantity"], 0);
     const currency = readItemField(item, ["paraBirimi", "currency"], "TRY");
+    const productCode = readItemField(item, ["urunKodu", "product_code", "code"], "");
+    const productName = readItemField(item, ["urunAciklamasi", "product_name", "description", "name"], "");
+    const normalizedCode = normalizeRequestProductCode(productCode);
+    const normalizedName = normalizeRequestProductName(productName);
+    const matchingProducts = (products || []).filter((product) => {
+      if (normalizedCode) return normalizeRequestProductCode(product.product_code) === normalizedCode;
+      return normalizedName && normalizeRequestProductName(product.product_name) === normalizedName;
+    });
+    const matchKey = normalizedCode ? `code:${normalizedCode}` : `name:${normalizedName}`;
+    const currentStock = matchingProducts.reduce((sum, product) => sum + Number(product.current_stock || 0), 0);
+    const reservedStock = matchingProducts.reduce((sum, product) => sum + Number(product.reserved_stock || 0), 0);
+    const initialAvailableStock = Math.max(currentStock - reservedStock, 0);
+    const availableStock = matchingProducts.length > 0
+      ? remainingStock.has(matchKey) ? remainingStock.get(matchKey) : initialAvailableStock
+      : 0;
+    const requestedQuantity = Number(quantity || 0);
+    const missingQuantity = matchingProducts.length > 0
+      ? Math.max(requestedQuantity - availableStock, 0)
+      : requestedQuantity;
+    const allocatedQuantity = Math.min(requestedQuantity, availableStock);
+
+    if (matchingProducts.length > 0) {
+      remainingStock.set(matchKey, Math.max(availableStock - allocatedQuantity, 0));
+    }
+
+    const stockStatus = matchingProducts.length === 0
+      ? "Ürün kartı bulunamadı"
+      : missingQuantity === 0
+        ? "Stoktan karşılanabilir"
+        : availableStock > 0
+          ? "Kısmi stok var"
+          : "Stokta yok";
+    const matchedProduct = matchingProducts.length > 0
+      ? matchingProducts
+          .map((product) => `${product.product_code || "Kodsuz"} · ${product.product_name || "Ürün kartı"}`)
+          .join(" | ")
+      : "-";
 
     return {
       "Sıra": index + 1,
-      "Ürün Kodu": readItemField(item, ["urunKodu", "product_code", "code"], ""),
+      "Ürün Kodu": productCode,
       "Marka": readItemField(item, ["marka", "brand"], ""),
-      "Açıklama": readItemField(item, ["urunAciklamasi", "product_name", "description", "name"], ""),
-      "Miktar": Number(quantity || 0),
+      "Açıklama": productName,
+      "Mevcut Stok": currentStock,
+      "Ayrılmış Stok": reservedStock,
+      "Boşta Stok": availableStock,
+      "Talep Edilen Miktar": requestedQuantity,
+      "Eksik Miktar": missingQuantity,
+      "Stok Durumu": stockStatus,
+      "Eşleşen Ürün Kodu / Kartı": matchedProduct,
       "Birim": readItemField(item, ["birim", "unit"], "adet"),
       "Birim Fiyat": Number(readItemField(item, ["birimFiyat", "unit_price", "estimated_unit_price"], 0) || 0),
       "Toplam": Number(readItemField(item, ["toplam", "total", "estimated_total"], 0) || 0),
       "Para Birimi": currency,
       "Not": cleanRequestNote(readItemField(item, ["not", "note"], "")),
     };
+    });
+    rowsByRequest.set(request, rows);
   });
+
+  return rowsByRequest;
 }
 
 function buildMergedPurchasePreview(requests) {
@@ -446,18 +524,26 @@ export default function TaleplerPage() {
 
     if (!user) return;
 
-    const { data, error } = await supabase
-      .from("products")
-      .select("id,product_code,product_name,current_stock,reserved_stock")
-      .eq("user_id", user.id)
-      .limit(5000);
-
-    if (error) {
+    try {
+      const data = await fetchTenantStockProducts(user.id);
+      setStockProducts(data);
+    } catch (error) {
       console.error("Stok simülasyonu için ürünler yüklenemedi:", error);
-      return;
     }
+  };
 
-    setStockProducts(data || []);
+  const getStockProductsForExport = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return stockProducts;
+
+    try {
+      const products = await fetchTenantStockProducts(user.id);
+      setStockProducts(products);
+      return products;
+    } catch (error) {
+      console.error("Export için güncel stok bilgisi yüklenemedi:", error);
+      return stockProducts;
+    }
   };
 
   function createOrderFromMergedRequests() {
@@ -612,11 +698,13 @@ export default function TaleplerPage() {
     }
 
     const { companyName } = await fetchCompanyBranding(supabase);
+    const exportProducts = await getStockProductsForExport();
     const XLSX = await import("xlsx");
     const workbook = XLSX.utils.book_new();
+    const exportRowsByRequest = buildStockAwareRequestExportRows(requestsToDownload, exportProducts);
 
     requestsToDownload.forEach((request, index) => {
-      const rowsForSheet = requestItemsToExportRows(request);
+      const rowsForSheet = exportRowsByRequest.get(request) || [];
       const rowsToWrite = rowsForSheet.length > 0 ? rowsForSheet : [{ Bilgi: "Kalem detayı bulunamadı." }];
       const worksheet = XLSX.utils.aoa_to_sheet([
         [companyName],
@@ -646,12 +734,14 @@ export default function TaleplerPage() {
     }
 
     const { companyName } = await fetchCompanyBranding(supabase);
+    const exportProducts = await getStockProductsForExport();
     const [{ jsPDF }, autoTableModule] = await Promise.all([
       import("jspdf"),
       import("jspdf-autotable"),
     ]);
     const autoTable = autoTableModule.default || autoTableModule.autoTable || autoTableModule;
     const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+    const exportRowsByRequest = buildStockAwareRequestExportRows(requestsToDownload, exportProducts);
 
     requestsToDownload.forEach((request, index) => {
       if (index > 0) doc.addPage();
@@ -666,7 +756,7 @@ export default function TaleplerPage() {
       doc.setFontSize(8);
       doc.text(`Oluşturma tarihi: ${formatDateTime(request.created_at || request.tarih)}`, 40, 76);
 
-      const rowsForPdf = requestItemsToExportRows(request);
+      const rowsForPdf = exportRowsByRequest.get(request) || [];
       const rowsToWrite = rowsForPdf.length > 0 ? rowsForPdf : [{ Bilgi: "Kalem detayi bulunamadi." }];
       const headers = Object.keys(rowsToWrite[0]);
       const body = rowsToWrite.map((row) => headers.map((header) => row[header] ?? ""));
@@ -675,11 +765,12 @@ export default function TaleplerPage() {
         head: [headers],
         body,
         startY: 90,
-        styles: { fontSize: 7, cellPadding: 4, overflow: "linebreak" },
+        styles: { fontSize: 5.5, cellPadding: 2.5, overflow: "linebreak" },
         headStyles: { fillColor: [15, 23, 42] },
         columnStyles: {
-          3: { cellWidth: 230 },
-          9: { cellWidth: 160 },
+          3: { cellWidth: 110 },
+          10: { cellWidth: 105 },
+          15: { cellWidth: 75 },
         },
         margin: { left: 40, right: 40 },
       });
