@@ -547,6 +547,37 @@ function projectItemMatchesProduct(item, product) {
   return !productCode && productName && productName === itemName;
 }
 
+function orderItemMatchesProduct(item, product) {
+  if (!product || !item || typeof item !== "object") return false;
+
+  const ids = product.duplicateIds || [product.id];
+  const itemProductId = item.product_id || item.productId || item.stock_product_id;
+  if (itemProductId && ids.includes(itemProductId)) return true;
+
+  const productCode = normalizeStockCode(product.product_code);
+  const itemCode = normalizeStockCode(item.product_code || item.productCode || item.code);
+  const productName = normalizeStockText(product.product_name);
+  const itemName = normalizeStockText(item.product_name || item.productName || item.name || item.description);
+
+  if (productCode && itemCode && productCode === itemCode && productName === itemName) return true;
+  return !productCode && productName && productName === itemName;
+}
+
+function flattenOrderItems(value) {
+  if (Array.isArray(value)) return value.flatMap(flattenOrderItems);
+  if (!value || typeof value !== "object") return [];
+
+  const nestedKeys = ["items", "children", "subItems", "lines"];
+  return [
+    value,
+    ...nestedKeys.flatMap((key) => flattenOrderItems(value[key])),
+  ];
+}
+
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ""));
+}
+
 function projectDisplayName(project) {
   const company = project?.customer_name || project?.customer || project?.client_name || project?.client || project?.firma || project?.firmaAdi || project?.musteri_adi || project?.musteriAdi || "";
   const projectName = project?.project_name || project?.name || project?.title || project?.proje_adi || project?.projeAdi || project?.project_code || "Proje";
@@ -700,6 +731,10 @@ export default function StockPage() {
   const [bulkDeletingProducts, setBulkDeletingProducts] = useState(false);
   const [bulkDeletingMovements, setBulkDeletingMovements] = useState(false);
   const [movementDeleteModalOpen, setMovementDeleteModalOpen] = useState(false);
+  const [productDeleteModalOpen, setProductDeleteModalOpen] = useState(false);
+  const [productDeleteAnalysis, setProductDeleteAnalysis] = useState(null);
+  const [productDeleteResult, setProductDeleteResult] = useState(null);
+  const [analyzingProductDeletion, setAnalyzingProductDeletion] = useState(false);
   const [productDeleteBlockKey, setProductDeleteBlockKey] = useState("");
   const movementSectionRef = useRef(null);
 
@@ -844,49 +879,236 @@ export default function StockPage() {
     await loadStock();
   }
 
-  async function deleteSelectedProducts() {
+  async function fetchRowsByProductIds(table, select, productIds, userId) {
+    const rows = [];
+    for (let offset = 0; offset < productIds.length; offset += 50) {
+      const chunk = productIds.slice(offset, offset + 50);
+      let page = 0;
+      while (true) {
+        const from = page * 1000;
+        const { data, error } = await supabase
+          .from(table)
+          .select(select)
+          .eq("user_id", userId)
+          .in("product_id", chunk)
+          .range(from, from + 999);
+        if (error) throw error;
+        rows.push(...(data || []));
+        if (!data || data.length < 1000) break;
+        page += 1;
+      }
+    }
+    return rows;
+  }
+
+  async function fetchUserOrders(userId) {
+    const rows = [];
+    let page = 0;
+    while (true) {
+      const from = page * 1000;
+      const { data, error } = await supabase
+        .from("orders")
+        .select("id, order_no, items")
+        .eq("user_id", userId)
+        .range(from, from + 999);
+      if (error) throw error;
+      rows.push(...(data || []));
+      if (!data || data.length < 1000) break;
+      page += 1;
+    }
+    return rows;
+  }
+
+  async function fetchRowsWithoutProductId(table, select, userId) {
+    const rows = [];
+    let page = 0;
+    while (true) {
+      const from = page * 1000;
+      const { data, error } = await supabase
+        .from(table)
+        .select(select)
+        .eq("user_id", userId)
+        .is("product_id", null)
+        .range(from, from + 999);
+      if (error) throw error;
+      rows.push(...(data || []));
+      if (!data || data.length < 1000) break;
+      page += 1;
+    }
+    return rows;
+  }
+
+  async function fetchUserReceipts(userId) {
+    const rows = [];
+    let page = 0;
+    while (true) {
+      const from = page * 1000;
+      const { data, error } = await supabase
+        .from("order_receipts")
+        .select("id, order_id, product_code, product_name")
+        .eq("user_id", userId)
+        .range(from, from + 999);
+      if (error) throw error;
+      rows.push(...(data || []));
+      if (!data || data.length < 1000) break;
+      page += 1;
+    }
+    return rows;
+  }
+
+  async function analyzeSelectedProductsForDeletion() {
     const selectedGroups = productGroups.filter((product) => selectedProductKeys.includes(product.groupKey));
-    if (selectedGroups.length === 0) return;
+    if (selectedGroups.length === 0 || analyzingProductDeletion) return;
 
-    if (selectedGroups.some((product) => product.is_virtual_project_main)) {
-      setMessage("Proje malzeme listesinden gelen ana ürünler stok kartı gibi silinemez. İlgili proje kalemini düzenleyin.");
-      return;
-    }
-
-    const blocked = selectedGroups.find((product) => movements.some((movement) => movementMatchesProduct(movement, product)));
-    if (blocked) {
-      const blockedMovementCount = movements.filter((movement) => movementMatchesProduct(movement, blocked)).length;
-      openProductDetail(blocked);
-      setProductDeleteBlockKey(blocked.groupKey);
-      setMessage(
-        `${blocked.product_name} ürün kartına bağlı ${blockedMovementCount} stok hareketi var. ` +
-          "Hareketleri temizledikten sonra toplu ürün silmeyi tekrar deneyin.",
-      );
-      return;
-    }
-
-    const approved = window.confirm(`Seçili ${selectedGroups.length} ürün kartı silinecek. Emin misiniz?`);
-    if (!approved) return;
-
-    setBulkDeletingProducts(true);
+    setAnalyzingProductDeletion(true);
+    setProductDeleteResult(null);
+    setProductDeleteAnalysis(null);
+    setProductDeleteModalOpen(true);
     setMessage("");
 
-    const productIds = selectedGroups.flatMap((product) => product.duplicateIds || [product.id]);
-    const { error } = await supabase.from("products").delete().in("id", productIds);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        setProductDeleteModalOpen(false);
+        router.push("/login");
+        return;
+      }
 
-    if (error) {
-      setMessage(error.message || "Seçili ürün kartları silinemedi.");
-      setBulkDeletingProducts(false);
-      return;
+      const productIds = selectedGroups.flatMap((product) => product.duplicateIds || [product.id]).filter(isUuid);
+      const [directMovements, legacyMovements, directProjectItems, legacyProjectItems, userOrders, userReceipts] = await Promise.all([
+        fetchRowsByProductIds(
+          "stock_movements",
+          "id, product_id, project_id, project_item_id, parent_item_id, order_id, receipt_id, request_id, report_id, created_at",
+          productIds,
+          user.id,
+        ),
+        fetchRowsWithoutProductId(
+          "stock_movements",
+          "id, product_id, product_code, product_name, project_id, project_item_id, parent_item_id, order_id, receipt_id, request_id, report_id, created_at",
+          user.id,
+        ),
+        fetchRowsByProductIds("project_items", "id, product_id, product_name, product_code", productIds, user.id),
+        fetchRowsWithoutProductId("project_items", "id, product_id, product_name, product_code", user.id),
+        fetchUserOrders(user.id),
+        fetchUserReceipts(user.id),
+      ]);
+      const orderRows = userOrders.flatMap((order) => flattenOrderItems(order.items).map((item) => ({ order, item })));
+
+      const plans = selectedGroups.map((product) => {
+        const ids = (product.duplicateIds || [product.id]).filter(isUuid);
+        const productMovements = [...directMovements, ...legacyMovements].filter(
+          (movement) => ids.includes(movement.product_id) || movementMatchesProduct(movement, product),
+        );
+        const productProjectItems = [...directProjectItems, ...legacyProjectItems].filter(
+          (item) => ids.includes(item.product_id) || projectItemMatchesProduct(item, product),
+        );
+        const productOrderItems = orderRows.filter(({ item }) => orderItemMatchesProduct(item, product));
+        const productReceipts = userReceipts.filter((receipt) => orderItemMatchesProduct(receipt, product));
+        const reasons = [];
+
+        if (product.is_virtual_project_main || ids.length === 0) reasons.push("Proje malzeme listesinden gelen sanal ürün kartı");
+        if (productProjectItems.length > 0) reasons.push(`${productProjectItems.length} proje kalemi bağlantısı`);
+        if (productOrderItems.length > 0) reasons.push(`${productOrderItems.length} sipariş kalemi bağlantısı`);
+        if (productReceipts.length > 0) reasons.push(`${productReceipts.length} sipariş teslimat kaydı bağlantısı`);
+
+        const projectMovements = productMovements.filter((row) => row.project_id || row.project_item_id || row.parent_item_id);
+        const orderMovements = productMovements.filter((row) => row.order_id || row.receipt_id);
+        const workflowMovements = productMovements.filter((row) => row.request_id || row.report_id);
+        if (projectMovements.length > 0) reasons.push(`${projectMovements.length} proje bağlantılı stok hareketi`);
+        if (orderMovements.length > 0) reasons.push(`${orderMovements.length} sipariş/teslimat bağlantılı stok hareketi`);
+        if (workflowMovements.length > 0) reasons.push(`${workflowMovements.length} talep/rapor bağlantılı stok hareketi`);
+
+        return {
+          groupKey: product.groupKey,
+          productName: product.product_name,
+          productCode: product.product_code,
+          productIds: ids,
+          movements: [...productMovements].sort(
+            (a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime(),
+          ),
+          projectItemCount: productProjectItems.length,
+          reasons,
+          eligible: reasons.length === 0,
+        };
+      });
+
+      setProductDeleteAnalysis({
+        plans,
+        selectedProductCount: plans.length,
+        movementCount: plans.reduce((sum, plan) => sum + plan.movements.length, 0),
+        projectLinkedProductCount: plans.filter((plan) => plan.projectItemCount > 0).length,
+        blockedProductCount: plans.filter((plan) => !plan.eligible).length,
+      });
+    } catch (error) {
+      setProductDeleteModalOpen(false);
+      setMessage(error?.message || "Ürün bağlantıları analiz edilirken hata oluştu.");
+    } finally {
+      setAnalyzingProductDeletion(false);
     }
+  }
 
-    setSelectedProductKeys([]);
-    setSelectedProduct(null);
-    setProductDeleteBlockKey("");
-    if (typeof window !== "undefined") window.localStorage.removeItem("stock-selected-product-key");
-    setMessage(`${selectedGroups.length} ürün kartı silindi.`);
-    setBulkDeletingProducts(false);
-    await loadStock();
+  async function executeAnalyzedProductDeletion() {
+    if (!productDeleteAnalysis || bulkDeletingProducts) return;
+    setBulkDeletingProducts(true);
+    setProductDeleteResult(null);
+    setMessage("");
+
+    const failedProducts = productDeleteAnalysis.plans
+      .filter((plan) => !plan.eligible)
+      .map((plan) => ({ ...plan, reason: plan.reasons.join(", ") }));
+    let deletedMovementCount = 0;
+    let deletedProductCount = 0;
+
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        setProductDeleteModalOpen(false);
+        router.push("/login");
+        return;
+      }
+
+      for (const plan of productDeleteAnalysis.plans.filter((item) => item.eligible)) {
+        let movementFailure = null;
+        for (const movement of plan.movements) {
+          const { error } = await supabase.rpc("delete_stock_movement_with_reversal", {
+            target_movement_id: movement.id,
+          });
+          if (error) {
+            movementFailure = error;
+            break;
+          }
+          deletedMovementCount += 1;
+        }
+        if (movementFailure) {
+          failedProducts.push({ ...plan, reason: `Stok hareketi silinemedi: ${movementFailure.message}` });
+          continue;
+        }
+
+        const { data: deletedRows, error: productError } = await supabase
+          .from("products")
+          .delete()
+          .eq("user_id", user.id)
+          .in("id", plan.productIds)
+          .select("id");
+        if (productError || (deletedRows || []).length !== plan.productIds.length) {
+          failedProducts.push({ ...plan, reason: productError?.message || "Ürün kartlarının tamamı silinemedi" });
+          continue;
+        }
+        deletedProductCount += 1;
+      }
+
+      const failedKeys = failedProducts.map((plan) => plan.groupKey);
+      setSelectedProductKeys(failedKeys);
+      if (selectedProduct && !failedKeys.includes(selectedProduct.groupKey)) setSelectedProduct(null);
+      setProductDeleteBlockKey("");
+      setProductDeleteResult({ deletedProductCount, deletedMovementCount, failedProducts });
+      setMessage(`${deletedProductCount} ürün ve ${deletedMovementCount} bağlı stok hareketi silindi.`);
+      await loadStock();
+    } catch (error) {
+      setMessage(error?.message || "Toplu ürün silme işlemi tamamlanamadı.");
+    } finally {
+      setBulkDeletingProducts(false);
+    }
   }
 
   async function deleteSelectedMovements() {
@@ -1724,11 +1946,11 @@ setMessage(
                     </button>
                     <button
                       type="button"
-                      disabled={selectedProductKeys.length === 0 || bulkDeletingProducts}
-                      onClick={deleteSelectedProducts}
+                      disabled={selectedProductKeys.length === 0 || bulkDeletingProducts || analyzingProductDeletion}
+                      onClick={analyzeSelectedProductsForDeletion}
                       className="rounded-lg bg-red-600 px-3 py-2 text-xs font-black text-white hover:bg-red-700 disabled:bg-slate-300"
                     >
-                      Seçilenleri Sil ({selectedProductKeys.length})
+                      {analyzingProductDeletion ? "Analiz ediliyor..." : `Seçilenleri Sil (${selectedProductKeys.length})`}
                     </button>
                   </div>
                 </div>
@@ -1859,6 +2081,137 @@ setMessage(
                 )}
               </div>
             </div>
+
+            {productDeleteModalOpen && (
+              <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/60 p-4">
+                <button
+                  type="button"
+                  aria-label="Toplu ürün silme penceresini kapat"
+                  onClick={() => !bulkDeletingProducts && setProductDeleteModalOpen(false)}
+                  className="absolute inset-0 cursor-default"
+                />
+                <section
+                  role="alertdialog"
+                  aria-modal="true"
+                  aria-labelledby="product-delete-title"
+                  className="relative z-10 max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-3xl bg-white p-5 shadow-2xl sm:p-7"
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <div className="inline-flex rounded-full bg-red-100 px-3 py-1 text-xs font-black text-red-700">
+                        Güvenli toplu silme
+                      </div>
+                      <h2 id="product-delete-title" className="mt-3 text-2xl font-black text-slate-950">
+                        Seçilen ürünleri analiz et ve temizle
+                      </h2>
+                      <p className="mt-2 text-sm leading-6 text-slate-600">
+                        Kritik bağlantısı olmayan ürünlerin stok hareketleri güvenli tersleme RPC’siyle silinir; ardından ürün kartları kaldırılır.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={bulkDeletingProducts}
+                      onClick={() => setProductDeleteModalOpen(false)}
+                      className="shrink-0 rounded-xl border border-slate-200 px-3 py-2 text-xs font-black text-slate-600 disabled:opacity-40"
+                    >
+                      Kapat
+                    </button>
+                  </div>
+
+                  {analyzingProductDeletion && (
+                    <div className="mt-6 rounded-2xl bg-blue-50 p-6 text-center text-sm font-black text-blue-800">
+                      Ürün, hareket ve kritik bağlantılar analiz ediliyor...
+                    </div>
+                  )}
+
+                  {productDeleteAnalysis && !productDeleteResult && (
+                    <>
+                      <div className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
+                        {[
+                          ["Seçilen ürün", productDeleteAnalysis.selectedProductCount, "bg-slate-50 text-slate-900"],
+                          ["Bağlı hareket", productDeleteAnalysis.movementCount, "bg-blue-50 text-blue-900"],
+                          ["Proje bağlantılı", productDeleteAnalysis.projectLinkedProductCount, "bg-amber-50 text-amber-900"],
+                          ["Silinemeyecek", productDeleteAnalysis.blockedProductCount, "bg-red-50 text-red-900"],
+                        ].map(([label, value, color]) => (
+                          <div key={label} className={`rounded-2xl p-4 ${color}`}>
+                            <div className="text-xs font-black uppercase tracking-wide opacity-70">{label}</div>
+                            <div className="mt-2 text-3xl font-black">{value}</div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {productDeleteAnalysis.blockedProductCount > 0 && (
+                        <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 p-4">
+                          <h3 className="text-sm font-black text-red-900">Silinemeyecek ürünler</h3>
+                          <div className="mt-3 max-h-52 space-y-2 overflow-y-auto">
+                            {productDeleteAnalysis.plans.filter((plan) => !plan.eligible).map((plan) => (
+                              <div key={plan.groupKey} className="rounded-xl bg-white p-3 text-sm">
+                                <div className="font-black text-slate-900">{plan.productName}</div>
+                                <div className="mt-1 text-xs font-semibold text-red-700">{plan.reasons.join(" · ")}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
+                        <span className="font-black">
+                          {productDeleteAnalysis.plans.filter((plan) => plan.eligible).length} ürün silmeye uygun.
+                        </span>{" "}
+                        Bağlı hareketler frontend hesabı yapılmadan yalnızca delete_stock_movement_with_reversal RPC üzerinden temizlenecek.
+                      </div>
+
+                      <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                        <button
+                          type="button"
+                          disabled={bulkDeletingProducts}
+                          onClick={() => setProductDeleteModalOpen(false)}
+                          className="rounded-xl border border-slate-300 px-4 py-3 text-sm font-black text-slate-700 disabled:opacity-40"
+                        >
+                          Vazgeç
+                        </button>
+                        <button
+                          type="button"
+                          disabled={bulkDeletingProducts || !productDeleteAnalysis.plans.some((plan) => plan.eligible)}
+                          onClick={executeAnalyzedProductDeletion}
+                          className="rounded-xl bg-red-600 px-5 py-3 text-sm font-black text-white hover:bg-red-700 disabled:bg-slate-300"
+                        >
+                          {bulkDeletingProducts ? "Güvenli silme sürüyor..." : "Onayla ve Sil"}
+                        </button>
+                      </div>
+                    </>
+                  )}
+
+                  {productDeleteResult && (
+                    <>
+                      <div className="mt-6 grid grid-cols-2 gap-3">
+                        <div className="rounded-2xl bg-emerald-50 p-5 text-emerald-900">
+                          <div className="text-xs font-black uppercase">Silinen ürün</div>
+                          <div className="mt-2 text-3xl font-black">{productDeleteResult.deletedProductCount}</div>
+                        </div>
+                        <div className="rounded-2xl bg-blue-50 p-5 text-blue-900">
+                          <div className="text-xs font-black uppercase">Silinen hareket</div>
+                          <div className="mt-2 text-3xl font-black">{productDeleteResult.deletedMovementCount}</div>
+                        </div>
+                      </div>
+                      {productDeleteResult.failedProducts.length > 0 && (
+                        <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                          <h3 className="text-sm font-black text-amber-900">Silinemeyen ürünler ve nedenleri</h3>
+                          <div className="mt-3 max-h-60 space-y-2 overflow-y-auto">
+                            {productDeleteResult.failedProducts.map((plan) => (
+                              <div key={plan.groupKey} className="rounded-xl bg-white p-3 text-sm">
+                                <div className="font-black text-slate-900">{plan.productName}</div>
+                                <div className="mt-1 text-xs font-semibold text-amber-800">{plan.reason}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </section>
+              </div>
+            )}
 
             {movementDeleteModalOpen && (
               <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/55 p-4">
