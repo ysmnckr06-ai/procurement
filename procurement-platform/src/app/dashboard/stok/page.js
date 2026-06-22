@@ -6,12 +6,12 @@ import { supabase } from "@/lib/supabase";
 import { CORVIAN_PRODUCT_NAME, fetchCompanyBranding } from "@/lib/companyBranding";
 import { matchProduct, productMatchLabel } from "@/lib/productMatching";
 import {
-  mapStockImportColumns,
-  parseStockImportRows,
+  analyzeStockMatrix,
   STOCK_IMPORT_ACCEPT,
+  STOCK_IMPORT_FIELDS,
   stockImportExpectedColumns,
-  validateStockImportColumns,
 } from "@/lib/stockImport";
+import { analyzeStockFile } from "@/lib/fileAnalyzer";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL;
 const PRODUCT_TYPES = {
@@ -1462,6 +1462,52 @@ export default function StockPage() {
     setStockImportResult(null);
   }
 
+  function createStockImportPreview(analyses, importType, error = "") {
+    const parsedRows = analyses.flatMap((analysis) => analysis.parsedRows || []);
+    const importIdentityCounts = parsedRows.reduce((counts, row) => {
+      const code = normalizeStockCode(row.productCode);
+      const key = code ? `code:${code}` : `name:${normalizeStockText(row.productName)}`;
+      counts.set(key, (counts.get(key) || 0) + 1);
+      return counts;
+    }, new Map());
+    const activeProducts = productGroups.filter((product) => !product.archived_at);
+    const rows = parsedRows.map((row) => {
+      const code = normalizeStockCode(row.productCode);
+      const name = normalizeStockText(row.productName);
+      const identityKey = code ? `code:${code}` : `name:${name}`;
+      const codeMatches = code ? activeProducts.filter((product) =>
+        normalizeStockCode(product.normalized_product_code || product.product_code) === code) : [];
+      const nameMatches = activeProducts.filter((product) => normalizeStockText(product.product_name) === name);
+      const matches = codeMatches.length ? codeMatches : nameMatches;
+      const decision = importIdentityCounts.get(identityKey) > 1 || matches.length > 1
+        ? "conflict"
+        : matches.length === 1 ? (codeMatches.length ? "exact" : "probable") : "new";
+      return { ...row, decision, matchedProduct: matches[0] || null };
+    });
+    const counts = rows.reduce(
+      (summary, row) => ({ ...summary, [row.decision]: summary[row.decision] + 1 }),
+      { exact: 0, probable: 0, conflict: 0, new: 0 },
+    );
+    const missingFields = [...new Set(analyses.flatMap((analysis) => analysis.missingFields || []))];
+    return {
+      importType,
+      analyses,
+      rows,
+      counts,
+      missingFields,
+      canApply: rows.length > 0 && missingFields.length === 0 && !error,
+      totalFileRows: analyses.reduce((sum, analysis) => sum + Math.max(0, analysis.rows.length - analysis.dataStartIndex), 0),
+      fileDetails: analyses.map((analysis) => ({
+        fileName: analysis.fileName,
+        sheetName: analysis.sheetName,
+        rowCount: Math.max(0, analysis.rows.length - analysis.dataStartIndex),
+        parsedCount: analysis.parsedRows.length,
+        confidence: analysis.overallConfidence,
+      })),
+      error,
+    };
+  }
+
   async function importStockCardsFromFiles(event) {
     const files = Array.from(event.target.files || []);
     event.target.value = "";
@@ -1470,71 +1516,43 @@ export default function StockPage() {
     const requiresQuantity = importType !== PRODUCT_TYPES.MAIN;
     setBulkImporting(true);
     setStockImportResult(null);
-    let totalFileRows = 0;
-    const fileDetails = [];
-
     try {
-      const XLSX = await import("xlsx");
-      const parsedRows = [];
-      for (const file of files) {
-        const extension = file.name.split(".").pop()?.toLowerCase();
-        if (!["xlsx", "xls", "csv"].includes(extension)) {
-          throw new Error(`${file.name}: Desteklenmeyen dosya tipi. Yalnızca XLSX, XLS ve CSV yüklenebilir.`);
-        }
-        const workbook = XLSX.read(await file.arrayBuffer(), { type: "array" });
-        if (!workbook.SheetNames.length) throw new Error(`${file.name}: Okunabilir sheet bulunamadı.`);
-        const sheetName = workbook.SheetNames[0];
-        const worksheet = workbook.Sheets[sheetName];
-        if (!worksheet) throw new Error(`${file.name}: "${sheetName}" sheet'i okunamadı.`);
-        const rows = XLSX.utils.sheet_to_json(worksheet, { defval: "", raw: false });
-        totalFileRows += rows.length;
-        const mapping = mapStockImportColumns(rows.length ? Object.keys(rows[0]) : []);
-        const missing = validateStockImportColumns(mapping, requiresQuantity);
-        if (missing.length) {
-          throw new Error(`${file.name} / ${sheetName}: Zorunlu kolon bulunamadı: ${missing.join(", ")}. ${stockImportExpectedColumns(requiresQuantity)}`);
-        }
-        const fileRows = parseStockImportRows(rows, mapping, requiresQuantity, file.name, sheetName);
-        parsedRows.push(...fileRows);
-        fileDetails.push({ fileName: file.name, sheetName, rowCount: rows.length, parsedCount: fileRows.length });
-      }
-
-      const importIdentityCounts = parsedRows.reduce((counts, row) => {
-        const code = normalizeStockCode(row.productCode);
-        const key = code ? `code:${code}` : `name:${normalizeStockText(row.productName)}`;
-        counts.set(key, (counts.get(key) || 0) + 1);
-        return counts;
-      }, new Map());
-      const analysisRows = parsedRows.map((row) => {
-        const code = normalizeStockCode(row.productCode);
-        const name = normalizeStockText(row.productName);
-        const identityKey = code ? `code:${code}` : `name:${name}`;
-        const activeProducts = productGroups.filter((product) => !product.archived_at);
-        const codeMatches = code ? activeProducts.filter((product) =>
-          normalizeStockCode(product.normalized_product_code || product.product_code) === code) : [];
-        const nameMatches = activeProducts.filter((product) => normalizeStockText(product.product_name) === name);
-        const matches = codeMatches.length ? codeMatches : nameMatches;
-        const decision = importIdentityCounts.get(identityKey) > 1 || matches.length > 1
-          ? "conflict"
-          : matches.length === 1 ? (codeMatches.length ? "exact" : "probable") : "new";
-        return { ...row, decision, matchedProduct: matches[0] || null };
-      });
-      const counts = analysisRows.reduce(
-        (summary, row) => ({ ...summary, [row.decision]: summary[row.decision] + 1 }),
-        { exact: 0, probable: 0, conflict: 0, new: 0 },
-      );
-      setStockImportPreview({ importType, totalFileRows, rows: analysisRows, counts, fileDetails, error: "" });
-      setMessage(analysisRows.length ? `${analysisRows.length} satır analiz edildi.` : "Dosyada okunabilir ürün satırı bulunamadı.");
+      const analyses = [];
+      for (const file of files) analyses.push(await analyzeStockFile(file, { requiresQuantity }));
+      const preview = createStockImportPreview(analyses, importType);
+      setStockImportPreview(preview);
+      setMessage(preview.rows.length ? `${preview.rows.length} ürün satırı analiz edildi.` : "Dosyada okunabilir ürün satırı bulunamadı.");
     } catch (error) {
-      setStockImportPreview({ importType, totalFileRows, rows: [], counts: { exact: 0, probable: 0, conflict: 0, new: 0 }, fileDetails, error: error.message || "Dosya analiz edilemedi." });
+      setStockImportPreview(createStockImportPreview([], importType, error.message || "Dosya analiz edilemedi."));
       setMessage(error.message || "Dosya analiz edilemedi.");
     } finally {
       setBulkImporting(false);
     }
   }
 
+  function updateStockImportMapping(analysisIndex, field, columnValue) {
+    setStockImportPreview((current) => {
+      if (!current || stockImportResult) return current;
+      const requiresQuantity = current.importType !== PRODUCT_TYPES.MAIN;
+      const analyses = current.analyses.map((analysis, index) => {
+        if (index !== analysisIndex) return analysis;
+        const manualMapping = { ...(analysis.manualMapping || {}), [field]: columnValue === "" ? null : Number(columnValue) };
+        const recalculated = analyzeStockMatrix(analysis.matrix, {
+          requiresQuantity,
+          fileName: analysis.fileName,
+          sheetName: analysis.sheetName,
+          headerRowIndex: analysis.headerRowIndex,
+          mapping: manualMapping,
+        });
+        return { ...analysis, ...recalculated, matrix: analysis.matrix, manualMapping };
+      });
+      return createStockImportPreview(analyses, current.importType);
+    });
+  }
+
   async function applyStockImportAnalysis() {
     const analysis = stockImportPreview;
-    if (!analysis?.rows?.length || stockImportApplying) return;
+    if (!analysis?.canApply || !analysis.rows.length || stockImportApplying) return;
     setStockImportApplying(true);
     const result = { processedRows: analysis.rows.length, updatedProducts: 0, createdProducts: 0, skippedRows: 0, errors: 0 };
     try {
@@ -2834,13 +2852,52 @@ export default function StockPage() {
                 <div className="mt-5 flex flex-wrap gap-2 text-xs font-bold text-slate-600">
                   {stockImportPreview.fileDetails.map((file) => (
                     <span key={`${file.fileName}-${file.sheetName}`} className="rounded-full bg-slate-100 px-3 py-2">
-                      {file.fileName} · sheet: {file.sheetName} · {file.parsedCount}/{file.rowCount} okunabilir
+                      {file.fileName} · {file.sheetName} · {file.parsedCount}/{file.rowCount} okunabilir · güven %{file.confidence}
                     </span>
                   ))}
                 </div>
-                {(stockImportPreview.error || stockImportPreview.rows.length === 0) && (
+                {stockImportPreview.analyses.map((analysis, analysisIndex) => (
+                  <section key={`${analysis.fileName}-${analysisIndex}`} className="mt-5 rounded-xl border border-slate-200 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <h3 className="font-black text-slate-900">{analysis.fileName}</h3>
+                        <p className="text-xs text-slate-500">
+                          {analysis.headerRowIndex >= 0 ? `Başlık satırı: ${analysis.headerRowIndex + 1}` : "Başlık bulunamadı; içerikten tahmin edildi"}
+                        </p>
+                      </div>
+                      <span className={`rounded-full px-3 py-1 text-xs font-black ${analysis.overallConfidence >= 70 ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>
+                        Genel güven %{analysis.overallConfidence}
+                      </span>
+                    </div>
+                    <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                      {STOCK_IMPORT_FIELDS.map((field) => (
+                        <label key={field.key} className="text-xs font-bold text-slate-600">
+                          {field.label}{(field.key === "productName" || (field.key === "quantity" && stockImportPreview.importType !== PRODUCT_TYPES.MAIN)) ? " *" : ""}
+                          <select
+                            value={analysis.mapping[field.key] ?? ""}
+                            onChange={(event) => updateStockImportMapping(analysisIndex, field.key, event.target.value)}
+                            className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                          >
+                            <option value="">Eşleşme yok</option>
+                            {analysis.columns.map((column) => (
+                              <option key={column.index} value={column.index}>
+                                {column.label} {column.samples.length ? `(${column.samples.join(" / ")})` : ""}
+                              </option>
+                            ))}
+                          </select>
+                          <span className="mt-1 block font-medium text-slate-400">Tahmin güveni %{Math.round((analysis.confidence[field.key] || 0) * 100)}</span>
+                        </label>
+                      ))}
+                    </div>
+                    {analysis.weakFields.length > 0 && <p className="mt-3 text-xs font-bold text-amber-700">Zayıf tahmin: {analysis.weakFields.join(", ")}. Lütfen kolon seçimlerini kontrol edin.</p>}
+                    <p className="mt-3 text-xs text-slate-500">Bulunan kolonlar: {analysis.columns.map((column) => column.label).join(", ") || "Yok"}</p>
+                  </section>
+                ))}
+                {(stockImportPreview.error || stockImportPreview.missingFields.length > 0 || stockImportPreview.rows.length === 0) && (
                   <div className="mt-5 rounded-xl bg-amber-50 p-4 font-bold text-amber-900">
-                    {stockImportPreview.error || "Dosyada okunabilir ürün satırı bulunamadı"}
+                    {stockImportPreview.error || (stockImportPreview.missingFields.length
+                      ? `Eksik zorunlu alanlar: ${stockImportPreview.missingFields.join(", ")}. ${stockImportExpectedColumns(stockImportPreview.importType !== PRODUCT_TYPES.MAIN)}`
+                      : "Dosyada okunabilir ürün satırı bulunamadı")}
                   </div>
                 )}
                 <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-5">
@@ -2864,7 +2921,7 @@ export default function StockPage() {
                 )}
                 <div className="mt-6 flex justify-end gap-3">
                   <button type="button" onClick={closeStockImportModal} className="rounded-xl bg-slate-100 px-5 py-3 font-bold text-slate-700">Vazgeç</button>
-                  <button type="button" onClick={applyStockImportAnalysis} disabled={!stockImportPreview.rows.length || stockImportApplying} className="rounded-xl bg-emerald-600 px-5 py-3 font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300">
+                  <button type="button" onClick={applyStockImportAnalysis} disabled={!stockImportPreview.canApply || stockImportApplying} className="rounded-xl bg-emerald-600 px-5 py-3 font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300">
                     {stockImportApplying ? "Uygulanıyor..." : "Tek seferde onayla ve uygula"}
                   </button>
                 </div>
