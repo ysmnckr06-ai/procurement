@@ -692,7 +692,18 @@ export default function ProjectDetailPage() {
     }
 
     const projectOrderRows = orderRes.data || [];
-    const projectOrderIds = projectOrderRows.map((order) => order.id).filter(Boolean);
+    const allOrderRows = allOrderRes.data || projectOrderRows;
+    const directProjectOrderIds = new Set(projectOrderRows.map((order) => String(order.id)));
+    const allocationProjectOrderRows = allOrderRows.filter((order) => {
+      if (directProjectOrderIds.has(String(order.id))) return false;
+      return (Array.isArray(order.items) ? order.items : []).some((item) =>
+        (Array.isArray(item.allocations) ? item.allocations : []).some((allocation) =>
+          String(allocation.projectId || allocation.project_id || "") === String(projectId)
+        )
+      );
+    });
+    const financeOrderRows = [...projectOrderRows, ...allocationProjectOrderRows];
+    const projectOrderIds = financeOrderRows.map((order) => order.id).filter(Boolean);
     const nextFinanceWarnings = [];
     let nextProjectDocuments = [];
     let nextProjectOrderPayments = [];
@@ -729,7 +740,13 @@ export default function ProjectDetailPage() {
           if (documentRes.error) {
             nextFinanceWarnings.push("Proje faturaları okunamadı.");
           } else {
-            nextProjectDocuments = documentRes.data || [];
+            const orderIdByDocumentId = new Map(
+              (documentLinkRes.data || []).map((link) => [String(link.document_id), link.order_id]),
+            );
+            nextProjectDocuments = (documentRes.data || []).map((document) => ({
+              ...document,
+              linked_order_id: orderIdByDocumentId.get(String(document.id)) || null,
+            }));
           }
         }
       }
@@ -810,7 +827,7 @@ export default function ProjectDetailPage() {
     setProjectReports(reportRes.data || []);
     setProjectOffers(offerRes.data || []);
     setProjectOrders(projectOrderRows);
-    setAllOrders(allOrderRes.data || orderRes.data || []);
+    setAllOrders(allOrderRows);
     setStockMovements(movementRes.data || []);
     if (settingsRes.data?.[0]) setCompanySettings(settingsRes.data[0]);
     setLoading(false);
@@ -5347,28 +5364,58 @@ export default function ProjectDetailPage() {
       ["estimated_budget_currency", "contract_currency"],
       ["estimated_budget_exchange_rate"],
     );
-    const orderCommitment = projectOrders.reduce(
-      (sum, order) => sum + toBaseAmount(
-        order,
-        ["total_amount", "order_total", "total"],
-        ["order_total_base", "base_amount"],
-      ),
+    const directOrderIds = new Set(projectOrders.map((order) => String(order.id)));
+    const allocationLinkedOrders = allOrders.filter((order) => {
+      if (directOrderIds.has(String(order.id))) return false;
+      return (Array.isArray(order.items) ? order.items : []).some((item) =>
+        (Array.isArray(item.allocations) ? item.allocations : []).some((allocation) =>
+          String(allocation.projectId || allocation.project_id || "") === String(projectId)
+        )
+      );
+    });
+    const allFinanceOrders = [...projectOrders, ...allocationLinkedOrders];
+    const financeOrderById = new Map(allFinanceOrders.map((order) => [String(order.id), order]));
+    const allocatedOrderBase = (order) => {
+      if (directOrderIds.has(String(order.id))) {
+        return toBaseAmount(order, ["total_amount", "order_total", "total"], ["order_total_base", "base_amount"]);
+      }
+      return (Array.isArray(order.items) ? order.items : []).reduce((sum, item) => {
+        const quantity = Number(item.quantity || 0);
+        if (quantity <= 0) return sum;
+        const projectQuantity = (Array.isArray(item.allocations) ? item.allocations : [])
+          .filter((allocation) => String(allocation.projectId || allocation.project_id || "") === String(projectId))
+          .reduce((allocationSum, allocation) => allocationSum + Number(allocation.quantity || 0), 0);
+        if (projectQuantity <= 0) return sum;
+        const itemTotal = Number(item.total || 0) || quantity * Number(item.netUnitPrice || item.unitPrice || 0);
+        const itemBase = calculateBaseAmount(itemTotal, item.currency || order.currency || baseCurrency, companySettings, order.exchange_rate);
+        return sum + itemBase * Math.min(projectQuantity / quantity, 1);
+      }, 0);
+    };
+    const projectShareForOrder = (order) => {
+      if (!order) return 0;
+      if (directOrderIds.has(String(order.id))) return 1;
+      const fullBase = toBaseAmount(order, ["total_amount", "order_total", "total"], ["order_total_base", "base_amount"]);
+      return fullBase > 0 ? Math.min(allocatedOrderBase(order) / fullBase, 1) : 0;
+    };
+    const orderCommitment = allFinanceOrders.reduce(
+      (sum, order) => sum + allocatedOrderBase(order),
       0,
     );
     const approvedInvoices = projectDocuments.filter((document) =>
       String(document.document_type || "").toLocaleLowerCase("tr-TR") === "fatura"
       && String(document.approval_status || "").toLocaleLowerCase("tr-TR") !== "reddedildi"
     );
-    const approvedInvoiceTotal = approvedInvoices.reduce(
-      (sum, document) => sum + toBaseAmount(
+    const approvedInvoiceTotal = approvedInvoices.reduce((sum, document) => {
+      const invoiceBase = toBaseAmount(
         document,
         ["invoice_total"],
         ["invoice_total_base", "base_amount"],
         ["currency"],
         ["exchange_rate"],
-      ),
-      0,
-    );
+      );
+      const linkedOrder = financeOrderById.get(String(document.linked_order_id || ""));
+      return sum + invoiceBase * (linkedOrder ? projectShareForOrder(linkedOrder) : 1);
+    }, 0);
     const manualExpenses = expenses.reduce(
       (sum, expense) => sum + toBaseAmount(
         expense,
@@ -5385,24 +5432,11 @@ export default function ProjectDetailPage() {
       ),
       0,
     );
-    const supplierPayments = projectOrderPayments.reduce(
-      (sum, payment) => sum + toBaseAmount(
-        payment,
-        ["amount", "original_amount"],
-        ["base_amount"],
-      ),
-      0,
-    );
-    const directOrderIds = new Set(projectOrders.map((order) => String(order.id)));
-    const allocationLinkedOrders = allOrders.filter((order) => {
-      if (directOrderIds.has(String(order.id))) return false;
-      const orderItems = Array.isArray(order.items) ? order.items : [];
-      return orderItems.some((item) =>
-        (Array.isArray(item.allocations) ? item.allocations : []).some((allocation) =>
-          String(allocation.projectId || allocation.project_id || "") === String(projectId)
-        )
-      );
-    });
+    const supplierPayments = projectOrderPayments.reduce((sum, payment) => {
+      const paymentBase = toBaseAmount(payment, ["amount", "original_amount"], ["base_amount"]);
+      const linkedOrder = financeOrderById.get(String(payment.order_id || ""));
+      return sum + paymentBase * (linkedOrder ? projectShareForOrder(linkedOrder) : 1);
+    }, 0);
     const actualCost = approvedInvoiceTotal + manualExpenses;
     const remainingCollection = contractAmount - customerCollections;
     const supplierDebt = approvedInvoiceTotal - supplierPayments;
@@ -5444,7 +5478,7 @@ export default function ProjectDetailPage() {
     if (orderCommitment > 0 && approvedInvoiceTotal <= 0) warnings.push("Sipariş var ama fatura yok.");
     if (estimatedConversionUsed) warnings.push("Çoklu para birimi dönüşümü tahmini olabilir.");
     if (allocationLinkedOrders.length > 0) {
-      warnings.push(`${allocationLinkedOrders.length} sipariş allocation üzerinden bu projeye bağlı görünüyor; hesaplara dahil edilmedi.`);
+      warnings.push(`${allocationLinkedOrders.length} çok projeli sipariş allocation oranıyla proje maliyetlerine dahil edildi.`);
     }
 
     return {
@@ -5518,7 +5552,7 @@ export default function ProjectDetailPage() {
       items.length > 0 ? Math.round((completedItems / items.length) * 100) : 0;
     const collection =
       totals.contract > 0 ? Math.round((totals.paidTotal / totals.contract) * 100) : 0;
-    const profitLoss = totals.netProfitLoss;
+    const profitLoss = projectFinanceSummary.grossProfit;
     const mainStatusCounts = countByStatus(mainItems, mainItemStatuses);
     const mainStatusSummary = mainItemStatuses
       .map((status) => ({ status, count: mainStatusCounts[status] || 0 }))
@@ -5553,11 +5587,11 @@ export default function ProjectDetailPage() {
       waitingMaterialMainItems: mainItems.filter((item) => item.status === "Malzeme bekliyor").length,
       orderedComponents: childItems.filter((item) => ["Sipariş verildi", "Tedarikçiden bekleniyor"].includes(item.status)).length,
       receivedComponents: childItems.filter((item) => ["Depoda", "Kısmi geldi", "Projeye rezerve edildi", "Kullanıldı", "Tamamlandı"].includes(item.status)).length,
-      actualCost: totals.actualCost,
+      actualCost: projectFinanceSummary.actualCost,
       profitLoss,
-      budgetVariance: totals.budgetVariance,
+      budgetVariance: projectFinanceSummary.actualCost - projectFinanceSummary.estimatedBudget,
     };
-  }, [items, projectOrders, totals]);
+  }, [items, projectOrders, projectFinanceSummary, totals]);
 
   const recentProjectOrders = useMemo(() => {
     return [...projectOrders]
@@ -5577,8 +5611,8 @@ export default function ProjectDetailPage() {
     if (criticalStockItems.length > 0) {
       warnings.push({ tone: "orange", text: `${criticalStockItems.length} kalemde kritik stok uyarısı var.` });
     }
-    if (totals.budgetVariance > 0) {
-      warnings.push({ tone: "amber", text: `${formatMoney(totals.budgetVariance, projectCurrencyForDisplay())} bütçe aşımı riski tespit edildi.` });
+    if (projectFinanceSummary.budgetExceeded) {
+      warnings.push({ tone: "amber", text: `${formatMoney(projectFinanceSummary.actualCost - projectFinanceSummary.estimatedBudget, projectCurrencyForDisplay())} bütçe aşımı riski tespit edildi.` });
     }
 
     const delayedOrders = projectOrders.filter((order) => {
@@ -5597,7 +5631,7 @@ export default function ProjectDetailPage() {
     }
 
     return warnings;
-  }, [criticalStockItems.length, projectKpis.openOrders, projectOrders, purchaseRequiredQuantity, totals.budgetVariance]);
+  }, [criticalStockItems.length, projectFinanceSummary, projectKpis.openOrders, projectOrders, purchaseRequiredQuantity]);
 
   function overviewWarningClass(tone) {
     const classes = {
@@ -6543,7 +6577,7 @@ export default function ProjectDetailPage() {
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
               <SummaryCard title="Sözleşme Bedeli" value={formatMoney(projectFinanceSummary.contractAmount, projectFinanceSummary.baseCurrency)} text="Baz para birimi karşılığı" tone="blue" />
               <SummaryCard title="Tahmini Bütçe" value={formatMoney(projectFinanceSummary.estimatedBudget, projectFinanceSummary.baseCurrency)} text="Planlanan proje bütçesi" />
-              <SummaryCard title="Sipariş Taahhüdü" value={formatMoney(projectFinanceSummary.orderCommitment, projectFinanceSummary.baseCurrency)} text={`${projectOrders.length} doğrudan bağlı sipariş`} />
+              <SummaryCard title="Sipariş Taahhüdü" value={formatMoney(projectFinanceSummary.orderCommitment, projectFinanceSummary.baseCurrency)} text={`${projectOrders.length} doğrudan, ${projectFinanceSummary.allocationLinkedOrderCount} allocation bağlı sipariş`} />
               <SummaryCard title="Onaylı Fatura Toplamı" value={formatMoney(projectFinanceSummary.approvedInvoiceTotal, projectFinanceSummary.baseCurrency)} text={`${projectFinanceSummary.approvedInvoiceCount} reddedilmemiş fatura`} tone="blue" />
               <SummaryCard title="Manuel Giderler" value={formatMoney(projectFinanceSummary.manualExpenses, projectFinanceSummary.baseCurrency)} text={`${expenses.length} ek gider kaydı`} />
               <SummaryCard title="Gerçekleşen Maliyet" value={formatMoney(projectFinanceSummary.actualCost, projectFinanceSummary.baseCurrency)} text="Faturalar + manuel giderler" tone={projectFinanceSummary.actualCost > projectFinanceSummary.contractAmount ? "red" : "blue"} />

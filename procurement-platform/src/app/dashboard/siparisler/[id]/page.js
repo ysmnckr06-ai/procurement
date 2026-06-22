@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { calculateBaseAmount, currencyOptions, getBaseCurrency, getExchangeRate } from "@/lib/currency";
 import { findOrCreateBusinessPartner } from "@/lib/businessPartners";
@@ -60,6 +60,12 @@ function formatDateTime(value) {
     dateStyle: "short",
     timeStyle: "short",
   }).format(date);
+}
+
+async function fileSha256(file) {
+  const bytes = await file.arrayBuffer();
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 function createMockOCRResult(document) {
@@ -625,6 +631,7 @@ export default function OrderDetailPage() {
   const [message, setMessage] = useState("");
   const [deliveryInputs, setDeliveryInputs] = useState({});
   const [receiptInputs, setReceiptInputs] = useState({});
+  const receiptSavingRef = useRef(new Set());
   const [receipts, setReceipts] = useState([]);
   const [automaticReceiptApplying, setAutomaticReceiptApplying] = useState(false);
   const [automaticReceiptResult, setAutomaticReceiptResult] = useState(null);
@@ -1233,6 +1240,16 @@ export default function OrderDetailPage() {
   }
 
   async function saveReceipt(index) {
+    if (receiptSavingRef.current.has(index)) return;
+    receiptSavingRef.current.add(index);
+    try {
+      await saveReceiptUnlocked(index);
+    } finally {
+      receiptSavingRef.current.delete(index);
+    }
+  }
+
+  async function saveReceiptUnlocked(index) {
     if (!order) return;
 
     const {
@@ -1697,6 +1714,56 @@ export default function OrderDetailPage() {
     setDocumentUploading(true);
     setMessage("");
 
+    let contentSha256 = "";
+    try {
+      contentSha256 = await fileSha256(file);
+    } catch (hashError) {
+      console.error(hashError);
+      setMessage("Belge güvenlik özeti hesaplanamadı; yükleme durduruldu.");
+      setDocumentUploading(false);
+      return;
+    }
+
+    const { data: existingDocument, error: existingDocumentError } = await supabase
+      .from("documents")
+      .select("*")
+      .eq("user_id", user.id)
+      .eq("content_sha256", contentSha256)
+      .maybeSingle();
+    if (existingDocumentError) {
+      setMessage("Belge mükerrer kontrolü yapılamadı. 014 document hash migrationı uygulanmalıdır.");
+      setDocumentUploading(false);
+      return;
+    }
+    if (existingDocument) {
+      const { data: existingLink } = await supabase
+        .from("document_links")
+        .select("id")
+        .eq("user_id", user.id)
+        .eq("document_id", existingDocument.id)
+        .eq("order_id", order.id)
+        .maybeSingle();
+      if (existingLink) {
+        setMessage("Bu belge bu siparişe daha önce yüklenmiş. Mükerrer belge oluşturulmadı.");
+        setDocumentUploading(false);
+        return;
+      }
+      const { error: reuseLinkError } = await supabase.from("document_links").insert({
+        document_id: existingDocument.id,
+        order_id: order.id,
+        user_id: user.id,
+      });
+      if (reuseLinkError) {
+        setMessage("Belge daha önce yüklenmiş ancak bu siparişe güvenli biçimde bağlanamadı.");
+        setDocumentUploading(false);
+        return;
+      }
+      setMessage("Mevcut belge yeniden yüklenmeden bu siparişe bağlandı.");
+      setDocumentUploading(false);
+      await loadOrderDocuments(order.id, user.id);
+      return;
+    }
+
     const safeFileName = String(file.name || "belge")
       .replace(/[^a-zA-Z0-9._-]/g, "-")
       .replace(/-+/g, "-");
@@ -1729,6 +1796,7 @@ export default function OrderDetailPage() {
         storage_path: storagePath,
         mime_type: file.type || null,
         file_size: file.size || null,
+        content_sha256: contentSha256,
         document_number: documentForm.document_number.trim() || null,
         document_date: documentForm.document_date || null,
         supplier_name: documentForm.supplier_name.trim() || null,
@@ -1742,7 +1810,12 @@ export default function OrderDetailPage() {
 
     if (documentError) {
       console.error(documentError);
-      setMessage("Belge bilgileri kaydedilemedi.");
+      await supabase.storage.from("order-documents").remove([storagePath]);
+      setMessage(
+        documentError.code === "23505"
+          ? "Bu belge eşzamanlı başka bir işlemde yüklenmiş. Mükerrer belge engellendi; sayfayı yenileyip tekrar bağlayın."
+          : "Belge bilgileri kaydedilemedi.",
+      );
       setDocumentUploading(false);
       return;
     }
@@ -3942,7 +4015,7 @@ function ReceivingPanel({
                   <span className="mb-1 block text-xs font-bold text-slate-500">Proje malzemesi</span>
                   <select
                     value={input.projectItemId || ""}
-                    disabled={disabled || !project}
+                    disabled={disabled || projectItems.length === 0}
                     onChange={(event) => onInputChange(index, "projectItemId", event.target.value)}
                     className="w-full rounded-xl border border-slate-300 p-3 text-sm disabled:bg-slate-100"
                   >

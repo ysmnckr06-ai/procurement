@@ -29,6 +29,31 @@ function profitLossTotal(rows) {
   return rows.reduce((sum, row) => sum + Number(row.profitLoss || 0), 0);
 }
 
+function orderBaseValue(order) {
+  return Number(order.order_total_base || order.base_amount || order.total_amount || 0);
+}
+
+function orderProjectAllocationValue(order, projectId) {
+  if (String(order.project_id || "") === String(projectId)) return orderBaseValue(order);
+  const rate = Number(order.exchange_rate || 1) || 1;
+  return (Array.isArray(order.items) ? order.items : []).reduce((sum, item) => {
+    const quantity = Number(item.quantity || 0);
+    if (quantity <= 0) return sum;
+    const projectQuantity = (Array.isArray(item.allocations) ? item.allocations : [])
+      .filter((allocation) => String(allocation.projectId || allocation.project_id || "") === String(projectId))
+      .reduce((allocationSum, allocation) => allocationSum + Number(allocation.quantity || 0), 0);
+    if (projectQuantity <= 0) return sum;
+    const itemTotal = Number(item.total || 0) || quantity * Number(item.netUnitPrice || item.unitPrice || 0);
+    return sum + itemTotal * rate * Math.min(projectQuantity / quantity, 1);
+  }, 0);
+}
+
+function orderProjectShare(order, projectId) {
+  if (String(order.project_id || "") === String(projectId)) return 1;
+  const fullValue = orderBaseValue(order);
+  return fullValue > 0 ? Math.min(orderProjectAllocationValue(order, projectId) / fullValue, 1) : 0;
+}
+
 function StatCard({ title, value, text, tone = "slate" }) {
   const tones = {
     slate: "border-slate-200 bg-white text-slate-900",
@@ -126,6 +151,11 @@ export default function FinancePage() {
       ? orders.filter(
           (order) =>
             filteredProjectIds.has(order.project_id) ||
+            (Array.isArray(order.items) ? order.items : []).some((item) =>
+              (Array.isArray(item.allocations) ? item.allocations : []).some((allocation) =>
+                filteredProjectIds.has(allocation.projectId || allocation.project_id)
+              )
+            ) ||
             matchesFilter([order.partner_name, order.supplier_name, order.customer_name, order.project_name]),
         )
       : orders;
@@ -172,13 +202,21 @@ export default function FinancePage() {
       const payments = filteredProjectPayments
         .filter((payment) => payment.project_id === project.id)
         .reduce((sum, payment) => sum + Number(payment.base_amount || payment.amount || 0), 0);
-      const projectOrders = filteredOrders.filter((order) => order.project_id === project.id);
+      const projectOrders = filteredOrders.filter((order) => orderProjectShare(order, project.id) > 0);
       const projectOrderTotal = projectOrders.reduce(
-        (sum, order) => sum + Number(order.order_total_base || order.base_amount || order.total_amount || 0),
+        (sum, order) => sum + orderProjectAllocationValue(order, project.id),
         0,
       );
-      const projectPaidOrders = projectOrders.reduce(
-        (sum, order) => sum + Number(order.paid_amount_base || order.paid_amount || 0),
+      const projectOrderIds = new Set(projectOrders.map((order) => String(order.id)));
+      const projectPaymentTotal = filteredOrderPayments
+        .filter((payment) => projectOrderIds.has(String(payment.order_id)))
+        .reduce((sum, payment) => {
+          const linkedOrder = projectOrders.find((order) => String(order.id) === String(payment.order_id));
+          const paymentBase = Number(payment.base_amount || payment.amount || 0);
+          return sum + paymentBase * orderProjectShare(linkedOrder, project.id);
+        }, 0);
+      const projectPaidOrders = projectPaymentTotal || projectOrders.reduce(
+        (sum, order) => sum + Number(order.paid_amount_base || order.paid_amount || 0) * orderProjectShare(order, project.id),
         0,
       );
       const contractBase = Number(project.contract_base_amount || project.contract_amount || 0);
