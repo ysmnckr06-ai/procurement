@@ -121,6 +121,7 @@ async function fetchTenantStockProducts(userId) {
       .from("products")
       .select("id,product_code,product_name,current_stock,reserved_stock")
       .eq("user_id", userId)
+      .is("archived_at", null)
       .range(from, from + 999);
 
     if (error) throw error;

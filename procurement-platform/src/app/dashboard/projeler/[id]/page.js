@@ -642,7 +642,8 @@ export default function ProjectDetailPage() {
       supabase
         .from("products")
         .select("*", { count: "exact" })
-        .eq("user_id", user.id),
+        .eq("user_id", user.id)
+        .is("archived_at", null),
       supabase
         .from("requests")
         .select("*")
@@ -1331,6 +1332,7 @@ export default function ProjectDetailPage() {
           .from("products")
           .select("*")
           .eq("user_id", user.id)
+          .is("archived_at", null)
           .eq("normalized_product_code", productPayload.normalized_product_code)
           .maybeSingle();
 
@@ -1582,6 +1584,7 @@ export default function ProjectDetailPage() {
           .from("products")
           .select("*")
           .eq("user_id", userId)
+          .is("archived_at", null)
           .eq("normalized_product_code", normalizeProductCode(safeProductCode))
           .maybeSingle();
 
@@ -1634,6 +1637,7 @@ export default function ProjectDetailPage() {
               .from("products")
               .select("*")
               .eq("user_id", userId)
+              .is("archived_at", null)
               .eq("normalized_product_code", normalizeProductCode(safeProductCode))
               .maybeSingle();
 
@@ -3965,6 +3969,7 @@ export default function ProjectDetailPage() {
       .from("products")
       .select("*")
       .eq("user_id", user.id)
+      .is("archived_at", null)
       .in("id", productIds);
 
     if (latestProductError) {
@@ -4406,6 +4411,7 @@ export default function ProjectDetailPage() {
       .from("products")
       .select("*")
       .eq("user_id", user.id)
+      .is("archived_at", null)
       .in("id", productIds);
 
     if (latestProductError) {

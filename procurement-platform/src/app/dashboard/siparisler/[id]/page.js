@@ -1008,6 +1008,7 @@ export default function OrderDetailPage() {
       .from("products")
       .select("*")
       .eq("user_id", userId)
+      .is("archived_at", null)
       .limit(5000);
     if (error) {
       setMessage("Ürün kartları kontrol edilemedi; teslim alma güvenli şekilde durduruldu.");

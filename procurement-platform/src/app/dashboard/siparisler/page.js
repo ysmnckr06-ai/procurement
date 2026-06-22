@@ -640,6 +640,7 @@ export default function OrdersPage() {
       .from("products")
       .select("id,product_code,product_name,current_stock,reserved_stock,unit")
       .eq("user_id", user.id)
+      .is("archived_at", null)
       .limit(5000);
 
     if (itemError) {

@@ -740,6 +740,7 @@ export default function StockPage() {
   const [stockImportModalOpen, setStockImportModalOpen] = useState(false);
   const [activeProductType, setActiveProductType] = useState(PRODUCT_TYPES.COMPONENT);
   const [stockViewFilter, setStockViewFilter] = useState(STOCK_VIEW_FILTERS.ALL);
+  const [showArchivedProducts, setShowArchivedProducts] = useState(false);
   const [stockImportType, setStockImportType] = useState(PRODUCT_TYPES.COMPONENT);
   const [selectedProductKeys, setSelectedProductKeys] = useState([]);
   const [selectedMovementIds, setSelectedMovementIds] = useState([]);
@@ -755,7 +756,7 @@ export default function StockPage() {
 
   useEffect(() => {
     loadStock();
-  }, []);
+  }, [showArchivedProducts]);
 
   useEffect(() => {
     setProductPage(1);
@@ -793,10 +794,14 @@ export default function StockPage() {
       email: user.email || null,
     });
 
-    const { data: productData, error: productError, count: productCount } = await supabase
+    let productQuery = supabase
       .from("products")
       .select("*", { count: "exact" })
-      .eq("user_id", user.id)
+      .eq("user_id", user.id);
+    productQuery = showArchivedProducts
+      ? productQuery.not("archived_at", "is", null)
+      : productQuery.is("archived_at", null);
+    const { data: productData, error: productError, count: productCount } = await productQuery
       .order("updated_at", { ascending: false });
 
     const { data: movementData, error: movementError, count: movementCount } = await supabase
@@ -847,6 +852,37 @@ export default function StockPage() {
     setLoading(false);
   }
 
+  async function archiveProductIds(productIds, reason) {
+    const safeProductIds = productIds.filter(isUuid);
+    if (safeProductIds.length !== 1) {
+      return new Error("Birleşik/mükerrer ürün grubu otomatik arşivlenmedi. Her fiziksel ürün kartı ayrı incelenmelidir.");
+    }
+    for (const productId of safeProductIds) {
+      const { error } = await supabase.rpc("archive_zero_stock_product", {
+        target_product_id: productId,
+        archive_reason: reason,
+      });
+      if (error) return error;
+    }
+    return null;
+  }
+
+  async function restoreArchivedProduct(product) {
+    if (!product?.id) return;
+    const approved = window.confirm(`${product.product_name} ürün kartı aktif stok listesine geri alınsın mı?`);
+    if (!approved) return;
+    const { error } = await supabase.rpc("restore_archived_product", {
+      target_product_id: product.id,
+    });
+    if (error) {
+      setMessage(error.message || "Ürün geri yüklenemedi.");
+      return;
+    }
+    setSelectedProduct(null);
+    setMessage("Ürün aktif stok listesine geri yüklendi.");
+    await loadStock();
+  }
+
   async function deleteProductGroup(product) {
     if (!product) return;
 
@@ -861,6 +897,32 @@ export default function StockPage() {
       .map((movement) => movement.id);
 
     if (movementIds.length > 0) {
+      const isZeroStock = Number(product.current_stock || 0) === 0 && Number(product.reserved_stock || 0) === 0;
+      const hasUnreversibleInbound = selectedMovements.some(
+        (movement) => String(movement.movement_type || "").trim().toLowerCase() === "in"
+          && Number(movement.quantity || 0) > Number(product.current_stock || 0),
+      );
+      if (isZeroStock && hasUnreversibleInbound) {
+        const archiveApproved = window.confirm(
+          "Bu ürünün eski stok hareketleri stoktan geri alınamıyor. Ürünü aktif listeden arşivlemek ister misiniz?",
+        );
+        if (archiveApproved) {
+          setDeleting(true);
+          const archiveError = await archiveProductIds(
+            productIds,
+            "Eski stok hareketi geri alınamadığı için kullanıcı onayıyla arşivlendi.",
+          );
+          setDeleting(false);
+          if (archiveError) {
+            setMessage(archiveError.message || "Ürün güvenlik kontrolleri nedeniyle arşivlenemedi.");
+            return;
+          }
+          setSelectedProduct(null);
+          setMessage("Ürün arşivlendi; stok hareketleri ve sayaçlar değiştirilmedi.");
+          await loadStock();
+          return;
+        }
+      }
       setProductDeleteBlockKey(product.groupKey);
       setMessage(
         `${product.product_name} ürün kartına bağlı ${movementIds.length} stok hareketi var. ` +
@@ -993,13 +1055,13 @@ export default function StockPage() {
       const [directMovements, legacyMovements, directProjectItems, legacyProjectItems, userOrders, userReceipts] = await Promise.all([
         fetchRowsByProductIds(
           "stock_movements",
-          "id, product_id, project_id, project_item_id, parent_item_id, order_id, receipt_id, request_id, report_id, created_at",
+          "id, product_id, movement_type, quantity, project_id, project_item_id, parent_item_id, order_id, receipt_id, request_id, report_id, created_at",
           productIds,
           user.id,
         ),
         fetchRowsWithoutProductId(
           "stock_movements",
-          "id, product_id, product_code, product_name, project_id, project_item_id, parent_item_id, order_id, receipt_id, request_id, report_id, created_at",
+          "id, product_id, product_code, product_name, movement_type, quantity, project_id, project_item_id, parent_item_id, order_id, receipt_id, request_id, report_id, created_at",
           user.id,
         ),
         fetchRowsByProductIds("project_items", "id, product_id, product_name, product_code", productIds, user.id),
@@ -1038,6 +1100,8 @@ export default function StockPage() {
           productName: product.product_name,
           productCode: product.product_code,
           productIds: ids,
+          currentStock: Number(product.current_stock || 0),
+          reservedStock: Number(product.reserved_stock || 0),
           movements: [...productMovements].sort(
             (a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime(),
           ),
@@ -1073,6 +1137,7 @@ export default function StockPage() {
       .map((plan) => ({ ...plan, reason: plan.reasons.join(", ") }));
     let deletedMovementCount = 0;
     let deletedProductCount = 0;
+    let archivedProductCount = 0;
 
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -1083,6 +1148,29 @@ export default function StockPage() {
       }
 
       for (const plan of productDeleteAnalysis.plans.filter((item) => item.eligible)) {
+        const shouldOfferArchive = plan.currentStock === 0
+          && plan.reservedStock === 0
+          && plan.movements.some(
+            (movement) => String(movement.movement_type || "").trim().toLowerCase() === "in"
+              && Number(movement.quantity || 0) > plan.currentStock,
+          );
+        if (shouldOfferArchive) {
+          const archiveApproved = window.confirm(
+            `${plan.productName}: Bu ürünün eski stok hareketleri stoktan geri alınamıyor. Ürünü aktif listeden arşivlemek ister misiniz?`,
+          );
+          if (archiveApproved) {
+            const archiveError = await archiveProductIds(
+              plan.productIds,
+              "Toplu ürün temizliğinde eski stok hareketi geri alınamadığı için kullanıcı onayıyla arşivlendi.",
+            );
+            if (archiveError) {
+              failedProducts.push({ ...plan, reason: archiveError.message || "Ürün arşivlenemedi" });
+            } else {
+              archivedProductCount += 1;
+            }
+            continue;
+          }
+        }
         let movementFailure = null;
         for (const movement of plan.movements) {
           const { error } = await supabase.rpc("delete_stock_movement_with_reversal", {
@@ -1116,8 +1204,8 @@ export default function StockPage() {
       setSelectedProductKeys(failedKeys);
       if (selectedProduct && !failedKeys.includes(selectedProduct.groupKey)) setSelectedProduct(null);
       setProductDeleteBlockKey("");
-      setProductDeleteResult({ deletedProductCount, deletedMovementCount, failedProducts });
-      setMessage(`${deletedProductCount} ürün ve ${deletedMovementCount} bağlı stok hareketi silindi.`);
+      setProductDeleteResult({ deletedProductCount, deletedMovementCount, archivedProductCount, failedProducts });
+      setMessage(`${deletedProductCount} ürün silindi, ${archivedProductCount} ürün arşivlendi ve ${deletedMovementCount} bağlı stok hareketi güvenli şekilde terslendi.`);
       await loadStock();
     } catch (error) {
       setMessage(error?.message || "Toplu ürün silme işlemi tamamlanamadı.");
@@ -1249,6 +1337,11 @@ export default function StockPage() {
       }
 
       existing = existingByCode || null;
+      if (existing?.archived_at) {
+        setShowArchivedProducts(true);
+        setMessage("Bu ürün kodu arşivde bulunuyor. Yeni kart açmak yerine arşivden geri yükleyin.");
+        return;
+      }
     }
 
     if (existing) {
@@ -1381,6 +1474,7 @@ async function importStockCardsFromFiles(event) {
         .from("products")
         .select("*")
         .eq("user_id", user.id)
+        .is("archived_at", null)
         .range(from, from + 999);
       if (error) throw error;
       matchingProducts.push(...(data || []));
@@ -1543,9 +1637,10 @@ async function executeStockImportPreview() {
   await loadStock();
 }
   const productGroups = useMemo(() => {
+    if (showArchivedProducts) return mergeProductGroups(products);
     const projectMainProducts = projectMainItemsAsProducts(projectItems, products);
     return mergeProductGroups([...products, ...projectMainProducts]);
-  }, [products, projectItems]);
+  }, [products, projectItems, showArchivedProducts]);
   const productTypeCounts = useMemo(() => ({
     main: productGroups.filter(isMainProduct).length,
     component: productGroups.filter((product) => !isMainProduct(product)).length,
@@ -1906,12 +2001,28 @@ async function executeStockImportPreview() {
               <div className="border-b border-slate-100 p-5">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                   <div>
-                    <h2 className="text-xl font-bold text-slate-900">Ürün Kartları</h2>
+                    <h2 className="text-xl font-bold text-slate-900">{showArchivedProducts ? "Arşivlenen Ürünler" : "Ürün Kartları"}</h2>
                     <p className="mt-1 text-sm text-slate-500">
                       {loading ? "Yükleniyor..." : `${filteredProducts.length} ürün gösteriliyor.`}
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => { setShowArchivedProducts(false); setSelectedProduct(null); setSelectedProductKeys([]); }}
+                      className={`rounded-xl px-4 py-2 text-sm font-black ${!showArchivedProducts ? "bg-blue-600 text-white" : "border border-slate-200 bg-white text-slate-700"}`}
+                    >
+                      Aktif Ürünler
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setShowArchivedProducts(true); setSelectedProduct(null); setSelectedProductKeys([]); }}
+                      className={`rounded-xl px-4 py-2 text-sm font-black ${showArchivedProducts ? "bg-slate-800 text-white" : "border border-slate-200 bg-white text-slate-700"}`}
+                    >
+                      Arşiv
+                    </button>
+                  </div>
+                  {!showArchivedProducts && <div className="flex flex-wrap gap-2">
                     <button
                       type="button"
                       onClick={() => setSelectedProductKeys(allFilteredProductsSelected ? [] : filteredProducts.map((product) => product.groupKey))}
@@ -1927,7 +2038,7 @@ async function executeStockImportPreview() {
                     >
                       {analyzingProductDeletion ? "Analiz ediliyor..." : `Seçilenleri Sil (${selectedProductKeys.length})`}
                     </button>
-                  </div>
+                  </div>}
                 </div>
               </div>
               <div className="space-y-3 p-4">
@@ -1947,7 +2058,7 @@ async function executeStockImportPreview() {
                     >
                       <div className="space-y-3">
                         <div className="flex min-w-0 items-start gap-3">
-                          <div className="pt-1">
+                          {!showArchivedProducts && <div className="pt-1">
                             <input
                               type="checkbox"
                               checked={selectedProductKeys.includes(product.groupKey)}
@@ -1955,7 +2066,7 @@ async function executeStockImportPreview() {
                               className="h-4 w-4 rounded border-slate-300"
                               aria-label={`${product.product_name} seç`}
                             />
-                          </div>
+                          </div>}
                           <div className="min-w-0 flex-1">
                             <h3
                               className="block w-full whitespace-normal break-words text-left text-base font-black leading-6 text-slate-950"
@@ -1984,6 +2095,12 @@ async function executeStockImportPreview() {
                                 {product.duplicateCount} kayıt birleşti. Aynı kod/açıklama için yeni kart açılmadı.
                               </div>
                             )}
+                            {showArchivedProducts && (
+                              <div className="mt-2 rounded-lg bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-700">
+                                <div className="font-black">Arşiv tarihi: {formatDate(product.archived_at)}</div>
+                                <div className="mt-1">{product.archived_reason || "Arşiv nedeni belirtilmedi."}</div>
+                              </div>
+                            )}
                           </div>
                         </div>
                             <div className="mt-3 flex flex-wrap gap-2">
@@ -2003,6 +2120,15 @@ async function executeStockImportPreview() {
                               >
                                 Ürün detayını gör
                               </button>
+                              {showArchivedProducts && (
+                                <button
+                                  type="button"
+                                  onClick={() => restoreArchivedProduct(product)}
+                                  className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-black text-white hover:bg-emerald-700"
+                                >
+                                  Aktife Geri Yükle
+                                </button>
+                              )}
                             </div>
                         <div className="grid min-w-0 grid-cols-4 gap-2 text-xs">
                           <div className="min-w-0 rounded-xl bg-slate-50 px-3 py-2">
@@ -2227,7 +2353,7 @@ async function executeStockImportPreview() {
 
                   {productDeleteResult && (
                     <>
-                      <div className="mt-6 grid grid-cols-2 gap-3">
+                      <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
                         <div className="rounded-2xl bg-emerald-50 p-5 text-emerald-900">
                           <div className="text-xs font-black uppercase">Silinen ürün</div>
                           <div className="mt-2 text-3xl font-black">{productDeleteResult.deletedProductCount}</div>
@@ -2235,6 +2361,10 @@ async function executeStockImportPreview() {
                         <div className="rounded-2xl bg-blue-50 p-5 text-blue-900">
                           <div className="text-xs font-black uppercase">Silinen hareket</div>
                           <div className="mt-2 text-3xl font-black">{productDeleteResult.deletedMovementCount}</div>
+                        </div>
+                        <div className="rounded-2xl bg-slate-100 p-5 text-slate-900">
+                          <div className="text-xs font-black uppercase">Arşivlenen ürün</div>
+                          <div className="mt-2 text-3xl font-black">{productDeleteResult.archivedProductCount || 0}</div>
                         </div>
                       </div>
                       {productDeleteResult.failedProducts.length > 0 && (
@@ -2348,14 +2478,24 @@ async function executeStockImportPreview() {
                             >
                               Kapat
                             </button>
-                            <button
-                              type="button"
-                              disabled={deleting}
-                              onClick={() => deleteProductGroup(selectedProduct)}
-                              className="rounded-lg bg-red-600 px-3 py-2 text-xs font-bold text-white hover:bg-red-700 disabled:bg-slate-300"
-                            >
-                              Sil
-                            </button>
+                            {showArchivedProducts ? (
+                              <button
+                                type="button"
+                                onClick={() => restoreArchivedProduct(selectedProduct)}
+                                className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700"
+                              >
+                                Aktife Geri Yükle
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                disabled={deleting}
+                                onClick={() => deleteProductGroup(selectedProduct)}
+                                className="rounded-lg bg-red-600 px-3 py-2 text-xs font-bold text-white hover:bg-red-700 disabled:bg-slate-300"
+                              >
+                                Sil
+                              </button>
+                            )}
                           </div>
                         </div>
 
@@ -2400,7 +2540,7 @@ async function executeStockImportPreview() {
                           </p>
                         </section>
 
-                        {selectedProductDeleteBlocked && selectedMovements.length > 0 && (
+                        {!showArchivedProducts && selectedProductDeleteBlocked && selectedMovements.length > 0 && (
                           <div role="alert" className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-4">
                             <div className="text-sm font-black text-red-950">Ürün kartı henüz silinemez</div>
                             <p className="mt-1 text-sm leading-6 text-red-800">
@@ -2425,7 +2565,7 @@ async function executeStockImportPreview() {
                           </div>
                         )}
 
-                        {selectedProductDeleteBlocked && selectedMovements.length === 0 && (
+                        {!showArchivedProducts && selectedProductDeleteBlocked && selectedMovements.length === 0 && (
                           <div role="status" className="mt-4 flex flex-col gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 sm:flex-row sm:items-center sm:justify-between">
                             <div>
                               <div className="text-sm font-black text-emerald-950">Stok hareketi engeli temizlendi</div>
