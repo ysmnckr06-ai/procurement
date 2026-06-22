@@ -4,15 +4,44 @@ function extensionOf(fileName) {
   return String(fileName || "").split(".").pop()?.toLowerCase() || "";
 }
 
-async function spreadsheetMatrix(file) {
+export function analyzeStockSheets(sheets, options = {}) {
+  const candidates = sheets.map(({ sheetName, matrix }) => {
+    const analysis = analyzeStockMatrix(matrix, {
+      requiresQuantity: options.requiresQuantity,
+      fileName: options.fileName,
+      sheetName,
+    });
+    return { matrix, sheetName, sourceType: "spreadsheet", fileName: options.fileName, ...analysis };
+  });
+  const suitableSheets = candidates.filter((candidate) => candidate.missingFields.length === 0 && candidate.parsedRows.length > 0);
+  const ranked = [...(suitableSheets.length ? suitableSheets : candidates)].sort((a, b) =>
+    b.parsedRows.length - a.parsedRows.length
+      || b.overallConfidence - a.overallConfidence
+      || b.rows.length - a.rows.length);
+  if (!ranked.length) throw new Error(`${options.fileName}: Okunabilir worksheet bulunamadı.`);
+  return {
+    selected: ranked[0],
+    candidates,
+    suitableSheetNames: suitableSheets.map((candidate) => candidate.sheetName),
+  };
+}
+
+async function spreadsheetAnalysis(file, options) {
   const XLSX = await import("xlsx");
   const workbook = XLSX.read(await file.arrayBuffer(), { type: "array" });
-  if (!workbook.SheetNames.length) throw new Error(`${file.name}: Okunabilir sheet bulunamadı.`);
-  const sheetName = workbook.SheetNames[0];
-  const worksheet = workbook.Sheets[sheetName];
-  if (!worksheet) throw new Error(`${file.name}: "${sheetName}" sheet'i okunamadı.`);
-  const matrix = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "", raw: false, blankrows: false });
-  return { matrix, sheetName, sourceType: "spreadsheet" };
+  if (!workbook.SheetNames.length) throw new Error(`${file.name}: Okunabilir worksheet bulunamadı.`);
+  const sheets = workbook.SheetNames.flatMap((sheetName) => {
+    const worksheet = workbook.Sheets[sheetName];
+    if (!worksheet) return [];
+    const matrix = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "", raw: false, blankrows: false });
+    return [{ sheetName, matrix }];
+  });
+  const result = analyzeStockSheets(sheets, { ...options, fileName: file.name });
+  return {
+    ...result.selected,
+    sheetCandidates: result.candidates,
+    suitableSheetNames: result.suitableSheetNames,
+  };
 }
 
 export function pdfTextItemsToMatrix(items) {
@@ -67,7 +96,8 @@ export async function analyzeStockFile(file, options = {}) {
   if (!["xlsx", "xls", "csv", "pdf"].includes(extension)) {
     throw new Error(`${file.name}: Desteklenmeyen dosya tipi. XLSX, XLS, CSV veya PDF yükleyin.`);
   }
-  const extracted = extension === "pdf" ? await pdfMatrix(file) : await spreadsheetMatrix(file);
+  if (extension !== "pdf") return spreadsheetAnalysis(file, options);
+  const extracted = await pdfMatrix(file);
   const analysis = analyzeStockMatrix(extracted.matrix, {
     requiresQuantity: options.requiresQuantity,
     fileName: file.name,

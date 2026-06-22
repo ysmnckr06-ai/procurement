@@ -1550,6 +1550,24 @@ export default function StockPage() {
     });
   }
 
+  function selectStockImportSheet(analysisIndex, sheetName) {
+    setStockImportPreview((current) => {
+      if (!current || stockImportResult) return current;
+      const analyses = current.analyses.map((analysis, index) => {
+        if (index !== analysisIndex) return analysis;
+        const selected = analysis.sheetCandidates?.find((candidate) => candidate.sheetName === sheetName);
+        if (!selected) return analysis;
+        return {
+          ...selected,
+          fileName: analysis.fileName,
+          sheetCandidates: analysis.sheetCandidates,
+          suitableSheetNames: analysis.suitableSheetNames,
+        };
+      });
+      return createStockImportPreview(analyses, current.importType);
+    });
+  }
+
   async function applyStockImportAnalysis() {
     const analysis = stockImportPreview;
     if (!analysis?.canApply || !analysis.rows.length || stockImportApplying) return;
@@ -2861,6 +2879,22 @@ export default function StockPage() {
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
                         <h3 className="font-black text-slate-900">{analysis.fileName}</h3>
+                        {analysis.sheetCandidates?.length > 1 && (
+                          <label className="mt-2 block text-xs font-bold text-slate-600">
+                            Worksheet
+                            <select
+                              value={analysis.sheetName}
+                              onChange={(event) => selectStockImportSheet(analysisIndex, event.target.value)}
+                              className="ml-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                            >
+                              {analysis.sheetCandidates.map((candidate) => (
+                                <option key={candidate.sheetName} value={candidate.sheetName}>
+                                  {candidate.sheetName} · {candidate.parsedRows.length} ürün satırı · güven %{candidate.overallConfidence}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        )}
                         <p className="text-xs text-slate-500">
                           {analysis.headerRowIndex >= 0 ? `Başlık satırı: ${analysis.headerRowIndex + 1}` : "Başlık bulunamadı; içerikten tahmin edildi"}
                         </p>
