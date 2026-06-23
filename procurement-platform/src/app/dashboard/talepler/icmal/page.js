@@ -49,6 +49,37 @@ function safeFileName(value) {
   return String(value || "malzeme-listesi").replace(/[^a-zA-Z0-9çğıöşüÇĞİÖŞÜ_-]+/g, "-");
 }
 
+function shortText(value, maxLength = 28) {
+  const text = String(value || "").trim();
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength - 1)}…`;
+}
+
+function AllocationChip({ allocation, unit = "adet" }) {
+  return (
+    <div className="rounded-lg bg-slate-100 px-2.5 py-2 text-[11px] font-semibold leading-snug text-slate-700">
+      <div className="flex min-w-0 items-center gap-1">
+        <span className="shrink-0 font-black text-slate-950">{allocation.projectCode || "Proje"}</span>
+        <span className="text-slate-400">·</span>
+        <span className="truncate" title={allocation.projectName || ""}>
+          {shortText(allocation.projectName || "-", 22)}
+        </span>
+      </div>
+      <div className="mt-1 text-slate-600">
+        Toplam {number(allocation.requestedQuantity)} · Açık {number(allocation.quantity)}
+      </div>
+      <div className="text-slate-600">
+        Stoktan {number(allocation.stockCoverableQuantity)} · Eksik {number(allocation.purchaseQuantity)} {unit}
+      </div>
+      {allocation.parentItemName ? (
+        <div className="mt-1 truncate text-slate-500" title={allocation.parentItemName}>
+          Ana ürün: {shortText(allocation.parentItemName, 24)}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function orderAllocationQuantities(orders) {
   const quantities = new Map();
   (orders || [])
@@ -248,6 +279,7 @@ export default function ProcurementSummaryPage() {
   const [reservingStock, setReservingStock] = useState(false);
   const [selectedRowKeys, setSelectedRowKeys] = useState([]);
   const [lastCreatedRequestId, setLastCreatedRequestId] = useState("");
+  const [allocationDetailRow, setAllocationDetailRow] = useState(null);
 
   async function loadSummaryData(nextMessage = "") {
     setLoading(true);
@@ -570,12 +602,67 @@ export default function ProcurementSummaryPage() {
               </td>
               <td className="p-3"><div className="font-black text-blue-800">{row.productCode || "Kodsuz"}</div><div>{row.productName}</div>{row.unitConflict && <div className="mt-1 font-bold text-red-700">Birim kontrolü: {row.sourceUnits.join(" / ")}</div>}</td>
               <td className="p-3">{row.brand || "-"}</td><td className="p-3">{row.unit}</td><td className="p-3 font-bold">{row.requestedQuantity}</td><td className="p-3 font-bold">{row.totalNeed}</td><td className="p-3">{row.currentStock}</td><td className="p-3">{row.reservedStock}</td><td className="p-3">{row.availableStock}</td><td className="p-3 font-black text-emerald-700">{row.stockCoverable}</td><td className="p-3 font-black text-red-700">{row.purchaseQuantity}</td><td className="p-3"><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-black text-slate-700">{row.statusLabel}</span></td>
-              <td className="p-3"><div className="space-y-2">{row.allocations.map((allocation) => <div key={allocation.projectItemId} className="rounded-lg bg-slate-50 p-2"><span className="font-black">{allocation.projectCode}</span> · {allocation.projectName}<div className="text-xs font-semibold text-slate-600">Toplam: {allocation.requestedQuantity} · Açık: {allocation.quantity} · Stoktan: {allocation.stockCoverableQuantity} · Eksik: {allocation.purchaseQuantity} {row.unit}</div>{allocation.parentItemName ? <div className="text-xs text-slate-500">Ana ürün: {allocation.parentItemName}</div> : null}</div>)}</div></td>
+              <td className="p-3">
+                <div className="max-w-[260px] space-y-1.5">
+                  {row.allocations.slice(0, 2).map((allocation, allocationIndex) => (
+                    <AllocationChip
+                      key={allocation.projectItemId || `${row.key}-${allocationIndex}`}
+                      allocation={allocation}
+                      unit={row.unit}
+                    />
+                  ))}
+                  {row.allocations.length > 2 && (
+                    <button
+                      type="button"
+                      onClick={() => setAllocationDetailRow(row)}
+                      className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-black text-blue-700 hover:bg-blue-50"
+                    >
+                      + {row.allocations.length - 2} dağılım daha
+                    </button>
+                  )}
+                </div>
+              </td>
             </tr>)}</tbody>
           </table>
           {!loading && rows.length === 0 && <div className="p-8 text-center text-slate-500">{modeConfig.emptyText}</div>}
           {loading && <div className="p-8 text-center text-slate-500">Malzeme listesi hazırlanıyor...</div>}
         </div>
+
+        {allocationDetailRow && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
+            <div className="max-h-[85vh] w-full max-w-3xl overflow-hidden rounded-3xl bg-white shadow-2xl">
+              <div className="flex items-start justify-between gap-4 border-b border-slate-100 p-5">
+                <div className="min-w-0">
+                  <div className="text-xs font-black uppercase tracking-wide text-blue-700">Proje dağılımı</div>
+                  <h2 className="mt-1 truncate text-xl font-black text-slate-900" title={allocationDetailRow.productName}>
+                    {allocationDetailRow.productCode || "Kodsuz"} · {allocationDetailRow.productName}
+                  </h2>
+                  <p className="mt-1 text-sm font-semibold text-slate-500">
+                    {allocationDetailRow.allocations.length} dağılım · {allocationDetailRow.unit || "adet"}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAllocationDetailRow(null)}
+                  className="rounded-xl bg-slate-100 px-4 py-2 text-sm font-black text-slate-700 hover:bg-slate-200"
+                >
+                  Kapat
+                </button>
+              </div>
+              <div className="max-h-[65vh] overflow-y-auto p-5">
+                <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                  {allocationDetailRow.allocations.map((allocation, allocationIndex) => (
+                    <AllocationChip
+                      key={allocation.projectItemId || `${allocationDetailRow.key}-modal-${allocationIndex}`}
+                      allocation={allocation}
+                      unit={allocationDetailRow.unit}
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );
