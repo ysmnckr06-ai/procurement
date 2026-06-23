@@ -1027,14 +1027,19 @@ export default function ProjectsPage() {
     );
   }
 
-  function openProcurementSummary() {
+  function openProcurementSummary(mode = "missing") {
     const validIds = selectedProjectIds.filter((id) => activeProjects.some((project) => project.id === id));
     if (validIds.length === 0) {
       setMessage("Satınalma icmali için en az bir aktif proje seçin.");
       return;
     }
     localStorage.setItem("procurementSummaryProjectIds", JSON.stringify(validIds));
-    router.push("/dashboard/talepler/icmal");
+    router.push(`/dashboard/talepler/icmal?mode=${mode}`);
+  }
+
+  function clearProjectSelection() {
+    setSelectedProjectIds([]);
+    setMessage("Proje seçimi temizlendi.");
   }
 
   const stats = useMemo(() => {
@@ -1077,22 +1082,54 @@ export default function ProjectsPage() {
           </button>
         </div>
 
-        <div className="flex flex-col gap-3 rounded-2xl border border-blue-200 bg-blue-50 p-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <div className="font-black text-blue-950">Çok projeli satınalma icmali</div>
-            <div className="mt-1 text-sm font-semibold text-blue-800">
-              {selectedProjectIds.length} proje seçili. Proje, ihtiyaç ve ana/alt ürün bağlantıları korunur.
+        {selectedProjectIds.length > 0 ? (
+          <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 shadow-sm">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <div className="font-black text-blue-950">
+                  Seçili {selectedProjectIds.length} proje için işlem yap
+                </div>
+                <div className="mt-1 text-sm font-semibold text-blue-800">
+                  İcmaller yalnızca seçili projelerden hazırlanır; proje, ana ürün ve alt ürün bağlantıları korunur.
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => openProcurementSummary("missing")}
+                  className="rounded-xl bg-red-700 px-4 py-3 text-sm font-black text-white hover:bg-red-800"
+                >
+                  Eksik Malzeme İcmali
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openProcurementSummary("stock")}
+                  className="rounded-xl bg-emerald-700 px-4 py-3 text-sm font-black text-white hover:bg-emerald-800"
+                >
+                  Stoktan Karşılanabilir İcmali
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openProcurementSummary("all")}
+                  className="rounded-xl bg-blue-700 px-4 py-3 text-sm font-black text-white hover:bg-blue-800"
+                >
+                  Tüm İhtiyaç İcmali
+                </button>
+                <button
+                  type="button"
+                  onClick={clearProjectSelection}
+                  className="rounded-xl border border-blue-200 bg-white px-4 py-3 text-sm font-black text-blue-700 hover:bg-blue-100"
+                >
+                  Seçimi Temizle
+                </button>
+              </div>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={openProcurementSummary}
-            disabled={selectedProjectIds.length === 0}
-            className="rounded-xl bg-blue-700 px-5 py-3 text-sm font-black text-white disabled:cursor-not-allowed disabled:bg-slate-300"
-          >
-            Satınalma İcmali Oluştur
-          </button>
-        </div>
+        ) : (
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm font-semibold text-slate-600 shadow-sm">
+            Birden fazla projeyi seçerek eksik malzeme, stoktan karşılanabilir ürün veya tüm ihtiyaç icmali oluşturabilirsiniz.
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
           {["Taslak", "Onaylandı", "Devam Ediyor", "Tamamlandı", "İptal"].map((status) => (
