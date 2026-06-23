@@ -295,6 +295,23 @@ def canonical_section_name(value):
     return ""
 
 
+def extract_project_main_group_name(full_text, fallback_name=""):
+    text = clean_text(full_text)
+    if text:
+        match = re.search(
+            r"PROJE\s*ADI\s*:?\s*(.+?)(?:\s+E-?MA[Iİ]L|\s+ŞALT|\s+SALT|\s+TEKL[Iİ]F|\n|$)",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if match:
+            project_title = clean_text(match.group(1))
+            if project_title:
+                return project_title.upper()
+
+    clean_fallback = clean_text(os.path.splitext(fallback_name or "")[0].replace("_", " ").replace("-", " "))
+    return clean_fallback.upper() if clean_fallback else "DOSYADAN AKTARILAN ANA KALEM"
+
+
 def is_meaningful_section_label(value):
     text = clean_text(value)
 
@@ -1375,6 +1392,7 @@ def parse_pdf_with_audit(file_path, firma_adi="", file_name=""):
 
     firma = detect_company_name(full_text, firma_adi, file_name)
     footer = detect_footer_info(full_text)
+    project_main_group_name = extract_project_main_group_name(full_text, file_name)
     table_result = parse_product_tables(tables, firma, footer, file_name)
     rows.extend(table_result["rows"])
     sections.extend(table_result["sections"])
@@ -1405,6 +1423,40 @@ def parse_pdf_with_audit(file_path, firma_adi="", file_name=""):
                 f"PDF tablo okuması yerine satır okuması kullanıldı: {len(fallback_rows)} satır."
             )
         rows = fallback_rows
+
+    if rows and not sections and project_main_group_name:
+        section_total = footer.get("dipToplam") or sum(float(row.get("netToplam") or 0) for row in rows)
+        section = {
+            "section_name": project_main_group_name,
+            "section_total": section_total,
+            "section_quantity": 1,
+            "product_code": "",
+            "unit": "adet",
+            "currency": "TRY",
+            "page_number": 1,
+            "page_end_parent": False,
+            "source": "project_title_fallback",
+        }
+        sections.append(section)
+
+        for row in rows:
+            row["section_name"] = section["section_name"]
+            row["section_total"] = section["section_total"]
+            row["section_quantity"] = section["section_quantity"]
+            row["price_status"] = "section_total_only"
+            row["birimFiyat"] = 0
+            row["netBirimFiyat"] = 0
+            row["netToplam"] = 0
+
+        warnings.append(
+            f"PDF icinde ayri ana kalem satiri bulunamadi; belge basligindan {project_main_group_name} ana kalem grubu olusturuldu ve {len(rows)} malzeme alt kalem olarak baglandi. Aktarmadan once ana kalem adini kontrol edin."
+        )
+        debug.append({
+            "event": "Project title fallback parent",
+            "section_name": project_main_group_name,
+            "child_count": len(rows),
+            "section_total": section_total,
+        })
 
     if has_product_table_header and not rows:
         errors.append("Ürün tablosu bulundu ama güvenilir ürün satırı çıkarılamadı.")
