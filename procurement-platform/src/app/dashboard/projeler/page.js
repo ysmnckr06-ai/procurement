@@ -111,12 +111,22 @@ function sectionQuoteTotalForRows(name, rows, sections) {
 }
 
 function nextProjectCode(projects) {
-  const maxNumber = projects.reduce((max, project) => {
-    const match = String(project.project_code || "").match(/PRJ-(\d+)/i);
-    return Math.max(max, match ? Number(match[1]) : 0);
-  }, 0);
+  const usedNumbers = new Set();
+  let width = 5;
 
-  return `PRJ-${String(maxNumber + 1).padStart(5, "0")}`;
+  (projects || []).forEach((project) => {
+    const match = String(project.project_code || "").match(/^PRJ-(\d+)$/i);
+    if (!match) return;
+    usedNumbers.add(Number(match[1]));
+    width = Math.max(width, match[1].length);
+  });
+
+  let nextNumber = 1;
+  while (usedNumbers.has(nextNumber)) {
+    nextNumber += 1;
+  }
+
+  return `PRJ-${String(nextNumber).padStart(width, "0")}`;
 }
 
 function statusClass(status) {
@@ -172,6 +182,7 @@ export default function ProjectsPage() {
   const [saving, setSaving] = useState(false);
   const [projectView, setProjectView] = useState("active");
   const [selectedProjectIds, setSelectedProjectIds] = useState([]);
+  const [projectCodeEdited, setProjectCodeEdited] = useState(false);
 
   useEffect(() => {
     loadProjects();
@@ -262,6 +273,7 @@ export default function ProjectsPage() {
 
   function openCreateForm() {
     setEditingId(null);
+    setProjectCodeEdited(false);
     setProjectFiles([]);
     setProjectFileSummary("");
     setForm({
@@ -277,6 +289,7 @@ export default function ProjectsPage() {
 
   function openEditForm(project) {
     setEditingId(project.id);
+    setProjectCodeEdited(true);
     setProjectFiles([]);
     setProjectFileSummary("");
     setForm({
@@ -301,7 +314,48 @@ export default function ProjectsPage() {
   }
 
   function updateForm(field, value) {
+    if (field === "project_code") setProjectCodeEdited(true);
     setForm((prev) => ({ ...prev, [field]: value }));
+  }
+
+  async function fetchProjectCodes(userId) {
+    const { data, error } = await supabase
+      .from("projects")
+      .select("id,project_code")
+      .eq("user_id", userId);
+
+    if (error) throw error;
+    return data || [];
+  }
+
+  function projectCodeAlreadyExists(projectRows, code, ignoredProjectId = null) {
+    const normalizedCode = String(code || "").trim().toUpperCase();
+    if (!normalizedCode) return false;
+    return (projectRows || []).some((project) =>
+      project.id !== ignoredProjectId
+        && String(project.project_code || "").trim().toUpperCase() === normalizedCode
+    );
+  }
+
+  async function resolveProjectCodeForSave(userId) {
+    const latestProjects = await fetchProjectCodes(userId);
+    const typedCode = String(form.project_code || "").trim();
+
+    if (editingId) {
+      if (projectCodeAlreadyExists(latestProjects, typedCode, editingId)) {
+        throw new Error("Bu proje kodu başka bir projede kullanılıyor.");
+      }
+      return typedCode;
+    }
+
+    if (projectCodeEdited && typedCode) {
+      if (projectCodeAlreadyExists(latestProjects, typedCode)) {
+        throw new Error("Bu proje kodu daha önce kullanılmış. Lütfen farklı bir kod girin.");
+      }
+      return typedCode;
+    }
+
+    return nextProjectCode(latestProjects);
   }
 
   function normalizeRateInput(value) {
@@ -656,9 +710,18 @@ export default function ProjectsPage() {
       return;
     }
 
+    let resolvedProjectCode = "";
+    try {
+      resolvedProjectCode = await resolveProjectCodeForSave(user.id);
+    } catch (codeError) {
+      setMessage(codeError.message || "Proje kodu kontrol edilemedi.");
+      setSaving(false);
+      return;
+    }
+
     const payload = {
       user_id: user.id,
-      project_code: form.project_code || nextProjectCode(projects),
+      project_code: resolvedProjectCode,
       project_name: form.project_name.trim(),
       customer_name: customerName,
       customer_partner_id: customerPartner?.id || null,
@@ -703,7 +766,10 @@ export default function ProjectsPage() {
     const { data, error } = await request;
 
     if (error) {
-      setMessage("Proje kaydedilemedi. Proje kodu daha önce kullanılmış olabilir.");
+      const duplicateCode = error.code === "23505" || String(error.message || "").toLowerCase().includes("duplicate");
+      setMessage(duplicateCode
+        ? "Proje kaydedilemedi. Aynı proje kodu az önce kullanılmış olabilir; lütfen formu kapatıp yeniden açın."
+        : "Proje kaydedilemedi. Proje kodu daha önce kullanılmış olabilir.");
       setSaving(false);
       return;
     }
@@ -729,6 +795,7 @@ export default function ProjectsPage() {
     setSaving(false);
     setShowForm(false);
     setEditingId(null);
+    setProjectCodeEdited(false);
     setProjectFiles([]);
     setProjectFileSummary("");
     await loadProjects();
@@ -1000,6 +1067,7 @@ export default function ProjectsPage() {
               <label className="text-sm font-bold text-slate-700">
                 Proje Kodu
                 <input className="mt-2 w-full rounded-xl border border-slate-300 p-3" value={form.project_code} onChange={(e) => updateForm("project_code", e.target.value)} />
+                <span className="mt-1 block text-xs font-semibold text-slate-500">Elle değiştirmezseniz sistem ilk boş PRJ numarasını verir.</span>
               </label>
               <label className="text-sm font-bold text-slate-700">
                 Proje Adı
