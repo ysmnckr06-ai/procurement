@@ -1439,11 +1439,23 @@ export default function ProjectDetailPage() {
     return Array.isArray(payload) ? payload.map(cleanRow) : cleanRow(payload);
   }
 
+  function withTimeout(promise, label, timeoutMs = 15000) {
+    return Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        setTimeout(() => reject(new Error(`${label} zaman aşımına uğradı. Lütfen bağlantıyı kontrol edip tekrar deneyin.`)), timeoutMs);
+      }),
+    ]);
+  }
+
   async function insertStockMovementsWithFallback(payload) {
-    const firstResult = await supabase
-      .from("stock_movements")
-      .insert(payload)
-      .select("id,project_item_id,quantity");
+    const firstResult = await withTimeout(
+      supabase
+        .from("stock_movements")
+        .insert(payload)
+        .select("id,project_item_id,quantity"),
+      "Stok hareketi kaydı",
+    );
 
     if (!firstResult.error) {
       return { data: firstResult.data || [], error: null, usedFallback: false };
@@ -1457,10 +1469,13 @@ export default function ProjectDetailPage() {
       "unit_price",
       "currency",
     ];
-    const fallbackResult = await supabase
-      .from("stock_movements")
-      .insert(stripPayloadFields(payload, fallbackFields))
-      .select("id,project_item_id,quantity");
+    const fallbackResult = await withTimeout(
+      supabase
+        .from("stock_movements")
+        .insert(stripPayloadFields(payload, fallbackFields))
+        .select("id,project_item_id,quantity"),
+      "Stok hareketi temel kayıt",
+    );
 
     return {
       data: fallbackResult.data || [],
@@ -4366,33 +4381,39 @@ export default function ProjectDetailPage() {
     try {
       const updateWarnings = [];
       await runInBatches(Array.from(productUpdates.values()), 25, async (update) => {
-        const { data, error } = await supabase
-          .from("products")
-          .update({
-            reserved_stock: update.reserved_stock,
-            updated_at: update.updated_at,
-          })
-          .eq("id", update.id)
-          .eq("user_id", user.id)
-          .select("id");
+        const { data, error } = await withTimeout(
+          supabase
+            .from("products")
+            .update({
+              reserved_stock: update.reserved_stock,
+              updated_at: update.updated_at,
+            })
+            .eq("id", update.id)
+            .eq("user_id", user.id)
+            .select("id"),
+          "Stok kartı güncelleme",
+        );
         if (error) updateWarnings.push(`Stok kartı güncellenemedi: ${error.message}`);
         else if (!data?.length) updateWarnings.push(`Stok kartı bulunamadı veya yetki yok: ${update.id}`);
       });
 
       const confirmedItemUpdates = [];
       await runInBatches(itemUpdates, 25, async (update) => {
-        const { data, error } = await supabase
-          .from("project_items")
-          .update({
-            product_id: update.product_id,
-            reserved_quantity: update.reserved_quantity,
-            status: update.status,
-            updated_at: update.updated_at,
-          })
-          .eq("id", update.id)
-          .eq("project_id", projectId)
-          .eq("user_id", user.id)
-          .select("id");
+        const { data, error } = await withTimeout(
+          supabase
+            .from("project_items")
+            .update({
+              product_id: update.product_id,
+              reserved_quantity: update.reserved_quantity,
+              status: update.status,
+              updated_at: update.updated_at,
+            })
+            .eq("id", update.id)
+            .eq("project_id", projectId)
+            .eq("user_id", user.id)
+            .select("id"),
+          "Proje kalemi güncelleme",
+        );
         if (error) updateWarnings.push(`Proje kalemi güncellenemedi: ${error.message}`);
         else if (!data?.length) updateWarnings.push(`Proje kalemi bulunamadı veya yetki yok: ${update.id}`);
         else confirmedItemUpdates.push(update);
@@ -4409,7 +4430,7 @@ export default function ProjectDetailPage() {
 
       const processedIds = new Set(confirmedItemUpdates.map((update) => update.id));
       setSelectedStockCoverItemIds((prev) => prev.filter((id) => !processedIds.has(id)));
-      await loadProject();
+      await withTimeout(loadProject(), "Proje bilgilerini yenileme", 20000);
 
       const warningText = updateWarnings.length > 0
         ? ` Kontrol: ${updateWarnings.slice(0, 3).join(" | ")}${updateWarnings.length > 3 ? ` +${updateWarnings.length - 3} uyarı` : ""}`
