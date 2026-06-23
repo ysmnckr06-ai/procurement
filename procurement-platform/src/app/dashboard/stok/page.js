@@ -1635,7 +1635,7 @@ export default function StockPage() {
       const from = page * 1000;
       const { data, error } = await supabase
         .from("products")
-        .select("id,current_stock,product_type,category")
+        .select("id,current_stock,category")
         .eq("user_id", userId)
         .is("archived_at", null)
         .range(from, from + 999);
