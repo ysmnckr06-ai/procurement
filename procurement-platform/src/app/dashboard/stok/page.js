@@ -1462,6 +1462,34 @@ export default function StockPage() {
     setStockImportResult(null);
   }
 
+  function stockImportDecisionText(decision) {
+    const labels = {
+      exact: "Mevcut ürüne eklenecek",
+      probable: "Benzer ürün bulundu",
+      conflict: "Kontrol gerekli",
+      new: "Yeni ürün açılacak",
+    };
+    return labels[decision] || "Kontrol edilecek";
+  }
+
+  function stockImportSummaryText(decision) {
+    const labels = {
+      exact: "Mevcut ürün",
+      probable: "Benzer ürün",
+      conflict: "Kontrol gerekli",
+      new: "Yeni ürün",
+    };
+    return labels[decision] || decision;
+  }
+
+  function stockImportDecisionTone(decision) {
+    if (decision === "exact") return "bg-emerald-50 text-emerald-800";
+    if (decision === "new") return "bg-blue-50 text-blue-800";
+    if (decision === "probable") return "bg-amber-50 text-amber-800";
+    if (decision === "conflict") return "bg-red-50 text-red-800";
+    return "bg-slate-100 text-slate-700";
+  }
+
   function createStockImportPreview(analyses, importType, error = "", batchId = crypto.randomUUID()) {
     const parsedRows = analyses.flatMap((analysis) => analysis.parsedRows || []);
     const importIdentityCounts = parsedRows.reduce((counts, row) => {
@@ -3105,13 +3133,13 @@ export default function StockPage() {
               <>
                 {stockImportPreview.importType !== PRODUCT_TYPES.MAIN && (
                   <div className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-bold text-emerald-900">
-                    Bu işlem sayım değerini eşitlemez; dosyadaki miktarı mevcut depo stoğunun üzerine ekler. Beklenen toplam artış: {Number(stockImportPreview.expectedIncrease || 0).toLocaleString("tr-TR")}.
+                    Bu yükleme mevcut stokları silmez veya eşitlemez; dosyadaki miktarları mevcut stokların üzerine ekler. Bu dosyadan stoğa eklenecek toplam miktar: {Number(stockImportPreview.expectedIncrease || 0).toLocaleString("tr-TR")}.
                   </div>
                 )}
                 <div className="mt-5 flex flex-wrap gap-2 text-xs font-bold text-slate-600">
                   {stockImportPreview.fileDetails.map((file) => (
                     <span key={`${file.fileName}-${file.sheetName}`} className="rounded-full bg-slate-100 px-3 py-2">
-                      {file.fileName} · {file.sheetName} · {file.parsedCount}/{file.rowCount} okunabilir · güven %{file.confidence}
+                      {file.fileName} · {file.sheetName} · {file.parsedCount}/{file.rowCount} satır okundu · okuma doğruluğu %{file.confidence}
                     </span>
                   ))}
                 </div>
@@ -3122,7 +3150,7 @@ export default function StockPage() {
                         <h3 className="font-black text-slate-900">{analysis.fileName}</h3>
                         {analysis.sheetCandidates?.length > 1 && (
                           <label className="mt-2 block text-xs font-bold text-slate-600">
-                            Worksheet
+                            Sayfa seçimi
                             <select
                               value={analysis.sheetName}
                               onChange={(event) => selectStockImportSheet(analysisIndex, event.target.value)}
@@ -3130,7 +3158,7 @@ export default function StockPage() {
                             >
                               {analysis.sheetCandidates.map((candidate) => (
                                 <option key={candidate.sheetName} value={candidate.sheetName}>
-                                  {candidate.sheetName} · {candidate.parsedRows.length} ürün satırı · güven %{candidate.overallConfidence}
+                                  {candidate.sheetName} · {candidate.parsedRows.length} ürün satırı · okuma doğruluğu %{candidate.overallConfidence}
                                 </option>
                               ))}
                             </select>
@@ -3141,7 +3169,7 @@ export default function StockPage() {
                         </p>
                       </div>
                       <span className={`rounded-full px-3 py-1 text-xs font-black ${analysis.overallConfidence >= 70 ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>
-                        Genel güven %{analysis.overallConfidence}
+                        Okuma doğruluğu %{analysis.overallConfidence}
                       </span>
                     </div>
                     <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -3160,7 +3188,7 @@ export default function StockPage() {
                               </option>
                             ))}
                           </select>
-                          <span className="mt-1 block font-medium text-slate-400">Tahmin güveni %{Math.round((analysis.confidence[field.key] || 0) * 100)}</span>
+                          <span className="mt-1 block font-medium text-slate-400">Alan doğruluğu %{Math.round((analysis.confidence[field.key] || 0) * 100)}</span>
                         </label>
                       ))}
                     </div>
@@ -3171,25 +3199,25 @@ export default function StockPage() {
                 {(stockImportPreview.error || stockImportPreview.missingFields.length > 0 || stockImportPreview.rows.length === 0 || stockImportPreview.counts.conflict > 0) && (
                   <div className="mt-5 rounded-xl bg-amber-50 p-4 font-bold text-amber-900">
                     {stockImportPreview.error || (stockImportPreview.counts.conflict > 0
-                      ? `${stockImportPreview.counts.conflict} çakışmalı satır var. Aynı kodun dosyada veya mevcut kartlarda birden fazla karşılığı bulunduğu için uygulama durduruldu.`
+                      ? `${stockImportPreview.counts.conflict} satır için kullanıcı kontrolü gerekiyor. Aynı ürün kodu dosyada veya mevcut ürün kartlarında birden fazla kez göründüğü için güvenli şekilde durduruldu.`
                       : stockImportPreview.missingFields.length
                       ? `Eksik zorunlu alanlar: ${stockImportPreview.missingFields.join(", ")}. ${stockImportExpectedColumns(stockImportPreview.importType !== PRODUCT_TYPES.MAIN)}`
                       : "Dosyada okunabilir ürün satırı bulunamadı")}
                   </div>
                 )}
                 <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-5">
-                  <div className="rounded-xl bg-slate-900 p-4 text-white"><div className="text-xs font-bold">Parse edilen</div><div className="text-2xl font-black">{stockImportPreview.rows.length}</div></div>
+                  <div className="rounded-xl bg-slate-900 p-4 text-white"><div className="text-xs font-bold">Okunan satır</div><div className="text-2xl font-black">{stockImportPreview.rows.length}</div></div>
                   {Object.entries(stockImportPreview.counts).map(([decision, count]) => (
-                    <div key={decision} className="rounded-xl bg-slate-100 p-4"><div className="text-xs font-bold uppercase text-slate-500">{decision}</div><div className="text-2xl font-black text-slate-900">{count}</div></div>
+                    <div key={decision} className={`rounded-xl p-4 ${stockImportDecisionTone(decision)}`}><div className="text-xs font-bold">{stockImportSummaryText(decision)}</div><div className="text-2xl font-black">{count}</div></div>
                   ))}
                 </div>
                 {stockImportPreview.rows.length > 0 && (
                   <div className="mt-5 overflow-x-auto rounded-xl border border-slate-200">
                     <table className="w-full min-w-[760px] text-left text-sm">
-                      <thead className="bg-slate-100 text-xs uppercase text-slate-500"><tr><th className="p-3">Satır</th><th className="p-3">Ürün kodu</th><th className="p-3">Ürün adı</th><th className="p-3">Eklenecek</th><th className="p-3">Karar</th></tr></thead>
+                      <thead className="bg-slate-100 text-xs uppercase text-slate-500"><tr><th className="p-3">Satır</th><th className="p-3">Ürün kodu</th><th className="p-3">Ürün adı</th><th className="p-3">Eklenecek miktar</th><th className="p-3">Durum</th></tr></thead>
                       <tbody>{stockImportPreview.rows.slice(0, 20).map((row, index) => (
                         <tr key={`${row.fileName}-${row.rowNumber}-${index}`} className="border-t border-slate-100">
-                          <td className="p-3">{row.rowNumber}</td><td className="p-3 font-bold">{row.productCode || "-"}</td><td className="p-3">{row.productName}</td><td className="p-3">{row.quantity} {row.unit}</td><td className="p-3 font-black uppercase">{row.decision}</td>
+                          <td className="p-3">{row.rowNumber}</td><td className="p-3 font-bold">{row.productCode || "-"}</td><td className="p-3">{row.productName}</td><td className="p-3">{row.quantity} {row.unit}</td><td className="p-3"><span className={`rounded-full px-2 py-1 text-xs font-black ${stockImportDecisionTone(row.decision)}`}>{stockImportDecisionText(row.decision)}</span></td>
                         </tr>
                       ))}</tbody>
                     </table>
