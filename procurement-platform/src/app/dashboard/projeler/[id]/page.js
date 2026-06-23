@@ -4308,7 +4308,7 @@ export default function ProjectDetailPage() {
         return itemName && productName === itemName;
       });
       const relation = componentRelationForItem(item, items);
-      const openQuantity = Math.max(Number(item.estimated_quantity || 0) - consumedChildQuantity(item), 0);
+      const openQuantity = Math.max(Number(item.estimated_quantity || 0) - Number(relation.consumedChildQuantity || 0), 0);
       const currentReserved = Number(item.reserved_child_quantity ?? item.reserved_quantity ?? 0) || 0;
       let quantityToCover = Math.max(openQuantity - currentReserved, 0);
       let coveredQuantity = 0;
