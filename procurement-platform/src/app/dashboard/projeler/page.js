@@ -142,6 +142,25 @@ function statusClass(status) {
   return classes[status] || "bg-slate-100 text-slate-700";
 }
 
+function projectListBadgeClass(tone) {
+  const classes = {
+    green: "border-emerald-100 bg-emerald-50 text-emerald-700",
+    red: "border-red-100 bg-red-50 text-red-700",
+    amber: "border-amber-100 bg-amber-50 text-amber-700",
+    blue: "border-blue-100 bg-blue-50 text-blue-700",
+    slate: "border-slate-100 bg-slate-50 text-slate-700",
+  };
+
+  return classes[tone] || classes.slate;
+}
+
+function quantityFromItem(item, fields) {
+  return fields.reduce((value, field) => {
+    const numericValue = Number(item?.[field] || 0);
+    return numericValue > value ? numericValue : value;
+  }, 0);
+}
+
 
 function StatCard({ title, value, text }) {
   return (
@@ -806,19 +825,67 @@ export default function ProjectsPage() {
   function projectMetrics(projectId) {
     const items = relatedRows.items.filter((item) => item.project_id === projectId);
     const orders = relatedRows.orders.filter((order) => order.project_id === projectId);
+    const movements = relatedRows.movements.filter((row) => row.project_id === projectId);
+    const materialItems = items.filter((item) => {
+      const itemType = String(item.item_type || "").toLowerCase();
+      return item.parent_item_id || itemType === "child" || itemType === "standalone" || itemType === "material";
+    });
+    const trackedItems = materialItems.length > 0 ? materialItems : items;
+    const missingStatuses = ["Satınalma gerekli", "Eksik geldi", "Tedarikçiden bekleniyor", "Talep oluşturuldu"];
+    const stockCoveredStatuses = ["Depoda", "Projeye Ayrıldı", "Projeye rezerve edildi", "Stoktan karşılandı"];
+    const orderedStatuses = ["Sipariş verildi", "Tedarikçiden bekleniyor", "Kısmi geldi"];
     const completedItems = items.filter((item) =>
       ["Depoda", "Tamamlandı", "Sevk edildi"].includes(item.status),
     ).length;
-    const missingMaterials = items.filter((item) =>
-      ["Satınalma gerekli", "Eksik geldi", "Tedarikçiden bekleniyor"].includes(item.status),
+    const missingMaterials = trackedItems.filter((item) =>
+      missingStatuses.includes(item.status),
     ).length;
+    const orderedItems = trackedItems.filter((item) =>
+      orderedStatuses.includes(item.status),
+    ).length;
+    const stockCoveredItems = trackedItems.filter((item) => {
+      const reservedQuantity = quantityFromItem(item, [
+        "reserved_quantity",
+        "reserved_child_quantity",
+        "consumed_child_quantity",
+        "issued_to_production_quantity",
+        "received_quantity",
+      ]);
+      const itemMovements = movements.filter((movement) => movement.project_item_id === item.id);
+      const hasStockMovement = itemMovements.some((movement) => {
+        const source = String(movement.source || movement.reference_type || "").toLowerCase();
+        const movementType = String(movement.movement_type || "").toLowerCase();
+        return source.includes("stock") || source.includes("stok") || source.includes("reserve") || movementType === "out";
+      });
+
+      return reservedQuantity > 0 || hasStockMovement || stockCoveredStatuses.includes(item.status);
+    }).length;
     const openOrders = orders.filter((order) =>
       !["Tam Teslim", "Teslim Edildi", "İptal"].includes(order.status),
     ).length;
+    const totalOrders = orders.length;
+    const productStatus =
+      trackedItems.length === 0
+        ? { label: "Malzeme yok", tone: "slate" }
+        : missingMaterials > 0
+          ? { label: `${missingMaterials} eksik`, tone: "red" }
+          : stockCoveredItems > 0
+            ? { label: `${stockCoveredItems} stoktan`, tone: "green" }
+            : { label: "Kontrol gerekli", tone: "amber" };
+    const orderStatus =
+      openOrders > 0
+        ? { label: `${openOrders} açık sipariş`, tone: "blue" }
+        : orderedItems > 0
+          ? { label: `${orderedItems} kalem siparişte`, tone: "blue" }
+          : missingMaterials > 0
+            ? { label: "Sipariş bekliyor", tone: "amber" }
+            : totalOrders > 0
+              ? { label: "Sipariş tamam", tone: "green" }
+              : { label: "Sipariş yok", tone: "slate" };
     const dependencyDetails = {
       teklif: relatedRows.offers.filter((row) => row.project_id === projectId).length,
       sipariş: orders.length,
-      "stok hareketi": relatedRows.movements.filter((row) => row.project_id === projectId).length,
+      "stok hareketi": movements.length,
       ödeme: relatedRows.payments.filter((row) => row.project_id === projectId).length,
       revizyon: relatedRows.revisions.filter((row) => row.project_id === projectId).length,
     };
@@ -827,8 +894,14 @@ export default function ProjectsPage() {
 
     return {
       completion: items.length > 0 ? Math.round((completedItems / items.length) * 100) : 0,
+      materialTotal: trackedItems.length,
+      stockCoveredItems,
+      orderedItems,
       openOrders,
+      totalOrders,
       missingMaterials,
+      productStatus,
+      orderStatus,
       dependencyCount,
       dependencyDetails,
     };
@@ -907,6 +980,27 @@ export default function ProjectsPage() {
       ].join(" ")).includes(needle),
     );
   }, [displayedProjectsBase, customerFilter]);
+  const displayedProjectOverview = useMemo(() => {
+    return displayedProjects.reduce((summary, project) => {
+      const metrics = projectMetrics(project.id);
+      if (metrics.missingMaterials > 0) summary.projectsWithMissing += 1;
+      if (metrics.stockCoveredItems > 0) summary.projectsWithStockCover += 1;
+      if (metrics.openOrders > 0 || metrics.orderedItems > 0) summary.projectsWithOrders += 1;
+      if (metrics.missingMaterials === 0 && metrics.openOrders === 0 && metrics.materialTotal > 0) summary.projectsReady += 1;
+      summary.missingItems += metrics.missingMaterials;
+      summary.stockCoveredItems += metrics.stockCoveredItems;
+      summary.openOrders += metrics.openOrders;
+      return summary;
+    }, {
+      projectsWithMissing: 0,
+      projectsWithStockCover: 0,
+      projectsWithOrders: 0,
+      projectsReady: 0,
+      missingItems: 0,
+      stockCoveredItems: 0,
+      openOrders: 0,
+    });
+  }, [displayedProjects, relatedRows]);
   const selectedCustomerPartner = useMemo(
     () => findBusinessPartnerByName(businessPartners, form.customer_name),
     [businessPartners, form.customer_name],
@@ -1270,6 +1364,36 @@ export default function ProjectsPage() {
                 </button>
               </div>
             </div>
+            <div className="mt-4 grid gap-3 md:grid-cols-4">
+              <div className="rounded-2xl border border-red-100 bg-red-50 p-4">
+                <div className="text-xs font-black uppercase tracking-wide text-red-700">Eksik malzeme</div>
+                <div className="mt-2 text-2xl font-black text-red-800">{displayedProjectOverview.projectsWithMissing}</div>
+                <div className="text-xs font-semibold text-red-700">
+                  {displayedProjectOverview.missingItems} kalem takip bekliyor
+                </div>
+              </div>
+              <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
+                <div className="text-xs font-black uppercase tracking-wide text-emerald-700">Stoktan karşılanan</div>
+                <div className="mt-2 text-2xl font-black text-emerald-800">{displayedProjectOverview.projectsWithStockCover}</div>
+                <div className="text-xs font-semibold text-emerald-700">
+                  {displayedProjectOverview.stockCoveredItems} kalem stoktan ayrıldı
+                </div>
+              </div>
+              <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4">
+                <div className="text-xs font-black uppercase tracking-wide text-blue-700">Sipariş süreci</div>
+                <div className="mt-2 text-2xl font-black text-blue-800">{displayedProjectOverview.projectsWithOrders}</div>
+                <div className="text-xs font-semibold text-blue-700">
+                  {displayedProjectOverview.openOrders} açık sipariş var
+                </div>
+              </div>
+              <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+                <div className="text-xs font-black uppercase tracking-wide text-slate-600">Sorunsuz görünen</div>
+                <div className="mt-2 text-2xl font-black text-slate-900">{displayedProjectOverview.projectsReady}</div>
+                <div className="text-xs font-semibold text-slate-500">
+                  Eksik ve açık sipariş görünmüyor
+                </div>
+              </div>
+            </div>
           </div>
           <div className="overflow-hidden">
             <table className="w-full table-fixed text-left text-xs [&_td]:p-2">
@@ -1283,14 +1407,14 @@ export default function ProjectsPage() {
                       onChange={toggleVisibleProjects}
                     />
                   </th>
-                  <th className="w-[16%] p-2">Proje</th>
-                  <th className="w-[14%] p-2">Müşteri</th>
-                  <th className="w-[12%] p-2">Tamamlanma</th>
-                  <th className="w-[8%] p-2">Sipariş</th>
-                  <th className="w-[8%] p-2">Eksik</th>
+                  <th className="w-[15%] p-2">Proje</th>
+                  <th className="w-[13%] p-2">Müşteri</th>
+                  <th className="w-[18%] p-2">Ürün durumu</th>
+                  <th className="w-[15%] p-2">Sipariş durumu</th>
+                  <th className="w-[10%] p-2">Tamamlanma</th>
                   <th className="w-[12%] p-2">Tarih</th>
-                  <th className="w-[10%] p-2">Durum</th>
-                  <th className="w-[16%] p-2">İşlem</th>
+                  <th className="w-[8%] p-2">Durum</th>
+                  <th className="w-[15%] p-2">İşlem</th>
                 </tr>
               </thead>
               <tbody>
@@ -1322,16 +1446,33 @@ export default function ProjectsPage() {
                         </div>
                       </td>
                       <td className="p-4">
+                        <div className="flex flex-wrap gap-1.5">
+                          <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-black ${projectListBadgeClass(metrics.productStatus.tone)}`}>
+                            {metrics.productStatus.label}
+                          </span>
+                          <span className="inline-flex rounded-full border border-slate-100 bg-white px-2.5 py-1 text-xs font-bold text-slate-600">
+                            Toplam {metrics.materialTotal}
+                          </span>
+                        </div>
+                        <div className="mt-1 text-[11px] font-semibold text-slate-500">
+                          Stoktan {metrics.stockCoveredItems} · Eksik {metrics.missingMaterials}
+                        </div>
+                      </td>
+                      <td className="p-4">
+                        <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-black ${projectListBadgeClass(metrics.orderStatus.tone)}`}>
+                          {metrics.orderStatus.label}
+                        </span>
+                        <div className="mt-1 text-[11px] font-semibold text-slate-500">
+                          Toplam sipariş {metrics.totalOrders}
+                        </div>
+                      </td>
+                      <td className="p-4">
                         <div className="flex items-center gap-2">
                           <div className="h-2 w-16 overflow-hidden rounded-full bg-slate-100">
                             <div className="h-full rounded-full bg-blue-600" style={{ width: `${metrics.completion}%` }} />
                           </div>
                           <span className="font-bold text-slate-700">%{metrics.completion}</span>
                         </div>
-                      </td>
-                      <td className="p-4 font-bold text-blue-700">{metrics.openOrders}</td>
-                      <td className={`p-4 font-bold ${metrics.missingMaterials > 0 ? "text-red-700" : "text-emerald-700"}`}>
-                        {metrics.missingMaterials}
                       </td>
                       <td className="p-4">
                         <div>{formatDate(project.start_date)}</div>
