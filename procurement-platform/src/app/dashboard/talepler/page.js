@@ -851,11 +851,20 @@ export default function TaleplerPage() {
       };
     });
 
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      setMessage("Oturum bulunamadı. Talep miktarını güncellemek için lütfen tekrar giriş yapın.");
+      return;
+    }
+
     const { error } = await supabase
       .from("requests")
       .update({ items, totalitems: items.length })
       .eq("id", request.id)
-      .eq("user_id", request.user_id);
+      .eq("user_id", user.id);
 
     if (error) {
       setMessage(`Talep miktarı güncellenemedi: ${error.message}`);
