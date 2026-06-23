@@ -194,6 +194,7 @@ def clean_number(val):
         return 0.0
 
     s = str(val).strip()
+    s = re.sub(r"(?<=\d)\s+(?=\d)", "", s)
     s = s.replace("₺", "").replace("€", "").replace("£", "")
     s = s.replace("â‚º", "").replace("â‚¬", "").replace("Â£", "")
     s = s.replace("TL", "").replace("TRY", "")
@@ -212,6 +213,27 @@ def clean_number(val):
         return float(s)
     except Exception:
         return 0.0
+
+
+def money_values_from_line(line):
+    text = clean_text(line)
+    if not text:
+        return []
+
+    currency_pattern = r"(?:₺|TL|TRY|\$|USD|€|EUR|£|GBP|â‚º|â‚¬|Â£)"
+    values = []
+
+    for match in re.finditer(currency_pattern + r"\s*([0-9][0-9\s.,]*)", text, flags=re.IGNORECASE):
+        value = clean_number(match.group(1))
+        if value > 0:
+            values.append(value)
+
+    for match in re.finditer(r"([0-9][0-9\s.,]*)\s*" + currency_pattern, text, flags=re.IGNORECASE):
+        value = clean_number(match.group(1))
+        if value > 0:
+            values.append(value)
+
+    return values
 
 
 def detect_currency(text):
@@ -503,6 +525,7 @@ def detect_footer_info(full_text):
 
     for line in lines:
         low = line.lower()
+        normalized_low = normalize_tr(line)
 
         if "vade" in low or "ödeme" in low or "odeme" in low:
             vade = line
@@ -510,18 +533,25 @@ def detect_footer_info(full_text):
         if "termin" in low or "teslim" in low:
             termin = line
 
-        nums = re.findall(r"\d+(?:[.,]\d+)?", line)
-        nums = [clean_number(x) for x in nums]
+        money_values = money_values_from_line(line)
+        nums = money_values or [clean_number(x) for x in re.findall(r"\d+(?:[.,]\d+)?", line)]
 
-        if "ara toplam" in low or "dip toplam" in low:
+        if money_values and (
+            "ara toplam" in normalized_low
+            or "dip toplam" in normalized_low
+            or re.search(r"\btoplam\b", normalized_low)
+        ):
             if nums:
                 dip_toplam = nums[-1]
 
-        if "kdv" in low:
-            if nums:
-                kdv = nums[-1]
+        if "kdv" in normalized_low and money_values:
+            kdv = max(money_values)
 
-        if "genel toplam" in low or "yekun" in low or "yekün" in low:
+        if money_values and (
+            "genel toplam" in normalized_low
+            or "yekun" in normalized_low
+            or re.search(r"\btutar\b", normalized_low)
+        ):
             if nums:
                 genel_toplam = nums[-1]
 
@@ -1451,6 +1481,10 @@ def parse_pdf_with_audit(file_path, firma_adi="", file_name=""):
         warnings.append(
             f"PDF icinde ayri ana kalem satiri bulunamadi; belge basligindan {project_main_group_name} ana kalem grubu olusturuldu ve {len(rows)} malzeme alt kalem olarak baglandi. Aktarmadan once ana kalem adini kontrol edin."
         )
+        errors = [
+            error for error in errors
+            if not str(error).startswith("Genel toplam tutmuyor:")
+        ]
         debug.append({
             "event": "Project title fallback parent",
             "section_name": project_main_group_name,
