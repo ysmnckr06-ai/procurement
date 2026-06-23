@@ -8,25 +8,28 @@ import { CORVIAN_PRODUCT_NAME, fetchCompanyBranding } from "@/lib/companyBrandin
 
 const summaryModes = {
   missing: {
-    title: "Eksik Malzeme İcmali",
-    shortTitle: "Eksik icmal",
-    description: "Seçili projelerde stoktan karşılanamayan ve satınalma/teklif gerektiren kalemler.",
-    filePrefix: "eksik-malzeme-icmali",
+    title: "Satın Alma Gerekenler",
+    shortTitle: "Satın alma",
+    description: "Bu ekranda seçili projelerde stoktan karşılanamayan ürünlerden talep listesi oluşturabilirsiniz.",
+    filePrefix: "satin-alma-gerekenler",
     emptyText: "Seçili projelerde satınalma gerektiren eksik malzeme bulunamadı.",
+    nextStep: "Satın alınacak kalemleri seçin, ardından Talep Listesi Oluştur butonuyla Talepler modülüne aktarın.",
   },
   stock: {
-    title: "Stoktan Karşılanabilir İcmali",
-    shortTitle: "Stok icmali",
-    description: "Seçili projelerde depodaki boş stoktan ayrılabilecek kalemler.",
-    filePrefix: "stoktan-karsilanabilir-icmali",
+    title: "Stoktan Karşılanacaklar",
+    shortTitle: "Stoktan",
+    description: "Bu ekranda stokta bulunan ürünleri seçili projelere güvenli şekilde ayırabilirsiniz.",
+    filePrefix: "stoktan-karsilanacaklar",
     emptyText: "Seçili projelerde stoktan karşılanabilecek açık kalem bulunamadı.",
+    nextStep: "Ürünleri seçip stoktan karşılayın. İşlem ürün stoğunu silmez; projeye ayrılan miktarı reserved_quantity olarak işler.",
   },
   all: {
-    title: "Tüm İhtiyaç İcmali",
-    shortTitle: "Tüm ihtiyaç",
-    description: "Eksik, stoktan karşılanabilir ve tamamlanmış tüm proje ihtiyaçları.",
-    filePrefix: "tum-ihtiyac-icmali",
+    title: "Tüm Malzeme Listesi",
+    shortTitle: "Tüm liste",
+    description: "Seçili projelerdeki tüm malzemeleri, stok ve satınalma durumlarıyla birlikte görürsünüz.",
+    filePrefix: "tum-malzeme-listesi",
     emptyText: "Seçili projelerde ihtiyaç kalemi bulunamadı.",
+    nextStep: "Bu ekran kontrol amaçlıdır. Stoktan işlem için Stoktan Karşılanacaklar, satınalma için Satın Alma Gerekenler ekranını kullanın.",
   },
 };
 
@@ -43,7 +46,7 @@ function normalizeText(value) {
 }
 
 function safeFileName(value) {
-  return String(value || "satinalma-icmali").replace(/[^a-zA-Z0-9çğıöşüÇĞİÖŞÜ_-]+/g, "-");
+  return String(value || "malzeme-listesi").replace(/[^a-zA-Z0-9çğıöşüÇĞİÖŞÜ_-]+/g, "-");
 }
 
 function orderAllocationQuantities(orders) {
@@ -243,6 +246,8 @@ export default function ProcurementSummaryPage() {
   const [message, setMessage] = useState("");
   const [creatingRequest, setCreatingRequest] = useState(false);
   const [reservingStock, setReservingStock] = useState(false);
+  const [selectedRowKeys, setSelectedRowKeys] = useState([]);
+  const [lastCreatedRequestId, setLastCreatedRequestId] = useState("");
 
   async function loadSummaryData(nextMessage = "") {
     setLoading(true);
@@ -253,7 +258,7 @@ export default function ProcurementSummaryPage() {
       selectedIds = [];
     }
     if (!Array.isArray(selectedIds) || selectedIds.length === 0) {
-      setMessage("İcmal için proje seçimi bulunamadı.");
+      setMessage("Malzeme listesi için proje seçimi bulunamadı.");
       setLoading(false);
       return;
     }
@@ -272,7 +277,7 @@ export default function ProcurementSummaryPage() {
     ]);
     const error = projectResult.error || itemResult.error || productResult.error || orderResult.error;
     if (error) {
-      setMessage(`İcmal yüklenemedi: ${error.message}`);
+      setMessage(`Malzeme listesi yüklenemedi: ${error.message}`);
       setLoading(false);
       return;
     }
@@ -292,6 +297,15 @@ export default function ProcurementSummaryPage() {
   }, [router]);
 
   const rows = useMemo(() => filterRowsByMode(allRows, mode), [allRows, mode]);
+  const selectedRows = useMemo(
+    () => rows.filter((row) => selectedRowKeys.includes(row.key)),
+    [rows, selectedRowKeys],
+  );
+
+  useEffect(() => {
+    const visibleKeys = new Set(rows.map((row) => row.key));
+    setSelectedRowKeys((current) => current.filter((key) => visibleKeys.has(key)));
+  }, [rows]);
 
   const totals = useMemo(() => rows.reduce((summary, row) => ({
     requested: summary.requested + row.requestedQuantity,
@@ -299,6 +313,24 @@ export default function ProcurementSummaryPage() {
     stock: summary.stock + row.stockCoverable,
     purchase: summary.purchase + row.purchaseQuantity,
   }), { requested: 0, need: 0, stock: 0, purchase: 0 }), [rows]);
+
+  function toggleRowSelection(rowKey) {
+    setSelectedRowKeys((current) =>
+      current.includes(rowKey)
+        ? current.filter((key) => key !== rowKey)
+        : [...current, rowKey],
+    );
+  }
+
+  function toggleAllRows() {
+    const visibleKeys = rows.map((row) => row.key);
+    const allSelected = visibleKeys.length > 0 && visibleKeys.every((key) => selectedRowKeys.includes(key));
+    setSelectedRowKeys(allSelected ? [] : visibleKeys);
+  }
+
+  function rowsForAction(selectedOnly = false) {
+    return selectedOnly && selectedRows.length > 0 ? selectedRows : rows;
+  }
 
   async function downloadExcel() {
     const { companyName } = await fetchCompanyBranding(supabase);
@@ -344,17 +376,22 @@ export default function ProcurementSummaryPage() {
     doc.save(`${safeFileName(`${modeConfig.filePrefix}-${new Date().toISOString().slice(0, 10)}`)}.pdf`);
   }
 
-  async function createRequestForOffers() {
-    if (creatingRequest || rows.length === 0) return;
-    const conflicts = rows.filter((row) => row.unitConflict);
+  async function createRequestForOffers(selectedOnly = false) {
+    const actionRows = rowsForAction(selectedOnly).filter((row) => row.purchaseQuantity > 0);
+    if (creatingRequest || actionRows.length === 0) {
+      setMessage("Talep listesi oluşturmak için satın alınacak miktarı olan kalem seçin.");
+      return;
+    }
+    const conflicts = actionRows.filter((row) => row.unitConflict);
     if (conflicts.length > 0) {
       setMessage(`${conflicts.length} ürün kodunda birim çakışması var. Proje kalemlerinin birimleri düzeltilmeden teklif akışı başlatılmadı.`);
       return;
     }
     setCreatingRequest(true);
+    setLastCreatedRequestId("");
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { router.push("/login"); return; }
-    const items = rows.filter((row) => row.purchaseQuantity > 0).map((row) => ({
+    const items = actionRows.map((row) => ({
       product_id: row.productId,
       product_code: row.productCode,
       normalized_product_code: row.normalizedProductCode,
@@ -384,12 +421,17 @@ export default function ProcurementSummaryPage() {
     }).select("id").single();
     setCreatingRequest(false);
     if (error) { setMessage(`Talep oluşturulamadı: ${error.message}`); return; }
-    router.push(`/dashboard/teklifler?requestId=${data.id}`);
+    setLastCreatedRequestId(data.id);
+    setMessage(`Talep listesi oluşturuldu. ${items.length} kalem Talepler modülüne aktarıldı.`);
   }
 
-  async function reserveVisibleStockRows() {
-    if (reservingStock || rows.length === 0) return;
-    const allocations = rows.flatMap((row) =>
+  async function reserveVisibleStockRows(selectedOnly = false) {
+    const actionRows = rowsForAction(selectedOnly).filter((row) => row.stockCoverable > 0);
+    if (reservingStock || actionRows.length === 0) {
+      setMessage("Stoktan karşılamak için stoktan ayrılabilir kalem seçin.");
+      return;
+    }
+    const allocations = actionRows.flatMap((row) =>
       row.allocations
         .filter((allocation) => row.productId && allocation.projectItemId && allocation.stockCoverableQuantity > 0)
         .map((allocation) => ({
@@ -401,7 +443,7 @@ export default function ProcurementSummaryPage() {
           product_code: row.productCode || row.normalizedProductCode || "",
           product_name: row.productName || "",
           unit: row.unit || "adet",
-          notes: `${allocation.projectCode || allocation.projectName || "Proje"} için çok projeli stok icmalinden ayrıldı`,
+          notes: `${allocation.projectCode || allocation.projectName || "Proje"} için çok projeli stok listesinden ayrıldı`,
         })),
     );
 
@@ -414,7 +456,7 @@ export default function ProcurementSummaryPage() {
     if (!approved) return;
 
     setReservingStock(true);
-    setMessage("Seçili proje icmali stoktan karşılanıyor...");
+    setMessage("Seçili proje listesi stoktan karşılanıyor...");
     const { data, error } = await supabase.rpc("reserve_project_items_from_stock", {
       p_allocations: allocations,
     });
@@ -448,6 +490,9 @@ export default function ProcurementSummaryPage() {
           <Link href="/dashboard/projeler" className="text-sm font-bold text-blue-200">← Projelere dön</Link>
           <h1 className="mt-3 text-3xl font-black">{modeConfig.title}</h1>
           <p className="mt-2 text-sm text-slate-300">{modeConfig.description}</p>
+          <div className="mt-4 rounded-2xl border border-white/10 bg-white/10 p-4 text-sm font-semibold text-blue-50">
+            Sıradaki adım: {modeConfig.nextStep}
+          </div>
           <p className="mt-2 text-xs font-semibold text-slate-400">{projects.map((project) => `${project.project_code} · ${project.project_name}`).join(" | ")}</p>
           <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-4">
             <Metric label="Toplam ihtiyaç" value={totals.requested} />
@@ -457,35 +502,79 @@ export default function ProcurementSummaryPage() {
           </div>
         </div>
         {message && <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 font-semibold text-amber-900">{message}</div>}
-        <div className="flex flex-wrap gap-2">
-          <button type="button" onClick={downloadExcel} disabled={!rows.length} className="rounded-xl bg-emerald-700 px-4 py-3 font-bold text-white disabled:bg-slate-300">Excel İndir</button>
-          <button type="button" onClick={downloadPdf} disabled={!rows.length} className="rounded-xl bg-red-700 px-4 py-3 font-bold text-white disabled:bg-slate-300">PDF İndir</button>
-          {mode === "stock" ? (
-            <button
-              type="button"
-              onClick={reserveVisibleStockRows}
-              disabled={!rows.length || reservingStock}
-              className="rounded-xl bg-blue-700 px-4 py-3 font-bold text-white disabled:bg-slate-300"
-            >
-              {reservingStock ? "Stoktan ayrılıyor..." : "Listelenenleri Stoktan Karşıla"}
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="mb-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+            <div>
+              <div className="font-black text-slate-900">{rows.length} ürün listeleniyor</div>
+              <div className="text-sm font-semibold text-slate-500">
+                {selectedRows.length > 0 ? `${selectedRows.length} ürün seçili.` : "İşlem yapmak için ürün seçebilir veya tüm listeyi kullanabilirsiniz."}
+              </div>
+            </div>
+            <button type="button" onClick={toggleAllRows} disabled={!rows.length} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-black text-slate-700 disabled:bg-slate-100">
+              {rows.length > 0 && rows.every((row) => selectedRowKeys.includes(row.key)) ? "Seçimi Temizle" : "Tümünü Seç"}
             </button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={downloadExcel} disabled={!rows.length} className="rounded-xl bg-emerald-700 px-4 py-3 font-bold text-white disabled:bg-slate-300">Excel İndir</button>
+            <button type="button" onClick={downloadPdf} disabled={!rows.length} className="rounded-xl bg-red-700 px-4 py-3 font-bold text-white disabled:bg-slate-300">PDF İndir</button>
+          {mode === "stock" ? (
+            <>
+              <button
+                type="button"
+                onClick={() => reserveVisibleStockRows(false)}
+                disabled={!rows.length || reservingStock}
+                className="rounded-xl bg-blue-700 px-4 py-3 font-bold text-white disabled:bg-slate-300"
+              >
+                {reservingStock ? "Stoktan ayrılıyor..." : "Tümünü Stoktan Karşıla"}
+              </button>
+              <button
+                type="button"
+                onClick={() => reserveVisibleStockRows(true)}
+                disabled={selectedRows.length === 0 || reservingStock}
+                className="rounded-xl bg-slate-900 px-4 py-3 font-bold text-white disabled:bg-slate-300"
+              >
+                Seçili Ürünleri Stoktan Karşıla
+              </button>
+            </>
           ) : (
-            <button type="button" onClick={createRequestForOffers} disabled={!rows.length || creatingRequest || totals.purchase <= 0} className="rounded-xl bg-blue-700 px-4 py-3 font-bold text-white disabled:bg-slate-300">{creatingRequest ? "Hazırlanıyor..." : "Teklif / Mukayese Akışına Gönder"}</button>
+            <>
+              <button type="button" onClick={() => createRequestForOffers(false)} disabled={!rows.length || creatingRequest || totals.purchase <= 0} className="rounded-xl bg-blue-700 px-4 py-3 font-bold text-white disabled:bg-slate-300">{creatingRequest ? "Hazırlanıyor..." : "Talep Listesi Oluştur"}</button>
+              <button type="button" onClick={() => createRequestForOffers(true)} disabled={selectedRows.length === 0 || creatingRequest} className="rounded-xl bg-slate-900 px-4 py-3 font-bold text-white disabled:bg-slate-300">Seçili Kalemlerden Talep Oluştur</button>
+              {lastCreatedRequestId && (
+                <>
+                  <button type="button" onClick={() => router.push(`/dashboard/talepler?createdRequestId=${lastCreatedRequestId}`)} className="rounded-xl bg-emerald-700 px-4 py-3 font-bold text-white">
+                    Talepler Modülünde Gör
+                  </button>
+                  <button type="button" onClick={() => router.push(`/dashboard/teklifler?requestId=${lastCreatedRequestId}`)} className="rounded-xl bg-purple-700 px-4 py-3 font-bold text-white">
+                    Teklif Toplamaya Geç
+                  </button>
+                </>
+              )}
+            </>
           )}
+          </div>
         </div>
         <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
           <table className="min-w-[1250px] w-full text-left text-sm">
             <thead className="bg-slate-50 text-xs uppercase text-slate-500"><tr>
-              <th className="p-3">Kod / Ürün</th><th className="p-3">Marka</th><th className="p-3">Birim</th><th className="p-3">Toplam ihtiyaç</th><th className="p-3">Açık ihtiyaç</th><th className="p-3">Mevcut</th><th className="p-3">Ayrılmış</th><th className="p-3">Boşta</th><th className="p-3">Stoktan</th><th className="p-3">Satın alınacak</th><th className="p-3">Durum</th><th className="p-3">Proje dağılımı</th>
+              <th className="p-3">Seç</th><th className="p-3">Kod / Ürün</th><th className="p-3">Marka</th><th className="p-3">Birim</th><th className="p-3">Toplam ihtiyaç</th><th className="p-3">Açık ihtiyaç</th><th className="p-3">Mevcut</th><th className="p-3">Ayrılmış</th><th className="p-3">Boşta</th><th className="p-3">Stoktan</th><th className="p-3">Satın alınacak</th><th className="p-3">Durum</th><th className="p-3">Proje dağılımı</th>
             </tr></thead>
             <tbody>{rows.map((row) => <tr key={row.key} className="border-t align-top">
+              <td className="p-3">
+                <input
+                  type="checkbox"
+                  checked={selectedRowKeys.includes(row.key)}
+                  onChange={() => toggleRowSelection(row.key)}
+                  aria-label={`${row.productCode || row.productName} seç`}
+                />
+              </td>
               <td className="p-3"><div className="font-black text-blue-800">{row.productCode || "Kodsuz"}</div><div>{row.productName}</div>{row.unitConflict && <div className="mt-1 font-bold text-red-700">Birim kontrolü: {row.sourceUnits.join(" / ")}</div>}</td>
               <td className="p-3">{row.brand || "-"}</td><td className="p-3">{row.unit}</td><td className="p-3 font-bold">{row.requestedQuantity}</td><td className="p-3 font-bold">{row.totalNeed}</td><td className="p-3">{row.currentStock}</td><td className="p-3">{row.reservedStock}</td><td className="p-3">{row.availableStock}</td><td className="p-3 font-black text-emerald-700">{row.stockCoverable}</td><td className="p-3 font-black text-red-700">{row.purchaseQuantity}</td><td className="p-3"><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-black text-slate-700">{row.statusLabel}</span></td>
               <td className="p-3"><div className="space-y-2">{row.allocations.map((allocation) => <div key={allocation.projectItemId} className="rounded-lg bg-slate-50 p-2"><span className="font-black">{allocation.projectCode}</span> · {allocation.projectName}<div className="text-xs font-semibold text-slate-600">Toplam: {allocation.requestedQuantity} · Açık: {allocation.quantity} · Stoktan: {allocation.stockCoverableQuantity} · Eksik: {allocation.purchaseQuantity} {row.unit}</div>{allocation.parentItemName ? <div className="text-xs text-slate-500">Ana ürün: {allocation.parentItemName}</div> : null}</div>)}</div></td>
             </tr>)}</tbody>
           </table>
           {!loading && rows.length === 0 && <div className="p-8 text-center text-slate-500">{modeConfig.emptyText}</div>}
-          {loading && <div className="p-8 text-center text-slate-500">İcmal hazırlanıyor...</div>}
+          {loading && <div className="p-8 text-center text-slate-500">Malzeme listesi hazırlanıyor...</div>}
         </div>
       </main>
     </div>

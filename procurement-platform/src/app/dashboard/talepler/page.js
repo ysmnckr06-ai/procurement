@@ -468,6 +468,7 @@ export default function TaleplerPage() {
   const [showAllRequests, setShowAllRequests] = useState(false);
   const [expandedRequestId, setExpandedRequestId] = useState("");
   const [selectedRequestIds, setSelectedRequestIds] = useState([]);
+  const [quantityDrafts, setQuantityDrafts] = useState({});
   const isAnalyzingRef = useRef(false);
 
   const totalQty = useMemo(() => {
@@ -489,6 +490,13 @@ export default function TaleplerPage() {
     useEffect(() => {
       loadRequests();
       loadStockProducts();
+      if (typeof window !== "undefined") {
+        const createdRequestId = new URLSearchParams(window.location.search).get("createdRequestId");
+        if (createdRequestId) {
+          setExpandedRequestId(createdRequestId);
+          setMessage("Talep listesi oluşturuldu. Kalemleri kontrol edip teklif toplama sürecine geçebilirsiniz.");
+        }
+      }
     }, []);
 
   const loadRequests = async () => {
@@ -814,6 +822,56 @@ export default function TaleplerPage() {
     }, 700);
   };
 
+  function quantityDraftKey(requestId, itemIndex) {
+    return `${requestId}:${itemIndex}`;
+  }
+
+  function requestItemQuantity(requestId, itemIndex, item) {
+    const draftKey = quantityDraftKey(requestId, itemIndex);
+    if (quantityDrafts[draftKey] !== undefined) return quantityDrafts[draftKey];
+    return readItemField(item, ["purchase_quantity", "talepEdilenAdet", "quantity", "qty", "estimated_quantity"], 0);
+  }
+
+  async function saveRequestItemQuantity(request, itemIndex, nextQuantity) {
+    const quantity = Number(nextQuantity || 0);
+    if (quantity < 0) {
+      setMessage("Talep miktarı negatif olamaz.");
+      return;
+    }
+
+    const items = getRequestItems(request).map((item, index) => {
+      if (index !== itemIndex) return item;
+      const unitPrice = Number(readItemField(item, ["birimFiyat", "unit_price", "estimated_unit_price"], 0) || 0);
+      return {
+        ...item,
+        quantity,
+        talepEdilenAdet: quantity,
+        purchase_quantity: quantity,
+        total: unitPrice > 0 ? Number((unitPrice * quantity).toFixed(2)) : item.total,
+      };
+    });
+
+    const { error } = await supabase
+      .from("requests")
+      .update({ items, totalitems: items.length })
+      .eq("id", request.id)
+      .eq("user_id", request.user_id);
+
+    if (error) {
+      setMessage(`Talep miktarı güncellenemedi: ${error.message}`);
+      return;
+    }
+
+    setSavedRequests((current) =>
+      current.map((savedRequest) =>
+        savedRequest.id === request.id
+          ? { ...savedRequest, items, totalitems: items.length }
+          : savedRequest,
+      ),
+    );
+    setMessage("Talep kalemi güncellendi.");
+  }
+
   async function deleteRequest(requestId) {
   const onay = window.confirm("Bu talep listesini silmek istediğine emin misin?");
   if (!onay) return;
@@ -856,15 +914,14 @@ export default function TaleplerPage() {
             <div>
               <h1 className="text-3xl font-bold text-slate-900">Talepler</h1>
               <p className="mt-1 text-sm text-slate-600">
-                Talep dosyalarınızı yükleyin, icmal listenizi oluşturun ve teklif
-                karşılaştırmalarında kullanın.
+                Projelerden gelen satınalma listelerini kontrol edin, miktarları revize edin ve teklif toplama sürecine aktarın.
               </p>
             </div>
           </div>
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
             <StatCard icon="📄" title="Yüklenen Dosya" value={files.length} text="Seçili dosya" />
-            <StatCard icon="📦" title="Toplam Kalem" value={rows.length} text="İcmal listesinde" />
+            <StatCard icon="📦" title="Toplam Kalem" value={rows.length} text="Önizleme listesinde" />
             <StatCard icon="🔢" title="Toplam Miktar" value={totalQty} text="Talep edilen adet" />
             <StatCard icon="✅" title="Durum" value={reportPath ? "Hazır" : "Bekliyor"} text={reportPath ? "Excel oluşturuldu" : "Analiz bekleniyor"} />
           </div>
@@ -877,7 +934,7 @@ export default function TaleplerPage() {
               <p className="text-sm font-medium text-purple-900">
                 Burada yüklediğiniz Excel, PDF veya görsel talep dosyaları backend
                 tarafından analiz edilir. Ürün kodu, açıklama, adet ve birim
-                bilgileri icmal listesine dönüştürülür.
+                bilgileri talep listesine dönüştürülür.
               </p>
             </div>
           </div>
@@ -926,7 +983,7 @@ export default function TaleplerPage() {
                 disabled={isLoading}
                 className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300"
               >
-                {isLoading ? "İcmal Oluşturuluyor..." : "+ Talep Listesini Oluştur"}
+                {isLoading ? "Talep Listesi Oluşturuluyor..." : "+ Talep Listesini Oluştur"}
               </button>
 
               <button
@@ -957,8 +1014,8 @@ export default function TaleplerPage() {
           <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div>
-                <h2 className="text-lg font-bold text-slate-900">Oluşturulan Talep Listeleri</h2>
-                <p className="text-sm text-slate-500">Daha önce oluşturduğunuz talep listeleri burada görünür.</p>
+                <h2 className="text-lg font-bold text-slate-900">Proje Talepleri</h2>
+                <p className="text-sm text-slate-500">Projelerden oluşturulan satınalma talepleri burada görünür. Detaydan miktarları kontrol edip teklif toplamaya geçebilirsiniz.</p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <span className="rounded-full bg-blue-50 px-3 py-1 text-sm font-semibold text-blue-700">
@@ -995,7 +1052,7 @@ export default function TaleplerPage() {
 
             {savedRequests.length === 0 ? (
               <div className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500">
-                Henüz kayıtlı talep listesi yok.
+                Henüz proje talebi yok. Projeler ekranından satın alma gerekenler listesini oluşturabilirsiniz.
               </div>
             ) : (
               <div className="space-y-3">
@@ -1087,9 +1144,9 @@ export default function TaleplerPage() {
                         <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
                           <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
                             <div>
-                              <div className="text-sm font-bold text-slate-900">Talep Kalemleri</div>
+                              <div className="text-sm font-bold text-slate-900">Talep Detayı</div>
                               <div className="text-xs font-medium text-slate-500">
-                                Bu talep içinde satınalma için hazırlanan ürünler listelenir.
+                                Ürün, stok bilgisi, satın alınacak miktar ve proje dağılımı burada görünür. Gerekirse satın alınacak miktarı revize edebilirsiniz.
                               </div>
                             </div>
                             <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-bold text-blue-700">
@@ -1109,17 +1166,24 @@ export default function TaleplerPage() {
                                     <th className="px-3 py-3">#</th>
                                     <th className="px-3 py-3">Ürün kodu</th>
                                     <th className="px-3 py-3">Açıklama</th>
-                                    <th className="px-3 py-3 text-right">Miktar</th>
+                                    <th className="px-3 py-3 text-right">Satın alınacak</th>
+                                    <th className="px-3 py-3 text-right">Stoktan</th>
+                                    <th className="px-3 py-3 text-right">Mevcut stok</th>
                                     <th className="px-3 py-3">Birim</th>
                                     <th className="px-3 py-3 text-right">Birim fiyat</th>
                                     <th className="px-3 py-3 text-right">Toplam</th>
-                                    <th className="px-3 py-3">Not</th>
+                                    <th className="px-3 py-3">Proje dağılımı / Not</th>
+                                    <th className="px-3 py-3">İşlem</th>
                                   </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
                                   {requestItems.map((item, itemIndex) => {
                                     const quantity = readItemField(item, ["talepEdilenAdet", "quantity", "qty", "estimated_quantity"], 0);
                                     const currency = readItemField(item, ["paraBirimi", "currency"], "TRY");
+                                    const draftQuantity = requestItemQuantity(req.id, itemIndex, item);
+                                    const stockCoverable = readItemField(item, ["stock_coverable_quantity", "stockCoverableQuantity"], 0);
+                                    const currentStock = readItemField(item, ["current_stock", "currentStock"], 0);
+                                    const allocations = Array.isArray(item.allocations) ? item.allocations : [];
                                     const productMatch = matchProduct(stockProducts, {
                                       product_id: readItemField(item, ["product_id", "productId"], ""),
                                       product_code: readItemField(item, ["urunKodu", "product_code", "code"], ""),
@@ -1142,7 +1206,23 @@ export default function TaleplerPage() {
                                           )}
                                         </td>
                                         <td className="px-3 py-3 text-right font-bold text-blue-700">
-                                          {Number(quantity || 0).toLocaleString("tr-TR")}
+                                          <input
+                                            type="number"
+                                            min="0"
+                                            value={draftQuantity}
+                                            onChange={(event) => setQuantityDrafts((current) => ({
+                                              ...current,
+                                              [quantityDraftKey(req.id, itemIndex)]: event.target.value,
+                                            }))}
+                                            className="w-24 rounded-lg border border-slate-300 px-2 py-1 text-right font-bold text-blue-700"
+                                            aria-label="Satın alınacak miktar"
+                                          />
+                                        </td>
+                                        <td className="px-3 py-3 text-right font-semibold text-emerald-700">
+                                          {Number(stockCoverable || 0).toLocaleString("tr-TR")}
+                                        </td>
+                                        <td className="px-3 py-3 text-right font-semibold text-slate-700">
+                                          {Number(currentStock || 0).toLocaleString("tr-TR")}
                                         </td>
                                         <td className="px-3 py-3 font-semibold text-slate-600">
                                           {readItemField(item, ["birim", "unit"], "adet")}
@@ -1154,7 +1234,25 @@ export default function TaleplerPage() {
                                           {formatRequestMoney(readItemField(item, ["toplam", "total", "estimated_total"], 0), currency)}
                                         </td>
                                         <td className="max-w-[260px] px-3 py-3 text-xs font-medium text-slate-500">
-                                          {cleanRequestNote(readItemField(item, ["not", "note"], "")) || "-"}
+                                          {allocations.length > 0 ? (
+                                            <div className="space-y-1">
+                                              {allocations.slice(0, 3).map((allocation, allocationIndex) => (
+                                                <div key={`${allocation.projectItemId || allocationIndex}`} className="rounded bg-slate-50 px-2 py-1">
+                                                  {allocation.projectCode || allocation.projectName || "Proje"}: {Number(allocation.quantity || 0).toLocaleString("tr-TR")}
+                                                </div>
+                                              ))}
+                                              {allocations.length > 3 && <div>+{allocations.length - 3} proje dağılımı</div>}
+                                            </div>
+                                          ) : cleanRequestNote(readItemField(item, ["not", "note"], "")) || "-"}
+                                        </td>
+                                        <td className="px-3 py-3">
+                                          <button
+                                            type="button"
+                                            onClick={() => saveRequestItemQuantity(req, itemIndex, draftQuantity)}
+                                            className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white hover:bg-blue-700"
+                                          >
+                                            Miktarı Kaydet
+                                          </button>
                                         </td>
                                       </tr>
                                     );
@@ -1192,10 +1290,10 @@ export default function TaleplerPage() {
               <div className="flex items-center justify-between border-b border-slate-100 p-5">
                 <div>
                   <h2 className="text-xl font-bold text-slate-800">
-                    İcmal Önizleme
+                    Talep Listesi Önizleme
                   </h2>
                   <p className="mt-1 text-sm text-slate-500">
-                    Backend tarafından oluşturulan talep icmal listesi.
+                    Sistem tarafından oluşturulan talep listesi.
                   </p>
                 </div>
 
@@ -1253,7 +1351,7 @@ export default function TaleplerPage() {
 
               <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
                 <Step no="1" title="Dosya Yükleyin" text="Excel, PDF veya görsel talep dosyalarınızı seçin." />
-                <Step no="2" title="İcmal Oluşturun" text="Sistem ürünleri birleştirip talep listesini çıkarır." />
+                <Step no="2" title="Talep Listesini Oluşturun" text="Sistem ürünleri birleştirip satınalma listesini çıkarır." />
                 <Step no="3" title="Tekliflere Aktarın" text="Oluşan listeyi teklif karşılaştırmada kullanın." />
               </div>
             </div>
@@ -1263,7 +1361,7 @@ export default function TaleplerPage() {
 
               <div className="mt-4 space-y-3 text-sm text-green-900">
                 <p>✅ Ürün kodu varsa sistem eşleştirmeyi daha güçlü yapar.</p>
-                <p>✅ Kod yoksa açıklama benzerliğiyle icmal oluşturulur.</p>
+                <p>✅ Kod yoksa açıklama benzerliğiyle talep listesi oluşturulur.</p>
                 <p>✅ Oluşturulan talep listesi teklif analizinde ana referans olur.</p>
               </div>
             </div>

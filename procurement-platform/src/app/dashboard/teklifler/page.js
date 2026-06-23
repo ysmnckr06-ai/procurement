@@ -496,11 +496,11 @@ const loadCompanySettings = async () => {
             </div>
 
             <h1 className="mt-3 text-4xl font-bold text-slate-900">
-              Teklif Karşılaştırma
+              Talep Bazlı Teklif Toplama
             </h1>
 
             <p className="mt-2 max-w-2xl text-sm text-slate-600">
-              Excel, PDF veya görsel teklif dosyalarını yükleyin. Sistem teklifleri talep listesine göre analiz ederek mukayese raporu oluşturur.
+              Önce talep listesini seçin, sonra tedarikçilerden gelen teklif dosyalarını yükleyin. Sistem talep kalemlerine göre mukayese raporu oluşturur.
             </p>
           </div>
 
@@ -545,9 +545,9 @@ const loadCompanySettings = async () => {
             <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <h2 className="text-xl font-bold text-slate-800">Talep Kullanımı</h2>
+                  <h2 className="text-xl font-bold text-slate-800">Hangi talep için teklif topluyorsunuz?</h2>
                   <p className="mt-2 text-sm text-slate-600">
-                    Teklifleri mevcut talep listesine göre veya talep olmadan kendi içinde karşılaştırabilirsiniz.
+                    ERP akışında önerilen yol: önce Talepler modülünden talep seçin, sonra birden fazla tedarikçi teklifini aynı talebe bağlayın.
                   </p>
                 </div>
 
@@ -566,9 +566,9 @@ const loadCompanySettings = async () => {
                       : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
                   }`}
                 >
-                  <div className="text-lg">📚 Talep Listesiyle Analiz</div>
+                  <div className="text-lg">📚 Talebe Bağlı Analiz</div>
                   <div className={`mt-1 text-xs ${analysisMode === "withRequest" ? "text-blue-100" : "text-slate-500"}`}>
-                    Teklifleri seçilen talep listesine göre karşılaştırır.
+                    Teklifleri seçilen talep kalemleriyle eşleştirir.
                   </div>
                 </button>
 
@@ -584,9 +584,9 @@ const loadCompanySettings = async () => {
                       : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
                   }`}
                 >
-                  <div className="text-lg">⚡ Talep Olmadan Analiz</div>
+                  <div className="text-lg">⚡ Serbest Teklif Analizi</div>
                   <div className={`mt-1 text-xs ${analysisMode === "withoutRequest" ? "text-slate-300" : "text-slate-500"}`}>
-                    Teklifleri ürün kodu ve açıklama benzerliğine göre gruplar.
+                    Talep kaydı yoksa teklifleri ürün kodu ve açıklama benzerliğine göre gruplar.
                   </div>
                 </button>
               </div>
@@ -598,10 +598,10 @@ const loadCompanySettings = async () => {
                     onChange={(e) => setSelectedRequestId(e.target.value)}
                     className="mt-5 w-full rounded-xl border border-slate-300 bg-white p-3 text-sm"
                   >
-                    <option value="">Talep listesi seçin</option>
+                    <option value="">Talep seçin</option>
                     {requestLists.map((item, index) => (
                       <option key={item.id} value={item.id}>
-                        {`Talep #${index + 1} - ${
+                        {`${item.ad || `Talep #${index + 1}`} - ${
                           item.created_at
                             ? new Date(item.created_at).toLocaleString("tr-TR")
                             : "Tarih yok"
@@ -612,21 +612,21 @@ const loadCompanySettings = async () => {
 
                   {selectedRequestId && (
                     <div className="mt-4 rounded-xl border border-green-200 bg-green-50 p-4 text-sm text-green-800">
-                      Talep listesi seçildi ✅ Bu liste teklif analizinde referans alınacak.
+                      Talep seçildi ✅ Yükleyeceğiniz tüm teklif dosyaları bu talep listesine göre analiz edilecek.
                     </div>
                   )}
                 </>
               ) : (
                 <div className="mt-4 rounded-xl border border-yellow-200 bg-yellow-50 p-4 text-sm text-yellow-800">
-                  Talep listesi seçilmeden analiz yapılacak. Sistem teklifleri kendi içinde ürün kodu ve açıklama benzerliğine göre gruplandıracaktır.
+                  Talep seçilmeden analiz yapılacak. Bu yol hızlı kontrol içindir; proje/talep/sipariş zinciri için talep seçerek ilerlemeniz önerilir.
                 </div>
               )}
             </section>
 
             <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-              <h2 className="text-xl font-bold text-slate-800">Teklif Dosyalarını Yükle</h2>
+              <h2 className="text-xl font-bold text-slate-800">Tedarikçi Teklif Dosyalarını Yükle</h2>
               <p className="mt-2 text-sm text-slate-600">
-                En fazla 15 teklif dosyası yükleyebilirsiniz.
+                Aynı talep için birden fazla tedarikçi teklifi yükleyebilirsiniz. Dosyalar analiz edilerek mukayese raporuna aktarılır.
               </p>
 
               <div className="mt-5 rounded-3xl border border-dashed border-blue-300 bg-blue-50/40 p-8 text-center">

@@ -358,7 +358,9 @@ export default function ProjectDetailPage() {
   const [selectedPurchaseItemIds, setSelectedPurchaseItemIds] = useState([]);
   const [selectedStockCoverItemIds, setSelectedStockCoverItemIds] = useState([]);
   const [selectedProjectItemIds, setSelectedProjectItemIds] = useState([]);
+  const [selectedStockMovementIds, setSelectedStockMovementIds] = useState([]);
   const [isCoveringStock, setIsCoveringStock] = useState(false);
+  const [isDeletingStockMovements, setIsDeletingStockMovements] = useState(false);
   const [itemStockFilter, setItemStockFilter] = useState("all");
   const [itemPriceDrafts, setItemPriceDrafts] = useState({});
   const [processQuantityDrafts, setProcessQuantityDrafts] = useState({});
@@ -489,6 +491,11 @@ export default function ProjectDetailPage() {
     if (!projectId || typeof window === "undefined") return;
     window.localStorage.setItem(`project-detail-expanded-items-${projectId}`, JSON.stringify(expandedItems));
   }, [expandedItems, projectId]);
+
+  useEffect(() => {
+    const visibleMovementIds = new Set(stockMovements.map((movement) => movement.id));
+    setSelectedStockMovementIds((current) => current.filter((id) => visibleMovementIds.has(id)));
+  }, [stockMovements]);
 
   function projectCurrencyForDisplay(sourceCurrency = "") {
     return project?.estimated_budget_currency
@@ -5851,13 +5858,7 @@ export default function ProjectDetailPage() {
       .eq("user_id", userId);
   }
 
-  async function deleteStockMovement(movement) {
-    const approved = window.confirm(`${movement.product_name || "Stok hareketi"} kaydı silinsin mi? Stok toplamları ters hareketle güncellenecek.`);
-    if (!approved) return;
-
-    const user = await getUserOrRedirect();
-    if (!user) return;
-
+  async function deleteStockMovementRecord(movement, user) {
     await reverseStockMovementTotals(movement, user.id);
     await reverseProjectItemStockMovement(movement, user.id);
 
@@ -5868,12 +5869,76 @@ export default function ProjectDetailPage() {
       .eq("user_id", user.id);
 
     if (error) {
-      setMessage(error.message || "Stok hareketi silinemedi.");
+      return { ok: false, movement, error: error.message || "Stok hareketi silinemedi." };
+    }
+
+    return { ok: true, movement };
+  }
+
+  async function deleteStockMovement(movement) {
+    const approved = window.confirm(`${movement.product_name || "Stok hareketi"} kaydı silinsin mi? Stok toplamları ters hareketle güncellenecek.`);
+    if (!approved) return;
+
+    const user = await getUserOrRedirect();
+    if (!user) return;
+
+    const result = await deleteStockMovementRecord(movement, user);
+    if (!result.ok) {
+      setMessage(result.error);
       return;
     }
 
     setMessage("Stok hareketi silindi ve liste yenilendi.");
     await loadProject();
+  }
+
+  function toggleStockMovementSelection(movementId) {
+    setSelectedStockMovementIds((current) =>
+      current.includes(movementId)
+        ? current.filter((id) => id !== movementId)
+        : [...current, movementId],
+    );
+  }
+
+  function toggleAllStockMovements() {
+    const visibleIds = stockMovements.map((movement) => movement.id);
+    const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedStockMovementIds.includes(id));
+    setSelectedStockMovementIds(allSelected ? [] : visibleIds);
+  }
+
+  async function deleteSelectedStockMovements() {
+    const selectedMovements = stockMovements.filter((movement) => selectedStockMovementIds.includes(movement.id));
+    if (selectedMovements.length === 0) {
+      setMessage("Silmek için en az bir stok hareketi seçin.");
+      return;
+    }
+
+    const approved = window.confirm(`${selectedMovements.length} stok hareketi silinecek. Stok ve proje kalemi miktarları ters hareketle güncellenecek. Devam edilsin mi?`);
+    if (!approved) return;
+
+    const user = await getUserOrRedirect();
+    if (!user) return;
+
+    setIsDeletingStockMovements(true);
+    const failed = [];
+    let deletedCount = 0;
+
+    for (const movement of selectedMovements) {
+      const result = await deleteStockMovementRecord(movement, user);
+      if (result.ok) deletedCount += 1;
+      else failed.push(result);
+    }
+
+    setIsDeletingStockMovements(false);
+    setSelectedStockMovementIds([]);
+    await loadProject();
+
+    if (failed.length > 0) {
+      setMessage(`${deletedCount} stok hareketi silindi. ${failed.length} hareket silinemedi: ${failed.slice(0, 3).map((row) => row.error).join(" | ")}`);
+      return;
+    }
+
+    setMessage(`${deletedCount} stok hareketi silindi ve liste yenilendi.`);
   }
 
   async function deleteProjectOffer(offer) {
@@ -8768,6 +8833,39 @@ export default function ProjectDetailPage() {
               </div>
             </div>
 
+            <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-slate-100 bg-slate-50 p-4 md:flex-row md:items-center md:justify-between">
+              <div>
+                <div className="text-sm font-black text-slate-900">
+                  {selectedStockMovementIds.length > 0
+                    ? `${selectedStockMovementIds.length} stok hareketi seçildi`
+                    : "Toplu işlem için stok hareketlerini seçin"}
+                </div>
+                <div className="mt-1 text-xs font-semibold text-slate-500">
+                  Silme işleminde stok ve proje kalemi miktarları ters hareketle güncellenir.
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={toggleAllStockMovements}
+                  disabled={stockMovements.length === 0 || isDeletingStockMovements}
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-black text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:bg-slate-200"
+                >
+                  {stockMovements.length > 0 && stockMovements.every((movement) => selectedStockMovementIds.includes(movement.id))
+                    ? "Seçimi Temizle"
+                    : "Tümünü Seç"}
+                </button>
+                <button
+                  type="button"
+                  onClick={deleteSelectedStockMovements}
+                  disabled={selectedStockMovementIds.length === 0 || isDeletingStockMovements}
+                  className="rounded-xl bg-red-600 px-4 py-2 text-xs font-black text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                >
+                  {isDeletingStockMovements ? "Siliniyor..." : `Seçilenleri Sil (${selectedStockMovementIds.length})`}
+                </button>
+              </div>
+            </div>
+
             <div className="mt-5 grid grid-cols-1 gap-3">
               {stockMovements.map((movement) => {
                 const currency = movement.currency || projectCurrencyForDisplay();
@@ -8775,7 +8873,15 @@ export default function ProjectDetailPage() {
 
                 return (
                 <div key={movement.id} className="rounded-xl border border-slate-100 p-4">
-                  <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_160px_170px_110px] lg:items-center">
+                  <div className="grid grid-cols-1 gap-4 lg:grid-cols-[32px_minmax(0,1fr)_160px_170px_110px] lg:items-center">
+                    <div className="flex items-start">
+                      <input
+                        type="checkbox"
+                        checked={selectedStockMovementIds.includes(movement.id)}
+                        onChange={() => toggleStockMovementSelection(movement.id)}
+                        aria-label={`${movement.product_name || "Stok hareketi"} seç`}
+                      />
+                    </div>
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <div className="truncate font-black text-slate-900" title={movement.product_name || "Stok kalemi"}>{movement.product_name || "Stok kalemi"}</div>

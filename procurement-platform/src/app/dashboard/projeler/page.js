@@ -1030,7 +1030,7 @@ export default function ProjectsPage() {
   function openProcurementSummary(mode = "missing") {
     const validIds = selectedProjectIds.filter((id) => activeProjects.some((project) => project.id === id));
     if (validIds.length === 0) {
-      setMessage("Satınalma icmali için en az bir aktif proje seçin.");
+      setMessage("Malzeme listesi hazırlamak için en az bir aktif proje seçin.");
       return;
     }
     localStorage.setItem("procurementSummaryProjectIds", JSON.stringify(validIds));
@@ -1090,7 +1090,7 @@ export default function ProjectsPage() {
                   Seçili {selectedProjectIds.length} proje için işlem yap
                 </div>
                 <div className="mt-1 text-sm font-semibold text-blue-800">
-                  İcmaller yalnızca seçili projelerden hazırlanır; proje, ana ürün ve alt ürün bağlantıları korunur.
+                  Listeler yalnızca seçili projelerden hazırlanır; proje, ana ürün ve alt ürün bağlantıları korunur.
                 </div>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -1099,21 +1099,21 @@ export default function ProjectsPage() {
                   onClick={() => openProcurementSummary("missing")}
                   className="rounded-xl bg-red-700 px-4 py-3 text-sm font-black text-white hover:bg-red-800"
                 >
-                  Eksik Malzeme İcmali
+                  Satın Alma Gerekenler
                 </button>
                 <button
                   type="button"
                   onClick={() => openProcurementSummary("stock")}
                   className="rounded-xl bg-emerald-700 px-4 py-3 text-sm font-black text-white hover:bg-emerald-800"
                 >
-                  Stoktan Karşılanabilir İcmali
+                  Stoktan Karşılanacaklar
                 </button>
                 <button
                   type="button"
                   onClick={() => openProcurementSummary("all")}
                   className="rounded-xl bg-blue-700 px-4 py-3 text-sm font-black text-white hover:bg-blue-800"
                 >
-                  Tüm İhtiyaç İcmali
+                  Tüm Malzeme Listesi
                 </button>
                 <button
                   type="button"
@@ -1127,7 +1127,7 @@ export default function ProjectsPage() {
           </div>
         ) : (
           <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm font-semibold text-slate-600 shadow-sm">
-            Birden fazla projeyi seçerek eksik malzeme, stoktan karşılanabilir ürün veya tüm ihtiyaç icmali oluşturabilirsiniz.
+            Birden fazla projeyi seçerek stoktan karşılanacakları, satın alma gerekenleri veya tüm malzeme listesini hazırlayabilirsiniz.
           </div>
         )}
 
