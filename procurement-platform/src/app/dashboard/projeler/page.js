@@ -831,7 +831,8 @@ export default function ProjectsPage() {
       return item.parent_item_id || itemType === "child" || itemType === "standalone" || itemType === "material";
     });
     const trackedItems = materialItems.length > 0 ? materialItems : items;
-    const missingStatuses = ["Satınalma gerekli", "Eksik geldi", "Tedarikçiden bekleniyor", "Talep oluşturuldu"];
+    const missingStatuses = ["Satınalma gerekli", "Eksik geldi", "Tedarikçiden bekleniyor"];
+    const requestedStatuses = ["Talep oluşturuldu"];
     const stockCoveredStatuses = ["Depoda", "Projeye Ayrıldı", "Projeye rezerve edildi", "Stoktan karşılandı"];
     const orderedStatuses = ["Sipariş verildi", "Tedarikçiden bekleniyor", "Kısmi geldi"];
     const completedItems = items.filter((item) =>
@@ -842,6 +843,9 @@ export default function ProjectsPage() {
     ).length;
     const orderedItems = trackedItems.filter((item) =>
       orderedStatuses.includes(item.status),
+    ).length;
+    const requestedItems = trackedItems.filter((item) =>
+      requestedStatuses.includes(item.status),
     ).length;
     const stockCoveredItems = trackedItems.filter((item) => {
       const reservedQuantity = quantityFromItem(item, [
@@ -869,6 +873,8 @@ export default function ProjectsPage() {
         ? { label: "Malzeme yok", tone: "slate" }
         : missingMaterials > 0
           ? { label: `${missingMaterials} eksik`, tone: "red" }
+          : requestedItems > 0
+            ? { label: `${requestedItems} talepte`, tone: "blue" }
           : stockCoveredItems > 0
             ? { label: `${stockCoveredItems} stoktan`, tone: "green" }
             : { label: "Kontrol gerekli", tone: "amber" };
@@ -877,6 +883,8 @@ export default function ProjectsPage() {
         ? { label: `${openOrders} açık sipariş`, tone: "blue" }
         : orderedItems > 0
           ? { label: `${orderedItems} kalem siparişte`, tone: "blue" }
+          : requestedItems > 0
+            ? { label: "Talep aşamasında", tone: "blue" }
           : missingMaterials > 0
             ? { label: "Sipariş bekliyor", tone: "amber" }
             : totalOrders > 0
@@ -896,6 +904,7 @@ export default function ProjectsPage() {
       completion: items.length > 0 ? Math.round((completedItems / items.length) * 100) : 0,
       materialTotal: trackedItems.length,
       stockCoveredItems,
+      requestedItems,
       orderedItems,
       openOrders,
       totalOrders,
@@ -986,18 +995,22 @@ export default function ProjectsPage() {
       if (metrics.missingMaterials > 0) summary.projectsWithMissing += 1;
       if (metrics.stockCoveredItems > 0) summary.projectsWithStockCover += 1;
       if (metrics.openOrders > 0 || metrics.orderedItems > 0) summary.projectsWithOrders += 1;
-      if (metrics.missingMaterials === 0 && metrics.openOrders === 0 && metrics.materialTotal > 0) summary.projectsReady += 1;
+      if (metrics.requestedItems > 0) summary.projectsWithRequests += 1;
+      if (metrics.missingMaterials === 0 && metrics.requestedItems === 0 && metrics.openOrders === 0 && metrics.materialTotal > 0) summary.projectsReady += 1;
       summary.missingItems += metrics.missingMaterials;
       summary.stockCoveredItems += metrics.stockCoveredItems;
+      summary.requestedItems += metrics.requestedItems;
       summary.openOrders += metrics.openOrders;
       return summary;
     }, {
       projectsWithMissing: 0,
       projectsWithStockCover: 0,
       projectsWithOrders: 0,
+      projectsWithRequests: 0,
       projectsReady: 0,
       missingItems: 0,
       stockCoveredItems: 0,
+      requestedItems: 0,
       openOrders: 0,
     });
   }, [displayedProjects, relatedRows]);
@@ -1403,10 +1416,10 @@ export default function ProjectsPage() {
             </div>
             <div className="mt-4 grid gap-3 md:grid-cols-4">
               <div className="rounded-2xl border border-red-100 bg-red-50 p-4">
-                <div className="text-xs font-black uppercase tracking-wide text-red-700">Eksik malzeme</div>
+                <div className="text-xs font-black uppercase tracking-wide text-red-700">Talebe alınmamış</div>
                 <div className="mt-2 text-2xl font-black text-red-800">{displayedProjectOverview.projectsWithMissing}</div>
                 <div className="text-xs font-semibold text-red-700">
-                  {displayedProjectOverview.missingItems} kalem takip bekliyor
+                  {displayedProjectOverview.missingItems} kalem henüz talebe alınmadı
                 </div>
               </div>
               <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
@@ -1417,17 +1430,19 @@ export default function ProjectsPage() {
                 </div>
               </div>
               <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4">
-                <div className="text-xs font-black uppercase tracking-wide text-blue-700">Sipariş süreci</div>
-                <div className="mt-2 text-2xl font-black text-blue-800">{displayedProjectOverview.projectsWithOrders}</div>
+                <div className="text-xs font-black uppercase tracking-wide text-blue-700">Talep / Sipariş süreci</div>
+                <div className="mt-2 text-2xl font-black text-blue-800">
+                  {displayedProjectOverview.projectsWithRequests + displayedProjectOverview.projectsWithOrders}
+                </div>
                 <div className="text-xs font-semibold text-blue-700">
-                  {displayedProjectOverview.openOrders} açık sipariş var
+                  {displayedProjectOverview.requestedItems} kalem talepte · {displayedProjectOverview.openOrders} açık sipariş
                 </div>
               </div>
               <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
                 <div className="text-xs font-black uppercase tracking-wide text-slate-600">Sorunsuz görünen</div>
                 <div className="mt-2 text-2xl font-black text-slate-900">{displayedProjectOverview.projectsReady}</div>
                 <div className="text-xs font-semibold text-slate-500">
-                  Eksik ve açık sipariş görünmüyor
+                  Açık talep, eksik veya açık sipariş görünmüyor
                 </div>
               </div>
             </div>
@@ -1492,7 +1507,7 @@ export default function ProjectsPage() {
                           </span>
                         </div>
                         <div className="mt-1 text-[11px] font-semibold text-slate-500">
-                          Stoktan {metrics.stockCoveredItems} · Eksik {metrics.missingMaterials}
+                          Stoktan {metrics.stockCoveredItems} · Talepte {metrics.requestedItems} · Eksik {metrics.missingMaterials}
                         </div>
                       </td>
                       <td className="p-4">

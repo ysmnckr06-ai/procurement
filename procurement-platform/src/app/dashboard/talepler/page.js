@@ -103,6 +103,79 @@ function cleanRequestNote(value) {
   return note;
 }
 
+function compactRequestText(value, maxLength = 18) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength - 1)}…`;
+}
+
+function formatAllocationQuantity(value) {
+  const amount = Number(value || 0);
+  if (!amount) return "";
+
+  return amount.toLocaleString("tr-TR", {
+    maximumFractionDigits: 2,
+  });
+}
+
+function requestAllocationQuantity(allocation) {
+  return Number(
+    allocation?.purchaseQuantity ??
+    allocation?.purchase_quantity ??
+    allocation?.quantity ??
+    allocation?.qty ??
+    allocation?.openQuantity ??
+    allocation?.open_quantity ??
+    0
+  ) || 0;
+}
+
+function RequestAllocationChips({ allocations, unit = "adet", limit = 2 }) {
+  if (!Array.isArray(allocations) || allocations.length === 0) return null;
+
+  const visibleAllocations = allocations.slice(0, limit);
+  const hiddenCount = Math.max(allocations.length - visibleAllocations.length, 0);
+
+  return (
+    <div className="flex max-w-[190px] flex-wrap gap-1">
+      {visibleAllocations.map((allocation, allocationIndex) => {
+        const projectCode = allocation.projectCode || allocation.project_code || allocation.projectName || allocation.project_name || "Proje";
+        const projectName = allocation.projectName || allocation.project_name || "";
+        const quantity = requestAllocationQuantity(allocation);
+        const formattedQuantity = formatAllocationQuantity(quantity);
+        const title = [
+          projectCode,
+          projectName,
+          formattedQuantity ? `${formattedQuantity} ${unit || "adet"}` : "",
+        ].filter(Boolean).join(" · ");
+
+        return (
+          <span
+            key={`${allocation.projectItemId || allocation.project_item_id || allocationIndex}`}
+            title={title}
+            className="inline-flex max-w-full items-center gap-1 rounded-full bg-slate-100 px-2 py-1 text-[11px] font-bold text-slate-600"
+          >
+            <span className="truncate">{compactRequestText(projectCode, 14)}</span>
+            {formattedQuantity && (
+              <>
+                <span className="text-slate-400">·</span>
+                <span>{formattedQuantity} {unit || "adet"}</span>
+              </>
+            )}
+          </span>
+        );
+      })}
+
+      {hiddenCount > 0 && (
+        <span className="inline-flex rounded-full bg-blue-50 px-2 py-1 text-[11px] font-black text-blue-700">
+          + {hiddenCount} proje dağılımı
+        </span>
+      )}
+    </div>
+  );
+}
+
 function normalizeRequestProductCode(value) {
   return String(value || "").trim().toUpperCase();
 }
@@ -1181,25 +1254,17 @@ export default function TaleplerPage() {
                                     <th className="px-3 py-3">Birim</th>
                                     <th className="px-3 py-3 text-right">Birim fiyat</th>
                                     <th className="px-3 py-3 text-right">Toplam</th>
-                                    <th className="px-3 py-3">Proje dağılımı / Not</th>
+                                    <th className="px-3 py-3">Proje</th>
                                     <th className="px-3 py-3">İşlem</th>
                                   </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
                                   {requestItems.map((item, itemIndex) => {
-                                    const quantity = readItemField(item, ["talepEdilenAdet", "quantity", "qty", "estimated_quantity"], 0);
                                     const currency = readItemField(item, ["paraBirimi", "currency"], "TRY");
                                     const draftQuantity = requestItemQuantity(req.id, itemIndex, item);
                                     const stockCoverable = readItemField(item, ["stock_coverable_quantity", "stockCoverableQuantity"], 0);
                                     const currentStock = readItemField(item, ["current_stock", "currentStock"], 0);
                                     const allocations = Array.isArray(item.allocations) ? item.allocations : [];
-                                    const productMatch = matchProduct(stockProducts, {
-                                      product_id: readItemField(item, ["product_id", "productId"], ""),
-                                      product_code: readItemField(item, ["urunKodu", "product_code", "code"], ""),
-                                      product_name: readItemField(item, ["urunAciklamasi", "product_name", "description", "name"], ""),
-                                      brand: readItemField(item, ["marka", "brand"], ""),
-                                      unit: readItemField(item, ["birim", "unit"], "adet"),
-                                    });
                                     return (
                                       <tr key={`${readItemField(item, ["urunKodu", "product_code", "code"], "kod-yok")}-${itemIndex}`} className="align-top">
                                         <td className="px-3 py-3 font-semibold text-slate-500">{itemIndex + 1}</td>
@@ -1208,11 +1273,6 @@ export default function TaleplerPage() {
                                         </td>
                                         <td className="max-w-[420px] px-3 py-3 font-semibold text-slate-800">
                                           {readItemField(item, ["urunAciklamasi", "product_name", "description", "name"], "Ürün açıklaması yok")}
-                                          {productMatch.type !== "new" && productMatch.match?.product && (
-                                            <div className={`mt-2 rounded-lg border px-2 py-1 text-[10px] font-bold ${productMatch.type === "exact" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : productMatch.type === "conflict" ? "border-red-200 bg-red-50 text-red-800" : "border-blue-200 bg-blue-50 text-blue-800"}`}>
-                                              {productMatch.type === "exact" ? "Eşleşen kart" : productMatch.type === "conflict" ? "Kod çakışması" : "Benzer kart"}: %{Math.round((productMatch.match.score || 0) * 100)} · {productMatch.match.product.product_code || "Kodsuz"} · {productMatch.match.product.product_name}
-                                            </div>
-                                          )}
                                         </td>
                                         <td className="px-3 py-3 text-right font-bold text-blue-700">
                                           <input
@@ -1242,16 +1302,12 @@ export default function TaleplerPage() {
                                         <td className="px-3 py-3 text-right font-bold text-slate-900">
                                           {formatRequestMoney(readItemField(item, ["toplam", "total", "estimated_total"], 0), currency)}
                                         </td>
-                                        <td className="max-w-[260px] px-3 py-3 text-xs font-medium text-slate-500">
+                                        <td className="max-w-[220px] px-3 py-3 text-xs font-medium text-slate-500">
                                           {allocations.length > 0 ? (
-                                            <div className="space-y-1">
-                                              {allocations.slice(0, 3).map((allocation, allocationIndex) => (
-                                                <div key={`${allocation.projectItemId || allocationIndex}`} className="rounded bg-slate-50 px-2 py-1">
-                                                  {allocation.projectCode || allocation.projectName || "Proje"}: {Number(allocation.quantity || 0).toLocaleString("tr-TR")}
-                                                </div>
-                                              ))}
-                                              {allocations.length > 3 && <div>+{allocations.length - 3} proje dağılımı</div>}
-                                            </div>
+                                            <RequestAllocationChips
+                                              allocations={allocations}
+                                              unit={readItemField(item, ["birim", "unit"], "adet")}
+                                            />
                                           ) : cleanRequestNote(readItemField(item, ["not", "note"], "")) || "-"}
                                         </td>
                                         <td className="px-3 py-3">
