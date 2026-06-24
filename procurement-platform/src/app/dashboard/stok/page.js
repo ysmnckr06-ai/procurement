@@ -566,33 +566,6 @@ function projectItemMatchesProduct(item, product) {
   return !productCode && productName && productName === itemName;
 }
 
-function orderItemMatchesProduct(item, product) {
-  if (!product || !item || typeof item !== "object") return false;
-
-  const ids = product.duplicateIds || [product.id];
-  const itemProductId = item.product_id || item.productId || item.stock_product_id;
-  if (itemProductId && ids.includes(itemProductId)) return true;
-
-  const productCode = normalizeStockCode(product.product_code);
-  const itemCode = normalizeStockCode(item.product_code || item.productCode || item.code);
-  const productName = normalizeStockText(product.product_name);
-  const itemName = normalizeStockText(item.product_name || item.productName || item.name || item.description);
-
-  if (productCode && itemCode && productCode === itemCode && productName === itemName) return true;
-  return !productCode && productName && productName === itemName;
-}
-
-function flattenOrderItems(value) {
-  if (Array.isArray(value)) return value.flatMap(flattenOrderItems);
-  if (!value || typeof value !== "object") return [];
-
-  const nestedKeys = ["items", "children", "subItems", "lines"];
-  return [
-    value,
-    ...nestedKeys.flatMap((key) => flattenOrderItems(value[key])),
-  ];
-}
-
 function isUuid(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ""));
 }
@@ -859,21 +832,6 @@ export default function StockPage() {
     setLoading(false);
   }
 
-  async function archiveProductIds(productIds, reason) {
-    const safeProductIds = productIds.filter(isUuid);
-    if (safeProductIds.length !== 1) {
-      return new Error("Birleşik/mükerrer ürün grubu otomatik arşivlenmedi. Her fiziksel ürün kartı ayrı incelenmelidir.");
-    }
-    for (const productId of safeProductIds) {
-      const { error } = await supabase.rpc("archive_zero_stock_product", {
-        target_product_id: productId,
-        archive_reason: reason,
-      });
-      if (error) return error;
-    }
-    return null;
-  }
-
   async function restoreArchivedProduct(product) {
     if (!product?.id) return;
     const approved = window.confirm(`${product.product_name} ürün kartı aktif stok listesine geri alınsın mı?`);
@@ -898,45 +856,7 @@ export default function StockPage() {
       return;
     }
 
-    const productIds = product.duplicateIds || [product.id];
-    const movementIds = movements
-      .filter((movement) => movementMatchesProduct(movement, product))
-      .map((movement) => movement.id);
-
-    if (movementIds.length > 0) {
-      const isZeroStock = Number(product.current_stock || 0) === 0 && Number(product.reserved_stock || 0) === 0;
-      const hasUnreversibleInbound = selectedMovements.some(
-        (movement) => String(movement.movement_type || "").trim().toLowerCase() === "in"
-          && Number(movement.quantity || 0) > Number(product.current_stock || 0),
-      );
-      if (isZeroStock && hasUnreversibleInbound) {
-        const archiveApproved = window.confirm(
-          "Bu ürünün eski stok hareketleri stoktan geri alınamıyor. Ürünü aktif listeden arşivlemek ister misiniz?",
-        );
-        if (archiveApproved) {
-          setDeleting(true);
-          const archiveError = await archiveProductIds(
-            productIds,
-            "Eski stok hareketi geri alınamadığı için kullanıcı onayıyla arşivlendi.",
-          );
-          setDeleting(false);
-          if (archiveError) {
-            setMessage(archiveError.message || "Ürün güvenlik kontrolleri nedeniyle arşivlenemedi.");
-            return;
-          }
-          setSelectedProduct(null);
-          setMessage("Ürün arşivlendi; stok hareketleri ve sayaçlar değiştirilmedi.");
-          await loadStock();
-          return;
-        }
-      }
-      setProductDeleteBlockKey(product.groupKey);
-      setMessage(
-        `${product.product_name} ürün kartına bağlı ${movementIds.length} stok hareketi var. ` +
-          "Bağlı hareketleri görüntüleyip sildikten sonra ürün kartını tekrar silebilirsiniz.",
-      );
-      return;
-    }
+    const productIds = (product.duplicateIds || [product.id]).filter(isUuid);
 
     const approved = window.confirm(`${product.product_name} ürün kartını silmek istiyor musunuz?`);
     if (!approved) return;
@@ -944,100 +864,26 @@ export default function StockPage() {
     setDeleting(true);
     setMessage("");
 
-    const { error: productDeleteError } = await supabase
-      .from("products")
-      .delete()
-      .in("id", productIds);
+    const { data, error } = await supabase.rpc("bulk_delete_products_with_stock_records", {
+      target_product_ids: productIds,
+    });
 
-    if (productDeleteError) {
+    if (error) {
       setMessage("Ürün kartı silinirken hata oluştu.");
       setDeleting(false);
       return;
     }
 
-    setMessage("Ürün kartı silindi.");
+    const deletedProductCount = Number(data?.deletedProductCount || 0);
+    const failedProductCount = Number(data?.failedProductCount || 0);
+    setMessage(`${deletedProductCount} ürün silindi. ${failedProductCount} ürün silinemedi.`);
     setProductDeleteBlockKey("");
-    setSelectedProduct(null);
-    if (typeof window !== "undefined") window.localStorage.removeItem("stock-selected-product-key");
+    if (deletedProductCount > 0) {
+      setSelectedProduct(null);
+      if (typeof window !== "undefined") window.localStorage.removeItem("stock-selected-product-key");
+    }
     setDeleting(false);
     await loadStock();
-  }
-
-  async function fetchRowsByProductIds(table, select, productIds, userId) {
-    const rows = [];
-    for (let offset = 0; offset < productIds.length; offset += 50) {
-      const chunk = productIds.slice(offset, offset + 50);
-      let page = 0;
-      while (true) {
-        const from = page * 1000;
-        const { data, error } = await supabase
-          .from(table)
-          .select(select)
-          .eq("user_id", userId)
-          .in("product_id", chunk)
-          .range(from, from + 999);
-        if (error) throw error;
-        rows.push(...(data || []));
-        if (!data || data.length < 1000) break;
-        page += 1;
-      }
-    }
-    return rows;
-  }
-
-  async function fetchUserOrders(userId) {
-    const rows = [];
-    let page = 0;
-    while (true) {
-      const from = page * 1000;
-      const { data, error } = await supabase
-        .from("orders")
-        .select("id, order_no, items")
-        .eq("user_id", userId)
-        .range(from, from + 999);
-      if (error) throw error;
-      rows.push(...(data || []));
-      if (!data || data.length < 1000) break;
-      page += 1;
-    }
-    return rows;
-  }
-
-  async function fetchRowsWithoutProductId(table, select, userId) {
-    const rows = [];
-    let page = 0;
-    while (true) {
-      const from = page * 1000;
-      const { data, error } = await supabase
-        .from(table)
-        .select(select)
-        .eq("user_id", userId)
-        .is("product_id", null)
-        .range(from, from + 999);
-      if (error) throw error;
-      rows.push(...(data || []));
-      if (!data || data.length < 1000) break;
-      page += 1;
-    }
-    return rows;
-  }
-
-  async function fetchUserReceipts(userId) {
-    const rows = [];
-    let page = 0;
-    while (true) {
-      const from = page * 1000;
-      const { data, error } = await supabase
-        .from("order_receipts")
-        .select("id, order_id, product_code, product_name")
-        .eq("user_id", userId)
-        .range(from, from + 999);
-      if (error) throw error;
-      rows.push(...(data || []));
-      if (!data || data.length < 1000) break;
-      page += 1;
-    }
-    return rows;
   }
 
   async function analyzeSelectedProductsForDeletion() {
@@ -1051,83 +897,14 @@ export default function StockPage() {
     setMessage("");
 
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        setProductDeleteModalOpen(false);
-        router.push("/login");
-        return;
-      }
-
       const productIds = selectedGroups.flatMap((product) => product.duplicateIds || [product.id]).filter(isUuid);
-      const [directMovements, legacyMovements, directProjectItems, legacyProjectItems, userOrders, userReceipts] = await Promise.all([
-        fetchRowsByProductIds(
-          "stock_movements",
-          "id, product_id, movement_type, quantity, project_id, project_item_id, parent_item_id, order_id, receipt_id, request_id, report_id, created_at",
-          productIds,
-          user.id,
-        ),
-        fetchRowsWithoutProductId(
-          "stock_movements",
-          "id, product_id, product_code, product_name, movement_type, quantity, project_id, project_item_id, parent_item_id, order_id, receipt_id, request_id, report_id, created_at",
-          user.id,
-        ),
-        fetchRowsByProductIds("project_items", "id, product_id, product_name, product_code", productIds, user.id),
-        fetchRowsWithoutProductId("project_items", "id, product_id, product_name, product_code", user.id),
-        fetchUserOrders(user.id),
-        fetchUserReceipts(user.id),
-      ]);
-      const orderRows = userOrders.flatMap((order) => flattenOrderItems(order.items).map((item) => ({ order, item })));
-
-      const plans = selectedGroups.map((product) => {
-        const ids = (product.duplicateIds || [product.id]).filter(isUuid);
-        const productMovements = [...directMovements, ...legacyMovements].filter(
-          (movement) => ids.includes(movement.product_id) || movementMatchesProduct(movement, product),
-        );
-        const productProjectItems = [...directProjectItems, ...legacyProjectItems].filter(
-          (item) => ids.includes(item.product_id) || projectItemMatchesProduct(item, product),
-        );
-        const productOrderItems = orderRows.filter(({ item }) => orderItemMatchesProduct(item, product));
-        const productReceipts = userReceipts.filter((receipt) => orderItemMatchesProduct(receipt, product));
-        const reasons = [];
-
-        if (product.is_virtual_project_main || ids.length === 0) reasons.push("Proje malzeme listesinden gelen sanal ürün kartı");
-        if (productProjectItems.length > 0) reasons.push(`${productProjectItems.length} proje kalemi bağlantısı`);
-        if (productOrderItems.length > 0) reasons.push(`${productOrderItems.length} sipariş kalemi bağlantısı`);
-        if (productReceipts.length > 0) reasons.push(`${productReceipts.length} sipariş teslimat kaydı bağlantısı`);
-
-        const projectMovements = productMovements.filter((row) => row.project_id || row.project_item_id || row.parent_item_id);
-        const orderMovements = productMovements.filter((row) => row.order_id || row.receipt_id);
-        const workflowMovements = productMovements.filter((row) => row.request_id || row.report_id);
-        if (projectMovements.length > 0) reasons.push(`${projectMovements.length} proje bağlantılı stok hareketi`);
-        if (orderMovements.length > 0) reasons.push(`${orderMovements.length} sipariş/teslimat bağlantılı stok hareketi`);
-        if (workflowMovements.length > 0) reasons.push(`${workflowMovements.length} talep/rapor bağlantılı stok hareketi`);
-
-        return {
-          groupKey: product.groupKey,
-          productName: product.product_name,
-          productCode: product.product_code,
-          productIds: ids,
-          currentStock: Number(product.current_stock || 0),
-          reservedStock: Number(product.reserved_stock || 0),
-          movements: [...productMovements].sort(
-            (a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime(),
-          ),
-          projectItemCount: productProjectItems.length,
-          reasons,
-          eligible: reasons.length === 0,
-        };
-      });
-
       setProductDeleteAnalysis({
-        plans,
-        selectedProductCount: plans.length,
-        movementCount: plans.reduce((sum, plan) => sum + plan.movements.length, 0),
-        projectLinkedProductCount: plans.filter((plan) => plan.projectItemCount > 0).length,
-        blockedProductCount: plans.filter((plan) => !plan.eligible).length,
+        productIds,
+        selectedProductCount: selectedGroups.length,
       });
-    } catch (error) {
+    } catch (_error) {
       setProductDeleteModalOpen(false);
-      setMessage(error?.message || "Ürün bağlantıları analiz edilirken hata oluştu.");
+      setMessage("Silme hazırlığı tamamlanamadı.");
     } finally {
       setAnalyzingProductDeletion(false);
     }
@@ -1139,13 +916,6 @@ export default function StockPage() {
     setProductDeleteResult(null);
     setMessage("");
 
-    const failedProducts = productDeleteAnalysis.plans
-      .filter((plan) => !plan.eligible)
-      .map((plan) => ({ ...plan, reason: plan.reasons.join(", ") }));
-    let deletedMovementCount = 0;
-    let deletedProductCount = 0;
-    let archivedProductCount = 0;
-
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) {
@@ -1154,68 +924,31 @@ export default function StockPage() {
         return;
       }
 
-      for (const plan of productDeleteAnalysis.plans.filter((item) => item.eligible)) {
-        const shouldOfferArchive = plan.currentStock === 0
-          && plan.reservedStock === 0
-          && plan.movements.some(
-            (movement) => String(movement.movement_type || "").trim().toLowerCase() === "in"
-              && Number(movement.quantity || 0) > plan.currentStock,
-          );
-        if (shouldOfferArchive) {
-          const archiveApproved = window.confirm(
-            `${plan.productName}: Bu ürünün eski stok hareketleri stoktan geri alınamıyor. Ürünü aktif listeden arşivlemek ister misiniz?`,
-          );
-          if (archiveApproved) {
-            const archiveError = await archiveProductIds(
-              plan.productIds,
-              "Toplu ürün temizliğinde eski stok hareketi geri alınamadığı için kullanıcı onayıyla arşivlendi.",
-            );
-            if (archiveError) {
-              failedProducts.push({ ...plan, reason: archiveError.message || "Ürün arşivlenemedi" });
-            } else {
-              archivedProductCount += 1;
-            }
-            continue;
-          }
-        }
-        let movementFailure = null;
-        for (const movement of plan.movements) {
-          const { error } = await supabase.rpc("delete_stock_movement_with_reversal", {
-            target_movement_id: movement.id,
-          });
-          if (error) {
-            movementFailure = error;
-            break;
-          }
-          deletedMovementCount += 1;
-        }
-        if (movementFailure) {
-          failedProducts.push({ ...plan, reason: `Stok hareketi silinemedi: ${movementFailure.message}` });
-          continue;
-        }
+      const { data, error } = await supabase.rpc("bulk_delete_products_with_stock_records", {
+        target_product_ids: productDeleteAnalysis.productIds || [],
+      });
 
-        const { data: deletedRows, error: productError } = await supabase
-          .from("products")
-          .delete()
-          .eq("user_id", user.id)
-          .in("id", plan.productIds)
-          .select("id");
-        if (productError || (deletedRows || []).length !== plan.productIds.length) {
-          failedProducts.push({ ...plan, reason: productError?.message || "Ürün kartlarının tamamı silinemedi" });
-          continue;
-        }
-        deletedProductCount += 1;
+      if (error) {
+        setMessage("Toplu ürün silme işlemi tamamlanamadı.");
+        return;
       }
 
-      const failedKeys = failedProducts.map((plan) => plan.groupKey);
+      const result = data || {};
+      const failedProductIds = new Set(result.failedProductIds || []);
+      const failedKeys = productGroups
+        .filter((product) => (product.duplicateIds || [product.id]).some((id) => failedProductIds.has(id)))
+        .map((product) => product.groupKey);
       setSelectedProductKeys(failedKeys);
       if (selectedProduct && !failedKeys.includes(selectedProduct.groupKey)) setSelectedProduct(null);
       setProductDeleteBlockKey("");
-      setProductDeleteResult({ deletedProductCount, deletedMovementCount, archivedProductCount, failedProducts });
-      setMessage(`${deletedProductCount} ürün silindi, ${archivedProductCount} ürün arşivlendi ve ${deletedMovementCount} bağlı stok hareketi güvenli şekilde terslendi.`);
+      setProductDeleteResult({
+        deletedProductCount: Number(result.deletedProductCount || 0),
+        failedProductCount: Number(result.failedProductCount || 0),
+      });
+      setMessage(`${Number(result.deletedProductCount || 0)} ürün silindi. ${Number(result.failedProductCount || 0)} ürün silinemedi.`);
       await loadStock();
-    } catch (error) {
-      setMessage(error?.message || "Toplu ürün silme işlemi tamamlanamadı.");
+    } catch (_error) {
+      setMessage("Toplu ürün silme işlemi tamamlanamadı.");
     } finally {
       setBulkDeletingProducts(false);
     }
@@ -1271,7 +1004,7 @@ export default function StockPage() {
         .join(", ");
       setMessage(
         `${deletedIds.length} hareket silindi. Silinemeyen kayıtlar: ${failedLabels}. ` +
-          `${failedRows[0].error.message || "Yetki veya bağlantı hatası."}`,
+          "Bu kayıtlar mevcut bağlantıları nedeniyle korunuyor olabilir.",
       );
       return;
     }
@@ -2431,13 +2164,13 @@ export default function StockPage() {
                   <div className="flex items-start justify-between gap-4">
                     <div>
                       <div className="inline-flex rounded-full bg-red-100 px-3 py-1 text-xs font-black text-red-700">
-                        Güvenli toplu silme
+                        Bu işlem geri alınamaz.
                       </div>
                       <h2 id="product-delete-title" className="mt-3 text-2xl font-black text-slate-950">
-                        Seçilen ürünleri analiz et ve temizle
+                        Ürünleri Sil
                       </h2>
                       <p className="mt-2 text-sm leading-6 text-slate-600">
-                        Kritik bağlantısı olmayan ürünlerin stok hareketleri güvenli tersleme RPC’siyle silinir; ardından ürün kartları kaldırılır.
+                        Seçilen ürünler ve bu ürünlere ait stok kayıtları kalıcı olarak silinecektir.
                       </p>
                     </div>
                     <button
@@ -2452,45 +2185,14 @@ export default function StockPage() {
 
                   {analyzingProductDeletion && (
                     <div className="mt-6 rounded-2xl bg-blue-50 p-6 text-center text-sm font-black text-blue-800">
-                      Ürün, hareket ve kritik bağlantılar analiz ediliyor...
+                      Silme işlemi hazırlanıyor...
                     </div>
                   )}
 
                   {productDeleteAnalysis && !productDeleteResult && (
                     <>
-                      <div className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
-                        {[
-                          ["Seçilen ürün", productDeleteAnalysis.selectedProductCount, "bg-slate-50 text-slate-900"],
-                          ["Bağlı hareket", productDeleteAnalysis.movementCount, "bg-blue-50 text-blue-900"],
-                          ["Proje bağlantılı", productDeleteAnalysis.projectLinkedProductCount, "bg-amber-50 text-amber-900"],
-                          ["Silinemeyecek", productDeleteAnalysis.blockedProductCount, "bg-red-50 text-red-900"],
-                        ].map(([label, value, color]) => (
-                          <div key={label} className={`rounded-2xl p-4 ${color}`}>
-                            <div className="text-xs font-black uppercase tracking-wide opacity-70">{label}</div>
-                            <div className="mt-2 text-3xl font-black">{value}</div>
-                          </div>
-                        ))}
-                      </div>
-
-                      {productDeleteAnalysis.blockedProductCount > 0 && (
-                        <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 p-4">
-                          <h3 className="text-sm font-black text-red-900">Silinemeyecek ürünler</h3>
-                          <div className="mt-3 max-h-52 space-y-2 overflow-y-auto">
-                            {productDeleteAnalysis.plans.filter((plan) => !plan.eligible).map((plan) => (
-                              <div key={plan.groupKey} className="rounded-xl bg-white p-3 text-sm">
-                                <div className="font-black text-slate-900">{plan.productName}</div>
-                                <div className="mt-1 text-xs font-semibold text-red-700">{plan.reasons.join(" · ")}</div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
-                        <span className="font-black">
-                          {productDeleteAnalysis.plans.filter((plan) => plan.eligible).length} ürün silmeye uygun.
-                        </span>{" "}
-                        Bağlı hareketler frontend hesabı yapılmadan yalnızca delete_stock_movement_with_reversal RPC üzerinden temizlenecek.
+                      <div className="mt-6 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-black text-red-900">
+                        Bu işlem geri alınamaz.
                       </div>
 
                       <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
@@ -2504,46 +2206,27 @@ export default function StockPage() {
                         </button>
                         <button
                           type="button"
-                          disabled={bulkDeletingProducts || !productDeleteAnalysis.plans.some((plan) => plan.eligible)}
+                          disabled={bulkDeletingProducts || (productDeleteAnalysis.productIds || []).length === 0}
                           onClick={executeAnalyzedProductDeletion}
                           className="rounded-xl bg-red-600 px-5 py-3 text-sm font-black text-white hover:bg-red-700 disabled:bg-slate-300"
                         >
-                          {bulkDeletingProducts ? "Güvenli silme sürüyor..." : "Onayla ve Sil"}
+                          {bulkDeletingProducts ? "Siliniyor..." : "Sil"}
                         </button>
                       </div>
                     </>
                   )}
 
                   {productDeleteResult && (
-                    <>
-                      <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
-                        <div className="rounded-2xl bg-emerald-50 p-5 text-emerald-900">
-                          <div className="text-xs font-black uppercase">Silinen ürün</div>
-                          <div className="mt-2 text-3xl font-black">{productDeleteResult.deletedProductCount}</div>
-                        </div>
-                        <div className="rounded-2xl bg-blue-50 p-5 text-blue-900">
-                          <div className="text-xs font-black uppercase">Silinen hareket</div>
-                          <div className="mt-2 text-3xl font-black">{productDeleteResult.deletedMovementCount}</div>
-                        </div>
-                        <div className="rounded-2xl bg-slate-100 p-5 text-slate-900">
-                          <div className="text-xs font-black uppercase">Arşivlenen ürün</div>
-                          <div className="mt-2 text-3xl font-black">{productDeleteResult.archivedProductCount || 0}</div>
-                        </div>
+                    <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div className="rounded-2xl bg-emerald-50 p-5 text-emerald-900">
+                        <div className="text-xs font-black uppercase">Silinen ürün</div>
+                        <div className="mt-2 text-3xl font-black">{productDeleteResult.deletedProductCount}</div>
                       </div>
-                      {productDeleteResult.failedProducts.length > 0 && (
-                        <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4">
-                          <h3 className="text-sm font-black text-amber-900">Silinemeyen ürünler ve nedenleri</h3>
-                          <div className="mt-3 max-h-60 space-y-2 overflow-y-auto">
-                            {productDeleteResult.failedProducts.map((plan) => (
-                              <div key={plan.groupKey} className="rounded-xl bg-white p-3 text-sm">
-                                <div className="font-black text-slate-900">{plan.productName}</div>
-                                <div className="mt-1 text-xs font-semibold text-amber-800">{plan.reason}</div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </>
+                      <div className="rounded-2xl bg-amber-50 p-5 text-amber-900">
+                        <div className="text-xs font-black uppercase">Silinemeyen ürün</div>
+                        <div className="mt-2 text-3xl font-black">{productDeleteResult.failedProductCount}</div>
+                      </div>
+                    </div>
                   )}
                 </section>
               </div>
@@ -2573,7 +2256,7 @@ export default function StockPage() {
                     {selectedVisibleMovements.length} stok hareketi silinecek. Bu işlem geri alınamaz.
                   </p>
                   <p className="mt-2 text-xs leading-5 text-slate-500">
-                    İlgili ürün ve proje stok toplamları silinen hareketlerin tersiyle atomik olarak güncellenecek.
+                    İlgili ürün ve proje stok toplamları işlem sonrasında güncellenecek.
                   </p>
                   <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                     <button
@@ -2667,7 +2350,7 @@ export default function StockPage() {
                             <div>
                               <h3 className="text-sm font-black uppercase tracking-wide text-slate-700">Bağlı kayıtlar</h3>
                               <p className="mt-1 text-xs leading-5 text-slate-600">
-                                Ürün silme kontrolü stok hareketlerini engel sayar. Proje kalemi bağlantıları bilgi amaçlı gösterilir ve kart silinirse bağlantı alanı boşaltılır.
+                                Ürün silinirken ilgili stok kayıtları da temizlenir. Kritik proje, sipariş veya teklif bağlantıları varsa ürün korunur.
                               </p>
                             </div>
                             {selectedMovements.length > 0 && (
@@ -2681,25 +2364,25 @@ export default function StockPage() {
                             )}
                           </div>
                           <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                            <div className={`rounded-xl border p-3 ${selectedMovements.length > 0 ? "border-red-200 bg-red-50" : "border-emerald-200 bg-emerald-50"}`}>
-                              <div className={`text-xs font-black uppercase ${selectedMovements.length > 0 ? "text-red-700" : "text-emerald-700"}`}>
+                            <div className="rounded-xl border border-blue-200 bg-blue-50 p-3">
+                              <div className="text-xs font-black uppercase text-blue-700">
                                 Stok hareketi
                               </div>
-                              <div className={`mt-1 text-2xl font-black ${selectedMovements.length > 0 ? "text-red-950" : "text-emerald-950"}`}>
+                              <div className="mt-1 text-2xl font-black text-blue-950">
                                 {selectedMovements.length}
                               </div>
                               <div className="mt-1 text-xs font-semibold text-slate-600">
-                                {selectedMovements.length > 0 ? "Ürün silmeye engel" : "Silme engeli yok"}
+                                Ürünle birlikte temizlenir
                               </div>
                             </div>
                             <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
                               <div className="text-xs font-black uppercase text-amber-700">Proje kalemi</div>
                               <div className="mt-1 text-2xl font-black text-amber-950">{selectedLinkedProjectItems.length}</div>
-                              <div className="mt-1 text-xs font-semibold text-slate-600">Bilgi amaçlı, silme engeli değil</div>
+                              <div className="mt-1 text-xs font-semibold text-slate-600">Kritik bağlantı varsa ürün korunur</div>
                             </div>
                           </div>
                           <p className="mt-3 text-xs leading-5 text-slate-500">
-                            Sipariş kalemi ve talep/teklif bağlantıları mevcut ürün kartı silme kontrolünde doğrudan engel olarak kullanılmıyor.
+                            Sipariş, talep ve teklif bağlantıları silme sırasında kontrol edilir.
                           </p>
                         </section>
 
@@ -2707,7 +2390,7 @@ export default function StockPage() {
                           <div role="alert" className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-4">
                             <div className="text-sm font-black text-red-950">Ürün kartı henüz silinemez</div>
                             <p className="mt-1 text-sm leading-6 text-red-800">
-                              Bu ürüne bağlı {selectedMovements.length} stok hareketi var. Hareketleri seçip güvenli toplu silme işlemini tamamlayın.
+                              Bu ürün kritik bağlantı nedeniyle korunuyor olabilir. Bağlantıları kontrol edip tekrar deneyin.
                             </p>
                             <div className="mt-3 flex flex-wrap gap-2">
                               <button
@@ -2722,7 +2405,7 @@ export default function StockPage() {
                                 onClick={() => focusProductMovements({ selectAll: true })}
                                 className="rounded-xl border border-red-300 bg-white px-4 py-2.5 text-sm font-black text-red-700 hover:bg-red-100"
                               >
-                                Tüm bağlı hareketleri seç
+                                Tüm ilgili hareketleri seç
                               </button>
                             </div>
                           </div>
@@ -2731,7 +2414,7 @@ export default function StockPage() {
                         {!showArchivedProducts && selectedProductDeleteBlocked && selectedMovements.length === 0 && (
                           <div role="status" className="mt-4 flex flex-col gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 sm:flex-row sm:items-center sm:justify-between">
                             <div>
-                              <div className="text-sm font-black text-emerald-950">Stok hareketi engeli temizlendi</div>
+                              <div className="text-sm font-black text-emerald-950">Ürün tekrar kontrol edilebilir</div>
                               <p className="mt-1 text-sm text-emerald-800">Ürün kartını silme işlemini şimdi tekrar deneyebilirsiniz.</p>
                             </div>
                             <button
