@@ -864,18 +864,16 @@ export default function StockPage() {
     setDeleting(true);
     setMessage("");
 
-    const { data, error } = await supabase.rpc("bulk_delete_products_with_stock_records", {
-      target_product_ids: productIds,
-    });
+    const result = await deleteProductsWithStockRecords(productIds);
 
-    if (error) {
+    if (result.error) {
       setMessage("Ürün kartı silinirken hata oluştu.");
       setDeleting(false);
       return;
     }
 
-    const deletedProductCount = Number(data?.deletedProductCount || 0);
-    const failedProductCount = Number(data?.failedProductCount || 0);
+    const deletedProductCount = Number(result.deletedProductCount || 0);
+    const failedProductCount = Number(result.failedProductCount || 0);
     setMessage(`${deletedProductCount} ürün silindi. ${failedProductCount} ürün silinemedi.`);
     setProductDeleteBlockKey("");
     if (deletedProductCount > 0) {
@@ -884,6 +882,68 @@ export default function StockPage() {
     }
     setDeleting(false);
     await loadStock();
+  }
+
+  async function deleteProductsWithStockRecords(productIds) {
+    const safeProductIds = [...new Set((productIds || []).filter(isUuid))];
+    if (safeProductIds.length === 0) {
+      return { deletedProductCount: 0, failedProductCount: 0, failedProductIds: [] };
+    }
+
+    const { data, error } = await supabase.rpc("bulk_delete_products_with_stock_records", {
+      target_product_ids: safeProductIds,
+    });
+
+    if (!error) {
+      return {
+        deletedProductCount: Number(data?.deletedProductCount || 0),
+        failedProductCount: Number(data?.failedProductCount || 0),
+        failedProductIds: data?.failedProductIds || [],
+      };
+    }
+
+    console.warn("Toplu ürün silme RPC kullanılamadı, doğrudan silme deneniyor:", error);
+
+    let deletedProductCount = 0;
+    const deletedProductIds = [];
+    for (let offset = 0; offset < safeProductIds.length; offset += 100) {
+      const chunk = safeProductIds.slice(offset, offset + 100);
+
+      const { error: movementDeleteError } = await supabase
+        .from("stock_movements")
+        .delete()
+        .in("product_id", chunk);
+
+      if (movementDeleteError) {
+        console.warn("Ürün stok hareketleri temizlenemedi, ürün silme deneniyor:", movementDeleteError);
+      }
+
+      const { data: deletedRows, error: productDeleteError } = await supabase
+        .from("products")
+        .delete()
+        .in("id", chunk)
+        .select("id");
+
+      if (productDeleteError) {
+        return {
+          error: productDeleteError,
+          deletedProductCount,
+          failedProductCount: safeProductIds.length - deletedProductCount,
+          failedProductIds: safeProductIds.filter((id) => !deletedProductIds.includes(id)),
+        };
+      }
+
+      const rows = deletedRows || [];
+      deletedProductCount += rows.length;
+      deletedProductIds.push(...rows.map((row) => row.id));
+    }
+
+    const failedProductIds = safeProductIds.filter((id) => !deletedProductIds.includes(id));
+    return {
+      deletedProductCount,
+      failedProductCount: failedProductIds.length,
+      failedProductIds,
+    };
   }
 
   async function analyzeSelectedProductsForDeletion() {
@@ -924,16 +984,13 @@ export default function StockPage() {
         return;
       }
 
-      const { data, error } = await supabase.rpc("bulk_delete_products_with_stock_records", {
-        target_product_ids: productDeleteAnalysis.productIds || [],
-      });
+      const result = await deleteProductsWithStockRecords(productDeleteAnalysis.productIds || []);
 
-      if (error) {
+      if (result.error) {
         setMessage("Toplu ürün silme işlemi tamamlanamadı.");
         return;
       }
 
-      const result = data || {};
       const failedProductIds = new Set(result.failedProductIds || []);
       const failedKeys = productGroups
         .filter((product) => (product.duplicateIds || [product.id]).some((id) => failedProductIds.has(id)))
