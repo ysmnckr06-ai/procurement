@@ -12,7 +12,7 @@ export const STOCK_IMPORT_FIELDS = [
 const COLUMN_ALIASES = {
   productCode: ["urun kodu", "malzeme kodu", "stok kodu", "product code", "product_code", "sku", "kod"],
   productName: ["urun adi", "urun aciklamasi", "malzeme adi", "malzeme aciklamasi", "product name", "product_name", "description", "aciklama", "urun", "malzeme"],
-  brand: ["marka", "brand", "uretici"],
+  brand: ["marka", "malzeme markasi", "malzeme markası", "urun markasi", "ürün markası", "brand", "uretici"],
   unit: ["birim", "unit", "olcu birimi"],
   quantity: ["stok miktari", "mevcut stok", "stok", "miktar", "adet", "qty", "quantity", "sayim", "count"],
   unitPrice: ["birim fiyat", "unit price", "fiyat", "price", "net fiyat"],

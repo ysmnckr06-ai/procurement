@@ -321,29 +321,21 @@ function formatDistributionSummary(row) {
   (row.allocations || []).forEach((allocation) => {
     const key = allocation.projectId || allocationProjectLabel(allocation);
     const current = projects.get(key) || {
-      label: allocationProjectLabel(allocation),
-      requested: 0,
-      open: 0,
-      stock: 0,
-      purchase: 0,
+      label: allocation.projectCode || allocationProjectLabel(allocation),
       parentNames: new Set(),
     };
-    current.requested += number(allocation.requestedQuantity);
-    current.open += number(allocation.quantity);
-    current.stock += number(allocation.stockCoverableQuantity);
-    current.purchase += number(allocation.purchaseQuantity);
     if (allocation.parentItemName) current.parentNames.add(allocation.parentItemName);
     projects.set(key, current);
   });
 
   return Array.from(projects.values()).map((project) => {
-    const parts = [
-      `${project.label}: ihtiyaç ${project.requested}`,
-      `açık ${project.open}`,
-      `satın alınacak ${project.purchase} ${row.unit}`,
-    ];
-    if (project.parentNames.size > 0) parts.push(`${project.parentNames.size} bölüm`);
-    return parts.join(", ");
+    const parentNames = Array.from(project.parentNames).filter(Boolean);
+    if (parentNames.length === 0) return project.label;
+    const visibleParents = parentNames.slice(0, 3).join("; ");
+    const hiddenCount = Math.max(parentNames.length - 3, 0);
+    return hiddenCount > 0
+      ? `${project.label}: ${visibleParents}; +${hiddenCount} ana ürün`
+      : `${project.label}: ${visibleParents}`;
   }).join(" | ");
 }
 

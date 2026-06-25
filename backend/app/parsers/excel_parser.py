@@ -608,6 +608,8 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
     ], exclude_keywords=["kod", "sira", "sıra"])
 
     brand_col = find_col_exact_or_contains(df.columns, [
+        "malzeme markasi",
+        "urun markasi",
         "marka",
         "brand",
         "uretici",

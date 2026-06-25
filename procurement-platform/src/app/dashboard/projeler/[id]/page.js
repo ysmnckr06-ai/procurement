@@ -1316,6 +1316,7 @@ export default function ProjectDetailPage() {
 
     setCreatingMissingProducts(true);
     const createdProducts = [];
+    const updatedProducts = [];
     const linkedProjectItems = [];
     const linkedProductIds = new Set();
     const failedRows = [];
@@ -1403,6 +1404,24 @@ export default function ProjectDetailPage() {
         createdProducts.push(data);
       }
 
+      const resolvedBrand = sourceItem.brand || identity.brand || "";
+      if (product?.id && resolvedBrand && !String(product.brand || "").trim()) {
+        const { data: brandedProduct, error: brandUpdateError } = await supabase
+          .from("products")
+          .update({ brand: resolvedBrand, updated_at: now })
+          .eq("id", product.id)
+          .eq("user_id", user.id)
+          .select("*")
+          .maybeSingle();
+
+        if (brandUpdateError) {
+          console.warn("Ürün kartı markası güncellenemedi:", brandUpdateError);
+        } else if (brandedProduct) {
+          product = brandedProduct;
+          updatedProducts.push(brandedProduct);
+        }
+      }
+
       const idsToLink = Array.from(new Set([
         ...(missingItem.projectItemIds || []),
         ...projectItemIdsForMissingProduct(missingItem),
@@ -1436,6 +1455,11 @@ export default function ProjectDetailPage() {
 
     if (createdProducts.length > 0) {
       setProducts((prev) => [...prev, ...createdProducts]);
+    }
+
+    if (updatedProducts.length > 0) {
+      const updatedById = new Map(updatedProducts.map((product) => [product.id, product]));
+      setProducts((prev) => prev.map((product) => updatedById.get(product.id) || product));
     }
 
     if (linkedProjectItems.length > 0) {
@@ -1650,6 +1674,7 @@ export default function ProjectDetailPage() {
     }
 
     const createdProducts = [];
+    const updatedProducts = [];
     const productCreationMovements = [];
     const linkedItems = [];
     const failedItems = [];
@@ -1787,6 +1812,24 @@ export default function ProjectDetailPage() {
 
       if (!product?.id) continue;
 
+      const resolvedBrand = item.brand || normalizedIdentity.brand || "";
+      if (resolvedBrand && !String(product.brand || "").trim()) {
+        const { data: brandedProduct, error: brandUpdateError } = await supabase
+          .from("products")
+          .update({ brand: resolvedBrand, updated_at: new Date().toISOString() })
+          .eq("id", product.id)
+          .eq("user_id", userId)
+          .select("*")
+          .maybeSingle();
+
+        if (brandUpdateError) {
+          console.warn("Ürün kartı markası güncellenemedi:", brandUpdateError);
+        } else if (brandedProduct) {
+          product = brandedProduct;
+          updatedProducts.push(brandedProduct);
+        }
+      }
+
       const projectItemUpdatePayload = {
         product_id: product.id,
         updated_at: new Date().toISOString(),
@@ -1830,6 +1873,11 @@ export default function ProjectDetailPage() {
 
     if (createdProducts.length > 0) {
       setProducts((prev) => [...prev, ...createdProducts]);
+    }
+
+    if (updatedProducts.length > 0) {
+      const updatedById = new Map(updatedProducts.map((product) => [product.id, product]));
+      setProducts((prev) => prev.map((product) => updatedById.get(product.id) || product));
     }
 
     if (productCreationMovements.length > 0) {
