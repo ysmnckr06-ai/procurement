@@ -1233,6 +1233,16 @@ export default function ProjectDetailPage() {
     return Array.from(grouped.values()).filter((item) => item.product_name);
   }
 
+  function projectItemIdsForMissingProduct(missingItem, projectItemRows = items) {
+    const key = missingItem?.key || missingProductKey(missingItem?.sourceItem || missingItem);
+    if (!key) return [];
+
+    return (projectItemRows || [])
+      .filter((item) => item?.id && item.item_type !== "main")
+      .filter((item) => missingProductKey(item) === key)
+      .map((item) => item.id);
+  }
+
   function updateMissingProductWarning(rows, productRows = products) {
     const nextMissingItems = uniqueMissingProductItems(rows, productRows);
     setMissingProductCardItems(nextMissingItems);
@@ -1381,7 +1391,11 @@ export default function ProjectDetailPage() {
         createdProducts.push(data);
       }
 
-      const idsToLink = missingItem.projectItemIds?.length ? missingItem.projectItemIds : [sourceItem.id].filter(Boolean);
+      const idsToLink = Array.from(new Set([
+        ...(missingItem.projectItemIds || []),
+        ...projectItemIdsForMissingProduct(missingItem),
+        sourceItem.id,
+      ].filter(Boolean)));
       const projectItemUpdatePayload = {
         product_id: product.id,
         updated_at: now,
