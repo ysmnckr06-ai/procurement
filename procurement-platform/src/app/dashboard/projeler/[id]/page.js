@@ -1065,7 +1065,7 @@ export default function ProjectDetailPage() {
     const itemIdentity = normalizeProductIdentityForStock(item);
     const productIdentity = normalizeProductIdentityForStock(product);
     const nameScore = textSimilarity(productIdentity.product_name, itemIdentity.product_name);
-    const brandScore = itemIdentity.brand || productIdentity.brand ? textSimilarity(productIdentity.brand, itemIdentity.brand) : 1;
+    const brandScore = itemIdentity.brand && productIdentity.brand ? textSimilarity(productIdentity.brand, itemIdentity.brand) : 1;
     return unitMatches && nameScore >= 0.75 && brandScore >= 0.6;
   }
 
@@ -1113,9 +1113,15 @@ export default function ProjectDetailPage() {
   }
 
   function nextAutoProductCode(usedCodes) {
-    const dateStamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-    for (let index = 1; index <= 9999; index += 1) {
-      const code = `STK-${dateStamp}-${String(index).padStart(4, "0")}`;
+    let startIndex = 1;
+    usedCodes.forEach((code) => {
+      const match = String(code || "").match(/^CRVM(\d{9})$/i);
+      if (!match) return;
+      startIndex = Math.max(startIndex, Number(match[1]) + 1);
+    });
+
+    for (let index = startIndex; index <= 999999999; index += 1) {
+      const code = `CRVM${String(index).padStart(9, "0")}`;
       const normalized = normalizeProductCode(code);
       if (!usedCodes.has(normalized)) {
         usedCodes.add(normalized);
@@ -1123,7 +1129,7 @@ export default function ProjectDetailPage() {
       }
     }
 
-    const fallback = `STK-${dateStamp}-${Date.now()}`;
+    const fallback = `CRVM${String(Date.now()).slice(-9)}`;
     usedCodes.add(normalizeProductCode(fallback));
     return fallback;
   }
@@ -1176,7 +1182,8 @@ export default function ProjectDetailPage() {
   function missingProductKey(item) {
     const code = normalizeProductCode(stockProductCodeForItem(item));
     if (code) return `code:${code}`;
-    return `name:${normalizeText(item?.product_name || item?.description)}|${normalizeText(item?.brand)}|${normalizeText(item?.unit || "adet")}`;
+    const identity = normalizeProductIdentityForStock(item);
+    return `name:${normalizeText(identity.product_name)}|unit:${normalizeText(item?.unit || "adet")}`;
   }
 
   function productExistsForProjectItem(item, productRows = products) {

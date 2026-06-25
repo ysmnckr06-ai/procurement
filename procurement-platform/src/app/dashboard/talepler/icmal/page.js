@@ -88,6 +88,11 @@ function productIdentityKey(item) {
   return `name:${identity.productName}|brand:${identity.brand}|unit:${identity.unit}`;
 }
 
+function looseProductIdentityKey(item) {
+  const identity = normalizeProductIdentity(item);
+  return `name:${identity.productName}|unit:${identity.unit}`;
+}
+
 function safeFileName(value) {
   return String(value || "malzeme-listesi").replace(/[^a-zA-Z0-9çğıöşüÇĞİÖŞÜ_-]+/g, "-");
 }
@@ -155,6 +160,11 @@ function buildSummary(projects, projectItems, products, orders) {
       .map((product) => [productIdentityKey(product), product])
       .filter(([key]) => !key.includes("name:|")),
   );
+  const productsByLooseIdentity = new Map(
+    products
+      .map((product) => [looseProductIdentityKey(product), product])
+      .filter(([key]) => !key.includes("name:|")),
+  );
   const grouped = new Map();
 
   projectItems
@@ -170,7 +180,8 @@ function buildSummary(projects, projectItems, products, orders) {
       const itemStockCode = stockProductCode(item.product_code);
       const matchedProduct = productsById.get(item.product_id)
         || productsByCode.get(itemStockCode)
-        || productsByIdentity.get(productIdentityKey(item));
+        || productsByIdentity.get(productIdentityKey(item))
+        || productsByLooseIdentity.get(looseProductIdentityKey(item));
       const normalizedProductCode = normalizeCode(
         matchedProduct?.normalized_product_code || matchedProduct?.product_code || itemStockCode,
       );
@@ -180,7 +191,7 @@ function buildSummary(projects, projectItems, products, orders) {
         ? `product:${resolvedProductId}`
         : normalizedProductCode
           ? `code:${normalizedProductCode}`
-          : productIdentityKey({ ...item, unit: normalizedUnit });
+          : looseProductIdentityKey({ ...item, unit: normalizedUnit });
       const project = projectsById.get(item.project_id);
       const parent = itemsById.get(item.parent_item_id);
 
