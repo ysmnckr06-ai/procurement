@@ -134,6 +134,10 @@ function normalizeStockCode(value) {
   return String(value || "").trim().toUpperCase();
 }
 
+function isAutoStockCode(value) {
+  return /^CRVM\d{9}$/i.test(String(value || "").trim());
+}
+
 function normalizeProductIdentity(product) {
   const rawBrand = String(product?.brand || "").trim();
   let productName = String(product?.product_name || product?.description || "").trim();
@@ -541,10 +545,16 @@ function movementMatchesProduct(movement, product) {
 
   const productCode = normalizeStockCode(product.product_code);
   const movementCode = normalizeStockCode(movement.product_code);
-  const productName = normalizeStockText(product.product_name);
-  const movementName = normalizeStockText(movement.product_name);
+  const productIdentity = normalizeProductIdentity(product);
+  const movementIdentity = normalizeProductIdentity(movement);
+  const productName = normalizeStockText(productIdentity.product_name);
+  const movementName = normalizeStockText(movementIdentity.product_name);
 
   if (productCode && movementCode) return productCode === movementCode;
+  if (isAutoStockCode(productCode) || isAutoStockCode(movementCode)) {
+    return productName && productName === movementName
+      && normalizeStockText(product.unit || "adet") === normalizeStockText(movement.unit || "adet");
+  }
 
   return !productCode && productName && productName === movementName;
 }
@@ -557,10 +567,16 @@ function projectItemMatchesProduct(item, product) {
 
   const productCode = normalizeStockCode(product.product_code);
   const itemCode = normalizeStockCode(item.product_code);
-  const productName = normalizeStockText(product.product_name);
-  const itemName = normalizeStockText(item.product_name || item.description);
+  const productIdentity = normalizeProductIdentity(product);
+  const itemIdentity = normalizeProductIdentity(item);
+  const productName = normalizeStockText(productIdentity.product_name);
+  const itemName = normalizeStockText(itemIdentity.product_name || item.description);
 
   if (productCode && itemCode) return productCode === itemCode;
+  if (isAutoStockCode(productCode) || isAutoStockCode(itemCode)) {
+    return productName && productName === itemName
+      && normalizeStockText(product.unit || "adet") === normalizeStockText(item.unit || "adet");
+  }
   return !productCode && productName && productName === itemName;
 }
 

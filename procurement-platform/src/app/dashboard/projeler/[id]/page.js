@@ -1098,6 +1098,10 @@ export default function ProjectDetailPage() {
     return /^PRJ-\d{3,}$/i.test(String(code || "").trim());
   }
 
+  function isAutoStockCode(code) {
+    return /^CRVM\d{9}$/i.test(String(code || "").trim());
+  }
+
   function stockProductCodeForItem(item) {
     const rawCode = normalizeProductCode(item?.product_code);
     if (!rawCode || isProjectSeriesCode(rawCode)) return "";
@@ -1181,7 +1185,7 @@ export default function ProjectDetailPage() {
 
   function missingProductKey(item) {
     const code = normalizeProductCode(stockProductCodeForItem(item));
-    if (code) return `code:${code}`;
+    if (code && !isAutoStockCode(code)) return `code:${code}`;
     const identity = normalizeProductIdentityForStock(item);
     return `name:${normalizeText(identity.product_name)}|unit:${normalizeText(item?.unit || "adet")}`;
   }
@@ -1201,8 +1205,12 @@ export default function ProjectDetailPage() {
       const quantity = Number(item.estimated_quantity || item.quantity || 0) || 0;
 
       if (existing) {
+        const existingCode = stockProductCodeForItem(existing);
+        const itemCode = stockProductCodeForItem(item);
         grouped.set(key, {
           ...existing,
+          product_code: existingCode || itemCode || existing.product_code || item.product_code || "",
+          sourceItem: existingCode || !itemCode ? existing.sourceItem : item,
           quantity: Number(existing.quantity || 0) + quantity,
           projectItemIds: Array.from(new Set([...(existing.projectItemIds || []), item.id].filter(Boolean))),
         });

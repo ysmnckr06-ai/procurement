@@ -54,6 +54,10 @@ function stockProductCode(value) {
   return code && !isProjectSeriesCode(code) ? code : "";
 }
 
+function isAutoStockCode(value) {
+  return /^CRVM\d{9}$/i.test(String(value || "").trim());
+}
+
 function normalizeProductIdentity(item) {
   const rawBrand = String(item?.brand || "").trim();
   let productName = String(item?.product_name || item?.description || "").trim();
@@ -187,11 +191,15 @@ function buildSummary(projects, projectItems, products, orders) {
       );
       const normalizedUnit = normalizeText(item.unit || matchedProduct?.unit || "adet");
       const resolvedProductId = matchedProduct?.id || item.product_id || null;
-      const key = resolvedProductId
+      const identityKey = looseProductIdentityKey({ ...item, unit: normalizedUnit });
+      const shouldGroupByIdentity = isAutoStockCode(itemStockCode) || isAutoStockCode(normalizedProductCode) || !itemStockCode;
+      const key = shouldGroupByIdentity
+        ? identityKey
+        : resolvedProductId
         ? `product:${resolvedProductId}`
         : normalizedProductCode
           ? `code:${normalizedProductCode}`
-          : looseProductIdentityKey({ ...item, unit: normalizedUnit });
+          : identityKey;
       const project = projectsById.get(item.project_id);
       const parent = itemsById.get(item.parent_item_id);
 
@@ -217,6 +225,17 @@ function buildSummary(projects, projectItems, products, orders) {
       }
 
       const row = grouped.get(key);
+      if (!row.productId && resolvedProductId) row.productId = resolvedProductId;
+      if (!row.normalizedProductCode && normalizedProductCode) row.normalizedProductCode = normalizedProductCode;
+      if (!row.productCode && (matchedProduct?.product_code || itemStockCode)) {
+        row.productCode = matchedProduct?.product_code || itemStockCode || "";
+      }
+      if (!row.productName && (matchedProduct?.product_name || item.product_name)) {
+        row.productName = matchedProduct?.product_name || item.product_name || "";
+      }
+      if (!row.brand && (matchedProduct?.brand || item.brand)) {
+        row.brand = matchedProduct?.brand || item.brand || "";
+      }
       row.sourceUnits.add(normalizeText(item.unit || matchedProduct?.unit || "adet"));
       row.requestedQuantity += estimated;
       row.totalNeed += openQuantity;
