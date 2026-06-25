@@ -18,6 +18,7 @@ import {
 import { supabase } from "@/lib/supabase";
 import { CORVIAN_PRODUCT_NAME, fetchCompanyBranding } from "@/lib/companyBranding";
 import { findProductMatches, matchProduct } from "@/lib/productMatching";
+import { parseStockNumber } from "@/lib/stockImport";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL;
 const UNCATEGORIZED_PREVIEW_CATEGORY = "Kategorisiz Ürünler";
@@ -3245,6 +3246,66 @@ export default function ProjectDetailPage() {
     }));
   }
 
+  function inferBrandFromRawCells(row, rawItem) {
+    if (row?.brand || rawItem?.brand) return row?.brand || rawItem?.brand || "";
+
+    const cells = Array.isArray(rawItem?.raw_cells) ? rawItem.raw_cells : [];
+    if (cells.length === 0) return "";
+
+    const rowName = normalizeText(row?.product_name || rawItem?.description || "");
+    const rowCode = normalizeCode(row?.product_code || rawItem?.product_code || "");
+    const blockedValues = new Set([
+      rowName,
+      normalizeText(row?.unit || rawItem?.unit || ""),
+      normalizeText(rowCode),
+      normalizeText(row?.product_code || rawItem?.product_code || ""),
+    ].filter(Boolean));
+
+    const isBrandCandidate = (value) => {
+      const text = String(value || "").trim();
+      const normalized = normalizeText(text);
+      if (!text || text === "-" || text === "0" || blockedValues.has(normalized)) return false;
+      if (parseStockNumber(text) !== null) return false;
+      if (normalized === rowName || rowName.includes(normalized) || normalized.includes(rowName)) return false;
+      if (text.length > 30) return false;
+      if (!/[A-Za-zÇĞİÖŞÜçğıöşü]/.test(text)) return false;
+      return true;
+    };
+
+    const descriptionIndex = cells.findIndex((cell) => {
+      const normalized = normalizeText(cell);
+      return normalized && rowName && (normalized === rowName || normalized.includes(rowName) || rowName.includes(normalized));
+    });
+    if (descriptionIndex > 0 && isBrandCandidate(cells[descriptionIndex - 1])) {
+      return String(cells[descriptionIndex - 1]).trim();
+    }
+
+    return cells.find(isBrandCandidate) || "";
+  }
+
+  function enrichPreviewRowsWithRawItems(rows, rawItems) {
+    const usedRawIds = new Set();
+    return (rows || []).map((row, index) => {
+      if (row.brand) return row;
+
+      const rowName = normalizeText(row.product_name);
+      const rowQuantity = Number(row.estimated_quantity || 0);
+      const rawItem = (rawItems || []).find((candidate) => {
+        if (!candidate || usedRawIds.has(candidate.id)) return false;
+        const candidateName = normalizeText(candidate.description);
+        const candidateQuantity = Number(candidate.quantity || 0);
+        return rowName
+          && candidateName
+          && (candidateName === rowName || candidateName.includes(rowName) || rowName.includes(candidateName))
+          && (!rowQuantity || !candidateQuantity || rowQuantity === candidateQuantity);
+      }) || rawItems?.[index];
+
+      if (rawItem?.id) usedRawIds.add(rawItem.id);
+      const inferredBrand = inferBrandFromRawCells(row, rawItem);
+      return inferredBrand ? { ...row, brand: inferredBrand } : row;
+    });
+  }
+
   function previewRowCategory(row) {
     return row.section_name || row.category || row.parent_name || UNCATEGORIZED_PREVIEW_CATEGORY;
   }
@@ -3402,19 +3463,19 @@ export default function ProjectDetailPage() {
         const nextRawItems = data.raw_items || data.rawItems || [];
         setRawItems(nextRawItems);
         setMessage("Dosya kontrol edildi ama güvenli aktarım için kilitlendi.");
-        const nextPreviewRows = preparePreviewRows(data.rows || []);
+        const nextPreviewRows = preparePreviewRows(enrichPreviewRowsWithRawItems(data.rows || [], nextRawItems));
         setPreviewRows(nextPreviewRows);
         setSelectedPreviewRowIds(nextPreviewRows.map((row) => row.preview_id));
         scrollToPreviewResults();
       } else {
-        const nextPreviewRows = preparePreviewRows(data.rows || []);
+        const nextRawItems = data.raw_items || data.rawItems || [];
+        const nextPreviewRows = preparePreviewRows(enrichPreviewRowsWithRawItems(data.rows || [], nextRawItems));
         setPreviewRows(nextPreviewRows);
         setSelectedPreviewRowIds(nextPreviewRows.map((row) => row.preview_id));
         setPreviewWarnings(warnings);
         setPreviewBlocked(false);
         setPreviewSections(data.sections || []);
         rememberSectionTotals(data.sections || []);
-        const nextRawItems = data.raw_items || data.rawItems || [];
         setRawItems(nextRawItems);
         setMessage(`${data.totalRows} satır okundu. Aktarmadan önce önizlemeyi kontrol edin.`);
         scrollToPreviewResults();
