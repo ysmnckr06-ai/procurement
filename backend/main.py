@@ -1366,6 +1366,7 @@ async def parse_project_items(
     for index, row in enumerate(all_rows):
         code = str(row.get("urunKodu") or "").strip().upper()
         name = str(row.get("urunAciklamasi") or "").strip()
+        brand = str(row.get("marka") or row.get("brand") or "").strip()
         unit = str(row.get("birim") or "adet").strip().lower() or "adet"
 
         quantity = safe_float_form(row.get("firmaAdedi"))
@@ -1415,7 +1416,7 @@ async def parse_project_items(
             "row_index": index + 1,
             "raw_cells": raw_cells,
             "product_code": code,
-            "brand": row.get("marka") or row.get("brand") or "",
+            "brand": brand,
             "description": name,
             "quantity": raw_quantity,
             "unit": unit,
@@ -1437,6 +1438,7 @@ async def parse_project_items(
 
         result_rows.append({
             "product_code": code,
+            "brand": brand,
             "product_name": name,
             "unit": unit,
             "estimated_quantity": quantity,

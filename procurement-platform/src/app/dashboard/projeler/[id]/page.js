@@ -1349,7 +1349,7 @@ export default function ProjectDetailPage() {
         user_id: user.id,
         product_code: productCodeResult.code,
         normalized_product_code: normalizeProductCode(productCodeResult.code) || null,
-        brand: identity.brand || sourceItem.brand || "",
+        brand: sourceItem.brand || identity.brand || "",
         product_name: identity.product_name || sourceItem.product_name || sourceItem.description || "",
         unit: sourceItem.unit || "adet",
         current_stock: 0,
@@ -1713,7 +1713,7 @@ export default function ProjectDetailPage() {
         const productPayload = {
             user_id: userId,
             product_code: safeProductCode,
-            brand: normalizedIdentity.brand || "",
+            brand: item.brand || normalizedIdentity.brand || "",
             product_name: normalizedIdentity.product_name || itemName,
             unit: safeUnit,
             current_stock: 0,
@@ -2947,6 +2947,7 @@ export default function ProjectDetailPage() {
   function rawToProjectRow(row, fallbackStatus = "Bekliyor") {
     return {
       product_code: String(row.product_code || "").trim().toUpperCase(),
+      brand: row.brand || "",
       product_name: String(row.product_name || "").trim(),
       unit: row.unit || "adet",
       estimated_quantity: Number(row.estimated_quantity || 0) || 0,

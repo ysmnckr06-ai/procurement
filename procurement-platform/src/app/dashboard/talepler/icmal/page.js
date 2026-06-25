@@ -312,6 +312,41 @@ function filterRowsByMode(rows, mode) {
   return rows.filter((row) => row.purchaseQuantity > 0);
 }
 
+function allocationProjectLabel(allocation) {
+  return [allocation.projectCode, allocation.projectName].filter(Boolean).join(" - ") || "Proje";
+}
+
+function formatDistributionSummary(row) {
+  const projects = new Map();
+  (row.allocations || []).forEach((allocation) => {
+    const key = allocation.projectId || allocationProjectLabel(allocation);
+    const current = projects.get(key) || {
+      label: allocationProjectLabel(allocation),
+      requested: 0,
+      open: 0,
+      stock: 0,
+      purchase: 0,
+      parentNames: new Set(),
+    };
+    current.requested += number(allocation.requestedQuantity);
+    current.open += number(allocation.quantity);
+    current.stock += number(allocation.stockCoverableQuantity);
+    current.purchase += number(allocation.purchaseQuantity);
+    if (allocation.parentItemName) current.parentNames.add(allocation.parentItemName);
+    projects.set(key, current);
+  });
+
+  return Array.from(projects.values()).map((project) => {
+    const parts = [
+      `${project.label}: ihtiyaç ${project.requested}`,
+      `açık ${project.open}`,
+      `satın alınacak ${project.purchase} ${row.unit}`,
+    ];
+    if (project.parentNames.size > 0) parts.push(`${project.parentNames.size} bölüm`);
+    return parts.join(", ");
+  }).join(" | ");
+}
+
 function exportRows(rows) {
   return rows.map((row, index) => ({
     "Sıra": index + 1,
@@ -328,9 +363,7 @@ function exportRows(rows) {
     "Eksik Miktar": row.missingQuantity,
     "Satın Alınacak": row.purchaseQuantity,
     "Durum": row.statusLabel,
-    "Proje Dağılımı": row.allocations.map((allocation) =>
-      `${allocation.projectCode} ${allocation.projectName}: ihtiyaç ${allocation.requestedQuantity}, açık ${allocation.quantity}, stoktan ${allocation.stockCoverableQuantity}, eksik ${allocation.purchaseQuantity} ${row.unit}${allocation.parentItemName ? ` / ${allocation.parentItemName}` : ""}`,
-    ).join(" | "),
+    "Proje Dağılımı": formatDistributionSummary(row),
   }));
 }
 
@@ -456,6 +489,7 @@ export default function ProcurementSummaryPage() {
     const distribution = rows.flatMap((row) => row.allocations.map((allocation) => ({
       "Ürün Kodu": row.productCode || row.normalizedProductCode,
       "Ürün": row.productName,
+      "Marka": row.brand || "-",
       "Proje Kodu": allocation.projectCode,
       "Proje": allocation.projectName,
       "Proje Kalemi": allocation.projectItemId,
@@ -481,8 +515,7 @@ export default function ProcurementSummaryPage() {
     autoTable(doc, {
       startY: 66,
       head: [["Kod", "Ürün", "Birim", "Toplam", "Açık", "Stoktan", "Satınalma", "Durum", "Proje dağılımı"]],
-      body: rows.map((row) => [row.productCode || "-", row.productName, row.unit, row.requestedQuantity, row.totalNeed, row.stockCoverable, row.purchaseQuantity, row.statusLabel,
-        row.allocations.map((allocation) => `${allocation.projectCode}: açık ${allocation.quantity}, stoktan ${allocation.stockCoverableQuantity}, eksik ${allocation.purchaseQuantity}`).join(" | ")]),
+      body: rows.map((row) => [row.productCode || "-", row.productName, row.unit, row.requestedQuantity, row.totalNeed, row.stockCoverable, row.purchaseQuantity, row.statusLabel, formatDistributionSummary(row)]),
       styles: { fontSize: 7, cellPadding: 4 }, headStyles: { fillColor: [30, 64, 175] },
     });
     doc.save(`${safeFileName(`${modeConfig.filePrefix}-${new Date().toISOString().slice(0, 10)}`)}.pdf`);
