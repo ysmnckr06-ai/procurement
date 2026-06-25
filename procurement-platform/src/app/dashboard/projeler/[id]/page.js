@@ -1317,6 +1317,7 @@ export default function ProjectDetailPage() {
     setCreatingMissingProducts(true);
     const createdProducts = [];
     const linkedProjectItems = [];
+    const linkedProductIds = new Set();
     const failedRows = [];
     const targetKeys = new Set(rowsToCreate.map((item) => item.key));
     const createAsMainProduct = options.productType === "main_product";
@@ -1430,6 +1431,7 @@ export default function ProjectDetailPage() {
       }
 
       linkedProjectItems.push(...(updatedItems || []));
+      if (product.id) linkedProductIds.add(product.id);
     }
 
     if (createdProducts.length > 0) {
@@ -1447,10 +1449,11 @@ export default function ProjectDetailPage() {
       .map((item) => item.sourceItem || item);
     const failedMissingItems = updateMissingProductWarning(remainingRows, [...products, ...createdProducts]);
     setCreatingMissingProducts(false);
+    const linkedProductCount = linkedProductIds.size;
     setMessage(
       failedMissingItems.length > 0
-        ? `${linkedProjectItems.length} kalem stok kartına bağlandı. ${failedMissingItems.length} ürün hâlâ kontrol bekliyor.`
-        : `${linkedProjectItems.length} kalem stok kartına bağlandı.`,
+        ? `${linkedProductCount} ürün kartı bağlandı. ${failedMissingItems.length} ürün hâlâ kontrol bekliyor.`
+        : `${linkedProductCount} ürün kartı bağlandı.`,
     );
   }
 
