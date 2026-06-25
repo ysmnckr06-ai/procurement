@@ -64,7 +64,7 @@ function normalizeProductIdentity(item) {
   let brand = rawBrand && rawBrand !== "-" ? rawBrand : "";
 
   if (!brand && productName) {
-    const leadingQuantityBrand = productName.match(/^\s*\d+(?:[.,]\d+)?\s*([A-Za-zÇĞİÖŞÜçğıöşü]{2,})\s+(.+)$/);
+    const leadingQuantityBrand = productName.match(/^\s*\d+(?:[.,]\d+)?\s+([A-Za-zÇĞİÖŞÜçğıöşü]{2,})\s+(.+)$/);
     if (leadingQuantityBrand) {
       brand = leadingQuantityBrand[1].toUpperCase();
       productName = leadingQuantityBrand[2].trim();

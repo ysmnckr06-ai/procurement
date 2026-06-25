@@ -138,13 +138,23 @@ function isAutoStockCode(value) {
   return /^CRVM\d{9}$/i.test(String(value || "").trim());
 }
 
+function productNamesMatch(left, right) {
+  const leftName = normalizeStockText(left);
+  const rightName = normalizeStockText(right);
+  if (!leftName || !rightName) return false;
+  if (leftName === rightName) return true;
+
+  const [shortName, longName] = leftName.length < rightName.length ? [leftName, rightName] : [rightName, leftName];
+  return shortName.split(" ").length >= 2 && longName.endsWith(` ${shortName}`);
+}
+
 function normalizeProductIdentity(product) {
   const rawBrand = String(product?.brand || "").trim();
   let productName = String(product?.product_name || product?.description || "").trim();
   let brand = rawBrand && rawBrand !== "-" ? rawBrand : "";
 
   if (!brand && productName) {
-    const leadingQuantityBrand = productName.match(/^\s*\d+(?:[.,]\d+)?\s*([A-Za-zÇĞİÖŞÜçğıöşü]{2,})\s+(.+)$/);
+    const leadingQuantityBrand = productName.match(/^\s*\d+(?:[.,]\d+)?\s+([A-Za-zÇĞİÖŞÜçğıöşü]{2,})\s+(.+)$/);
     if (leadingQuantityBrand) {
       brand = leadingQuantityBrand[1].toUpperCase();
       productName = leadingQuantityBrand[2].trim();
@@ -181,7 +191,7 @@ function productMatchesWithoutCode(product, candidate) {
 
   const productIdentity = normalizeProductIdentity(product);
   const candidateIdentity = normalizeProductIdentity(candidate);
-  return normalizeStockText(productIdentity.product_name) === normalizeStockText(candidateIdentity.product_name)
+  return productNamesMatch(productIdentity.product_name, candidateIdentity.product_name)
     && normalizeStockText(productIdentity.brand) === normalizeStockText(candidateIdentity.brand)
     && normalizeStockText(productIdentity.unit || "adet") === normalizeStockText(candidateIdentity.unit || "adet");
 }
@@ -552,11 +562,11 @@ function movementMatchesProduct(movement, product) {
 
   if (productCode && movementCode) return productCode === movementCode;
   if (isAutoStockCode(productCode) || isAutoStockCode(movementCode)) {
-    return productName && productName === movementName
+    return productNamesMatch(productName, movementName)
       && normalizeStockText(product.unit || "adet") === normalizeStockText(movement.unit || "adet");
   }
 
-  return !productCode && productName && productName === movementName;
+  return !productCode && productNamesMatch(productName, movementName);
 }
 
 function projectItemMatchesProduct(item, product) {
@@ -574,10 +584,10 @@ function projectItemMatchesProduct(item, product) {
 
   if (productCode && itemCode) return productCode === itemCode;
   if (isAutoStockCode(productCode) || isAutoStockCode(itemCode)) {
-    return productName && productName === itemName
+    return productNamesMatch(productName, itemName)
       && normalizeStockText(product.unit || "adet") === normalizeStockText(item.unit || "adet");
   }
-  return !productCode && productName && productName === itemName;
+  return !productCode && productNamesMatch(productName, itemName);
 }
 
 function isUuid(value) {

@@ -1064,9 +1064,20 @@ export default function ProjectDetailPage() {
     const unitMatches = normalizeText(product.unit || "adet") === normalizeText(item.unit || "adet");
     const itemIdentity = normalizeProductIdentityForStock(item);
     const productIdentity = normalizeProductIdentityForStock(product);
-    const nameScore = textSimilarity(productIdentity.product_name, itemIdentity.product_name);
+    const nameMatches = productNamesMatch(productIdentity.product_name, itemIdentity.product_name);
+    const nameScore = nameMatches ? 1 : textSimilarity(productIdentity.product_name, itemIdentity.product_name);
     const brandScore = itemIdentity.brand && productIdentity.brand ? textSimilarity(productIdentity.brand, itemIdentity.brand) : 1;
     return unitMatches && nameScore >= 0.75 && brandScore >= 0.6;
+  }
+
+  function productNamesMatch(left, right) {
+    const leftName = normalizeText(left);
+    const rightName = normalizeText(right);
+    if (!leftName || !rightName) return false;
+    if (leftName === rightName) return true;
+
+    const [shortName, longName] = leftName.length < rightName.length ? [leftName, rightName] : [rightName, leftName];
+    return shortName.split(" ").length >= 2 && longName.endsWith(` ${shortName}`);
   }
 
   function normalizeProductIdentityForStock(item) {
@@ -1075,7 +1086,7 @@ export default function ProjectDetailPage() {
     let brand = rawBrand && rawBrand !== "-" ? rawBrand : "";
 
     if (!brand && productName) {
-      const leadingQuantityBrand = productName.match(/^\s*\d+(?:[.,]\d+)?\s*([A-Za-zÇĞİÖŞÜçğıöşü]{2,})\s+(.+)$/);
+      const leadingQuantityBrand = productName.match(/^\s*\d+(?:[.,]\d+)?\s+([A-Za-zÇĞİÖŞÜçğıöşü]{2,})\s+(.+)$/);
       if (leadingQuantityBrand) {
         brand = leadingQuantityBrand[1].toUpperCase();
         productName = leadingQuantityBrand[2].trim();
