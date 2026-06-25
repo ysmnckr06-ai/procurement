@@ -45,6 +45,49 @@ function normalizeText(value) {
   return String(value || "").trim().toLocaleLowerCase("tr-TR").replace(/\s+/g, " ");
 }
 
+function isProjectSeriesCode(value) {
+  return /^PRJ-\d{3,}$/i.test(String(value || "").trim());
+}
+
+function stockProductCode(value) {
+  const code = normalizeCode(value);
+  return code && !isProjectSeriesCode(code) ? code : "";
+}
+
+function normalizeProductIdentity(item) {
+  const rawBrand = String(item?.brand || "").trim();
+  let productName = String(item?.product_name || item?.description || "").trim();
+  let brand = rawBrand && rawBrand !== "-" ? rawBrand : "";
+
+  if (!brand && productName) {
+    const leadingQuantityBrand = productName.match(/^\s*\d+(?:[.,]\d+)?\s*([A-Za-zÇĞİÖŞÜçğıöşü]{2,})\s+(.+)$/);
+    if (leadingQuantityBrand) {
+      brand = leadingQuantityBrand[1].toUpperCase();
+      productName = leadingQuantityBrand[2].trim();
+    }
+  }
+
+  if (!brand && productName) {
+    const firstTokenBrand = productName.match(/^([A-ZÇĞİÖŞÜ]{2,20})\s+(.+)$/);
+    const rest = firstTokenBrand?.[2] || "";
+    if (firstTokenBrand && /[0-9/-]/.test(rest)) {
+      brand = firstTokenBrand[1].trim();
+      productName = rest.trim();
+    }
+  }
+
+  return {
+    brand: normalizeText(brand),
+    productName: normalizeText(productName),
+    unit: normalizeText(item?.unit || "adet"),
+  };
+}
+
+function productIdentityKey(item) {
+  const identity = normalizeProductIdentity(item);
+  return `name:${identity.productName}|brand:${identity.brand}|unit:${identity.unit}`;
+}
+
 function safeFileName(value) {
   return String(value || "malzeme-listesi").replace(/[^a-zA-Z0-9çğıöşüÇĞİÖŞÜ_-]+/g, "-");
 }
@@ -104,8 +147,13 @@ function buildSummary(projects, projectItems, products, orders) {
   const productsById = new Map(products.map((product) => [product.id, product]));
   const productsByCode = new Map(
     products
-      .filter((product) => product.normalized_product_code || product.product_code)
-      .map((product) => [normalizeCode(product.normalized_product_code || product.product_code), product]),
+      .map((product) => [stockProductCode(product.normalized_product_code || product.product_code), product])
+      .filter(([code]) => code),
+  );
+  const productsByIdentity = new Map(
+    products
+      .map((product) => [productIdentityKey(product), product])
+      .filter(([key]) => !key.includes("name:|")),
   );
   const grouped = new Map();
 
@@ -119,10 +167,12 @@ function buildSummary(projects, projectItems, products, orders) {
       const openQuantity = Math.max(estimated - received - projectReserved - alreadyOrdered, 0);
       if (estimated <= 0 && openQuantity <= 0 && received <= 0 && projectReserved <= 0 && alreadyOrdered <= 0) return;
 
+      const itemStockCode = stockProductCode(item.product_code);
       const matchedProduct = productsById.get(item.product_id)
-        || productsByCode.get(normalizeCode(item.product_code));
+        || productsByCode.get(itemStockCode)
+        || productsByIdentity.get(productIdentityKey(item));
       const normalizedProductCode = normalizeCode(
-        matchedProduct?.normalized_product_code || matchedProduct?.product_code || item.product_code,
+        matchedProduct?.normalized_product_code || matchedProduct?.product_code || itemStockCode,
       );
       const normalizedUnit = normalizeText(item.unit || matchedProduct?.unit || "adet");
       const resolvedProductId = matchedProduct?.id || item.product_id || null;
@@ -130,7 +180,7 @@ function buildSummary(projects, projectItems, products, orders) {
         ? `product:${resolvedProductId}`
         : normalizedProductCode
           ? `code:${normalizedProductCode}`
-          : `name:${normalizeText(item.product_name)}|brand:${normalizeText(item.brand)}|unit:${normalizedUnit}`;
+          : productIdentityKey({ ...item, unit: normalizedUnit });
       const project = projectsById.get(item.project_id);
       const parent = itemsById.get(item.parent_item_id);
 
@@ -139,7 +189,7 @@ function buildSummary(projects, projectItems, products, orders) {
           key,
           productId: resolvedProductId,
           normalizedProductCode,
-          productCode: matchedProduct?.product_code || item.product_code || "",
+          productCode: matchedProduct?.product_code || itemStockCode || "",
           productName: matchedProduct?.product_name || item.product_name || "",
           brand: matchedProduct?.brand || item.brand || "",
           unit: matchedProduct?.unit || item.unit || "adet",

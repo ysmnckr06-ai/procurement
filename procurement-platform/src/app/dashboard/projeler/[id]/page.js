@@ -935,7 +935,7 @@ export default function ProjectDetailPage() {
       const productCode = normalizeCode(product.product_code);
       const productName = normalizeText(product.product_name);
 
-      if (code && productCode && code === productCode && name === productName) return true;
+      if (code && productCode && code === productCode) return true;
       if (!code && name && name === productName) return true;
       return false;
     });
@@ -1057,7 +1057,7 @@ export default function ProjectDetailPage() {
   }
 
   function productMatchesProjectItem(product, item) {
-    const itemCode = normalizeProductCode(item.normalized_product_code || item.product_code);
+    const itemCode = stockProductCodeForItem(item);
     const productCode = normalizeProductCode(product.normalized_product_code || product.product_code);
     if (itemCode) return Boolean(productCode) && itemCode === productCode;
 
@@ -1371,6 +1371,9 @@ export default function ProjectDetailPage() {
         product_id: product.id,
         updated_at: now,
       };
+      if (!stockProductCodeForItem(sourceItem) && product.product_code) {
+        projectItemUpdatePayload.product_code = product.product_code;
+      }
 
       const { data: updatedItems, error: updateError } = await supabase
         .from("project_items")
@@ -1741,9 +1744,17 @@ export default function ProjectDetailPage() {
 
       if (!product?.id) continue;
 
+      const projectItemUpdatePayload = {
+        product_id: product.id,
+        updated_at: new Date().toISOString(),
+      };
+      if (!stockProductCodeForItem(item) && product.product_code) {
+        projectItemUpdatePayload.product_code = product.product_code;
+      }
+
       const { error: itemError } = await supabase
         .from("project_items")
-        .update({ product_id: product.id, updated_at: new Date().toISOString() })
+        .update(projectItemUpdatePayload)
         .eq("id", item.id)
         .eq("project_id", projectId)
         .eq("user_id", userId);
@@ -1765,7 +1776,7 @@ export default function ProjectDetailPage() {
         continue;
       }
 
-      linkedItems.push({ ...item, product_id: product.id, productCardStatus });
+      linkedItems.push({ ...item, ...projectItemUpdatePayload, productCardStatus });
     }
 
     if (failedItems.length > 0) {
