@@ -544,9 +544,7 @@ function movementMatchesProduct(movement, product) {
   const productName = normalizeStockText(product.product_name);
   const movementName = normalizeStockText(movement.product_name);
 
-  if (productCode && movementCode && productCode === movementCode && productName === movementName) {
-    return true;
-  }
+  if (productCode && movementCode) return productCode === movementCode;
 
   return !productCode && productName && productName === movementName;
 }
@@ -562,7 +560,7 @@ function projectItemMatchesProduct(item, product) {
   const productName = normalizeStockText(product.product_name);
   const itemName = normalizeStockText(item.product_name || item.description);
 
-  if (productCode && itemCode && productCode === itemCode && productName === itemName) return true;
+  if (productCode && itemCode) return productCode === itemCode;
   return !productCode && productName && productName === itemName;
 }
 
@@ -2001,8 +1999,8 @@ export default function StockPage() {
                     : "bg-slate-50 text-slate-700 hover:bg-emerald-50"
                 }`}
               >
-                <div className="text-sm font-black">Alt Ürünler / Malzemeler</div>
-                <div className="mt-1 text-xs font-semibold opacity-80">Gerçek stok, rezervasyon ve satınalma takibi</div>
+                <div className="text-sm font-black">Alt Ürün Kartları</div>
+                <div className="mt-1 text-xs font-semibold opacity-80">Tekilleştirilmiş stok kartı ve satınalma takibi</div>
                 <div className="mt-2 text-2xl font-black">{productTypeCounts.component}</div>
               </button>
             </div>
