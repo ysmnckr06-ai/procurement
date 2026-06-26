@@ -16,6 +16,7 @@ const menu = [
   { name: "Siparişler", icon: "🛒", href: "/dashboard/siparisler" },
   { name: "İş Ortakları", icon: "🤝", href: "/dashboard/tedarikciler" },
   { name: "Stok", icon: "📦", href: "/dashboard/stok" },
+  { name: "AI Asistan", icon: "AI", href: "/dashboard/ai-asistan" },
   { name: "Finans", icon: "₺", href: "/dashboard/finans" },
   { name: "Ayarlar", icon: "⚙️", href: "/dashboard/ayarlar" },
 ];
