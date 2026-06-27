@@ -361,10 +361,6 @@ export async function deduplicateBusinessPartners(supabase, userId, partners = [
     }
   }
 
-  console.log("İş ortağı tekilleştirme sonucu", {
-    "Toplam iş ortağı": activePartners.length,
-    "Pasife alınan mükerrer": duplicateCount,
-  });
 
   return { duplicateCount };
 }
@@ -449,12 +445,6 @@ export async function backfillProjectCustomerPartners(supabase, userId, projects
     linkedProjects: projectsToUpdate.length,
   };
 
-  console.log("Proje müşteri iş ortağı backfill sonucu", {
-    "Toplam müşteri": summary.totalCustomers,
-    "Yeni oluşturulan müşteri": summary.createdCustomers,
-    "Zaten mevcut olan müşteri": summary.existingCustomers,
-    "Bağlanan proje": summary.linkedProjects,
-  });
 
   return summary;
 }

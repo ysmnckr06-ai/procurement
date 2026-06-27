@@ -1,10 +1,11 @@
-from pydoc import text
-
+import logging
 import cv2
 import pytesseract
 import numpy as np
 import re
 import os
+
+logger = logging.getLogger("corvian.parsers.image")
 
 configured_tesseract_cmd = os.getenv("TESSERACT_CMD")
 windows_tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
@@ -151,8 +152,15 @@ def extract_document_items_from_text(ocr_text):
     row_pattern = re.compile(
         rf"^(?:(?P<code>[A-Z0-9][A-Z0-9._/-]{{1,30}})\s+)?"
         rf"(?P<name>.+?)\s+(?P<qty>{number_pattern})\s+"
-        rf"(?P<unit>{unit_pattern})\s+(?P<price>{number_pattern})\s+"
+        rf"(?P<unit>{unit_pattern})\s+(?P<price>{number_pattern})(?:\s*(?:TRY|TL|USD|EUR|GBP|[$â‚¬Â£â‚º]))?\s+"
         rf"(?P<total>{number_pattern})(?:\s*(?:TRY|TL|USD|EUR|GBP|[$€£₺]))?$",
+        re.IGNORECASE,
+    )
+
+    delivery_pattern = re.compile(
+        rf"^(?:(?P<code>[A-Z0-9][A-Z0-9._/-]{{1,30}})\s+)?"
+        rf"(?P<name>.+?)\s+(?:teslim|gelen|received)\s+"
+        rf"(?P<qty>{number_pattern})\s+(?P<unit>{unit_pattern})(?:\b.*)?$",
         re.IGNORECASE,
     )
 
@@ -165,6 +173,10 @@ def extract_document_items_from_text(ocr_text):
         )):
             continue
         match = row_pattern.match(line)
+        is_delivery_only = False
+        if not match:
+            match = delivery_pattern.match(line)
+            is_delivery_only = True
         if not match:
             continue
         values = match.groupdict()
@@ -180,7 +192,9 @@ def extract_document_items_from_text(ocr_text):
             product_code = None
         item = build_document_item(
             product_code, product_name, values["qty"], values["unit"],
-            values["price"], values["total"], 82 if product_code else 70,
+            "0" if is_delivery_only else values.get("price"),
+            "0" if is_delivery_only else values.get("total"),
+            78 if is_delivery_only else (82 if product_code else 70),
         )
         if item:
             items.append(item)
@@ -519,8 +533,8 @@ def parse_image(image_path, firma_adi="", file_name=""):
 
     text = "\n".join([t for t in texts if t.strip()])
 
-    print("OCR RAW TEXT LENGTH:", len(text))
-    print("OCR RAW TEXT PREVIEW:", text[:1000])
+    logger.debug("OCR RAW TEXT LENGTH:", len(text))
+    logger.debug("OCR RAW TEXT PREVIEW:", text[:1000])
 
     lines = [fix_ocr_text(l) for l in text.split("\n") if fix_ocr_text(l)]
 
@@ -536,8 +550,8 @@ def parse_image(image_path, firma_adi="", file_name=""):
     for line in lines:
         parsed = parse_offer_line(line)
 
-        print("LINE:", line)
-        print("PARSED:", parsed)
+        logger.debug("LINE:", line)
+        logger.debug("PARSED:", parsed)
         
         if not parsed:
             continue

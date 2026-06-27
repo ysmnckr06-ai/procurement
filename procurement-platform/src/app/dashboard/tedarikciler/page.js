@@ -108,12 +108,16 @@ function collectObjectsDeep(value, predicate, output = [], depth = 0) {
   if (!value || depth > 8) return output;
   const parsed = parseMaybeJson(value) || value;
   if (Array.isArray(parsed)) {
-    parsed.forEach((item) => collectObjectsDeep(item, predicate, output, depth + 1));
+    parsed.forEach((item) => {
+      collectObjectsDeep(item, predicate, output, depth + 1);
+    });
     return output;
   }
   if (typeof parsed !== "object") return output;
   if (predicate(parsed)) output.push(parsed);
-  Object.values(parsed).forEach((item) => collectObjectsDeep(item, predicate, output, depth + 1));
+  Object.values(parsed).forEach((item) => {
+    collectObjectsDeep(item, predicate, output, depth + 1);
+  });
   return output;
 }
 
@@ -374,6 +378,7 @@ export default function BusinessPartnersPage() {
       return;
     }
 
+    try {
     const [partnerRes, projectRes, orderRes, projectPaymentRes, orderPaymentRes, movementRes, reportRes, offerRes] = await Promise.all([
       supabase
         .from("suppliers")
@@ -420,22 +425,30 @@ export default function BusinessPartnersPage() {
       );
       setPartners([]);
     } else {
-      const backfillSummary = await backfillProjectCustomerPartners(
-        supabase,
-        user.id,
-        projectRes.data || [],
-        partnerRes.data || [],
-      );
-      const { data: partnersAfterBackfill } = await supabase
+      let backfillSummary = { createdCustomers: 0, linkedProjects: 0, existingCustomers: 0 };
+      let dedupeSummary = { duplicateCount: 0 };
+      let partnersAfterBackfill = partnerRes.data || [];
+      try {
+        backfillSummary = await backfillProjectCustomerPartners(
+          supabase,
+          user.id,
+          projectRes.data || [],
+          partnerRes.data || [],
+        );
+        const { data: partnerRowsAfterBackfill } = await supabase
         .from("suppliers")
         .select("*")
         .eq("user_id", user.id)
         .order("name", { ascending: true });
-      const dedupeSummary = await deduplicateBusinessPartners(
-        supabase,
-        user.id,
-        partnersAfterBackfill || partnerRes.data || [],
-      );
+        partnersAfterBackfill = partnerRowsAfterBackfill || partnerRes.data || [];
+        dedupeSummary = await deduplicateBusinessPartners(
+          supabase,
+          user.id,
+          partnersAfterBackfill || partnerRes.data || [],
+        );
+      } catch (cleanupError) {
+        console.error("Ä°ÅŸ ortaÄŸÄ± otomatik eÅŸleÅŸtirme atlandÄ±:", cleanupError);
+      }
       const shouldReloadPartners =
         backfillSummary.createdCustomers > 0 ||
         backfillSummary.linkedProjects > 0 ||
@@ -469,6 +482,11 @@ export default function BusinessPartnersPage() {
     setMovements(movementRes.data || []);
     setReports(reportRes.data || []);
     setOffers(offerRes.data || []);
+    } catch (error) {
+      console.error(error);
+      setMessage(error?.message || "Ä°ÅŸ ortaklarÄ± yÃ¼klenemedi.");
+      setPartners([]);
+    }
     setLoading(false);
   }
 
@@ -754,7 +772,22 @@ export default function BusinessPartnersPage() {
         ? partners.find((item) => item.id === partnerChoice.partnerId)
         : matches.find((match) => match.type === "exact")?.partner;
 
-      if (!partner && partnerChoice?.mode === "new") {
+      if (!partner) {
+        partner = await findOrCreateBusinessPartner(supabase, user.id, {
+          name: payload.name,
+          partnerType: payload.partner_type,
+          taxNumber: payload.tax_number,
+          email: payload.email,
+          phone: payload.phone,
+          contactPerson: payload.contact_person,
+          city: payload.city,
+          address: payload.address,
+          notes: payload.notes,
+          allowCreate: false,
+        });
+      }
+
+      if (!partner && (partnerChoice?.mode === "new" || matches.length === 0)) {
         partner = await findOrCreateBusinessPartner(supabase, user.id, {
           name: payload.name,
           partnerType: payload.partner_type,
@@ -873,20 +906,9 @@ export default function BusinessPartnersPage() {
       Number(receiptRes.count || 0) +
       Number(reportRes.count || 0);
 
-    console.log("İş ortağı silme kontrolü", {
-      partnerId: partner.id,
-      partnerName: partner.name,
-      projects: currentMetrics.projects.length,
-      orders: currentMetrics.orders.length,
-      stockMovements: currentMetrics.movements.length,
-      payments: paymentRes.count || 0,
-      receipts: receiptRes.count || 0,
-      reports: reportRes.count || 0,
-      linkedCount,
-    });
 
     if (linkedCount > 0) {
-      const { data, error } = await supabase
+      const { error } = await supabase
         .from("suppliers")
         .update({
           status: "Silindi",
@@ -897,7 +919,6 @@ export default function BusinessPartnersPage() {
         .select("id,status")
         .single();
 
-      console.log("İş ortağı pasife alma sonucu", { data, error, linkedCount });
 
       if (error) {
         console.error("İş ortağı pasife alınamadı:", error);
@@ -914,14 +935,13 @@ export default function BusinessPartnersPage() {
       return;
     }
 
-    const { data, error } = await supabase
+    const { error } = await supabase
       .from("suppliers")
       .delete()
       .eq("id", partner.id)
       .eq("user_id", user.id)
       .select("id");
 
-    console.log("İş ortağı fiziksel silme sonucu", { data, error });
 
     if (error) {
       console.error("İş ortağı silinemedi:", error);

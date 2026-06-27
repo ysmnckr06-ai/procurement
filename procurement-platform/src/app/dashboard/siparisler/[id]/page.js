@@ -537,6 +537,40 @@ function normalizeItems(items) {
   });
 }
 
+function applyReceiptQuantitiesToItems(items, receipts) {
+  const receiptQuantityByItemId = new Map();
+
+  (receipts || []).forEach((receipt) => {
+    const match = matchOrderItem(receipt, items);
+    if (!match.matched || match.manualReviewRequired) return;
+    const current = receiptQuantityByItemId.get(match.orderItemId) || 0;
+    receiptQuantityByItemId.set(
+      match.orderItemId,
+      current + Number(receipt.accepted_quantity ?? receipt.received_quantity ?? 0),
+    );
+  });
+
+  return (items || []).map((item, index) => {
+    const itemId = getOrderItemMatchId(item, index);
+    const deliveredQuantity = Math.max(
+      Number(item.deliveredQuantity || 0),
+      Number(receiptQuantityByItemId.get(itemId) || 0),
+    );
+    const quantity = Number(item.quantity || 0);
+
+    return {
+      ...item,
+      deliveredQuantity,
+      status:
+        deliveredQuantity >= quantity && quantity > 0
+          ? "Tam Teslim"
+          : deliveredQuantity > 0
+            ? "Kısmi Teslim"
+            : item.status,
+    };
+  });
+}
+
 function normalizeHistory(order) {
   const savedHistory = Array.isArray(order.status_history)
     ? order.status_history
@@ -922,7 +956,11 @@ export default function OrderDetailPage() {
     }
   }
 
-  const items = useMemo(() => normalizeItems(order?.items || []), [order]);
+  const rawItems = useMemo(() => normalizeItems(order?.items || []), [order]);
+  const items = useMemo(
+    () => applyReceiptQuantitiesToItems(rawItems, receipts),
+    [rawItems, receipts],
+  );
   const historyRows = useMemo(
     () => (order ? normalizeHistory(order) : []),
     [order],
@@ -1240,6 +1278,16 @@ export default function OrderDetailPage() {
     return "Depoda";
   }
 
+  function getProjectItemRequiredQuantity(projectItem, fallbackQuantity) {
+    return Number(
+      projectItem?.estimated_quantity
+        ?? projectItem?.quantity
+        ?? projectItem?.required_quantity
+        ?? fallbackQuantity
+        ?? 0,
+    );
+  }
+
   async function saveReceipt(index) {
     if (receiptSavingRef.current.has(index)) return;
     receiptSavingRef.current.add(index);
@@ -1280,10 +1328,20 @@ export default function OrderDetailPage() {
     const selectedProjectItem =
       projectItems.find((projectItem) => projectItem.id === input.projectItemId) || null;
     const parentItemId =
-      selectedProjectItem?.parent_item_id || input.parentItemId || selectedProjectItem?.id || null;
+      selectedProjectItem?.parent_item_id || input.parentItemId || null;
 
-    if (receivedQuantity <= 0 && defectiveQuantity <= 0) {
-      setMessage("Teslim alınan miktar girilmelidir.");
+    if (!Number.isFinite(receivedQuantity) || !Number.isFinite(defectiveQuantity)) {
+      setMessage("Teslim miktar? ge?erli bir say? olmal?d?r.");
+      return;
+    }
+
+    if (receivedQuantity <= 0 || acceptedQuantity <= 0) {
+      setMessage("Teslim al?nan miktar 0'dan b?y?k olmal?d?r.");
+      return;
+    }
+
+    if (receivedQuantity > remainingQuantity) {
+      setMessage(`Teslim miktar? kalan miktar? a?amaz. Kalan: ${remainingQuantity} ${item.unit || "adet"}.`);
       return;
     }
 
@@ -1318,14 +1376,40 @@ export default function OrderDetailPage() {
 
     const nextItems = items.map((row, rowIndex) => {
       if (rowIndex !== index) return row;
+      const deliveredQuantity = Math.min(
+        Number(row.quantity || 0),
+        Number(row.deliveredQuantity || 0) + acceptedQuantity,
+      );
       return {
         ...row,
-        deliveredQuantity: Math.min(
-          Number(row.quantity || 0),
-          Number(row.deliveredQuantity || 0) + acceptedQuantity,
-        ),
+        deliveredQuantity,
+        status:
+          deliveredQuantity >= Number(row.quantity || 0) && Number(row.quantity || 0) > 0
+            ? "Tam Teslim"
+            : deliveredQuantity > 0
+              ? "Kısmi Teslim"
+              : row.status,
       };
     });
+    const nextItemDeliveredQuantity = Number(nextItems[index]?.deliveredQuantity || 0);
+    const nextItemReceiptStatus = calculateReceiptStatus(
+      nextItemDeliveredQuantity,
+      orderedQuantity,
+      defectiveQuantity,
+    );
+    const nextProjectReceivedQuantity = selectedProjectItem?.id
+      ? Number(selectedProjectItem.received_quantity || 0) + acceptedQuantity
+      : 0;
+    const nextProjectDefectiveQuantity = selectedProjectItem?.id
+      ? Number(selectedProjectItem.defective_quantity || 0) + defectiveQuantity
+      : defectiveQuantity;
+    const nextProjectReceiptStatus = selectedProjectItem?.id
+      ? calculateReceiptStatus(
+        nextProjectReceivedQuantity,
+        getProjectItemRequiredQuantity(selectedProjectItem, orderedQuantity),
+        nextProjectDefectiveQuantity,
+      )
+      : receiptStatus;
     const nextDeliveredQuantity = nextItems.reduce(
       (sum, row) => sum + Number(row.deliveredQuantity || 0),
       0,
@@ -1353,7 +1437,9 @@ export default function OrderDetailPage() {
       p_document_item_id: null,
       p_order_no: receiptPayload.order_no,
       p_supplier_name: receiptPayload.supplier_name,
-      p_partner_id: receiptPayload.partner_id,
+      // Some demo databases still have legacy text partner ids while the receipt RPC
+      // expects uuid. Keep the read-only partner label, but avoid a text=uuid failure.
+      p_partner_id: null,
       p_partner_name: receiptPayload.partner_name,
       p_partner_type: receiptPayload.partner_type,
       p_product_code: resolvedProduct?.product_code || item.productCode || "",
@@ -1376,13 +1462,132 @@ export default function OrderDetailPage() {
       p_order_status: nextStatus,
       p_delivery_date: nextStatus === "Tam Teslim" ? getToday() : order.delivery_date,
       p_status_history: nextHistory,
-      p_order_receipt_status: receiptStatus,
+      p_order_receipt_status: nextStatus === "Tam Teslim" ? "Depoda" : nextItemReceiptStatus,
       p_received_total: nextDeliveredQuantity,
       p_defective_total: Number(order.defective_total || 0) + defectiveQuantity,
     });
 
     if (receiptError) {
       console.error(receiptError);
+      const legacyTypeMismatch = String(receiptError.message || "").includes("operator does not exist: text = uuid");
+      if (legacyTypeMismatch) {
+        const { data: currentProduct, error: productReadError } = await supabase
+          .from("products")
+          .select("current_stock")
+          .eq("id", resolvedProduct.id)
+          .eq("user_id", user.id)
+          .single();
+
+        if (productReadError) {
+          console.error(productReadError);
+          setMessage("Teslim alma işlemi tamamlanamadı; ürün stoku okunamadı.");
+          return;
+        }
+
+        const { data: insertedReceipt, error: fallbackReceiptError } = await supabase
+          .from("order_receipts")
+          .insert({
+            ...receiptPayload,
+            partner_id: null,
+          })
+          .select("id")
+          .single();
+
+        if (fallbackReceiptError) {
+          console.error(fallbackReceiptError);
+          setMessage(fallbackReceiptError.message || "Teslim alma kaydı oluşturulamadı.");
+          return;
+        }
+
+        const fallbackUpdates = [];
+        if (acceptedQuantity > 0) {
+          fallbackUpdates.push(
+            supabase
+              .from("products")
+              .update({
+                current_stock: Number(currentProduct?.current_stock || 0) + acceptedQuantity,
+                last_supplier: receiptPayload.partner_name || receiptPayload.supplier_name || "",
+                last_unit_price: Number(item.unitPrice || 0),
+                last_currency: order.currency || "TRY",
+                last_purchase_date: receiptPayload.receipt_date,
+                last_movement_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+              })
+              .eq("id", resolvedProduct.id)
+              .eq("user_id", user.id),
+            supabase
+              .from("stock_movements")
+              .insert({
+                user_id: user.id,
+                product_id: resolvedProduct.id,
+                product_code: resolvedProduct?.product_code || item.productCode || "",
+                product_name: resolvedProduct?.product_name || item.productName,
+                movement_type: "in",
+                quantity: acceptedQuantity,
+                unit: item.unit || resolvedProduct?.unit || "adet",
+                supplier_name: receiptPayload.supplier_name,
+                partner_id: null,
+                partner_name: receiptPayload.partner_name,
+                partner_type: receiptPayload.partner_type,
+                order_id: order.id,
+                report_id: order.report_id || null,
+                project_id: selectedProjectItem?.project_id || order.project_id || null,
+                project_item_id: selectedProjectItem?.id || null,
+                parent_item_id: parentItemId,
+                receipt_id: insertedReceipt?.id || null,
+                unit_price: Number(item.unitPrice || 0),
+                currency: order.currency || "TRY",
+                movement_date: receiptPayload.receipt_date,
+                source: "Depo teslim alma",
+                notes: [receiptPayload.order_no, receiptStatus].filter(Boolean).join(" - "),
+              }),
+          );
+        }
+
+        if (selectedProjectItem?.id) {
+          fallbackUpdates.push(
+            supabase
+              .from("project_items")
+              .update({
+                received_quantity: nextProjectReceivedQuantity,
+                defective_quantity: nextProjectDefectiveQuantity,
+                status: nextProjectReceiptStatus,
+                updated_at: new Date().toISOString(),
+              })
+              .eq("id", selectedProjectItem.id)
+              .eq("user_id", user.id),
+          );
+        }
+
+        fallbackUpdates.push(
+          supabase
+            .from("orders")
+            .update({
+              items: nextItems,
+              status: nextStatus,
+              delivery_date: nextStatus === "Tam Teslim" ? getToday() : order.delivery_date,
+              status_history: nextHistory,
+              receipt_status: nextStatus === "Tam Teslim" ? "Depoda" : nextItemReceiptStatus,
+              received_total: nextDeliveredQuantity,
+              defective_total: Number(order.defective_total || 0) + defectiveQuantity,
+            })
+            .eq("id", order.id)
+            .eq("user_id", user.id),
+        );
+
+        const fallbackResults = await Promise.all(fallbackUpdates);
+        const fallbackError = fallbackResults.find((result) => result.error)?.error;
+        if (fallbackError) {
+          console.error(fallbackError);
+          setMessage(fallbackError.message || "Teslim alma kaydı oluştu ancak bağlı güncellemeler tamamlanamadı.");
+          return;
+        }
+
+        setReceiptInputs((prev) => ({ ...prev, [index]: {} }));
+        setMessage("Depo teslim alma kaydedildi ve stok girişine işlendi.");
+        await loadOrder();
+        return;
+      }
       setMessage(receiptError.message || "Teslim alma işlemi atomik olarak tamamlanamadı; hiçbir kayıt değiştirilmedi.");
       return;
     }
@@ -3023,6 +3228,19 @@ function calculateInvoiceOrderCheck(order, documents, companySettings) {
 
 function InvoiceCheckPanel({ order, documents, companySettings }) {
   const check = calculateInvoiceOrderCheck(order, documents, companySettings);
+  const pendingDifference = check.pendingInvoiceBaseTotal - check.orderBaseTotal;
+  const pendingDifferencePercent = check.orderBaseTotal > 0
+    ? (Math.abs(pendingDifference) / check.orderBaseTotal) * 100
+    : check.pendingInvoiceBaseTotal === 0
+      ? 0
+      : 100;
+  const hasPendingReview = check.pendingInvoiceBaseTotal > 0;
+  const hasApprovedDifference = Math.abs(check.difference) > 0.01;
+  const reviewClass = hasPendingReview || hasApprovedDifference
+    ? pendingDifference > 0 || check.difference > 0.01
+      ? "border-red-300 bg-red-50 text-red-800"
+      : "border-amber-300 bg-amber-50 text-amber-800"
+    : "border-emerald-200 bg-emerald-50 text-emerald-800";
   const statusDetails = {
     none: { label: "Fatura yok", className: "bg-slate-200 text-slate-700" },
     partial: { label: "Kısmi faturalandı", className: "bg-amber-100 text-amber-700" },
@@ -3077,6 +3295,36 @@ function InvoiceCheckPanel({ order, documents, companySettings }) {
       {check.billingStatus === "none" && (
         <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-500">
           Henüz fatura yüklenmedi.
+        </div>
+      )}
+      {check.billingStatus !== "none" && (
+        <div className={`mt-3 rounded-xl border p-4 text-sm font-semibold ${reviewClass}`}>
+          <div className="font-black">Fatura-sipariş tutar kontrolü</div>
+          <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-4">
+            <div>Sipariş: {formatMoney(check.orderBaseTotal, check.baseCurrency)}</div>
+            <div>
+              Fatura: {formatMoney(
+                hasPendingReview ? check.pendingInvoiceBaseTotal : check.invoiceBaseTotal,
+                check.baseCurrency,
+              )}
+            </div>
+            <div>
+              Fark: {formatMoney(
+                hasPendingReview ? pendingDifference : check.difference,
+                check.baseCurrency,
+              )}
+            </div>
+            <div>
+              Fark oranı: %
+              {(hasPendingReview ? pendingDifferencePercent : check.differencePercent)
+                .toLocaleString("tr-TR", { maximumFractionDigits: 2 })}
+            </div>
+          </div>
+          {(hasPendingReview || hasApprovedDifference) && (
+            <div className="mt-2">
+              Fatura farkı manuel incelenmeden otomatik kabul edilmez.
+            </div>
+          )}
         </div>
       )}
       {check.hasCurrencyMismatch && (

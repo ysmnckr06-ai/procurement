@@ -204,8 +204,8 @@ export default function AiAssistantPage() {
 
       setAnswer(payload.answer || "");
       setMatchedProject(payload.matchedProject || null);
-    } catch {
-      setError("Analiz alınamadı. Lütfen tekrar deneyin.");
+    } catch (error) {
+      setError(error?.message || "Analiz alınamadı. Lütfen tekrar deneyin.");
     } finally {
       setLoading(false);
     }

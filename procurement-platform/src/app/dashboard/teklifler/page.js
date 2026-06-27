@@ -21,6 +21,35 @@ const defaultCompanySettings = {
   approval_required: true,
 };
 
+const OFFER_FILE_EXTENSIONS = [".xlsx", ".xls"];
+const OFFER_FILE_MIME_TYPES = new Set([
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-excel",
+]);
+
+function offerFileExtension(fileName = "") {
+  const normalized = String(fileName || "").toLowerCase();
+  const dotIndex = normalized.lastIndexOf(".");
+  return dotIndex >= 0 ? normalized.slice(dotIndex) : "";
+}
+
+async function validateOfferWorkbook(file) {
+  const XLSX = await import("xlsx");
+  const buffer = await file.arrayBuffer();
+  const workbook = XLSX.read(buffer, { type: "array" });
+  const visibleSheets = (workbook.SheetNames || []).filter((sheetName) => {
+    const sheet = workbook.Sheets[sheetName];
+    if (!sheet || !sheet["!ref"]) return false;
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: false });
+    return rows.some((row) =>
+      Array.isArray(row) &&
+      row.some((cell) => cell !== null && cell !== undefined && String(cell).trim() !== "")
+    );
+  });
+
+  return visibleSheets.length > 0;
+}
+
 function InfoBox({ title, text, tone = "blue" }) {
   const toneClasses = {
     blue: "border-blue-200 bg-blue-50 text-blue-900",
@@ -57,7 +86,9 @@ function collectPartnerNames(value, found = new Set()) {
   if (!value) return found;
 
   if (Array.isArray(value)) {
-    value.forEach((item) => collectPartnerNames(item, found));
+    value.forEach((item) => {
+      collectPartnerNames(item, found);
+    });
     return found;
   }
 
@@ -217,12 +248,12 @@ const loadCompanySettings = async () => {
 
     allParsedRows.forEach((row) => {
       const raw = String(row?.paraBirimi || "").trim().toUpperCase();
-      if (!raw) return;
-
-      if (raw === "₺" || raw === "TL") {
-        currencies.add("TRY");
-      } else {
-        currencies.add(raw);
+      if (raw) {
+        if (raw === "₺" || raw === "TL") {
+          currencies.add("TRY");
+        } else {
+          currencies.add(raw);
+        }
       }
     });
 
@@ -239,13 +270,64 @@ const loadCompanySettings = async () => {
 
   const handleFileUpload = async (e) => {
     const uploadedFiles = Array.from(e.target.files || []);
+    await addOfferFiles(uploadedFiles, () => {
+      e.target.value = "";
+    });
+  };
+
+  const handleDropFiles = async (event) => {
+    event.preventDefault();
+    const uploadedFiles = Array.from(event.dataTransfer?.files || []);
+    await addOfferFiles(uploadedFiles);
+  };
+
+  const addOfferFiles = async (uploadedFiles, resetInput = () => {}) => {
     if (uploadedFiles.length === 0) return;
+
+    const invalidTypeFile = uploadedFiles.find((file) => {
+      const extension = offerFileExtension(file.name);
+      const mimeType = String(file.type || "").trim();
+      return (
+        !OFFER_FILE_EXTENSIONS.includes(extension) ||
+        (mimeType && !OFFER_FILE_MIME_TYPES.has(mimeType))
+      );
+    });
+
+    if (invalidTypeFile) {
+      setMessage(`${invalidTypeFile.name} desteklenmiyor. Sadece .xlsx veya .xls teklif dosyası yükleyin.`);
+      resetInput();
+      return;
+    }
+
+    const emptyFile = uploadedFiles.find((file) => file.size <= 0);
+
+    if (emptyFile) {
+      setMessage(`${emptyFile.name} boş görünüyor. İçinde veri olan bir Excel dosyası yükleyin.`);
+      resetInput();
+      return;
+    }
 
     const oversizedFile = uploadedFiles.find((file) => file.size > maxFileSizeMb * 1024 * 1024);
 
     if (oversizedFile) {
       setMessage(`${oversizedFile.name} dosyası ${maxFileSizeMb} MB sınırını aşıyor.`);
-      e.target.value = "";
+      resetInput();
+      return;
+    }
+
+    try {
+      for (const file of uploadedFiles) {
+        const hasRows = await validateOfferWorkbook(file);
+        if (!hasRows) {
+          setMessage(`${file.name} içinde okunabilir teklif satırı bulunamadı.`);
+          resetInput();
+          return;
+        }
+      }
+    } catch (error) {
+      console.error(error);
+      setMessage("Excel dosyası okunamadı. Lütfen geçerli bir .xlsx veya .xls dosyası yükleyin.");
+      resetInput();
       return;
     }
 
@@ -261,7 +343,7 @@ const loadCompanySettings = async () => {
     setFiles((prev) => [...prev, ...allowedNewFiles]);
     setMessage("");
     setReportReady(false);
-    e.target.value = "";
+    resetInput();
   };
 
   const calculateAnnualInterestRate = () => {
@@ -629,19 +711,23 @@ const loadCompanySettings = async () => {
                 Aynı talep için birden fazla tedarikçi teklifi yükleyebilirsiniz. Dosyalar analiz edilerek mukayese raporuna aktarılır.
               </p>
 
-              <div className="mt-5 rounded-3xl border border-dashed border-blue-300 bg-blue-50/40 p-8 text-center">
+              <div
+                className="mt-5 rounded-3xl border border-dashed border-blue-300 bg-blue-50/40 p-8 text-center"
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={handleDropFiles}
+              >
                 <div className="text-4xl">📎</div>
                 <div className="mt-2 text-lg font-bold text-slate-800">
                   Dosyaları seçin veya sürükleyin
                 </div>
                 <p className="mt-1 text-sm text-slate-500">
-                  Excel, PDF, PNG, JPG ve JPEG desteklenir.
+                  Sadece .xlsx ve .xls teklif dosyaları desteklenir.
                 </p>
 
                 <input
                   type="file"
                   multiple
-                  accept=".xlsx,.xls,.pdf,.png,.jpg,.jpeg"
+                  accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
                   onChange={handleFileUpload}
                   className="mx-auto mt-5 block w-full max-w-xl rounded-xl border border-slate-300 bg-white p-3"
                 />

@@ -1,10 +1,13 @@
 import os
+import logging
 import re
 import cv2
 import numpy as np
 import pandas as pd
 import pdfplumber
 import pytesseract
+
+logger = logging.getLogger("corvian.parsers.request")
 
 from app.utils import normalize_text, safe_float, safe_str
 
@@ -631,7 +634,7 @@ def parse_table_image_by_cells(img, file_name):
         unit_text = read_col(unit_col, psm=7)
         code_text = read_col(code_col, psm=7)
 
-        print("DEBUG GORSEL SATIR:", {
+        logger.debug("DEBUG GORSEL SATIR:", {
                 "product_col": product_col,
                 "desc_col": desc_col,
                 "qty_col": qty_col,

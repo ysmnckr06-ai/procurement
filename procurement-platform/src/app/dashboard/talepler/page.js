@@ -1060,7 +1060,7 @@ export default function TaleplerPage() {
             </div>
 
             <div className="mt-5 flex flex-wrap gap-3">
-              <button
+              <button type="button"
                 onClick={handleAnalyze}
                 disabled={isLoading}
                 className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300"
@@ -1068,7 +1068,7 @@ export default function TaleplerPage() {
                 {isLoading ? "Talep Listesi Oluşturuluyor..." : "+ Talep Listesini Oluştur"}
               </button>
 
-              <button
+              <button type="button"
                 onClick={handleDownload}
                 disabled={!reportPath}
                 className="rounded-xl bg-green-600 px-5 py-3 text-sm font-bold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:bg-slate-300"
@@ -1076,7 +1076,7 @@ export default function TaleplerPage() {
                 Excel İndir
               </button>
 
-              <button
+              <button type="button"
                 onClick={handleSendToOffers}
                 disabled={rows.length === 0}
                 className="rounded-xl bg-purple-600 px-5 py-3 text-sm font-bold text-white hover:bg-purple-700 disabled:cursor-not-allowed disabled:bg-slate-300"
@@ -1105,7 +1105,7 @@ export default function TaleplerPage() {
                 </span>
                 {savedRequests.length > 0 && (
                   <>
-                    <button
+                    <button type="button"
                       onClick={toggleVisibleRequestSelection}
                       className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
                     >
@@ -1113,14 +1113,14 @@ export default function TaleplerPage() {
                         ? "Görünen seçimi temizle"
                         : "Görünenleri seç"}
                     </button>
-                    <button
+                    <button type="button"
                       onClick={() => downloadRequestsAsExcel(selectedRequests)}
                       disabled={selectedRequests.length === 0}
                       className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300"
                     >
                       Seçilenleri Excel indir ({selectedRequests.length})
                     </button>
-                    <button
+                    <button type="button"
                       onClick={() => downloadRequestsAsPdf(selectedRequests)}
                       disabled={selectedRequests.length === 0}
                       className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
@@ -1177,7 +1177,7 @@ export default function TaleplerPage() {
                         </div>
 
                         <div className="flex flex-wrap items-start gap-2 md:justify-end">
-                          <button
+                          <button type="button"
                             onClick={() => setExpandedRequestId(isExpanded ? "" : req.id)}
                             className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
                           >
@@ -1185,7 +1185,7 @@ export default function TaleplerPage() {
                           </button>
 
                           {req.filepath && (
-                            <button
+                            <button type="button"
                               onClick={() => handleSavedRequestDownload(req.filepath)}
                               className="rounded-lg bg-green-600 px-3 py-2 text-sm font-semibold text-white"
                             >
@@ -1193,27 +1193,27 @@ export default function TaleplerPage() {
                             </button>
                           )}
 
-                          <button
+                          <button type="button"
                             onClick={() => downloadRequestsAsExcel([req])}
                             className="rounded-lg bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-100"
                           >
                             Excel indir
                           </button>
 
-                          <button
+                          <button type="button"
                             onClick={() => downloadRequestsAsPdf([req])}
                             className="rounded-lg bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-200"
                           >
                             PDF indir
                           </button>
 
-                          <button
+                          <button type="button"
                             onClick={() => router.push(`/dashboard/teklifler?requestId=${req.id}${req.project_id ? `&projectId=${req.project_id}` : ""}`)}
                             className="rounded-lg bg-purple-600 px-3 py-2 text-sm font-semibold text-white"
                           >
                             Tekliflere Aktar
                           </button>
-                          <button
+                          <button type="button"
                             onClick={() => deleteRequest(req.id)}
                             className="rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white"
                           >
@@ -1332,7 +1332,7 @@ export default function TaleplerPage() {
                   );
                 })}     
 <div className="flex justify-center pt-2">
-  <button
+  <button type="button"
     onClick={() => setShowAllRequests(!showAllRequests)}
     className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium hover:bg-slate-100"
   >

@@ -776,13 +776,6 @@ export default function ProjectDetailPage() {
     setPayments(paymentRes.data || []);
     setExpenses(expenseRes.data || []);
     setRevisions(revisionRes.data || []);
-    console.log("Project products query result", {
-      userId: user.id,
-      returned: productRes.data?.length || 0,
-      count: productRes.count,
-      error: productRes.error?.message || null,
-      sampleUserIds: Array.from(new Set((productRes.data || []).map((product) => product.user_id))).slice(0, 5),
-    });
     setProducts(productRes.data || []);
     const loadedItems = itemRes.data || [];
     const linkedItems = await ensureProductCardsForProjectItems(loadedItems, user.id, productRes.data || []);
@@ -804,12 +797,6 @@ export default function ProjectDetailPage() {
               ? "Ürün adı/açıklama boş olduğu için eşleştirilemedi"
               : "Eşleşme/oluşturma sonrası product_id boş kaldı",
       }));
-    console.log("Project item product backfill", {
-      total: linkedItems.length,
-      linked: linkedCount,
-      empty: linkedItems.length - linkedCount,
-    });
-    console.log("Unlinked project_items after product backfill", unlinkedItems);
     console.table(unlinkedItems);
     setItems(linkedItems);
     let nextProjectRequests = requestRes.data || [];
@@ -2723,7 +2710,6 @@ export default function ProjectDetailPage() {
     if (!user) return;
 
     try {
-      console.log("Toplu silme secilen id sayisi:", selectedIds.length);
       const response = await fetch(`${API_URL}/project-items/bulk-delete`, {
         method: "POST",
         headers: {
@@ -2746,9 +2732,6 @@ export default function ProjectDetailPage() {
       }
 
       const deletedIds = data.deleted_ids || [];
-      console.log("Toplu silme alt urun sayisi:", data.child_count || 0);
-      console.log("Toplu silme batch sonuclari:", data.batch_logs || []);
-      console.log("Toplu silme kalan kayit sayisi:", data.remaining_count || 0);
       const optimisticDeletedIds = data.remaining_count > 0
         ? deletedIds
         : Array.from(new Set([...deletedIds, ...selectedProjectItemDeleteIds, ...selectedIds]));

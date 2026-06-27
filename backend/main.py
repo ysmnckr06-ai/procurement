@@ -4,6 +4,8 @@ import re
 import json
 import uuid
 import requests
+import logging
+from openpyxl import load_workbook
 
 from dotenv import load_dotenv
 from pathlib import Path
@@ -44,6 +46,8 @@ from app.services.report_builder import build_excel_report
 from app.services.request_report_builder import build_request_excel_report
 
 from app.utils import normalize_text
+
+logger = logging.getLogger("corvian.backend")
 
 def safe_float_form(val):
     try:
@@ -423,7 +427,7 @@ app.add_middleware(
 def save_report_to_supabase(report_data):
 
     if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
-        print("SUPABASE ENV eksik")
+        logger.debug("SUPABASE ENV eksik")
         return
 
     url = f"{SUPABASE_URL}/rest/v1/reports"
@@ -441,8 +445,8 @@ def save_report_to_supabase(report_data):
         json=report_data
     )
 
-    print("SUPABASE REPORT RESPONSE:", response.status_code)
-    print(response.text)
+    logger.debug("SUPABASE REPORT RESPONSE:", response.status_code)
+    logger.debug(response.text)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMP_DIR = os.path.join(BASE_DIR, "app", "temp")
@@ -475,7 +479,7 @@ def require_active_license(user_id: str):
             .execute()
         )
     except Exception as exc:
-        print("LICENSE CHECK ERROR:", str(exc))
+        logger.debug("LICENSE CHECK ERROR:", str(exc))
         raise HTTPException(
             status_code=503,
             detail="Lisans bilgisi doğrulanamadı. Lütfen daha sonra tekrar deneyin.",
@@ -534,7 +538,7 @@ def verify_user_token(authorization: str, enforce_license: bool = True):
             timeout=10,
         )
     except requests.RequestException as e:
-        print("SUPABASE AUTH CONNECTION ERROR:", str(e))
+        logger.debug("SUPABASE AUTH CONNECTION ERROR:", str(e))
         raise HTTPException(
             status_code=503,
             detail="Supabase kullanıcı doğrulamasına ulaşılamadı. Lütfen tekrar deneyin.",
@@ -572,7 +576,7 @@ def resolve_company_info(user: dict) -> dict:
             )
             settings_row = settings_response.data[0] if settings_response.data else None
         except Exception as exc:
-            print("COMPANY SETTINGS LOOKUP ERROR:", str(exc))
+            logger.debug("COMPANY SETTINGS LOOKUP ERROR:", str(exc))
 
         try:
             license_response = (
@@ -584,7 +588,7 @@ def resolve_company_info(user: dict) -> dict:
             )
             license_row = license_response.data[0] if license_response.data else None
         except Exception as exc:
-            print("LICENSE COMPANY LOOKUP ERROR:", str(exc))
+            logger.debug("LICENSE COMPANY LOOKUP ERROR:", str(exc))
 
     company_name = (
         str((settings_row or {}).get("company_name") or "").strip()
@@ -847,12 +851,65 @@ def extract_order_document_metadata(ocr_text: str):
 MAX_UPLOAD_FILES = 15
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024
 ALLOWED_UPLOAD_EXTENSIONS = {".pdf", ".xlsx", ".xls", ".xlsm", ".xlsb", ".csv", ".ods", ".png", ".jpg", ".jpeg", ".webp"}
+OFFER_UPLOAD_EXTENSIONS = {".xlsx", ".xls"}
+OFFER_UPLOAD_MIME_TYPES = {
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.ms-excel",
+}
 
 def safe_upload_name(filename: str) -> str:
     original_name = os.path.basename(filename or "dosya")
     stem, ext = os.path.splitext(original_name)
     safe_stem = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("._-") or "dosya"
     return f"{uuid.uuid4()}_{safe_stem[:80]}{ext.lower()}"
+
+def validate_offer_upload_metadata(upload: UploadFile, contents: bytes) -> None:
+    original_name = os.path.basename(upload.filename or "dosya")
+    ext = os.path.splitext(original_name)[1].lower()
+    content_type = str(upload.content_type or "").strip()
+
+    if ext not in OFFER_UPLOAD_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{original_name} desteklenmiyor. Sadece .xlsx veya .xls teklif dosyası yükleyin.",
+        )
+
+    if content_type and content_type not in OFFER_UPLOAD_MIME_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{original_name} dosya türü geçersiz. Sadece Excel teklif dosyası yükleyin.",
+        )
+
+    if len(contents) == 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{original_name} boş dosya. İçinde veri olan bir Excel dosyası yükleyin.",
+        )
+
+def ensure_xlsx_workbook_has_data(file_path: str, original_name: str) -> None:
+    if not original_name.lower().endswith(".xlsx"):
+        return
+
+    try:
+        workbook = load_workbook(file_path, read_only=True, data_only=True)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{original_name} okunamadı. Geçerli bir Excel dosyası yükleyin.",
+        ) from exc
+
+    try:
+        for worksheet in workbook.worksheets:
+            for row in worksheet.iter_rows(values_only=True):
+                if any(cell is not None and str(cell).strip() for cell in row):
+                    return
+    finally:
+        workbook.close()
+
+    raise HTTPException(
+        status_code=400,
+        detail=f"{original_name} içinde okunabilir teklif satırı bulunamadı.",
+    )
 
 async def save_upload_file(upload: UploadFile) -> tuple[str | None, str | None, str | None]:
     original_name = os.path.basename(upload.filename or "dosya")
@@ -862,6 +919,9 @@ async def save_upload_file(upload: UploadFile) -> tuple[str | None, str | None, 
         return None, original_name, f"Desteklenmeyen dosya: {original_name}"
 
     contents = await upload.read()
+
+    if len(contents) == 0:
+        return None, original_name, f"{original_name} bos dosya. Icinde veri olan bir dosya yukleyin."
 
     if len(contents) > MAX_UPLOAD_SIZE:
         return None, original_name, f"{original_name} dosyasi 10 MB sinirini asiyor."
@@ -974,7 +1034,7 @@ async def analyze_order_document_ocr(
     except HTTPException:
         raise
     except Exception as error:
-        print("ORDER DOCUMENT OCR ERROR:", str(error))
+        logger.debug("ORDER DOCUMENT OCR ERROR:", str(error))
         raise HTTPException(
             status_code=422,
             detail=f"Belge OCR analizi başarısız: {str(error)}",
@@ -1193,7 +1253,7 @@ async def bulk_delete_project_items(
         )
 
         if response.status_code >= 400:
-            print("PROJECT ITEM SELECT ERROR:", response.status_code, response.text)
+            logger.debug("PROJECT ITEM SELECT ERROR:", response.status_code, response.text)
             raise HTTPException(status_code=400, detail=response.text or "Proje urunleri okunamadi")
 
         return response.json() or []
@@ -1202,7 +1262,7 @@ async def bulk_delete_project_items(
     known_ids = {str(item.get("id")) for item in project_items if item.get("id")}
     selected_ids = unique([item_id for item_id in selected_ids if item_id in known_ids])
 
-    print("BULK DELETE selected id count:", len(selected_ids))
+    logger.debug("BULK DELETE selected id count:", len(selected_ids))
 
     if not selected_ids:
         raise HTTPException(status_code=400, detail="Secili urunler proje listesinde bulunamadi")
@@ -1231,7 +1291,7 @@ async def bulk_delete_project_items(
     descendant_ids = unique([item_id for item_id in descendant_ids if item_id in known_ids])
     selected_remaining_ids = unique([item_id for item_id in selected_ids if item_id not in set(descendant_ids)])
 
-    print("BULK DELETE child id count:", len(descendant_ids))
+    logger.debug("BULK DELETE child id count:", len(descendant_ids))
 
     deleted_ids = []
     batch_logs = []
@@ -1255,7 +1315,7 @@ async def bulk_delete_project_items(
             )
 
             if response.status_code >= 400:
-                print("BULK DELETE batch error:", label, batch_index, response.status_code, response.text)
+                logger.debug("BULK DELETE batch error:", label, batch_index, response.status_code, response.text)
                 raise HTTPException(status_code=400, detail=response.text or f"{label} batch silinemedi")
 
             deleted_rows = response.json() if response.text else []
@@ -1268,7 +1328,7 @@ async def bulk_delete_project_items(
                 "deleted": len(deleted_batch_ids),
             }
             batch_logs.append(log)
-            print("BULK DELETE batch result:", log)
+            logger.debug("BULK DELETE batch result:", log)
 
     delete_batch("children", descendant_ids)
     delete_batch("selected", selected_remaining_ids)
@@ -1279,7 +1339,7 @@ async def bulk_delete_project_items(
         remaining_items.extend(select_project_items({"id": f"in.({','.join(batch_ids)})"}))
 
     remaining_ids = [item.get("id") for item in remaining_items if item.get("id")]
-    print("BULK DELETE remaining count:", len(remaining_ids))
+    logger.debug("BULK DELETE remaining count:", len(remaining_ids))
 
     return {
         "success": True,
@@ -1347,16 +1407,16 @@ async def parse_project_items(
             if not rows and file_type != "pdf":
                 rows = parse_request_file(save_path, original_name)
 
-            print("OKUNAN PROJE MALZEME DOSYASI:", original_name)
-            print("OKUNAN PROJE MALZEME SATIR SAYISI:", len(rows))
-            print("OKUNAN PROJE MALZEME ILK SATIRLAR:", rows[:5])
+            logger.debug("OKUNAN PROJE MALZEME DOSYASI:", original_name)
+            logger.debug("OKUNAN PROJE MALZEME SATIR SAYISI:", len(rows))
+            logger.debug("OKUNAN PROJE MALZEME ILK SATIRLAR:", rows[:5])
 
             if not rows:
                 warnings.append(f"Veri okunamadi: {original_name}")
 
             all_rows.extend(rows)
         except Exception as e:
-            print("PROJE MALZEME DOSYASI HATASI:", original_name, str(e))
+            logger.debug("PROJE MALZEME DOSYASI HATASI:", original_name, str(e))
             warnings.append(f"Hata ({original_name}): {str(e)}")
 
     auto_code_counter = 1
@@ -1531,16 +1591,8 @@ async def analyze_offers(
     MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
 
     for file in files:
-
-        allowed_extensions = [".pdf", ".xlsx", ".xls", ".png", ".jpg", ".jpeg"]
-
-        if not any(file.filename.lower().endswith(ext) for ext in allowed_extensions):
-            raise HTTPException(
-                status_code=400,
-                detail=f"{file.filename} desteklenmeyen dosya türü."
-        )
-        
         contents = await file.read()
+        validate_offer_upload_metadata(file, contents)
 
         if len(contents) > MAX_FILE_SIZE:
             raise HTTPException(status_code=400, detail=f"{file.filename} dosyası 10 MB sınırını aşıyor.")
@@ -1570,10 +1622,10 @@ async def analyze_offers(
     "currency_risk": currency_risk
     }
     
-    print("USER CONSTRAINTS:", user_constraints)
-    print("SEÇİLEN TALEP DOSYASI:", request_file_name)
-    print("SEÇİLEN TALEP PATH:", request_report_path)
-    print("GELEN TEKLİF DOSYALARI:", [f.filename for f in files])
+    logger.debug("USER CONSTRAINTS:", user_constraints)
+    logger.debug("SEÇİLEN TALEP DOSYASI:", request_file_name)
+    logger.debug("SEÇİLEN TALEP PATH:", request_report_path)
+    logger.debug("GELEN TEKLİF DOSYALARI:", [f.filename for f in files])
 
     if len(files) > 15:
         return {
@@ -1600,28 +1652,21 @@ async def analyze_offers(
         file_type = detect_file_type(original_name)
 
         try:
+            ensure_xlsx_workbook_has_data(save_path, original_name)
+
             if file_type == "excel":
                 audit = parse_excel_with_audit(save_path, firma_adi, original_name)
                 rows = audit["rows"]
                 warnings.extend(audit.get("warnings", []))
                 warnings.extend(audit.get("errors", []))
 
-            elif file_type == "pdf":
-                audit = parse_pdf_with_audit(save_path, firma_adi, original_name)
-                rows = audit["rows"]
-                warnings.extend(audit.get("warnings", []))
-                warnings.extend(audit.get("errors", []))
-
-            elif file_type == "image":
-                rows = parse_image(save_path, firma_adi, original_name)
-
             else:
                 rows = []
-                warnings.append(f"Desteklenmeyen dosya: {original_name}")
+                warnings.append(f"Desteklenmeyen teklif dosyası: {original_name}")
 
-            print("OKUNAN TEKLİF DOSYASI:", upload.filename)
-            print("OKUNAN SATIR SAYISI:", len(rows))
-            print("İLK SATIRLAR:", rows[:3])
+            logger.debug("OKUNAN TEKLİF DOSYASI:", upload.filename)
+            logger.debug("OKUNAN SATIR SAYISI:", len(rows))
+            logger.debug("İLK SATIRLAR:", rows[:3])
 
             if not rows:
                 warnings.append(f"Veri okunamadı: {upload.filename}")
@@ -1629,7 +1674,7 @@ async def analyze_offers(
             all_rows.extend(rows)
 
         except Exception as e:
-            print("DOSYA HATASI:", upload.filename, str(e))
+            logger.debug("DOSYA HATASI:", upload.filename, str(e))
             warnings.append(f"Hata ({upload.filename}): {str(e)}")
 
     if not all_rows:
@@ -1655,8 +1700,8 @@ async def analyze_offers(
         if (has_code or has_desc) and has_price:
             filtered.append(row)
 
-    print("TOPLAM OKUNAN SATIR:", len(all_rows))
-    print("FİLTRELENEN GEÇERLİ SATIR:", len(filtered))
+    logger.debug("TOPLAM OKUNAN SATIR:", len(all_rows))
+    logger.debug("FİLTRELENEN GEÇERLİ SATIR:", len(filtered))
 
     if not filtered:
         return {
@@ -1673,7 +1718,7 @@ async def analyze_offers(
     request_items = normalize_request_items_payload(request_items_json)
 
     if request_items:
-        print("SEÇİLEN TALEP JSON SATIR SAYISI:", len(request_items))
+        logger.debug("SEÇİLEN TALEP JSON SATIR SAYISI:", len(request_items))
 
     if not request_items and request_report_path:
         request_file_path = os.path.join(
@@ -1684,12 +1729,12 @@ async def analyze_offers(
         if os.path.exists(request_file_path):
             try:
                 request_items = parse_request_file(request_file_path, request_file_name)
-                print("TALEP SATIR SAYISI:", len(request_items))
+                logger.debug("TALEP SATIR SAYISI:", len(request_items))
             except Exception as e:
-                print("TALEP DOSYASI OKUMA HATASI:", str(e))
+                logger.debug("TALEP DOSYASI OKUMA HATASI:", str(e))
                 warnings.append(f"Talep dosyası okunamadı: {str(e)}")
         else:
-            print("TALEP DOSYASI BULUNAMADI:", request_file_path)
+            logger.debug("TALEP DOSYASI BULUNAMADI:", request_file_path)
             warnings.append("Talep dosyası bulunamadı, teklifler kendi içinde gruplanacak.")
 
     # --- GRUPLAMA ---
@@ -1718,15 +1763,15 @@ async def analyze_offers(
     else:
         groups = group_rows(filtered)
 
-    print("FİRMALARA GÖRE SATIR SAYISI:")
+    logger.debug("FİRMALARA GÖRE SATIR SAYISI:")
     firma_debug = {}
 
     for r in filtered:
         firma = r.get("firma") or r.get("firmaAdi") or "Bilinmeyen"
         firma_debug[firma] = firma_debug.get(firma, 0) + 1
 
-    print(firma_debug)
-    print("OLUŞAN GRUP SAYISI:", len(groups))
+    logger.debug(firma_debug)
+    logger.debug("OLUŞAN GRUP SAYISI:", len(groups))
 
     # --- KUR BİLGİSİ ---
     exchange_rates = {
@@ -1740,11 +1785,17 @@ async def analyze_offers(
             submitted_rates = json.loads(exchange_rates_json)
             for currency in ["USD", "EUR", "GBP"]:
                 rate = safe_float_form(submitted_rates.get(currency))
-                if rate and rate > 0:
-                    exchange_rates[currency] = rate
+                if rate is None or rate <= 0:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"{currency} kuru 0'dan büyük olmalıdır.",
+                    )
+                exchange_rates[currency] = rate
         except Exception as e:
-            print("KUR BILGISI OKUNAMADI:", str(e))
-            warnings.append("Kur bilgisi okunamadı, varsayılan kurlar kullanıldı.")
+            if isinstance(e, HTTPException):
+                raise
+            logger.debug("KUR BILGISI OKUNAMADI:", str(e))
+            raise HTTPException(status_code=400, detail="Kur bilgisi gecersiz.")
 
     # --- ŞİRKET / KARAR MOTORU AYARLARI ---
     decision_config = {
@@ -1770,7 +1821,7 @@ async def analyze_offers(
         preferences=user_preferences,
     )
 
-    print("ANALİZ EDİLEN GRUP SAYISI:", len(analyzed))
+    logger.debug("ANALİZ EDİLEN GRUP SAYISI:", len(analyzed))
 
     report_id = str(uuid.uuid4())
     report_name = f"mukayese_raporu_{report_id}.xlsx"
@@ -1813,8 +1864,8 @@ async def analyze_offers(
             "allocations": group.get("allocations") or request_item.get("allocations") or [],
         })
         
-    print("ORDER ITEMS SAYISI:", len(order_items))
-    print("ORDER ITEMS:", order_items)
+    logger.debug("ORDER ITEMS SAYISI:", len(order_items))
+    logger.debug("ORDER ITEMS:", order_items)
 
     report_record = {
         "id": report_id,
@@ -1919,7 +1970,7 @@ async def analyze_requests(
     all_rows = []
     warnings = []
 
-    print("BACKEND GELEN TALEP DOSYALARI:", [upload.filename for upload in files])
+    logger.debug("BACKEND GELEN TALEP DOSYALARI:", [upload.filename for upload in files])
 
     if len(files) > MAX_UPLOAD_FILES:
         return {
@@ -1939,9 +1990,9 @@ async def analyze_requests(
         try:
             rows = parse_request_file(save_path, original_name)
 
-            print("OKUNAN TALEP DOSYASI:", upload.filename)
-            print("OKUNAN TALEP SATIR SAYISI:", len(rows))
-            print("OKUNAN TALEP SATIRLAR:", rows[:20])
+            logger.debug("OKUNAN TALEP DOSYASI:", upload.filename)
+            logger.debug("OKUNAN TALEP SATIR SAYISI:", len(rows))
+            logger.debug("OKUNAN TALEP SATIRLAR:", rows[:20])
 
             if not rows:
                 warnings.append(f"Veri okunamadı: {upload.filename}")
@@ -1949,7 +2000,7 @@ async def analyze_requests(
             all_rows.extend(rows)
 
         except Exception as e:
-            print("TALEP DOSYASI HATASI:", upload.filename, str(e))
+            logger.debug("TALEP DOSYASI HATASI:", upload.filename, str(e))
             warnings.append(f"Hata ({upload.filename}): {str(e)}")
 
     if not all_rows:
@@ -2042,7 +2093,7 @@ async def analyze_requests(
     try:
         report_products = load_user_products_for_report(user_id)
     except Exception as exc:
-        print("REQUEST REPORT PRODUCT LOOKUP ERROR:", str(exc))
+        logger.debug("REQUEST REPORT PRODUCT LOOKUP ERROR:", str(exc))
         warnings.append("Stok kartları okunamadığı için raporda ürünler eşleşmemiş olarak gösterildi.")
         report_products = []
 
@@ -2073,7 +2124,7 @@ async def analyze_requests(
 
     signed = supabase.storage.from_("request-reports").create_signed_url(report_name, 3600)
     public_url = signed.get("signedURL") or signed.get("signedUrl") or signed.get("signed_url")
-    print(public_url)
+    logger.debug(public_url)
 
     return {
         "success": True,

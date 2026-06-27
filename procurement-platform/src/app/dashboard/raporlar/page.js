@@ -34,7 +34,6 @@ useEffect(() => {
         console.error(error);
         return;
       }
-      console.log("RAPORLAR DATA:", JSON.stringify(data, null, 2));
 
       setRaporlar(data || []);
 
@@ -161,7 +160,6 @@ async function deleteReport(reportId) {
   const onay = window.confirm("Bu raporu silmek istediğine emin misin?");
   if (!onay) return;
 
-  console.log("SİLİNECEK RAPOR ID:", reportId);
 
   const {
     data: { user },

@@ -793,10 +793,6 @@ export default function StockPage() {
       return;
     }
 
-    console.log("Stock page session user", {
-      userId: user.id,
-      email: user.email || null,
-    });
 
     let productQuery = supabase
       .from("products")
@@ -805,10 +801,10 @@ export default function StockPage() {
     productQuery = showArchivedProducts
       ? productQuery.not("archived_at", "is", null)
       : productQuery.is("archived_at", null);
-    const { data: productData, error: productError, count: productCount } = await productQuery
+    const { data: productData, error: productError } = await productQuery
       .order("updated_at", { ascending: false });
 
-    const { data: movementData, error: movementError, count: movementCount } = await supabase
+    const { data: movementData, error: movementError } = await supabase
       .from("stock_movements")
       .select("*", { count: "exact" })
       .eq("user_id", user.id)
@@ -828,22 +824,7 @@ export default function StockPage() {
       .eq("user_id", user.id)
       .limit(1000);
 
-    console.log("Stock products query result", {
-      table: "products",
-      filter: { user_id: user.id },
-      returned: productData?.length || 0,
-      count: productCount,
-      error: productError?.message || null,
-      sampleUserIds: Array.from(new Set((productData || []).map((product) => product.user_id))).slice(0, 5),
-    });
 
-    console.log("Stock movements query result", {
-      table: "stock_movements",
-      filter: { user_id: user.id },
-      returned: movementData?.length || 0,
-      count: movementCount,
-      error: movementError?.message || null,
-    });
 
     if (productError || movementError || projectItemError || projectError) {
       setMessage("Stok tabloları hazır değil. Supabase şemasındaki products ve stock_movements bölümlerini çalıştırın.");
@@ -1335,7 +1316,10 @@ export default function StockPage() {
       };
     });
     const counts = rows.reduce(
-      (summary, row) => ({ ...summary, [row.decision]: summary[row.decision] + 1 }),
+      (summary, row) => {
+        summary[row.decision] += 1;
+        return summary;
+      },
       { exact: 0, probable: 0, conflict: 0, new: 0 },
     );
     const missingFields = [...new Set(analyses.flatMap((analysis) => analysis.missingFields || []))];

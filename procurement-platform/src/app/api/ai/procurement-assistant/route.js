@@ -353,14 +353,6 @@ export async function POST(request) {
       return NextResponse.json({ error: "Lütfen bir soru yazın." }, { status: 400 });
     }
 
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      return NextResponse.json(
-        { error: "OPENAI_API_KEY environment variable tanımlı değil." },
-        { status: 500 },
-      );
-    }
-
     const supabase = await createServerSupabaseClient();
     const {
       data: { user },
@@ -369,6 +361,14 @@ export async function POST(request) {
 
     if (userError || !user) {
       return NextResponse.json({ error: "Oturum bulunamadı." }, { status: 401 });
+    }
+
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      return NextResponse.json(
+        { error: "AI Asistan yapılandırması eksik. OPENAI_API_KEY tanımlandıktan sonra analiz üretebilir." },
+        { status: 503 },
+      );
     }
 
     const [

@@ -23,6 +23,11 @@ const defaultSettings = {
   notify_email: "",
 };
 
+function parsePositiveNumber(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
 function StatCard({ title, value, text }) {
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -62,6 +67,8 @@ export default function SettingsPage() {
       .from("company_settings")
       .select("*")
       .eq("user_id", user.id)
+      .order("updated_at", { ascending: false })
+      .order("created_at", { ascending: false })
       .limit(1);
 
     if (error) {
@@ -125,30 +132,62 @@ export default function SettingsPage() {
       return;
     }
 
+    const usdRate = parsePositiveNumber(settings.usd_rate);
+    const eurRate = parsePositiveNumber(settings.eur_rate);
+    const gbpRate = parsePositiveNumber(settings.gbp_rate);
+    const maxFileSize = parsePositiveNumber(settings.max_file_size_mb);
+    const maxOfferFiles = parsePositiveNumber(settings.max_offer_files);
+
+    if (!usdRate || !eurRate || !gbpRate) {
+      setMessage("Kur değerleri boş, 0, negatif veya geçersiz olamaz.");
+      return;
+    }
+
+    if (!maxFileSize || !maxOfferFiles) {
+      setMessage("Dosya limitleri 0'dan büyük olmalıdır.");
+      return;
+    }
+
     const payload = {
       user_id: user.id,
       company_name: settings.company_name.trim(),
       tax_no: settings.tax_no.trim(),
       default_currency: settings.default_currency,
       base_currency: settings.base_currency || settings.default_currency || "TRY",
-      usd_rate: Number(settings.usd_rate || 1),
-      eur_rate: Number(settings.eur_rate || 1),
-      gbp_rate: Number(settings.gbp_rate || 1),
+      usd_rate: usdRate,
+      eur_rate: eurRate,
+      gbp_rate: gbpRate,
       exchange_rate_date: settings.exchange_rate_date || new Date().toISOString().slice(0, 10),
       annual_interest_rate: Number(settings.annual_interest_rate || 0),
-      max_file_size_mb: Number(settings.max_file_size_mb || 10),
-      max_offer_files: Number(settings.max_offer_files || 15),
+      max_file_size_mb: maxFileSize,
+      max_offer_files: maxOfferFiles,
       default_payment_term: settings.default_payment_term.trim(),
       risk_level: settings.risk_level,
       approval_required: Boolean(settings.approval_required),
       notify_email: settings.notify_email.trim(),
     };
 
-    const request = recordId
-      ? supabase.from("company_settings").update(payload).eq("id", recordId).eq("user_id", user.id)
+    const existing = recordId
+      ? { id: recordId }
+      : (
+          await supabase
+            .from("company_settings")
+            .select("id")
+            .eq("user_id", user.id)
+            .order("updated_at", { ascending: false })
+            .order("created_at", { ascending: false })
+            .limit(1)
+        ).data?.[0];
+
+    const request = existing?.id
+      ? supabase
+          .from("company_settings")
+          .update({ ...payload, updated_at: new Date().toISOString() })
+          .eq("id", existing.id)
+          .eq("user_id", user.id)
       : supabase.from("company_settings").insert(payload);
 
-    const { data, error } = await request.select("id").limit(1);
+    const { data, error } = await request.select("*").limit(1);
 
     if (error) {
       console.error(error);
@@ -158,9 +197,14 @@ export default function SettingsPage() {
 
     if (data?.[0]?.id) {
       setRecordId(data[0].id);
+      setSettings({
+        ...defaultSettings,
+        ...data[0],
+      });
     }
 
     setMessage("Ayarlar kaydedildi. Yeni teklif ve siparişlerde bu değerler kullanılacak.");
+    await loadSettings();
   }
 
   return (
@@ -262,9 +306,9 @@ export default function SettingsPage() {
                 </button>
               </div>
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-                <Input label="USD Kuru" name="usd_rate" type="number" value={settings.usd_rate} onChange={handleChange} />
-                <Input label="EUR Kuru" name="eur_rate" type="number" value={settings.eur_rate} onChange={handleChange} />
-                <Input label="GBP Kuru" name="gbp_rate" type="number" value={settings.gbp_rate} onChange={handleChange} />
+                <Input label="USD Kuru" name="usd_rate" type="number" min="0.000001" value={settings.usd_rate} onChange={handleChange} />
+                <Input label="EUR Kuru" name="eur_rate" type="number" min="0.000001" value={settings.eur_rate} onChange={handleChange} />
+                <Input label="GBP Kuru" name="gbp_rate" type="number" min="0.000001" value={settings.gbp_rate} onChange={handleChange} />
                 <Input label="Kur Tarihi" name="exchange_rate_date" type="date" value={settings.exchange_rate_date} onChange={handleChange} />
               </div>
             </div>
@@ -357,7 +401,7 @@ function SectionTitle({ title, text }) {
   );
 }
 
-function Input({ label, name, value, onChange, type = "text" }) {
+function Input({ label, name, value, onChange, type = "text", min }) {
   return (
     <label className="block">
       <span className="mb-2 block text-sm font-bold text-slate-700">{label}</span>
@@ -366,6 +410,8 @@ function Input({ label, name, value, onChange, type = "text" }) {
         name={name}
         value={value}
         onChange={onChange}
+        step={type === "number" ? "any" : undefined}
+        min={min}
         className="w-full rounded-xl border border-slate-300 p-3 text-sm"
       />
     </label>

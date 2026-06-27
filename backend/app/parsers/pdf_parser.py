@@ -1,6 +1,9 @@
 import re
+import logging
 import os
 import unicodedata
+
+logger = logging.getLogger("corvian.parsers.pdf")
 
 import cv2
 import numpy as np
@@ -1255,7 +1258,7 @@ def parse_product_tables(tables, firma, footer, file_name):
                 section_total = choose_section_total(line_total, numbers)
                 section_quantity = infer_quantity_from_cells(cells, quantity, section_total)
                 section_name = section_name or section_name_from_cells(cells)
-                print("Parent detected:", {"row": joined, "name": section_name})
+                logger.debug("Parent detected:", {"row": joined, "name": section_name})
                 section_debug.append({
                     "event": "Parent detected",
                     "row": joined,
@@ -1288,7 +1291,7 @@ def parse_product_tables(tables, firma, footer, file_name):
 
             if not code or not description:
                 warnings.append(f"Kontrol uyarısı: kod/açıklama eksik satır atlandı ({joined})")
-                print("Rejected:", {"row": joined, "reason": "kod/aciklama eksik"})
+                logger.debug("Rejected:", {"row": joined, "reason": "kod/aciklama eksik"})
                 section_debug.append({
                     "event": "Rejected",
                     "skipped_row": joined,
@@ -1301,7 +1304,7 @@ def parse_product_tables(tables, firma, footer, file_name):
 
             if should_skip_line(name) or is_section_name(name):
                 warnings.append(f"Kontrol uyarısı: kategori/toplam satırı ürün olarak algılandı ({name})")
-                print("Rejected:", {"row": name, "reason": "kategori/toplam satiri urun gibi gorundu"})
+                logger.debug("Rejected:", {"row": name, "reason": "kategori/toplam satiri urun gibi gorundu"})
                 section_debug.append({
                     "event": "Rejected",
                     "skipped_row": name,
@@ -1312,7 +1315,7 @@ def parse_product_tables(tables, firma, footer, file_name):
 
             if quantity <= 0:
                 warnings.append(f"Kontrol uyarısı: adet eksik satır atlandı ({name})")
-                print("Rejected:", {"row": name, "reason": "adet eksik"})
+                logger.debug("Rejected:", {"row": name, "reason": "adet eksik"})
                 section_debug.append({
                     "event": "Rejected",
                     "skipped_row": name,
@@ -1387,7 +1390,7 @@ def parse_product_tables(tables, firma, footer, file_name):
             f"Genel toplam tutmuyor: ürünler {product_total:.2f}, teklif {checked_total:.2f}"
         )
 
-    print("PDF ANA KALEM DEBUG:", section_debug)
+    logger.debug("PDF ANA KALEM DEBUG:", section_debug)
 
     return {
         "rows": rows,

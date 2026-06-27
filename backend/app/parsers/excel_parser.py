@@ -476,6 +476,7 @@ def should_skip_context_line(line):
 
 
 def detect_firma_adi(df, fallback_firma, file_name):
+    header_aliases = {"firma", "firma adi", "firma adı", "tedarikci", "tedarikçi", "satici", "satıcı", "supplier"}
     for _, row in df.head(8).iterrows():
         cells = [clean_text(x) for x in row.values if clean_text(x)]
         if not cells:
@@ -488,8 +489,17 @@ def detect_firma_adi(df, fallback_firma, file_name):
             for i, cell in enumerate(cells):
                 c = normalize_col(cell)
                 if "firma" in c or "tedarikci" in c or "satici" in c:
+                    if c in header_aliases:
+                        for below_index in range(1, min(len(df), 12)):
+                            value = clean_text(df.iloc[below_index, i] if i < len(df.columns) else "")
+                            value_norm = normalize_col(value)
+                            if value and value_norm not in header_aliases and not should_skip_context_line(value):
+                                return value
                     if i + 1 < len(cells):
-                        return cells[i + 1]
+                        candidate = cells[i + 1]
+                        candidate_norm = normalize_col(candidate)
+                        if candidate_norm not in header_aliases and not any(x in candidate_norm for x in ["urun kodu", "malzeme kodu", "aciklama", "miktar"]):
+                            return candidate
 
         if len(cells) == 1:
             one = cells[0]
@@ -688,6 +698,17 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
         "currency",
     ])
 
+    firma_col = find_col_exact_or_contains(df.columns, [
+        "firma",
+        "firma adi",
+        "firma adÄ±",
+        "tedarikci",
+        "tedarikÃ§i",
+        "satici",
+        "satÄ±cÄ±",
+        "supplier",
+    ])
+
     delivery_col = find_col_exact_or_contains(df.columns, [
         "teslim",
         "termin",
@@ -759,6 +780,9 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
         pending_rows.clear()
 
     for row_index, r in df.iterrows():
+        row_firma = clean_text(r.get(firma_col)) if firma_col is not None else firma
+        if not row_firma or normalize_col(row_firma) in ["firma", "firma adi", "firma adÄ±", "tedarikci", "tedarikÃ§i", "satici", "satÄ±cÄ±", "supplier"]:
+            row_firma = firma
         code = clean_text(r.get(code_col)) if code_col is not None else ""
         brand = clean_text(r.get(brand_col)) if brand_col is not None else ""
         desc = clean_text(r.get(desc_col)) if desc_col is not None else ""
@@ -846,8 +870,8 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
         net_unit_value = net_price_from_file or net_unit_calculated or price
 
         rows.append({
-            "firma": firma,
-            "firmaAdi": firma,
+            "firma": row_firma,
+            "firmaAdi": row_firma,
             "urunKodu": code,
             "marka": brand,
             "brand": brand,

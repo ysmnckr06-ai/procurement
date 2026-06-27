@@ -114,12 +114,13 @@ function nextProjectCode(projects) {
   const usedNumbers = new Set();
   let width = 5;
 
-  (projects || []).forEach((project) => {
+  for (const project of projects || []) {
     const match = String(project.project_code || "").match(/^PRJ-(\d+)$/i);
-    if (!match) return;
-    usedNumbers.add(Number(match[1]));
-    width = Math.max(width, match[1].length);
-  });
+    if (match) {
+      usedNumbers.add(Number(match[1]));
+      width = Math.max(width, match[1].length);
+    }
+  }
 
   let nextNumber = 1;
   while (usedNumbers.has(nextNumber)) {
@@ -551,7 +552,9 @@ export default function ProjectsPage() {
     }
 
     const formData = new FormData();
-    files.forEach((file) => formData.append("files", file));
+    files.forEach((file) => {
+      formData.append("files", file);
+    });
 
     const response = await fetch(`${API_URL}/parse-project-items`, {
       method: "POST",
