@@ -1767,12 +1767,19 @@ export default function OrderDetailPage() {
             ? normalizedKey
             : null;
         if (!matchingKey) return item;
+        const deliveredQuantity = Math.min(
+          Number(item.quantity || 0),
+          Number(deliveredByOrderItem.get(matchingKey) || 0),
+        );
+        const orderedQuantity = Number(item.quantity || 0);
         return {
           ...item,
-          deliveredQuantity: Math.min(
-            Number(item.quantity || 0),
-            Number(deliveredByOrderItem.get(matchingKey) || 0),
-          ),
+          deliveredQuantity,
+          status: deliveredQuantity >= orderedQuantity && orderedQuantity > 0
+            ? "Tam Teslim"
+            : deliveredQuantity > 0
+              ? "Kısmi Teslim"
+              : item.status,
         };
       });
       const totalOrdered = nextItems.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
@@ -1795,6 +1802,7 @@ export default function OrderDetailPage() {
         {
           items: nextItems,
           status: nextStatus,
+          receipt_status: nextStatus,
           delivery_date: nextStatus === "Tam Teslim" ? getToday() : order.delivery_date,
           received_total: totalDelivered,
           status_history: nextHistory,
@@ -1802,6 +1810,7 @@ export default function OrderDetailPage() {
         {
           items: nextItems,
           status: nextStatus,
+          receipt_status: nextStatus,
           delivery_date: nextStatus === "Tam Teslim" ? getToday() : order.delivery_date,
         },
       );
