@@ -18,6 +18,7 @@ const menu = [
   { name: "Stok", icon: "📦", href: "/dashboard/stok" },
   { name: "AI Asistan", icon: "AI", href: "/dashboard/ai-asistan" },
   { name: "Finans", icon: "₺", href: "/dashboard/finans" },
+  { name: "Yardım", icon: "?", href: "/dashboard/yardim" },
   { name: "Ayarlar", icon: "⚙️", href: "/dashboard/ayarlar" },
 ];
 
