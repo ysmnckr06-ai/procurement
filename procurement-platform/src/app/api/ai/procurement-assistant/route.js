@@ -344,6 +344,62 @@ function ensureHeadings(answer) {
   return REQUIRED_HEADINGS.map((heading) => `## ${heading}\n${heading === "Önerilen Aksiyon" ? text || "Analiz üretilemedi." : "Verilen özetten net sonuç çıkarılamadı."}`).join("\n\n");
 }
 
+function formatAmount(bucket) {
+  const amount = num(bucket?.amount);
+  const currency = bucket?.currency || "TRY";
+  return `${amount.toLocaleString("tr-TR", { maximumFractionDigits: 2 })} ${currency}`;
+}
+
+function formatRows(rows, emptyText, mapper) {
+  if (!rows.length) return `- ${emptyText}`;
+  return rows.slice(0, 5).map((row) => `- ${mapper(row)}`).join("\n");
+}
+
+function buildLocalAnalysisAnswer(context) {
+  const project = context.projectSummary;
+  const stock = context.stockSummary;
+  const price = context.priceSummary;
+  const matched = project.matchedProject;
+  const projectTitle = matched
+    ? `${matched.code} - ${matched.name}`
+    : `${project.projectCount} proje`;
+  const budgetRisk =
+    price.order.total.amount > 0 && matched?.budget?.amount > 0
+      ? price.order.total.amount > matched.budget.amount
+      : stock.totals.purchaseRequiredQuantity > 0 || price.openOrders.length > 0;
+
+  return [
+    `## ${REQUIRED_HEADINGS[0]}`,
+    `- Kapsam: ${projectTitle}.`,
+    `- Proje kalemi sayısı: ${project.itemCount}; tahmini ihtiyaç toplamı: ${formatAmount(project.totalEstimatedNeed)}.`,
+    `- Sipariş toplamı: ${formatAmount(price.order.total)}; açık sipariş sayısı: ${price.openOrders.length}.`,
+    "",
+    `## ${REQUIRED_HEADINGS[1]}`,
+    formatRows(
+      stock.stockCoverableTop,
+      "Stoktan karşılanabilecek net kalem görünmüyor.",
+      (row) => `${row.productCode || row.productName}: ${row.stockCoverable} ${row.unit} stoktan karşılanabilir; serbest stok ${row.freeStockBeforeAllocation} ${row.unit}.`,
+    ),
+    "",
+    `## ${REQUIRED_HEADINGS[2]}`,
+    formatRows(
+      stock.purchaseRequiredTop,
+      "Satınalma gerektiren açık miktar görünmüyor.",
+      (row) => `${row.productCode || row.productName}: ${row.purchaseRequired} ${row.unit} satınalma ihtiyacı var; tahmini tutar ${formatAmount(row.estimatedTotal)}.`,
+    ),
+    "",
+    `## ${REQUIRED_HEADINGS[3]}`,
+    `- ${budgetRisk ? "Maliyet/termin takibi gerekli." : "Mevcut özetlerde kritik maliyet riski görünmüyor."}`,
+    `- Ortalama birim fiyat: ${price.unitPrice.average.toLocaleString("tr-TR", { maximumFractionDigits: 2 })} TRY; en yüksek birim fiyat: ${price.unitPrice.max.toLocaleString("tr-TR", { maximumFractionDigits: 2 })} TRY.`,
+    `- Kritik veya açık miktarlı kalem sayısı: ${stock.totals.criticalLineCount}.`,
+    "",
+    `## ${REQUIRED_HEADINGS[4]}`,
+    "- Önce stoktan karşılanabilen kalemleri rezerve edin, kalan miktarlar için teklif/sipariş sürecini ilerletin.",
+    "- Açık siparişleri termin ve ödeme durumuna göre kontrol edin.",
+    "- Bu yanıt yerel read-only analizdir; sistem kaydı oluşturmaz, değiştirmez veya silmez.",
+  ].join("\n");
+}
+
 export async function POST(request) {
   try {
     const { question } = await request.json();
@@ -361,14 +417,6 @@ export async function POST(request) {
 
     if (userError || !user) {
       return NextResponse.json({ error: "Oturum bulunamadı." }, { status: 401 });
-    }
-
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      return NextResponse.json(
-        { error: "AI Asistan yapılandırması eksik. OPENAI_API_KEY tanımlandıktan sonra analiz üretebilir." },
-        { status: 503 },
-      );
     }
 
     const [
@@ -426,6 +474,26 @@ export async function POST(request) {
         stock_movements: stockMovements.length,
       },
     };
+
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      return NextResponse.json({
+        answer: ensureHeadings(buildLocalAnalysisAnswer(assistantContext)),
+        matchedProject: matchedProject
+          ? {
+              id: matchedProject.id,
+              code: matchedProject.project_code,
+              name: matchedProject.project_name,
+            }
+          : null,
+        mode: "local_read_only",
+        summary: {
+          scope: matchedProject ? "project" : "all_projects",
+          purchaseRequiredLines: stockSummary.purchaseRequiredTop.length,
+          stockCoverableLines: stockSummary.stockCoverableTop.length,
+        },
+      });
+    }
 
     const openAiResponse = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",

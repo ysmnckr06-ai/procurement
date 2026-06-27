@@ -2991,7 +2991,7 @@ function AutomaticReceiptSuggestionsPanel({
         <div>
           <h2 className="text-lg font-bold text-slate-900">Otomatik Teslim Alma Önerileri</h2>
           <p className="mt-1 text-sm text-slate-500">
-            Yalnızca güveni en az %80 olan, manuel kontrol gerektirmeyen eşleşmeler kullanıcı onayıyla işlenir.
+            İrsaliye OCR kalemleri sipariş satırlarıyla eşleşir; yalnızca güveni en az %80 olan, manuel kontrol gerektirmeyen eşleşmeler kullanıcı onayıyla stok girişine işlenir.
           </p>
         </div>
         <button

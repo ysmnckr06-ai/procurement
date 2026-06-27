@@ -125,7 +125,7 @@ function EmptyAnswer() {
   );
 }
 
-function AnswerBlock({ answer, loading }) {
+function AnswerBlock({ answer, loading, analysisMode }) {
   const sections = useMemo(() => parseAnswer(answer), [answer]);
 
   if (loading) return <LoadingAnswer />;
@@ -141,7 +141,7 @@ function AnswerBlock({ answer, loading }) {
           </p>
         </div>
         <span className="w-fit rounded-full bg-emerald-50 px-3 py-1 text-xs font-black text-emerald-700">
-          Read-only
+          {analysisMode === "local_read_only" ? "Yerel read-only analiz" : "Read-only"}
         </span>
       </div>
 
@@ -178,6 +178,7 @@ export default function AiAssistantPage() {
   const [matchedProject, setMatchedProject] = useState(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [analysisMode, setAnalysisMode] = useState("");
 
   async function askAssistant(event, nextQuestion = question) {
     event?.preventDefault();
@@ -189,6 +190,7 @@ export default function AiAssistantPage() {
     setError("");
     setAnswer("");
     setMatchedProject(null);
+    setAnalysisMode("");
 
     try {
       const response = await fetch("/api/ai/procurement-assistant", {
@@ -204,6 +206,7 @@ export default function AiAssistantPage() {
 
       setAnswer(payload.answer || "");
       setMatchedProject(payload.matchedProject || null);
+      setAnalysisMode(payload.mode || "");
     } catch (error) {
       setError(error?.message || "Analiz alınamadı. Lütfen tekrar deneyin.");
     } finally {
@@ -283,7 +286,7 @@ export default function AiAssistantPage() {
         )}
       </section>
 
-      <AnswerBlock answer={answer} loading={loading} />
+      <AnswerBlock answer={answer} loading={loading} analysisMode={analysisMode} />
     </main>
   );
 }
