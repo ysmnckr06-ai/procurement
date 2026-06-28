@@ -4,7 +4,9 @@ import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
+import DocumentArchivePanel from "@/components/DocumentArchivePanel";
 import { calculateBaseAmount, currencyOptions, getBaseCurrency, getExchangeRate } from "@/lib/currency";
+import { createDocumentSignedUrl, downloadDocumentFile, isPdfDocument } from "@/lib/documentAccess";
 import { fetchLiveTryRates, liveCurrencyOptions, liveRateFor, rateDiffPercent } from "@/lib/liveCurrency";
 import {
   buildComponentConsumptionRows,
@@ -29,6 +31,7 @@ const tabs = [
   "İhtiyaç Analizi",
   "Talepler",
   "Siparişler",
+  "Belgeler",
   "Stok Hareketleri",
   "Ödemeler",
   "Finans Özeti",
@@ -42,6 +45,7 @@ const tabLabels = {
   "İhtiyaç Analizi": "İhtiyaç Analizi",
   Talepler: "Satınalma Listeleri",
   Siparişler: "Siparişler",
+  Belgeler: "Belgeler",
   "Stok Hareketleri": "Stok Hareketleri",
   Ödemeler: "Ödemeler",
   "Finans Özeti": "Finans Özeti",
@@ -341,6 +345,9 @@ export default function ProjectDetailPage() {
   const [projectOrders, setProjectOrders] = useState([]);
   const [allOrders, setAllOrders] = useState([]);
   const [projectDocuments, setProjectDocuments] = useState([]);
+  const [documentPreview, setDocumentPreview] = useState(null);
+  const [documentAccessLoadingId, setDocumentAccessLoadingId] = useState(null);
+  const [documentAccessError, setDocumentAccessError] = useState("");
   const [projectOrderPayments, setProjectOrderPayments] = useState([]);
   const [financeLoadWarnings, setFinanceLoadWarnings] = useState([]);
   const [stockMovements, setStockMovements] = useState([]);
@@ -612,8 +619,59 @@ export default function ProjectDetailPage() {
     await loadProject();
   }
 
+  async function previewDocument(document) {
+    setDocumentAccessError("");
+    setDocumentAccessLoadingId(document.id);
+
+    try {
+      const signedUrl = await createDocumentSignedUrl(supabase, document);
+      setDocumentPreview({
+        document,
+        url: signedUrl,
+        fileName: document.original_file_name || "Belge",
+        isPdf: isPdfDocument(document),
+      });
+    } catch (error) {
+      console.error(error);
+      setDocumentAccessError(error.message || "Belge önizleme bağlantısı oluşturulamadı.");
+    } finally {
+      setDocumentAccessLoadingId(null);
+    }
+  }
+
+  async function openDocumentInNewTab(document) {
+    setDocumentAccessError("");
+    setDocumentAccessLoadingId(document.id);
+
+    try {
+      const signedUrl = await createDocumentSignedUrl(supabase, document);
+      window.open(signedUrl, "_blank", "noopener,noreferrer");
+    } catch (error) {
+      console.error(error);
+      setDocumentAccessError(error.message || "Belge yeni sekmede açılamadı.");
+    } finally {
+      setDocumentAccessLoadingId(null);
+    }
+  }
+
+  async function downloadDocument(document) {
+    setDocumentAccessError("");
+    setDocumentAccessLoadingId(document.id);
+
+    try {
+      await downloadDocumentFile(supabase, document);
+    } catch (error) {
+      console.error(error);
+      setDocumentAccessError(error.message || "Belge indirilemedi.");
+    } finally {
+      setDocumentAccessLoadingId(null);
+    }
+  }
+
   async function loadProject() {
     setLoading(true);
+    setDocumentPreview(null);
+    setDocumentAccessError("");
     const user = await getUserOrRedirect();
     if (!user) return;
 
@@ -753,9 +811,19 @@ export default function ProjectDetailPage() {
             const orderIdByDocumentId = new Map(
               (documentLinkRes.data || []).map((link) => [String(link.document_id), link.order_id]),
             );
+            const orderById = new Map(
+              financeOrderRows.map((order) => [String(order.id), order]),
+            );
             nextProjectDocuments = (documentRes.data || []).map((document) => ({
               ...document,
               linked_order_id: orderIdByDocumentId.get(String(document.id)) || null,
+              linked_order_no:
+                orderById.get(String(orderIdByDocumentId.get(String(document.id))))?.order_no
+                || orderById.get(String(orderIdByDocumentId.get(String(document.id))))?.orderNo
+                || orderIdByDocumentId.get(String(document.id))
+                || null,
+              linked_project_id: projectId,
+              linked_project_code: projectRes.data?.project_code || null,
             }));
           }
         }
@@ -8957,6 +9025,22 @@ export default function ProjectDetailPage() {
                 </tbody>
               </table>
             </div>
+          </section>
+        )}
+
+        {activeTab === "Belgeler" && (
+          <section>
+            <DocumentArchivePanel
+              documents={projectDocuments}
+              title="Proje Belgeleri"
+              emptyMessage="Henüz belge yüklenmedi."
+              preview={documentPreview}
+              loadingDocumentId={documentAccessLoadingId}
+              error={documentAccessError}
+              onPreview={previewDocument}
+              onOpen={openDocumentInNewTab}
+              onDownload={downloadDocument}
+            />
           </section>
         )}
 

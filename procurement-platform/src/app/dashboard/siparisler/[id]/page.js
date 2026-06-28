@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
+import DocumentArchivePanel from "@/components/DocumentArchivePanel";
+import { createDocumentSignedUrl, downloadDocumentFile, isPdfDocument } from "@/lib/documentAccess";
 import { supabase } from "@/lib/supabase";
 import { calculateBaseAmount, currencyOptions, getBaseCurrency, getExchangeRate } from "@/lib/currency";
 import { findOrCreateBusinessPartner } from "@/lib/businessPartners";
@@ -677,6 +679,9 @@ export default function OrderDetailPage() {
   const [documentItemMatchSummary, setDocumentItemMatchSummary] = useState(null);
   const [documentUploadOpen, setDocumentUploadOpen] = useState(false);
   const [documentUploading, setDocumentUploading] = useState(false);
+  const [documentPreview, setDocumentPreview] = useState(null);
+  const [documentAccessLoadingId, setDocumentAccessLoadingId] = useState(null);
+  const [documentAccessError, setDocumentAccessError] = useState("");
   const [documentItemModalDocument, setDocumentItemModalDocument] = useState(null);
   const [documentItemSaving, setDocumentItemSaving] = useState(false);
   const [ocrDocumentItemsCreatingId, setOcrDocumentItemsCreatingId] = useState(null);
@@ -728,6 +733,8 @@ export default function OrderDetailPage() {
     setDocuments([]);
     setDocumentItems([]);
     setDocumentItemMatchSummary(null);
+    setDocumentPreview(null);
+    setDocumentAccessError("");
 
     const { data: documentLinkRows, error: documentLinkError } = await supabase
       .from("document_links")
@@ -760,6 +767,55 @@ export default function OrderDetailPage() {
 
     setDocuments(documentRows || []);
     await loadDocumentItems(documentIds, userId, orderItemsForMatching, orderId);
+  }
+
+  async function previewDocument(document) {
+    setDocumentAccessError("");
+    setDocumentAccessLoadingId(document.id);
+
+    try {
+      const signedUrl = await createDocumentSignedUrl(supabase, document);
+      setDocumentPreview({
+        document,
+        url: signedUrl,
+        fileName: document.original_file_name || "Belge",
+        isPdf: isPdfDocument(document),
+      });
+    } catch (error) {
+      console.error(error);
+      setDocumentAccessError(error.message || "Belge önizleme bağlantısı oluşturulamadı.");
+    } finally {
+      setDocumentAccessLoadingId(null);
+    }
+  }
+
+  async function openDocumentInNewTab(document) {
+    setDocumentAccessError("");
+    setDocumentAccessLoadingId(document.id);
+
+    try {
+      const signedUrl = await createDocumentSignedUrl(supabase, document);
+      window.open(signedUrl, "_blank", "noopener,noreferrer");
+    } catch (error) {
+      console.error(error);
+      setDocumentAccessError(error.message || "Belge yeni sekmede açılamadı.");
+    } finally {
+      setDocumentAccessLoadingId(null);
+    }
+  }
+
+  async function downloadDocument(document) {
+    setDocumentAccessError("");
+    setDocumentAccessLoadingId(document.id);
+
+    try {
+      await downloadDocumentFile(supabase, document);
+    } catch (error) {
+      console.error(error);
+      setDocumentAccessError(error.message || "Belge indirilemedi.");
+    } finally {
+      setDocumentAccessLoadingId(null);
+    }
   }
 
   async function persistDocumentItemMatches(rows, orderItemsForMatching, currentOrderId, userId) {
@@ -2739,9 +2795,15 @@ export default function OrderDetailPage() {
                 ocrProcessingId={documentOcrProcessingId}
                 ocrItemsCreatingId={ocrDocumentItemsCreatingId}
                 ocrItemsResults={ocrDocumentItemsResults}
+                preview={documentPreview}
+                accessLoadingId={documentAccessLoadingId}
+                accessError={documentAccessError}
                 onToggleUpload={() => setDocumentUploadOpen((prev) => !prev)}
                 onFormChange={setDocumentForm}
                 onUpload={uploadDocument}
+                onPreviewDocument={previewDocument}
+                onOpenDocument={openDocumentInNewTab}
+                onDownloadDocument={downloadDocument}
                 onApprovalNoteChange={(documentId, value) =>
                   setDocumentApprovalNotes((prev) => ({ ...prev, [documentId]: value }))
                 }
@@ -3516,9 +3578,15 @@ function DocumentsPanel({
   ocrProcessingId,
   ocrItemsCreatingId,
   ocrItemsResults,
+  preview,
+  accessLoadingId,
+  accessError,
   onToggleUpload,
   onFormChange,
   onUpload,
+  onPreviewDocument,
+  onOpenDocument,
+  onDownloadDocument,
   onApprovalNoteChange,
   onApproval,
   onAnalyzeOCR,
@@ -3529,7 +3597,7 @@ function DocumentsPanel({
     { type: "siparis_formu", label: "Sipariş Formu" },
     { type: "irsaliye", label: "İrsaliyeler" },
     { type: "fatura", label: "Faturalar" },
-    { type: "depo_giris", label: "Depo Giriş Belgeleri" },
+    { type: "depo_giris", label: "Teslim Fişleri" },
     { type: "diger", label: "Diğer Belgeler" },
     { type: "teklif", label: "Teklif Belgeleri (eski kayıtlar)" },
     { type: "odeme", label: "Ödeme Belgeleri (eski kayıtlar)" },
@@ -3627,6 +3695,22 @@ function DocumentsPanel({
           </div>
         </form>
       )}
+
+      <DocumentArchivePanel
+        documents={documents}
+        title="Belgeler"
+        emptyMessage="Henüz belge yüklenmedi."
+        preview={preview}
+        loadingDocumentId={accessLoadingId}
+        error={accessError}
+        onPreview={onPreviewDocument}
+        onOpen={onOpenDocument}
+        onDownload={onDownloadDocument}
+      />
+
+      <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm font-bold text-slate-700">
+        OCR ve belge kalemi kontrolleri aşağıda yönetilir. Orijinal belge için referans üstteki arşiv panelidir.
+      </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         {sections.map((section) => {
