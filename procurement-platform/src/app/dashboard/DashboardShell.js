@@ -22,6 +22,10 @@ const menu = [
   { name: "Ayarlar", icon: "⚙️", href: "/dashboard/ayarlar" },
 ];
 
+function getMenuLabel(item) {
+  return item.href === "/dashboard/yardim" ? "Destek Merkezi" : item.name;
+}
+
 const dateFormatter = new Intl.DateTimeFormat("tr-TR", {
   dateStyle: "long",
   timeZone: "Europe/Istanbul",
@@ -107,6 +111,7 @@ export default function DashboardShell({
   const pathname = usePathname();
   const router = useRouter();
   const [isCheckingSession, setIsCheckingSession] = useState(true);
+  const [supportUnreadCount, setSupportUnreadCount] = useState(0);
 
   async function handleSignOut() {
     await supabase.auth.signOut();
@@ -126,6 +131,33 @@ export default function DashboardShell({
       if (!user) {
         router.replace("/login");
         return;
+      }
+
+      try {
+        const { data: adminRow } = await supabase
+          .from("support_admins")
+          .select("active")
+          .eq("user_id", user.id)
+          .eq("active", true)
+          .maybeSingle();
+
+        const unreadColumn = adminRow?.active
+          ? "unread_for_admin"
+          : "unread_for_customer";
+
+        let unreadQuery = supabase
+          .from("support_tickets")
+          .select("id", { count: "exact", head: true })
+          .gt(unreadColumn, 0);
+
+        if (!adminRow?.active) {
+          unreadQuery = unreadQuery.eq("tenant_id", user.id);
+        }
+
+        const { count } = await unreadQuery;
+        if (mounted) setSupportUnreadCount(count || 0);
+      } catch {
+        if (mounted) setSupportUnreadCount(0);
       }
 
       setIsCheckingSession(false);
@@ -184,7 +216,16 @@ export default function DashboardShell({
                 }`}
               >
                 <span className="shrink-0 text-2xl">{item.icon}</span>
-                <span className="min-w-0 truncate">{item.name}</span>
+                <span className="min-w-0 flex-1 truncate">{getMenuLabel(item)}</span>
+                {item.href === "/dashboard/yardim" && supportUnreadCount > 0 && (
+                  <span
+                    className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-black ${
+                      active ? "bg-white text-blue-700" : "bg-red-600 text-white"
+                    }`}
+                  >
+                    {supportUnreadCount}
+                  </span>
+                )}
               </Link>
             );
           })}
@@ -232,7 +273,16 @@ export default function DashboardShell({
                       : "bg-slate-100 text-slate-700"
                   }`}
                 >
-                  {item.name}
+                  {getMenuLabel(item)}
+                  {item.href === "/dashboard/yardim" && supportUnreadCount > 0 && (
+                    <span
+                      className={`ml-2 rounded-full px-2 py-0.5 text-xs font-black ${
+                        active ? "bg-white text-blue-700" : "bg-red-600 text-white"
+                      }`}
+                    >
+                      {supportUnreadCount}
+                    </span>
+                  )}
                 </Link>
               );
             })}
