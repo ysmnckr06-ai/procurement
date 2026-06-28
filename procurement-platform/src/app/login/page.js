@@ -1,11 +1,20 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import {
+  AuthButton,
+  AuthCard,
+  AuthInput,
+  AuthShell,
+  FieldIcon,
+} from "@/components/AuthShell";
 import { migrateLegacySupabaseSession, supabase } from "@/lib/supabase";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [rememberMe, setRememberMe] = useState(true);
+  const [showPassword, setShowPassword] = useState(false);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -52,139 +61,90 @@ export default function LoginPage() {
     }
   };
 
+  const showForgotPasswordMessage = () => {
+    setMessage("Şifre sıfırlama için sistem yöneticinizle iletişime geçin.");
+  };
+
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        background: "#f5f5f5",
-        padding: "24px",
-      }}
-    >
-      <div
-        style={{
-          width: "100%",
-          maxWidth: "400px",
-          background: "#ffffff",
-          padding: "32px",
-          borderRadius: "16px",
-          boxShadow: "0 10px 30px rgba(0,0,0,0.08)",
-        }}
+    <AuthShell>
+      <AuthCard
+        title="Tekrar hoş geldiniz"
+        description="Hesabınıza giriş yaparak devam edin."
+        footerPrompt="Hesabınız yok mu?"
+        footerHref="/register"
+        footerLabel="Kayıt Ol"
       >
-        <h1
-          style={{
-            fontSize: "28px",
-            fontWeight: "700",
-            marginBottom: "8px",
-            textAlign: "center",
-          }}
-        >
-          Giriş Yap
-        </h1>
+        <form onSubmit={handleLogin} className="mt-8 space-y-5">
+          <AuthInput
+            id="login-email"
+            label="E-posta adresiniz"
+            type="email"
+            placeholder="ornek@firma.com"
+            value={email}
+            onChange={setEmail}
+            required
+            autoComplete="email"
+            icon={<FieldIcon type="mail" />}
+          />
 
-        <p
-          style={{
-            textAlign: "center",
-            color: "#666",
-            marginBottom: "24px",
-          }}
-        >
-          Hesabınıza giriş yapın
-        </p>
+          <AuthInput
+            id="login-password"
+            label="Şifreniz"
+            type={showPassword ? "text" : "password"}
+            placeholder="••••••••"
+            value={password}
+            onChange={setPassword}
+            required
+            autoComplete="current-password"
+            icon={<FieldIcon type="lock" />}
+            rightElement={
+              <button
+                type="button"
+                onClick={() => setShowPassword((value) => !value)}
+                className="ml-3 text-slate-500 transition hover:text-blue-700"
+                aria-label={showPassword ? "Şifreyi gizle" : "Şifreyi göster"}
+              >
+                <FieldIcon type={showPassword ? "eye-off" : "eye"} />
+              </button>
+            }
+          />
 
-        <form onSubmit={handleLogin}>
-          <div style={{ marginBottom: "16px" }}>
-            <label
-              htmlFor="login-email"
-              style={{
-                display: "block",
-                marginBottom: "8px",
-                fontWeight: "600",
-              }}
-            >
-              E-posta
+          <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
+            <label className="flex cursor-pointer items-center gap-2 font-semibold text-slate-600">
+              <input
+                type="checkbox"
+                checked={rememberMe}
+                onChange={(event) => setRememberMe(event.target.checked)}
+                className="h-4 w-4 rounded border-slate-300 text-blue-600 accent-blue-600"
+              />
+              Beni hatırla
             </label>
-            <input
-              id="login-email"
-              type="email"
-              placeholder="ornek@mail.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-              style={{
-                width: "100%",
-                padding: "12px",
-                borderRadius: "10px",
-                border: "1px solid #ccc",
-                outline: "none",
-                fontSize: "16px",
-              }}
-            />
+            <button
+              type="button"
+              onClick={showForgotPasswordMessage}
+              className="font-black text-blue-700 hover:text-blue-800"
+            >
+              Şifremi unuttum?
+            </button>
           </div>
 
-          <div style={{ marginBottom: "20px" }}>
-            <label
-              htmlFor="login-password"
-              style={{
-                display: "block",
-                marginBottom: "8px",
-                fontWeight: "600",
-              }}
-            >
-              Şifre
-            </label>
-            <input
-              id="login-password"
-              type="password"
-              placeholder="Şifrenizi girin"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              style={{
-                width: "100%",
-                padding: "12px",
-                borderRadius: "10px",
-                border: "1px solid #ccc",
-                outline: "none",
-                fontSize: "16px",
-              }}
-            />
-          </div>
-
-          <button
-            type="submit"
-            disabled={loading}
-            style={{
-              width: "100%",
-              padding: "12px",
-              border: "none",
-              borderRadius: "10px",
-              background: loading ? "#999" : "#111",
-              color: "#fff",
-              fontSize: "16px",
-              fontWeight: "600",
-              cursor: loading ? "not-allowed" : "pointer",
-            }}
-          >
-            {loading ? "Giriş yapılıyor..." : "Giriş Yap"}
-          </button>
+          <AuthButton loading={loading} loadingText="Giriş yapılıyor...">
+            Giriş Yap
+          </AuthButton>
         </form>
 
         {message && (
-          <p
-            style={{
-              marginTop: "16px",
-              textAlign: "center",
-              color: message === "Giriş başarılı" ? "green" : "red",
-              fontWeight: "500",
-            }}
+          <div
+            className={`mt-5 rounded-xl border px-4 py-3 text-center text-sm font-bold ${
+              message === "Giriş başarılı"
+                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                : "border-red-200 bg-red-50 text-red-700"
+            }`}
           >
             {message}
-          </p>
+          </div>
         )}
-      </div>
-    </div>
+      </AuthCard>
+    </AuthShell>
   );
 }
