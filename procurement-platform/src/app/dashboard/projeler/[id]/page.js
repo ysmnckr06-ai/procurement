@@ -988,6 +988,7 @@ export default function ProjectDetailPage() {
     const name = normalizeText(item.product_name);
 
     const matched = products.filter((product) => {
+      if (item.product_id && product.id === item.product_id) return true;
       const productCode = normalizeCode(product.product_code);
       const productName = normalizeText(product.product_name);
 
@@ -1113,6 +1114,7 @@ export default function ProjectDetailPage() {
   }
 
   function productMatchesProjectItem(product, item) {
+    if (item?.product_id && product?.id && item.product_id === product.id) return true;
     const itemCode = stockProductCodeForItem(item);
     const productCode = normalizeProductCode(product.normalized_product_code || product.product_code);
     if (itemCode) return Boolean(productCode) && itemCode === productCode;
@@ -1483,25 +1485,16 @@ export default function ProjectDetailPage() {
         ...projectItemIdsForMissingProduct(missingItem),
         sourceItem.id,
       ].filter(Boolean)));
-      const projectItemUpdatePayload = {
-        product_id: product.id,
-        updated_at: now,
-      };
-      if (!stockProductCodeForItem(sourceItem) && product.product_code) {
-        projectItemUpdatePayload.product_code = product.product_code;
-      }
-
-      const { data: updatedItems, error: updateError } = await supabase
-        .from("project_items")
-        .update(projectItemUpdatePayload)
-        .in("id", idsToLink)
-        .eq("project_id", projectId)
-        .eq("user_id", user.id)
-        .select("*");
+      const { data: updatedItems, error: updateError, originalError } = await updateProjectItemsProductLink(
+        idsToLink,
+        product,
+        user.id,
+        now,
+      );
 
       if (updateError) {
         failedRows.push(sourceItem);
-        logProductCardError(updateError, sourceItem, productPayload, "manual-link");
+        logProductCardError(updateError, sourceItem, { product_id: product.id, product_code: product.product_code, originalError }, "manual-link");
         continue;
       }
 
@@ -1509,25 +1502,24 @@ export default function ProjectDetailPage() {
       if (product.id) linkedProductIds.add(product.id);
     }
 
-    if (createdProducts.length > 0) {
-      setProducts((prev) => [...prev, ...createdProducts]);
-    }
+    const updatedProductById = new Map(updatedProducts.map((product) => [product.id, product]));
+    const nextProducts = [
+      ...products.map((product) => updatedProductById.get(product.id) || product),
+      ...createdProducts.filter((product) => !products.some((existing) => existing.id === product.id)),
+    ];
 
-    if (updatedProducts.length > 0) {
-      const updatedById = new Map(updatedProducts.map((product) => [product.id, product]));
-      setProducts((prev) => prev.map((product) => updatedById.get(product.id) || product));
-    }
+    setProducts(nextProducts);
 
+    const linkedById = new Map(linkedProjectItems.map((item) => [item.id, item]));
+    const nextItems = items.map((item) => linkedById.get(item.id) || item);
     if (linkedProjectItems.length > 0) {
-      const linkedById = new Map(linkedProjectItems.map((item) => [item.id, item]));
-      setItems((prev) => prev.map((item) => linkedById.get(item.id) || item));
+      setItems(nextItems);
     }
 
-    const failedKeys = new Set(uniqueMissingProductItems(failedRows, [...products, ...createdProducts]).map((item) => item.key));
-    const remainingRows = missingProductCardItems
-      .filter((item) => !targetKeys.has(item.key) || failedKeys.has(item.key))
-      .map((item) => item.sourceItem || item);
-    const failedMissingItems = updateMissingProductWarning(remainingRows, [...products, ...createdProducts]);
+    const failedKeys = new Set(uniqueMissingProductItems(failedRows, nextProducts).map((item) => item.key));
+    const candidateRows = nextItems
+      .filter((item) => !targetKeys.has(missingProductKey(item)) || failedKeys.has(missingProductKey(item)));
+    const failedMissingItems = updateMissingProductWarning(candidateRows, nextProducts);
     setCreatingMissingProducts(false);
     const linkedProductCount = linkedProductIds.size;
     setMessage(
@@ -1670,6 +1662,47 @@ export default function ProjectDetailPage() {
       data: fallbackResult.data || [],
       error: fallbackResult.error,
       usedFallback: !fallbackResult.error,
+      originalError: firstResult.error,
+    };
+  }
+
+  async function updateProjectItemsProductLink(idsToLink, product, userId, now) {
+    const normalizedCode = normalizeProductCode(product?.normalized_product_code || product?.product_code);
+    const fullPayload = {
+      product_id: product.id,
+      stock_card_id: product.id,
+      product_code: product.product_code || "",
+      normalized_product_code: normalizedCode || null,
+      updated_at: now,
+    };
+
+    const runUpdate = (payload) => supabase
+      .from("project_items")
+      .update(payload)
+      .in("id", idsToLink)
+      .eq("project_id", projectId)
+      .eq("user_id", userId)
+      .select("*");
+
+    const firstResult = await runUpdate(fullPayload);
+    if (!firstResult.error) return firstResult;
+
+    const fallbackPayload = {
+      product_id: product.id,
+      product_code: product.product_code || "",
+      updated_at: now,
+    };
+    const fallbackResult = await supabase
+      .from("project_items")
+      .update(fallbackPayload)
+      .in("id", idsToLink)
+      .eq("project_id", projectId)
+      .eq("user_id", userId)
+      .select("*");
+
+    return {
+      data: fallbackResult.data || [],
+      error: fallbackResult.error,
       originalError: firstResult.error,
     };
   }
@@ -1886,20 +1919,13 @@ export default function ProjectDetailPage() {
         }
       }
 
-      const projectItemUpdatePayload = {
-        product_id: product.id,
-        updated_at: new Date().toISOString(),
-      };
-      if (!stockProductCodeForItem(item) && product.product_code) {
-        projectItemUpdatePayload.product_code = product.product_code;
-      }
-
-      const { error: itemError } = await supabase
-        .from("project_items")
-        .update(projectItemUpdatePayload)
-        .eq("id", item.id)
-        .eq("project_id", projectId)
-        .eq("user_id", userId);
+      const linkUpdatedAt = new Date().toISOString();
+      const { data: updatedProjectItems, error: itemError, originalError } = await updateProjectItemsProductLink(
+        [item.id],
+        product,
+        userId,
+        linkUpdatedAt,
+      );
 
       if (itemError) {
         failedItems.push(item);
@@ -1913,12 +1939,20 @@ export default function ProjectDetailPage() {
           errorDetails: itemError?.details || null,
           errorHint: itemError?.hint || null,
           errorCode: itemError?.code || null,
+          originalError,
           rawError: itemError || null,
         });
         continue;
       }
 
-      linkedItems.push({ ...item, ...projectItemUpdatePayload, productCardStatus });
+      linkedItems.push(updatedProjectItems?.[0] || {
+        ...item,
+        product_id: product.id,
+        product_code: product.product_code || item.product_code || "",
+        normalized_product_code: normalizeProductCode(product.normalized_product_code || product.product_code) || null,
+        updated_at: linkUpdatedAt,
+        productCardStatus,
+      });
     }
 
     if (failedItems.length > 0) {
