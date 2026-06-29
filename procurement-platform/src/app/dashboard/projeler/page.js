@@ -879,8 +879,16 @@ export default function ProjectsPage() {
           : requestedItems > 0
             ? { label: `${requestedItems} talepte`, tone: "blue" }
           : stockCoveredItems > 0
-            ? { label: `${stockCoveredItems} stoktan`, tone: "green" }
-            : { label: "Kontrol gerekli", tone: "amber" };
+            ? { label: `${stockCoveredItems} stoktan karşılandı`, tone: "green" }
+            : completedItems > 0
+              ? { label: "Tamamlandı", tone: "green" }
+              : { label: "Bekliyor", tone: "slate" };
+    const materialStatusParts = [
+      stockCoveredItems > 0 ? `Stoktan ${stockCoveredItems}` : null,
+      requestedItems > 0 ? `Talepte ${requestedItems}` : null,
+      missingMaterials > 0 ? `Eksik ${missingMaterials}` : null,
+      orderedItems > 0 ? `Siparişte ${orderedItems}` : null,
+    ].filter(Boolean);
     const orderStatus =
       openOrders > 0
         ? { label: `${openOrders} açık sipariş`, tone: "blue" }
@@ -905,13 +913,13 @@ export default function ProjectsPage() {
 
     return {
       completion: items.length > 0 ? Math.round((completedItems / items.length) * 100) : 0,
-      materialTotal: trackedItems.length,
       stockCoveredItems,
       requestedItems,
       orderedItems,
       openOrders,
       totalOrders,
       missingMaterials,
+      materialStatusText: materialStatusParts.length > 0 ? materialStatusParts.join(" · ") : "Alt malzeme işlemi bekliyor",
       productStatus,
       orderStatus,
       dependencyCount,
@@ -1473,12 +1481,9 @@ export default function ProjectsPage() {
                           <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-black ${projectListBadgeClass(metrics.productStatus.tone)}`}>
                             {metrics.productStatus.label}
                           </span>
-                          <span className="inline-flex rounded-full border border-slate-100 bg-white px-2.5 py-1 text-xs font-bold text-slate-600">
-                            Toplam {metrics.materialTotal}
-                          </span>
                         </div>
                         <div className="mt-1 text-[11px] font-semibold text-slate-500">
-                          Stoktan {metrics.stockCoveredItems} · Talepte {metrics.requestedItems} · Eksik {metrics.missingMaterials}
+                          {metrics.materialStatusText}
                         </div>
                       </td>
                       <td className="p-4">
