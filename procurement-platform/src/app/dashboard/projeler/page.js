@@ -1417,38 +1417,6 @@ export default function ProjectsPage() {
                 </button>
               </div>
             </div>
-            <div className="mt-4 grid gap-3 md:grid-cols-4">
-              <div className="rounded-2xl border border-red-100 bg-red-50 p-4">
-                <div className="text-xs font-black uppercase tracking-wide text-red-700">Talebe alınmamış</div>
-                <div className="mt-2 text-2xl font-black text-red-800">{displayedProjectOverview.projectsWithMissing}</div>
-                <div className="text-xs font-semibold text-red-700">
-                  {displayedProjectOverview.missingItems} kalem henüz talebe alınmadı
-                </div>
-              </div>
-              <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
-                <div className="text-xs font-black uppercase tracking-wide text-emerald-700">Stoktan karşılanan</div>
-                <div className="mt-2 text-2xl font-black text-emerald-800">{displayedProjectOverview.projectsWithStockCover}</div>
-                <div className="text-xs font-semibold text-emerald-700">
-                  {displayedProjectOverview.stockCoveredItems} kalem stoktan ayrıldı
-                </div>
-              </div>
-              <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4">
-                <div className="text-xs font-black uppercase tracking-wide text-blue-700">Talep / Sipariş süreci</div>
-                <div className="mt-2 text-2xl font-black text-blue-800">
-                  {displayedProjectOverview.projectsWithRequests + displayedProjectOverview.projectsWithOrders}
-                </div>
-                <div className="text-xs font-semibold text-blue-700">
-                  {displayedProjectOverview.requestedItems} kalem talepte · {displayedProjectOverview.openOrders} açık sipariş
-                </div>
-              </div>
-              <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
-                <div className="text-xs font-black uppercase tracking-wide text-slate-600">Sorunsuz görünen</div>
-                <div className="mt-2 text-2xl font-black text-slate-900">{displayedProjectOverview.projectsReady}</div>
-                <div className="text-xs font-semibold text-slate-500">
-                  Açık talep, eksik veya açık sipariş görünmüyor
-                </div>
-              </div>
-            </div>
           </div>
           <div className="overflow-hidden">
             <table className="w-full table-fixed text-left text-xs [&_td]:p-2">
