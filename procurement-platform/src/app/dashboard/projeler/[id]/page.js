@@ -5737,6 +5737,23 @@ export default function ProjectDetailPage() {
       (sum, order) => sum + allocatedOrderBase(order),
       0,
     );
+    const allocatedOrders = allFinanceOrders.map((order) => {
+      const orderBaseAmount = toBaseAmount(order, ["total_amount", "order_total", "total"], ["order_total_base", "base_amount"]);
+      const projectBaseAmount = allocatedOrderBase(order);
+      const projectShare = projectShareForOrder(order);
+      return {
+        id: order.id,
+        order_no: order.order_no || order.siparisNo || order.siparis_no || order.id?.slice?.(0, 8) || "Sipariş",
+        supplier_name: order.partner_name || order.supplier_name || order.firma || order.supplier || "-",
+        status: order.status || "Bekliyor",
+        date: order.order_date || order.created_at,
+        currency: order.currency || baseCurrency,
+        orderBaseAmount,
+        projectBaseAmount,
+        projectShare,
+        isDirectProjectOrder: directOrderIds.has(String(order.id)),
+      };
+    });
     const approvedInvoices = projectDocuments.filter((document) =>
       String(document.document_type || "").toLocaleLowerCase("tr-TR") === "fatura"
       && String(document.approval_status || "").toLocaleLowerCase("tr-TR") !== "reddedildi"
@@ -5843,6 +5860,7 @@ export default function ProjectDetailPage() {
       warnings: Array.from(new Set(warnings)),
       approvedInvoiceCount: approvedInvoices.length,
       allocationLinkedOrderCount: allocationLinkedOrders.length,
+      allocatedOrders,
     };
   }, [allOrders, companySettings, expenses, financeLoadWarnings, payments, project, projectDocuments, projectId, projectOrderPayments, projectOrders]);
 
@@ -6711,190 +6729,60 @@ export default function ProjectDetailPage() {
             </div>
           </section>
         )}
+                
         {activeTab === "Finans Özeti" && (
           <section className="space-y-6">
             <div className="rounded-2xl border border-blue-100 bg-blue-50 p-5 text-sm text-blue-900 shadow-sm">
-              <div className="font-black">Proje finans görünümü · Baz para birimi: {projectFinanceSummary.baseCurrency}</div>
-              <p className="mt-1 font-semibold text-blue-700">
-                Siparişler taahhüt, faturalar gerçekleşen maliyet, ödemeler ise nakit hareketi olarak ayrı izlenir.
-              </p>
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <div className="font-black">Proje finansı ? Baz para birimi: {projectFinanceSummary.baseCurrency}</div>
+                  <p className="mt-1 font-semibold text-blue-700">Bu ekran üç net bölümden oluşur: müşteriden gelen ödemeler, projeye düşen tedarikçi/alım maliyeti ve ek giderler.</p>
+                </div>
+                <span className={"w-fit rounded-full px-3 py-1 text-xs font-black " + (projectFinanceSummary.grossProfit >= 0 ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800")}>Brüt sonuç: {formatMoney(projectFinanceSummary.grossProfit, projectFinanceSummary.baseCurrency)}</span>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <SummaryCard title="Sözleşme Bedeli" value={formatMoney(projectFinanceSummary.contractAmount, projectFinanceSummary.baseCurrency)} text="Baz para birimi karşılığı" tone="blue" />
-              <SummaryCard title="Tahmini Bütçe" value={formatMoney(projectFinanceSummary.estimatedBudget, projectFinanceSummary.baseCurrency)} text="Planlanan proje bütçesi" />
-              <SummaryCard title="Sipariş Taahhüdü" value={formatMoney(projectFinanceSummary.orderCommitment, projectFinanceSummary.baseCurrency)} text={`${projectOrders.length} doğrudan, ${projectFinanceSummary.allocationLinkedOrderCount} allocation bağlı sipariş`} />
-              <SummaryCard title="Onaylı Fatura Toplamı" value={formatMoney(projectFinanceSummary.approvedInvoiceTotal, projectFinanceSummary.baseCurrency)} text={`${projectFinanceSummary.approvedInvoiceCount} reddedilmemiş fatura`} tone="blue" />
-              <SummaryCard title="Manuel Giderler" value={formatMoney(projectFinanceSummary.manualExpenses, projectFinanceSummary.baseCurrency)} text={`${expenses.length} ek gider kaydı`} />
-              <SummaryCard title="Gerçekleşen Maliyet" value={formatMoney(projectFinanceSummary.actualCost, projectFinanceSummary.baseCurrency)} text="Faturalar + manuel giderler" tone={projectFinanceSummary.actualCost > projectFinanceSummary.contractAmount ? "red" : "blue"} />
-              <SummaryCard title="Müşteri Tahsilatı" value={formatMoney(projectFinanceSummary.customerCollections, projectFinanceSummary.baseCurrency)} text={`${payments.length} tahsilat kaydı`} tone="green" />
-              <SummaryCard title="Tedarikçiye Ödenen" value={formatMoney(projectFinanceSummary.supplierPayments, projectFinanceSummary.baseCurrency)} text={`${projectOrderPayments.length} sipariş ödemesi`} />
-              <SummaryCard title="Bekleyen Tahsilat" value={formatMoney(projectFinanceSummary.remainingCollection, projectFinanceSummary.baseCurrency)} text="Sözleşme - müşteri tahsilatı" tone={projectFinanceSummary.remainingCollection < 0 ? "red" : "blue"} />
-              <SummaryCard title="Bekleyen Tedarikçi Borcu" value={formatMoney(projectFinanceSummary.supplierDebt, projectFinanceSummary.baseCurrency)} text="Faturalar - tedarikçi ödemeleri" tone={projectFinanceSummary.supplierDebt < 0 ? "red" : "blue"} />
-              <SummaryCard title="Brüt Kar / Zarar" value={formatMoney(projectFinanceSummary.grossProfit, projectFinanceSummary.baseCurrency)} text="Sözleşme - gerçekleşen maliyet" tone={projectFinanceSummary.grossProfit >= 0 ? "green" : "red"} />
-              <SummaryCard title="Kar Marjı %" value={`%${projectFinanceSummary.profitMargin.toLocaleString("tr-TR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}`} text="Brüt kar / sözleşme bedeli" tone={projectFinanceSummary.profitMargin >= 0 ? "green" : "red"} />
+              <SummaryCard title="Sözleşme Bedeli" value={formatMoney(projectFinanceSummary.contractAmount, projectFinanceSummary.baseCurrency)} text="Müşteriyle anlaşılan toplam" tone="blue" />
+              <SummaryCard title="Projeye Düşen Alım" value={formatMoney(projectFinanceSummary.orderCommitment, projectFinanceSummary.baseCurrency)} text={projectFinanceSummary.allocatedOrders.length + " sipariş/pay"} />
+              <SummaryCard title="Müşteri Tahsilatı" value={formatMoney(projectFinanceSummary.customerCollections, projectFinanceSummary.baseCurrency)} text={payments.length + " ödeme kaydı"} tone="green" />
+              <SummaryCard title="Ek Giderler" value={formatMoney(projectFinanceSummary.manualExpenses, projectFinanceSummary.baseCurrency)} text={expenses.length + " gider kaydı"} />
             </div>
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <h2 className="text-lg font-black text-slate-900">Karlılık Analizi</h2>
-                  <p className="mt-1 text-sm font-semibold text-slate-500">
-                    Sözleşme, gerçekleşen maliyet ve tahmini bütçenin baz para birimindeki karşılaştırması.
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <span className={`rounded-full px-3 py-1 text-xs font-black ${
-                    projectFinanceSummary.profitabilityStatus === "Kar yüksek"
-                      ? "bg-emerald-100 text-emerald-800"
-                      : projectFinanceSummary.profitabilityStatus === "Kar düşük"
-                        ? "bg-amber-100 text-amber-800"
-                        : projectFinanceSummary.profitabilityStatus === "Zararda"
-                          ? "bg-red-100 text-red-800"
-                          : "bg-slate-100 text-slate-700"
-                  }`}>
-                    {projectFinanceSummary.profitabilityStatus}
-                  </span>
-                  {projectFinanceSummary.budgetExceeded && (
-                    <span className="rounded-full bg-red-100 px-3 py-1 text-xs font-black text-red-800">
-                      Bütçe aşıldı
-                    </span>
-                  )}
-                </div>
-              </div>
+            <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+              <section className="rounded-2xl border border-emerald-100 bg-white p-5 shadow-sm">
+                <div className="flex items-start justify-between gap-3"><div><h2 className="text-lg font-black text-slate-900">1. Müşteri Ödemeleri</h2><p className="mt-1 text-sm font-semibold text-slate-500">Bu projeye müşteriden gelen tahsilatlar.</p></div><span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-black text-emerald-700">{formatMoney(projectFinanceSummary.customerCollections, projectFinanceSummary.baseCurrency)}</span></div>
+                <form onSubmit={savePayment} className="mt-5 space-y-3 rounded-xl border border-emerald-100 bg-emerald-50 p-3">
+                  <div className="flex items-center justify-between gap-3"><h3 className="text-sm font-black text-emerald-950">{editingPaymentId ? "Ödeme Düzenle" : "Ödeme Ekle"}</h3>{editingPaymentId && <button type="button" onClick={cancelPaymentEdit} className="rounded-lg bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100">Vazgeç</button>}</div>
+                  <input type="date" className="w-full rounded-xl border border-emerald-200 bg-white p-3 text-sm font-semibold" value={paymentForm.payment_date} onChange={(e) => updatePaymentForm("payment_date", e.target.value)} />
+                  <input type="number" className="w-full rounded-xl border border-emerald-200 bg-white p-3 text-sm font-semibold" placeholder="Ödeme tutarı" value={paymentForm.amount} onChange={(e) => updatePaymentForm("amount", e.target.value)} />
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><select className="rounded-xl border border-emerald-200 bg-white p-3 text-sm font-semibold" value={paymentForm.currency} onChange={(e) => { updatePaymentForm("currency", e.target.value); updatePaymentForm("exchange_rate", getExchangeRate(e.target.value, companySettings)); }}>{currencyOptions.map((currency) => <option key={currency}>{currency}</option>)}</select><input type="number" className="rounded-xl border border-emerald-200 bg-white p-3 text-sm font-semibold" placeholder="Kur" value={paymentForm.exchange_rate} onChange={(e) => updatePaymentForm("exchange_rate", e.target.value)} /></div>
+                  <select className="w-full rounded-xl border border-emerald-200 bg-white p-3 text-sm font-semibold" value={paymentForm.payment_type} onChange={(e) => updatePaymentForm("payment_type", e.target.value)}>{paymentTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select>
+                  <textarea className="w-full rounded-xl border border-emerald-200 bg-white p-3 text-sm font-semibold" rows={3} placeholder="Açıklama" value={paymentForm.description} onChange={(e) => updatePaymentForm("description", e.target.value)} />
+                  <button type="submit" className="w-full rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white hover:bg-emerald-700">{editingPaymentId ? "Değişiklikleri Kaydet" : "Ödemeyi Kaydet"}</button>
+                </form>
+                <div className="mt-5 space-y-3">{payments.map((payment) => (<div key={payment.id} className="rounded-xl border border-slate-100 p-3 text-sm"><div className="flex items-start justify-between gap-3"><div><div className="font-black text-slate-900">{payment.payment_type || "Ödeme"}</div><div className="mt-1 text-xs font-semibold text-slate-500">{formatDate(payment.payment_date)} ? {payment.description || "Açıklama yok"}</div></div><div className="text-right font-black text-emerald-700">{formatMoney(payment.amount, payment.currency || "TRY")}</div></div><div className="mt-3 flex justify-end gap-2"><button type="button" onClick={() => editPayment(payment)} className="rounded-lg bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700 hover:bg-blue-100">Düzenle</button><button type="button" onClick={() => deletePayment(payment)} className="rounded-lg bg-red-50 px-3 py-2 text-xs font-bold text-red-700 hover:bg-red-100">Sil</button></div></div>))}{payments.length === 0 && <div className="rounded-xl bg-slate-50 p-4 text-sm font-semibold text-slate-500">Henüz müşteri ödemesi yok.</div>}</div>
+              </section>
 
-              <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                {[
-                  ["Sözleşme Bedeli", formatMoney(projectFinanceSummary.contractAmount, projectFinanceSummary.baseCurrency)],
-                  ["Gerçekleşen Maliyet", formatMoney(projectFinanceSummary.actualCost, projectFinanceSummary.baseCurrency)],
-                  ["Tahmini Bütçe", formatMoney(projectFinanceSummary.estimatedBudget, projectFinanceSummary.baseCurrency)],
-                  ["Brüt Kar / Zarar", formatMoney(projectFinanceSummary.grossProfit, projectFinanceSummary.baseCurrency)],
-                  ["Kar Marjı", projectFinanceSummary.contractAmount > 0 ? `%${projectFinanceSummary.profitMargin.toLocaleString("tr-TR", { maximumFractionDigits: 1 })}` : "Hesaplanamaz"],
-                  ["Bütçe Sapması", projectFinanceSummary.estimatedBudget > 0 ? formatMoney(projectFinanceSummary.budgetVariance, projectFinanceSummary.baseCurrency) : "Hesaplanamaz"],
-                  ["Maliyet Gerçekleşme Oranı", projectFinanceSummary.costRealizationRate !== null ? `%${projectFinanceSummary.costRealizationRate.toLocaleString("tr-TR", { maximumFractionDigits: 1 })}` : "Hesaplanamaz"],
-                ].map(([label, value]) => (
-                  <div key={label} className="rounded-xl border border-slate-100 bg-slate-50 p-4">
-                    <div className="text-xs font-bold text-slate-500">{label}</div>
-                    <div className="mt-1 break-words text-lg font-black text-slate-950">{value}</div>
-                  </div>
-                ))}
-              </div>
+              <section className="rounded-2xl border border-blue-100 bg-white p-5 shadow-sm">
+                <div className="flex items-start justify-between gap-3"><div><h2 className="text-lg font-black text-slate-900">2. Tedarikçi / Alım Payı</h2><p className="mt-1 text-sm font-semibold text-slate-500">Sipariş bu projeye bağlıysa veya kalem allocation içeriyorsa proje payı otomatik hesaplanır.</p></div><span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-black text-blue-700">{formatMoney(projectFinanceSummary.orderCommitment, projectFinanceSummary.baseCurrency)}</span></div>
+                <div className="mt-5 rounded-xl border border-blue-100 bg-blue-50 p-3 text-xs font-bold text-blue-900">Örnek mantık: 50 TL birim fiyatlı siparişte bu projeye 10 adet, başka projeye 20 adet ve stoğa 50 adet ayrıldıysa proje maliyeti kendi 10 adetlik payını alır. Dip toplam varsa aynı oranla projelere/stoğa dağıtılır.</div>
+                <div className="mt-5 space-y-3">{projectFinanceSummary.allocatedOrders.map((order) => (<div key={order.id} className="rounded-xl border border-slate-100 p-3 text-sm"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><Link href={"/dashboard/siparisler/" + order.id} className="font-black text-blue-700 hover:underline">{order.order_no}</Link><div className="mt-1 truncate text-xs font-semibold text-slate-500" title={order.supplier_name}>{order.supplier_name} ? {formatDate(order.date)}</div></div><span className={"shrink-0 rounded-full px-2 py-1 text-[11px] font-black " + (order.isDirectProjectOrder ? "bg-blue-100 text-blue-800" : "bg-amber-100 text-amber-800")}>{order.isDirectProjectOrder ? "Doğrudan" : "Paylaştırıldı"}</span></div><div className="mt-3 grid grid-cols-2 gap-2 text-xs"><div className="rounded-lg bg-slate-50 p-2"><div className="font-bold text-slate-500">Sipariş toplamı</div><div className="mt-1 font-black text-slate-950">{formatMoney(order.orderBaseAmount, projectFinanceSummary.baseCurrency)}</div></div><div className="rounded-lg bg-blue-50 p-2"><div className="font-bold text-blue-700">Bu projeye düşen</div><div className="mt-1 font-black text-blue-900">{formatMoney(order.projectBaseAmount, projectFinanceSummary.baseCurrency)}</div></div><div className="rounded-lg bg-slate-50 p-2"><div className="font-bold text-slate-500">Pay oranı</div><div className="mt-1 font-black text-slate-950">%{(Number(order.projectShare || 0) * 100).toLocaleString("tr-TR", { maximumFractionDigits: 1 })}</div></div><div className="rounded-lg bg-slate-50 p-2"><div className="font-bold text-slate-500">Durum</div><div className="mt-1 font-black text-slate-950">{order.status}</div></div></div></div>))}{projectFinanceSummary.allocatedOrders.length === 0 && <div className="rounded-xl bg-slate-50 p-4 text-sm font-semibold text-slate-500">Bu projeye bağlı sipariş/alım payı yok.</div>}</div>
+                <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2"><div className="rounded-xl border border-slate-100 bg-slate-50 p-3"><div className="text-xs font-bold text-slate-500">Tedarikçiye ödenen</div><div className="mt-1 text-lg font-black text-slate-950">{formatMoney(projectFinanceSummary.supplierPayments, projectFinanceSummary.baseCurrency)}</div></div><div className="rounded-xl border border-slate-100 bg-slate-50 p-3"><div className="text-xs font-bold text-slate-500">Bekleyen tedarikçi borcu</div><div className="mt-1 text-lg font-black text-slate-950">{formatMoney(projectFinanceSummary.supplierDebt, projectFinanceSummary.baseCurrency)}</div></div></div>
+              </section>
 
-              {projectFinanceSummary.costRealizationRate !== null && (
-                <div className="mt-5">
-                  <div className="mb-2 flex items-center justify-between text-xs font-black text-slate-600">
-                    <span>Bütçe kullanım oranı</span>
-                    <span>%{projectFinanceSummary.costRealizationRate.toLocaleString("tr-TR", { maximumFractionDigits: 1 })}</span>
-                  </div>
-                  <div className="h-3 overflow-hidden rounded-full bg-slate-100">
-                    <div
-                      className={`h-full rounded-full ${projectFinanceSummary.budgetExceeded ? "bg-red-500" : "bg-blue-600"}`}
-                      style={{ width: `${Math.min(100, Math.max(0, projectFinanceSummary.costRealizationRate))}%` }}
-                    />
-                  </div>
-                </div>
-              )}
-
-              {projectFinanceSummary.profitabilityWarnings.length > 0 && (
-                <div className="mt-5 space-y-2">
-                  {projectFinanceSummary.profitabilityWarnings.map((warning) => (
-                    <div key={warning} className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-bold text-amber-900">
-                      {warning}
-                    </div>
-                  ))}
-                </div>
-              )}
+              <section className="rounded-2xl border border-amber-100 bg-white p-5 shadow-sm">
+                <div className="flex items-start justify-between gap-3"><div><h2 className="text-lg font-black text-slate-900">3. Ek Giderler</h2><p className="mt-1 text-sm font-semibold text-slate-500">İşçilik, nakliye, montaj, beklenmeyen gider gibi proje özel maliyetleri.</p></div><span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-black text-amber-700">{formatMoney(projectFinanceSummary.manualExpenses, projectFinanceSummary.baseCurrency)}</span></div>
+                <form onSubmit={addExpense} className="mt-5 space-y-3 rounded-xl border border-amber-100 bg-amber-50 p-3"><h3 className="text-sm font-black text-amber-950">Ek Gider Ekle</h3><select value={expenseForm.expense_type} onChange={(event) => updateExpenseForm("expense_type", event.target.value)} className="w-full rounded-xl border border-amber-200 bg-white p-3 text-sm font-semibold">{expenseTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select><div className="grid grid-cols-1 gap-3 sm:grid-cols-3"><input type="number" min="0" step="0.01" value={expenseForm.amount} onChange={(event) => updateExpenseForm("amount", event.target.value)} placeholder="Tutar" className="rounded-xl border border-amber-200 bg-white p-3 text-sm font-semibold" /><select value={expenseForm.currency} onChange={(event) => { const currency = event.target.value; updateExpenseForm("currency", currency); updateExpenseForm("exchange_rate", getExchangeRate(currency, companySettings)); }} className="rounded-xl border border-amber-200 bg-white p-3 text-sm font-semibold">{currencyOptions.map((currency) => <option key={currency} value={currency}>{currency}</option>)}</select><input type="number" min="0" step="0.0001" value={expenseForm.exchange_rate} onChange={(event) => updateExpenseForm("exchange_rate", event.target.value)} placeholder="Kur" className="rounded-xl border border-amber-200 bg-white p-3 text-sm font-semibold" /></div><input type="date" value={expenseForm.expense_date} onChange={(event) => updateExpenseForm("expense_date", event.target.value)} className="w-full rounded-xl border border-amber-200 bg-white p-3 text-sm font-semibold" /><textarea value={expenseForm.description} onChange={(event) => updateExpenseForm("description", event.target.value)} placeholder="Açıklama" rows={3} className="w-full rounded-xl border border-amber-200 bg-white p-3 text-sm font-semibold" /><button type="submit" className="w-full rounded-xl bg-amber-600 px-5 py-3 text-sm font-bold text-white hover:bg-amber-700">Ek Gider Ekle</button></form>
+                <div className="mt-5 space-y-3">{expenses.map((expense) => (<div key={expense.id} className="rounded-xl border border-slate-100 p-3 text-sm"><div className="flex items-start justify-between gap-3"><div><div className="font-black text-slate-900">{expense.expense_type || "Diğer"}</div><div className="mt-1 text-xs font-semibold text-slate-500">{formatDate(expense.expense_date)} ? {expense.description || "Açıklama yok"}</div></div><div className="text-right font-black text-amber-700">{formatMoney(expense.base_amount || expense.amount, expense.base_currency || expense.currency || projectFinanceSummary.baseCurrency)}</div></div><div className="mt-3 flex justify-end"><button type="button" onClick={() => deleteExpense(expense)} className="rounded-lg bg-red-50 px-3 py-2 text-xs font-bold text-red-700 hover:bg-red-100">Sil</button></div></div>))}{expenses.length === 0 && <div className="rounded-xl bg-slate-50 p-4 text-sm font-semibold text-slate-500">Bu proje için ek gider kaydı yok.</div>}</div>
+              </section>
             </div>
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <h2 className="text-lg font-black text-slate-900">Nakit Akışı</h2>
-                  <p className="mt-1 text-sm font-semibold text-slate-500">
-                    Gerçekleşen tahsilat ve nakit çıkışlarının baz para birimindeki görünümü.
-                  </p>
-                </div>
-                <span className={`rounded-full px-3 py-1 text-xs font-black ${
-                  projectFinanceSummary.cashFlowStatus === "Pozitif Nakit"
-                    ? "bg-emerald-100 text-emerald-800"
-                    : projectFinanceSummary.cashFlowStatus === "Negatif Nakit"
-                      ? "bg-red-100 text-red-800"
-                      : "bg-slate-100 text-slate-700"
-                }`}>
-                  {projectFinanceSummary.cashFlowStatus}
-                </span>
-              </div>
-
-              <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                {[
-                  ["Toplam Sözleşme Bedeli", projectFinanceSummary.contractAmount],
-                  ["Müşteri Tahsilatı", projectFinanceSummary.customerCollections],
-                  ["Bekleyen Tahsilat", projectFinanceSummary.remainingCollection],
-                  ["Tedarikçiye Ödenen", projectFinanceSummary.supplierPayments],
-                  ["Bekleyen Tedarikçi Borcu", projectFinanceSummary.supplierDebt],
-                  ["Manuel Giderler", projectFinanceSummary.manualExpenses],
-                  ["Toplam Nakit Çıkışı", projectFinanceSummary.totalCashOutflow],
-                  ["Net Nakit Pozisyonu", projectFinanceSummary.netCashPosition],
-                ].map(([label, value]) => (
-                  <div key={label} className="rounded-xl border border-slate-100 bg-slate-50 p-4">
-                    <div className="text-xs font-bold text-slate-500">{label}</div>
-                    <div className={`mt-1 break-words text-lg font-black ${
-                      label === "Net Nakit Pozisyonu"
-                        ? Number(value) >= 0
-                          ? "text-emerald-700"
-                          : "text-red-700"
-                        : "text-slate-950"
-                    }`}>
-                      {formatMoney(value, projectFinanceSummary.baseCurrency)}
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              <div className="mt-5 rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm font-semibold text-blue-900">
-                Net nakit pozisyonu, müşteri tahsilatından tedarikçi ödemeleri ve manuel giderlerin çıkarılmasıyla hesaplanır.
-              </div>
-
-              {projectFinanceSummary.cashFlowWarnings.length > 0 && (
-                <div className="mt-4 space-y-2">
-                  {projectFinanceSummary.cashFlowWarnings.map((warning) => (
-                    <div key={warning} className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-900">
-                      {warning}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-lg font-black text-slate-900">Finans Veri Uyarıları</h2>
-                  <p className="mt-1 text-sm font-semibold text-slate-500">Eksik bağlantılar ve yaklaşık kur dönüşümleri burada gösterilir.</p>
-                </div>
-                {projectFinanceSummary.allocationLinkedOrderCount > 0 && (
-                  <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-black text-amber-800">
-                    {projectFinanceSummary.allocationLinkedOrderCount} allocation siparişi hariç
-                  </span>
-                )}
-              </div>
-              <div className="mt-4 space-y-2">
-                {projectFinanceSummary.warnings.map((warning) => (
-                  <div key={warning} className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-bold text-amber-900">
-                    {warning}
-                  </div>
-                ))}
-                {projectFinanceSummary.warnings.length === 0 && (
-                  <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-bold text-emerald-800">
-                    Finans özeti için belirgin bir veri uyarısı bulunmuyor.
-                  </div>
-                )}
-              </div>
-            </div>
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-black text-slate-900">Kısa Sonuç</h2><p className="mt-1 text-sm font-semibold text-slate-500">Satış, alım, tahsilat ve ek gider toplamlarının net proje sonucu.</p></div><span className={"rounded-full px-3 py-1 text-xs font-black " + (projectFinanceSummary.cashFlowStatus === "Pozitif Nakit" ? "bg-emerald-100 text-emerald-800" : projectFinanceSummary.cashFlowStatus === "Negatif Nakit" ? "bg-red-100 text-red-800" : "bg-slate-100 text-slate-700")}>{projectFinanceSummary.cashFlowStatus}</span></div><div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">{[["Gerçekleşen maliyet", projectFinanceSummary.actualCost], ["Bekleyen tahsilat", projectFinanceSummary.remainingCollection], ["Toplam nakit çıkışı", projectFinanceSummary.totalCashOutflow], ["Net nakit pozisyonu", projectFinanceSummary.netCashPosition]].map(([label, value]) => (<div key={label} className="rounded-xl border border-slate-100 bg-slate-50 p-4"><div className="text-xs font-bold text-slate-500">{label}</div><div className={"mt-1 break-words text-lg font-black " + (label === "Net nakit pozisyonu" && Number(value) < 0 ? "text-red-700" : label === "Net nakit pozisyonu" ? "text-emerald-700" : "text-slate-950")}>{formatMoney(value, projectFinanceSummary.baseCurrency)}</div></div>))}</div><div className="mt-5 space-y-2">{[...projectFinanceSummary.cashFlowWarnings, ...projectFinanceSummary.warnings].map((warning) => (<div key={warning} className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-bold text-amber-900">{warning}</div>))}{projectFinanceSummary.cashFlowWarnings.length === 0 && projectFinanceSummary.warnings.length === 0 && (<div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-bold text-emerald-800">Finans özeti için belirgin veri uyarısı bulunmuyor.</div>)}</div></div>
           </section>
         )}
 
-        {activeTab === "İhtiyaç Analizi" && (
+{activeTab === "İhtiyaç Analizi" && (
           <section className="space-y-6">
             <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
               <SummaryCard title="Ana Kalem" value={parentItems.length} text="Takip edilen proje malzemesi" tone="blue" />
@@ -8306,7 +8194,7 @@ export default function ProjectDetailPage() {
           </section>
         )}
 
-        {activeTab === "Finans Özeti" && (
+        {false && activeTab === "Finans Özeti" && (
           <section className="grid grid-cols-1 gap-6 xl:grid-cols-[0.9fr_1.3fr]">
             <form onSubmit={savePayment} className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
               <div className="flex items-center justify-between gap-3">
