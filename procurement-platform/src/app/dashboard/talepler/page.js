@@ -59,6 +59,39 @@ function getRequestItems(request) {
   return candidates.find((items) => items.length > 0) || [];
 }
 
+function getRequestMeta(request) {
+  const items = getRequestItems(request);
+  return items.find((item) => item?.request_meta)?.request_meta || {};
+}
+
+function requestSourceLabel(request) {
+  const meta = getRequestMeta(request);
+  if (meta.source === "manual") return "Manuel talep";
+  if (request?.project_id || getRequestItems(request).some((item) => Array.isArray(item.allocations) && item.allocations.length > 0)) {
+    return "Projeden aktarıldı";
+  }
+  return "Dosyadan oluşturuldu";
+}
+
+function requestProjectSummary(request) {
+  const items = getRequestItems(request);
+  const names = new Set();
+  items.forEach((item) => {
+    (Array.isArray(item.allocations) ? item.allocations : []).forEach((allocation) => {
+      const label = [allocation.projectCode, allocation.projectName].filter(Boolean).join(" - ");
+      if (label) names.add(label);
+    });
+  });
+  if (names.size === 0) return request?.project_id ? "Proje bağlantılı" : "Proje bağımsız";
+  const values = Array.from(names);
+  return values.length > 1 ? `${values[0]} +${values.length - 1}` : values[0];
+}
+
+function requestOwnerSummary(request) {
+  const meta = getRequestMeta(request);
+  return [meta.requester || meta.createdBy, meta.department].filter(Boolean).join(" / ") || "Sistem kullanıcısı";
+}
+
 function readItemField(item, keys, fallback = "") {
   for (const key of keys) {
     const value = item?.[key];
@@ -542,6 +575,19 @@ export default function TaleplerPage() {
   const [expandedRequestId, setExpandedRequestId] = useState("");
   const [selectedRequestIds, setSelectedRequestIds] = useState([]);
   const [quantityDrafts, setQuantityDrafts] = useState({});
+  const [requestRelations, setRequestRelations] = useState({});
+  const [creatingManualRequest, setCreatingManualRequest] = useState(false);
+  const [manualRequest, setManualRequest] = useState({
+    subject: "",
+    requester: "",
+    department: "",
+    priority: "Orta",
+    note: "",
+    productCode: "",
+    productName: "",
+    quantity: "1",
+    unit: "adet",
+  });
   const isAnalyzingRef = useRef(false);
 
   const totalQty = useMemo(() => {
@@ -555,6 +601,16 @@ export default function TaleplerPage() {
   const selectedRequests = useMemo(() => {
     return savedRequests.filter((request) => selectedRequestIds.includes(request.id));
   }, [savedRequests, selectedRequestIds]);
+
+  const requestStats = useMemo(() => {
+    const openStatuses = new Set(["Yeni Talep", "Teklif Bekliyor", "Teklif Toplanıyor", "Oluşturuldu", "Bekliyor"]);
+    return {
+      total: savedRequests.length,
+      manual: savedRequests.filter((request) => getRequestMeta(request).source === "manual").length,
+      project: savedRequests.filter((request) => requestSourceLabel(request) === "Projeden aktarıldı").length,
+      open: savedRequests.filter((request) => openStatuses.has(request.durum || "Bekliyor")).length,
+    };
+  }, [savedRequests]);
 
   const mergedPurchasePreview = useMemo(
     () => addStockSimulation(buildMergedPurchasePreview(selectedRequests), stockProducts),
@@ -594,10 +650,42 @@ export default function TaleplerPage() {
         return;
       }
 
-      setSavedRequests(data || []);
+      const requests = data || [];
+      setSavedRequests(requests);
+      await loadRequestRelations(user.id, requests);
     } catch (err) {
       console.error(err);
     }
+  };
+
+  const loadRequestRelations = async (userId, requests = savedRequests) => {
+    const requestIds = (requests || []).map((request) => request.id).filter(Boolean);
+    if (requestIds.length === 0) {
+      setRequestRelations({});
+      return;
+    }
+
+    const [offerResult, reportResult] = await Promise.all([
+      supabase.from("offers").select("id,request_id,dosya_adi,firma_adi,durum,created_at").eq("user_id", userId).in("request_id", requestIds),
+      supabase.from("reports").select("id,request_id,ad,name,request_name,durum,created_at,reportpath,report_path").eq("user_id", userId).in("request_id", requestIds),
+    ]);
+
+    if (offerResult.error || reportResult.error) {
+      console.error("Talep bağlantıları okunamadı:", offerResult.error || reportResult.error);
+      return;
+    }
+
+    const nextRelations = {};
+    requestIds.forEach((id) => { nextRelations[id] = { offers: [], reports: [] }; });
+    (offerResult.data || []).forEach((offer) => {
+      if (!nextRelations[offer.request_id]) nextRelations[offer.request_id] = { offers: [], reports: [] };
+      nextRelations[offer.request_id].offers.push(offer);
+    });
+    (reportResult.data || []).forEach((report) => {
+      if (!nextRelations[report.request_id]) nextRelations[report.request_id] = { offers: [], reports: [] };
+      nextRelations[report.request_id].reports.push(report);
+    });
+    setRequestRelations(nextRelations);
   };
 
   const loadStockProducts = async () => {
@@ -669,6 +757,84 @@ export default function TaleplerPage() {
     minute: "2-digit",
   });
   };
+
+  const updateManualRequest = (field, value) => {
+    setManualRequest((current) => ({ ...current, [field]: value }));
+  };
+
+  async function createManualRequest() {
+    const productName = manualRequest.productName.trim();
+    const quantity = Number(manualRequest.quantity || 0);
+    if (!productName || quantity <= 0) {
+      setMessage("Manuel talep için ürün açıklaması ve 0'dan büyük miktar girin.");
+      return;
+    }
+
+    setCreatingManualRequest(true);
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      router.push("/login");
+      return;
+    }
+
+    const subject = manualRequest.subject.trim() || `Manuel Talep - ${productName}`;
+    const item = {
+      urunKodu: manualRequest.productCode.trim(),
+      product_code: manualRequest.productCode.trim(),
+      urunAciklamasi: productName,
+      product_name: productName,
+      talepEdilenAdet: quantity,
+      quantity,
+      purchase_quantity: quantity,
+      birim: manualRequest.unit.trim() || "adet",
+      unit: manualRequest.unit.trim() || "adet",
+      note: manualRequest.note.trim(),
+      request_meta: {
+        source: "manual",
+        requester: manualRequest.requester.trim(),
+        department: manualRequest.department.trim(),
+        priority: manualRequest.priority,
+        createdBy: user.email || user.id,
+      },
+    };
+
+    const { data, error } = await supabase.from("requests").insert({
+      user_id: user.id,
+      project_id: null,
+      ad: subject,
+      durum: "Yeni Talep",
+      totalitems: 1,
+      items: [item],
+    }).select("id").single();
+
+    setCreatingManualRequest(false);
+    if (error) {
+      setMessage(`Manuel talep oluşturulamadı: ${error.message}`);
+      return;
+    }
+
+    setManualRequest({ subject: "", requester: "", department: "", priority: "Orta", note: "", productCode: "", productName: "", quantity: "1", unit: "adet" });
+    setExpandedRequestId(data.id);
+    setMessage("Manuel talep oluşturuldu. Talep havuzundan teklif toplamaya geçebilirsiniz.");
+    await loadRequests();
+  }
+
+  async function updateRequestStatus(request, status) {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+    const { error } = await supabase.from("requests").update({ durum: status }).eq("id", request.id).eq("user_id", user.id);
+    if (error) {
+      setMessage(`Talep durumu güncellenemedi: ${error.message}`);
+      return;
+    }
+    setSavedRequests((current) => current.map((item) => item.id === request.id ? { ...item, durum: status } : item));
+    setMessage("Talep durumu güncellendi.");
+  }
+
+  async function startOfferCollection(request) {
+    await updateRequestStatus(request, "Teklif Toplanıyor");
+    router.push(`/dashboard/teklifler?requestId=${request.id}${request.project_id ? `&projectId=${request.project_id}` : ""}`);
+  }
 
   const handleFileChange = (e) => {
     setFiles(Array.from(e.target.files || []));
@@ -1002,10 +1168,10 @@ export default function TaleplerPage() {
           </div>
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-            <StatCard icon="📄" title="Yüklenen Dosya" value={files.length} text="Seçili dosya" />
-            <StatCard icon="📦" title="Toplam Kalem" value={rows.length} text="Önizleme listesinde" />
-            <StatCard icon="🔢" title="Toplam Miktar" value={totalQty} text="Talep edilen adet" />
-            <StatCard icon="✅" title="Durum" value={reportPath ? "Hazır" : "Bekliyor"} text={reportPath ? "Excel oluşturuldu" : "Analiz bekleniyor"} />
+            <StatCard icon="📥" title="Talep Havuzu" value={requestStats.total} text="Manuel ve proje talepleri" />
+            <StatCard icon="🏗️" title="Projeden Gelen" value={requestStats.project} text="Proje bağlantılı talep" />
+            <StatCard icon="✍️" title="Manuel" value={requestStats.manual} text="Proje bağımsız talep" />
+            <StatCard icon="⏳" title="Açık Süreç" value={requestStats.open} text="Teklif/satınalma bekliyor" />
           </div>
 
           <div className="rounded-2xl border border-purple-200 bg-white p-5 shadow-sm">
@@ -1093,11 +1259,39 @@ export default function TaleplerPage() {
             )}
           </div>
 
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <h2 className="text-xl font-bold text-slate-900">Manuel Talep Oluştur</h2>
+                <p className="mt-1 text-sm text-slate-500">Projeye bağlı olmayan, satın almacıya doğrudan gelen ihtiyaçları buradan talep havuzuna ekleyin.</p>
+              </div>
+              <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">Proje bağımsız</span>
+            </div>
+
+            <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-2">
+              <input value={manualRequest.subject} onChange={(e) => updateManualRequest("subject", e.target.value)} placeholder="Talep konusu" className="rounded-xl border border-slate-300 px-4 py-3 text-sm" />
+              <input value={manualRequest.requester} onChange={(e) => updateManualRequest("requester", e.target.value)} placeholder="Talebi açan kişi" className="rounded-xl border border-slate-300 px-4 py-3 text-sm" />
+              <input value={manualRequest.department} onChange={(e) => updateManualRequest("department", e.target.value)} placeholder="Birim / departman" className="rounded-xl border border-slate-300 px-4 py-3 text-sm" />
+              <select value={manualRequest.priority} onChange={(e) => updateManualRequest("priority", e.target.value)} className="rounded-xl border border-slate-300 px-4 py-3 text-sm">
+                <option>Düşük</option><option>Orta</option><option>Yüksek</option><option>Kritik</option>
+              </select>
+              <input value={manualRequest.productCode} onChange={(e) => updateManualRequest("productCode", e.target.value)} placeholder="Ürün kodu (opsiyonel)" className="rounded-xl border border-slate-300 px-4 py-3 text-sm" />
+              <input value={manualRequest.productName} onChange={(e) => updateManualRequest("productName", e.target.value)} placeholder="Ürün / hizmet açıklaması" className="rounded-xl border border-slate-300 px-4 py-3 text-sm" />
+              <input type="number" min="0" value={manualRequest.quantity} onChange={(e) => updateManualRequest("quantity", e.target.value)} placeholder="Miktar" className="rounded-xl border border-slate-300 px-4 py-3 text-sm" />
+              <input value={manualRequest.unit} onChange={(e) => updateManualRequest("unit", e.target.value)} placeholder="Birim" className="rounded-xl border border-slate-300 px-4 py-3 text-sm" />
+              <textarea value={manualRequest.note} onChange={(e) => updateManualRequest("note", e.target.value)} placeholder="Not / açıklama" className="md:col-span-2 min-h-24 rounded-xl border border-slate-300 px-4 py-3 text-sm" />
+            </div>
+
+            <button type="button" onClick={createManualRequest} disabled={creatingManualRequest} className="mt-4 rounded-xl bg-slate-900 px-5 py-3 text-sm font-bold text-white hover:bg-slate-800 disabled:bg-slate-300">
+              {creatingManualRequest ? "Kaydediliyor..." : "Manuel Talep Ekle"}
+            </button>
+          </div>
+
           <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div>
-                <h2 className="text-lg font-bold text-slate-900">Proje Talepleri</h2>
-                <p className="text-sm text-slate-500">Projelerden oluşturulan satınalma talepleri burada görünür. Detaydan miktarları kontrol edip teklif toplamaya geçebilirsiniz.</p>
+                <h2 className="text-lg font-bold text-slate-900">Talep Havuzu</h2>
+                <p className="text-sm text-slate-500">Projelerden aktarılan ve manuel oluşturulan tüm talepler burada izlenir. Kaynak, açan kişi, tarih, teklif ve rapor bağlantıları tek yerde takip edilir.</p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <span className="rounded-full bg-blue-50 px-3 py-1 text-sm font-semibold text-blue-700">
@@ -1134,7 +1328,7 @@ export default function TaleplerPage() {
 
             {savedRequests.length === 0 ? (
               <div className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500">
-                Henüz proje talebi yok. Projeler ekranından satın alma gerekenler listesini oluşturabilirsiniz.
+                Henüz talep kaydı yok. Projelerden aktarabilir veya manuel talep oluşturabilirsiniz.
               </div>
             ) : (
               <div className="space-y-3">
@@ -1142,6 +1336,10 @@ export default function TaleplerPage() {
                   const requestItems = getRequestItems(req);
                   const isExpanded = expandedRequestId === req.id;
                   const isSelected = selectedRequestIds.includes(req.id);
+                  const relations = requestRelations[req.id] || { offers: [], reports: [] };
+                  const sourceLabel = requestSourceLabel(req);
+                  const ownerLabel = requestOwnerSummary(req);
+                  const projectLabel = requestProjectSummary(req);
 
                   return (
                     <div
@@ -1167,12 +1365,17 @@ export default function TaleplerPage() {
                         <div>
                           <div className="text-xs font-semibold text-slate-500">Talep</div>
                           <div className="mt-1 font-bold text-slate-900">{req.ad || "Talep Listesi"}</div>
-                          <div className="mt-1 text-xs font-semibold text-slate-500">
-                            {req.durum || "Oluşturuldu"} · {req.totalitems || requestItems.length || 0} kalem
+                          <div className="mt-1 flex flex-wrap gap-2 text-xs font-semibold text-slate-600">
+                            <span className="rounded-full bg-slate-100 px-2 py-1">{sourceLabel}</span>
+                            <span className="rounded-full bg-blue-50 px-2 py-1 text-blue-700">{req.totalitems || requestItems.length || 0} kalem</span>
+                            <span className="rounded-full bg-purple-50 px-2 py-1 text-purple-700">Teklif {relations.offers.length}</span>
+                            <span className="rounded-full bg-emerald-50 px-2 py-1 text-emerald-700">Rapor {relations.reports.length}</span>
                           </div>
-                          <div className="mt-2 text-xs font-semibold text-slate-500">Oluşturulma Tarihi</div>
-                          <div className="mt-1 font-semibold text-slate-900">
-                            {formatDateTime(req.created_at || req.tarih)}
+                          <div className="mt-3 grid grid-cols-1 gap-2 text-xs sm:grid-cols-2 lg:grid-cols-4">
+                            <div><span className="font-semibold text-slate-500">Kaynak:</span><div className="font-bold text-slate-900">{projectLabel}</div></div>
+                            <div><span className="font-semibold text-slate-500">Açan / birim:</span><div className="font-bold text-slate-900">{ownerLabel}</div></div>
+                            <div><span className="font-semibold text-slate-500">Tarih:</span><div className="font-bold text-slate-900">{formatDateTime(req.created_at || req.tarih)}</div></div>
+                            <div><span className="font-semibold text-slate-500">Durum:</span><div className="font-bold text-slate-900">{req.durum || "Oluşturuldu"}</div></div>
                           </div>
                         </div>
 
@@ -1208,10 +1411,10 @@ export default function TaleplerPage() {
                           </button>
 
                           <button type="button"
-                            onClick={() => router.push(`/dashboard/teklifler?requestId=${req.id}${req.project_id ? `&projectId=${req.project_id}` : ""}`)}
+                            onClick={() => startOfferCollection(req)}
                             className="rounded-lg bg-purple-600 px-3 py-2 text-sm font-semibold text-white"
                           >
-                            Tekliflere Aktar
+                            Teklif Topla
                           </button>
                           <button type="button"
                             onClick={() => deleteRequest(req.id)}
@@ -1234,6 +1437,34 @@ export default function TaleplerPage() {
                             <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-bold text-blue-700">
                               {requestItems.length} kalem
                             </span>
+                          </div>
+
+                          <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-[220px_1fr]">
+                            <label className="text-xs font-bold text-slate-600">
+                              Talep durumu
+                              <select value={req.durum || "Yeni Talep"} onChange={(event) => updateRequestStatus(req, event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-bold text-slate-800">
+                                <option>Yeni Talep</option>
+                                <option>Teklif Bekliyor</option>
+                                <option>Teklif Toplanıyor</option>
+                                <option>Teklifler Geldi</option>
+                                <option>Rapor Oluşturuldu</option>
+                                <option>Siparişe Aktarıldı</option>
+                                <option>Kapandı</option>
+                              </select>
+                            </label>
+                            <div className="rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-600">
+                              <div className="font-black text-slate-900">Talep zinciri</div>
+                              <div className="mt-1">Talep → Teklif ({relations.offers.length}) → Mukayese raporu ({relations.reports.length})</div>
+                              {relations.reports.length > 0 && (
+                                <div className="mt-2 flex flex-wrap gap-2">
+                                  {relations.reports.map((report) => (
+                                    <button key={report.id} type="button" onClick={() => router.push(`/dashboard/raporlar/${report.id}`)} className="rounded-lg bg-emerald-50 px-3 py-2 font-bold text-emerald-700 hover:bg-emerald-100">
+                                      Raporu aç
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
                           </div>
 
                           {requestItems.length === 0 ? (
