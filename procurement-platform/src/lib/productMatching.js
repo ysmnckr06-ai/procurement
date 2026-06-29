@@ -19,6 +19,15 @@ export function normalizeProductCode(value) {
   return String(value || "").trim().toUpperCase();
 }
 
+function isProjectSeriesCode(value) {
+  return /^PRJ-\d{3,}$/i.test(String(value || "").trim());
+}
+
+function normalizeMatchProductCode(value) {
+  const code = normalizeProductCode(value);
+  return isProjectSeriesCode(code) ? "" : code;
+}
+
 export function normalizeProductText(value) {
   return stripTurkishMarks(value)
     .toLowerCase()
@@ -67,8 +76,8 @@ export function scoreProductMatch(candidate, input) {
     return { product: candidate, type: "exact", score: 1, reason: "product_id" };
   }
 
-  const inputCode = normalizeProductCode(input?.normalized_product_code || input?.product_code || input?.productCode);
-  const candidateCode = normalizeProductCode(candidate?.normalized_product_code || candidate?.product_code || candidate?.productCode);
+  const inputCode = normalizeMatchProductCode(input?.normalized_product_code || input?.product_code || input?.productCode);
+  const candidateCode = normalizeMatchProductCode(candidate?.normalized_product_code || candidate?.product_code || candidate?.productCode);
   const inputName = input?.product_name || input?.productName || input?.description || input?.name;
   const candidateName = candidate?.product_name || candidate?.productName || candidate?.description || candidate?.name;
   const nameScore = productTextSimilarity(candidateName, inputName);

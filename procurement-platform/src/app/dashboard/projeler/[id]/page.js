@@ -1336,7 +1336,9 @@ export default function ProjectDetailPage() {
   useEffect(() => {
     if (missingProductCardItems.length === 0) return;
     const filtered = uniqueMissingProductItems(missingProductCardItems.map((item) => item.sourceItem || item), products);
-    if (filtered.length !== missingProductCardItems.length) {
+    const currentKeys = missingProductCardItems.map((item) => item.key).sort().join("|");
+    const nextKeys = filtered.map((item) => item.key).sort().join("|");
+    if (filtered.length !== missingProductCardItems.length || currentKeys !== nextKeys) {
       updateMissingProductWarning(filtered.map((item) => item.sourceItem || item), products);
     }
   }, [products, missingProductCardItems]);
