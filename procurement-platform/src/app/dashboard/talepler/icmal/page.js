@@ -97,6 +97,28 @@ function looseProductIdentityKey(item) {
   return `name:${identity.productName}|unit:${identity.unit}`;
 }
 
+
+function movementMatchesProduct(movement, product) {
+  if (!movement || !product) return false;
+  if (movement.product_id && movement.product_id === product.id) return true;
+
+  const productCode = stockProductCode(product.normalized_product_code || product.product_code);
+  const movementCode = stockProductCode(movement.product_code);
+  if (productCode && movementCode) return productCode === movementCode;
+
+  const productIdentity = normalizeProductIdentity(product);
+  const movementIdentity = normalizeProductIdentity(movement);
+  return productIdentity.productName === movementIdentity.productName
+    && productIdentity.unit === movementIdentity.unit;
+}
+
+function productReservedFromMovements(product, movements) {
+  if (!product) return 0;
+  return (movements || [])
+    .filter((movement) => movementMatchesProduct(movement, product))
+    .reduce((sum, movement) => sum + number(movement.reserved_quantity), 0);
+}
+
 function safeFileName(value) {
   return String(value || "malzeme-listesi").replace(/[^a-zA-Z0-9çğıöşüÇĞİÖŞÜ_-]+/g, "-");
 }
@@ -118,10 +140,7 @@ function AllocationChip({ allocation, unit = "adet" }) {
         </span>
       </div>
       <div className="mt-1 text-slate-600">
-        Toplam {number(allocation.requestedQuantity)} · Açık {number(allocation.quantity)}
-      </div>
-      <div className="text-slate-600">
-        Stoktan {number(allocation.stockCoverableQuantity)} · Eksik {number(allocation.purchaseQuantity)} {unit}
+        Gerekli {number(allocation.quantity)} · Stoktan {number(allocation.stockCoverableQuantity)} · Alinacak {number(allocation.purchaseQuantity)} {unit}
       </div>
       {allocation.parentItemName ? (
         <div className="mt-1 truncate text-slate-500" title={allocation.parentItemName}>
@@ -149,7 +168,7 @@ function orderAllocationQuantities(orders) {
   return quantities;
 }
 
-function buildSummary(projects, projectItems, products, orders) {
+function buildSummary(projects, projectItems, products, orders, stockMovements = []) {
   const projectsById = new Map(projects.map((project) => [project.id, project]));
   const itemsById = new Map(projectItems.map((item) => [item.id, item]));
   const orderedByProjectItem = orderAllocationQuantities(orders);
@@ -220,7 +239,7 @@ function buildSummary(projects, projectItems, products, orders) {
           orderedQuantity: 0,
           allocations: [],
           currentStock: number(matchedProduct?.current_stock),
-          reservedStock: number(matchedProduct?.reserved_stock),
+          reservedStock: number(matchedProduct?.reserved_stock) + productReservedFromMovements(matchedProduct, stockMovements),
         });
       }
 
@@ -339,25 +358,32 @@ function formatDistributionSummary(row) {
   }).join(" | ");
 }
 
-function exportRows(rows) {
-  return rows.map((row, index) => ({
-    "Sıra": index + 1,
-    "Ürün Kodu": row.productCode || row.normalizedProductCode || "-",
-    "Ürün Açıklaması": row.productName,
-    "Marka": row.brand || "-",
-    "Birim": row.unit,
-    "Toplam İhtiyaç": row.requestedQuantity,
-    "Açık İhtiyaç": row.totalNeed,
-    "Mevcut Stok": row.currentStock,
-    "Ayrılmış Stok": row.reservedStock,
-    "Boşta Stok": row.availableStock,
-    "Stoktan Karşılanabilir": row.stockCoverable,
-    "Eksik Miktar": row.missingQuantity,
-    "Satın Alınacak": row.purchaseQuantity,
-    "Durum": row.statusLabel,
-    "Proje Dağılımı": formatDistributionSummary(row),
-  }));
+function exportRows(rows, mode) {
+  return rows.map((row, index) => {
+    const base = {
+      "Sira": index + 1,
+      "Urun Kodu": row.productCode || row.normalizedProductCode || "-",
+      "Urun Aciklamasi": row.productName,
+      "Marka": row.brand || "-",
+      "Birim": row.unit,
+      "Gerekli": row.totalNeed,
+    };
+
+    if (mode !== "missing") {
+      base["Stokta"] = row.availableStock;
+      base["Stoktan Ayrilacak"] = row.stockCoverable;
+    }
+
+    if (mode !== "stock") {
+      base["Satin Alinacak"] = row.purchaseQuantity;
+    }
+
+    base["Durum"] = row.statusLabel;
+    base["Proje Dagilimi"] = formatDistributionSummary(row);
+    return base;
+  });
 }
+
 
 function purchaseAllocations(allocations, purchaseQuantity) {
   const source = (allocations || []).filter((allocation) => number(allocation.quantity) > 0);
@@ -406,13 +432,14 @@ export default function ProcurementSummaryPage() {
       return;
     }
 
-    const [projectResult, itemResult, productResult, orderResult] = await Promise.all([
+    const [projectResult, itemResult, productResult, orderResult, movementResult] = await Promise.all([
       supabase.from("projects").select("id,project_code,project_name,status").eq("user_id", user.id).in("id", selectedIds),
       supabase.from("project_items").select("*").eq("user_id", user.id).in("project_id", selectedIds),
       supabase.from("products").select("id,product_code,normalized_product_code,product_name,brand,unit,current_stock,reserved_stock").eq("user_id", user.id).is("archived_at", null),
       supabase.from("orders").select("id,status,items").eq("user_id", user.id),
+      supabase.from("stock_movements").select("id,product_id,product_code,product_name,unit,reserved_quantity").eq("user_id", user.id),
     ]);
-    const error = projectResult.error || itemResult.error || productResult.error || orderResult.error;
+    const error = projectResult.error || itemResult.error || productResult.error || orderResult.error || movementResult.error;
     if (error) {
       setMessage(`Malzeme listesi yüklenemedi: ${error.message}`);
       setLoading(false);
@@ -420,7 +447,7 @@ export default function ProcurementSummaryPage() {
     }
     const tenantProjects = projectResult.data || [];
     setProjects(tenantProjects);
-    setAllRows(buildSummary(tenantProjects, itemResult.data || [], productResult.data || [], orderResult.data || []));
+    setAllRows(buildSummary(tenantProjects, itemResult.data || [], productResult.data || [], orderResult.data || [], movementResult.data || []));
     setMessage(nextMessage);
     setLoading(false);
   }
@@ -476,7 +503,7 @@ export default function ProcurementSummaryPage() {
     const summarySheet = XLSX.utils.aoa_to_sheet([
       [companyName], [CORVIAN_PRODUCT_NAME], [modeConfig.title, new Date().toLocaleString("tr-TR")], [],
     ]);
-    XLSX.utils.sheet_add_json(summarySheet, exportRows(rows), { origin: "A5" });
+    XLSX.utils.sheet_add_json(summarySheet, exportRows(rows, mode), { origin: "A5" });
     XLSX.utils.book_append_sheet(workbook, summarySheet, modeConfig.shortTitle);
     const distribution = rows.flatMap((row) => row.allocations.map((allocation) => ({
       "Ürün Kodu": row.productCode || row.normalizedProductCode,
@@ -506,8 +533,8 @@ export default function ProcurementSummaryPage() {
     doc.setFontSize(9); doc.setTextColor(90); doc.text(`${CORVIAN_PRODUCT_NAME} · ${modeConfig.title} · ${new Date().toLocaleString("tr-TR")}`, 40, 50);
     autoTable(doc, {
       startY: 66,
-      head: [["Kod", "Ürün", "Birim", "Toplam", "Açık", "Stoktan", "Satınalma", "Durum", "Proje dağılımı"]],
-      body: rows.map((row) => [row.productCode || "-", row.productName, row.unit, row.requestedQuantity, row.totalNeed, row.stockCoverable, row.purchaseQuantity, row.statusLabel, formatDistributionSummary(row)]),
+      head: [["Kod", "Urun", "Birim", "Gerekli", "Stokta", "Stoktan", "Alinacak", "Durum", "Proje dagilimi"]],
+      body: rows.map((row) => [row.productCode || "-", row.productName, row.unit, row.totalNeed, row.availableStock, row.stockCoverable, row.purchaseQuantity, row.statusLabel, formatDistributionSummary(row)]),
       styles: { fontSize: 7, cellPadding: 4 }, headStyles: { fillColor: [30, 64, 175] },
     });
     doc.save(`${safeFileName(`${modeConfig.filePrefix}-${new Date().toISOString().slice(0, 10)}`)}.pdf`);
@@ -632,10 +659,10 @@ export default function ProcurementSummaryPage() {
           </div>
           <p className="mt-2 text-xs font-semibold text-slate-400">{projects.map((project) => `${project.project_code} · ${project.project_name}`).join(" | ")}</p>
           <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-4">
-            <Metric label="Toplam ihtiyaç" value={totals.requested} />
-            <Metric label="Açık ihtiyaç" value={totals.need} />
-            <Metric label="Stoktan karşılanabilir" value={totals.stock} />
-            <Metric label="Satın alınacak" value={totals.purchase} />
+            <Metric label="Kalem sayisi" value={rows.length} />
+            <Metric label="Gerekli" value={totals.need} />
+            {mode !== "missing" && <Metric label="Stoktan" value={totals.stock} />}
+            {mode !== "stock" && <Metric label="Alinacak" value={totals.purchase} />}
           </div>
         </div>
         {message && <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 font-semibold text-amber-900">{message}</div>}
@@ -692,9 +719,9 @@ export default function ProcurementSummaryPage() {
           </div>
         </div>
         <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <table className="min-w-[1250px] w-full text-left text-sm">
+          <table className="min-w-[980px] w-full text-left text-sm">
             <thead className="bg-slate-50 text-xs uppercase text-slate-500"><tr>
-              <th className="p-3">Seç</th><th className="p-3">Kod / Ürün</th><th className="p-3">Marka</th><th className="p-3">Birim</th><th className="p-3">Toplam ihtiyaç</th><th className="p-3">Açık ihtiyaç</th><th className="p-3">Mevcut</th><th className="p-3">Ayrılmış</th><th className="p-3">Boşta</th><th className="p-3">Stoktan</th><th className="p-3">Satın alınacak</th><th className="p-3">Durum</th><th className="p-3">Proje dağılımı</th>
+              <th className="p-3">Sec</th><th className="p-3">Kod / Urun</th><th className="p-3">Marka</th><th className="p-3">Birim</th><th className="p-3">Gerekli</th><th className="p-3">Stokta</th>{mode !== "missing" && <th className="p-3">Stoktan</th>}{mode !== "stock" && <th className="p-3">Alinacak</th>}<th className="p-3">Durum</th><th className="p-3">Proje dagilimi</th>
             </tr></thead>
             <tbody>{rows.map((row) => <tr key={row.key} className="border-t align-top">
               <td className="p-3">
@@ -706,7 +733,7 @@ export default function ProcurementSummaryPage() {
                 />
               </td>
               <td className="p-3"><div className="font-black text-blue-800">{row.productCode || "Kodsuz"}</div><div>{row.productName}</div>{row.unitConflict && <div className="mt-1 font-bold text-red-700">Birim kontrolü: {row.sourceUnits.join(" / ")}</div>}</td>
-              <td className="p-3">{row.brand || "-"}</td><td className="p-3">{row.unit}</td><td className="p-3 font-bold">{row.requestedQuantity}</td><td className="p-3 font-bold">{row.totalNeed}</td><td className="p-3">{row.currentStock}</td><td className="p-3">{row.reservedStock}</td><td className="p-3">{row.availableStock}</td><td className="p-3 font-black text-emerald-700">{row.stockCoverable}</td><td className="p-3 font-black text-red-700">{row.purchaseQuantity}</td><td className="p-3"><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-black text-slate-700">{row.statusLabel}</span></td>
+              <td className="p-3">{row.brand || "-"}</td><td className="p-3">{row.unit}</td><td className="p-3 font-bold">{row.totalNeed}</td><td className="p-3">{row.availableStock}</td>{mode !== "missing" && <td className="p-3 font-black text-emerald-700">{row.stockCoverable}</td>}{mode !== "stock" && <td className="p-3 font-black text-red-700">{row.purchaseQuantity}</td>}<td className="p-3"><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-black text-slate-700">{row.statusLabel}</span></td>
               <td className="p-3">
                 <div className="max-w-[260px] space-y-1.5">
                   {row.allocations.slice(0, 2).map((allocation, allocationIndex) => (
