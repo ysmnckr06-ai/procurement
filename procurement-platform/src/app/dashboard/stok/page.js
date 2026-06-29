@@ -204,6 +204,55 @@ function stockCriticalLimit(product) {
   );
 }
 
+async function insertProductWithSchemaFallback(payload, select = "") {
+  const fallbackFields = [
+    "product_type",
+    "normalized_product_code",
+    "reserved_stock",
+    "min_stock",
+    "critical_stock",
+    "manual_unit_price",
+    "last_currency",
+    "last_movement_at",
+    "source",
+    "notes",
+    "created_at",
+    "updated_at",
+  ];
+
+  const runInsert = (nextPayload) => {
+    let query = supabase.from("products").insert(nextPayload);
+    if (select) query = query.select(select).single();
+    return query;
+  };
+
+  let result = await runInsert(payload);
+  if (!result.error) return result;
+
+  let fallbackPayload = { ...payload };
+  for (const field of fallbackFields) {
+    if (!String(result.error?.message || "").includes(field)) continue;
+    delete fallbackPayload[field];
+  }
+
+  if (Object.keys(fallbackPayload).length === Object.keys(payload).length) {
+    return result;
+  }
+
+  while (true) {
+    const fallbackResult = await runInsert(fallbackPayload);
+    if (!fallbackResult.error) return fallbackResult;
+
+    const fieldToRemove = fallbackFields.find((field) =>
+      Object.prototype.hasOwnProperty.call(fallbackPayload, field)
+      && String(fallbackResult.error?.message || "").includes(field)
+    );
+
+    if (!fieldToRemove) return fallbackResult;
+    delete fallbackPayload[fieldToRemove];
+  }
+}
+
 function mergeProductGroups(items) {
   const grouped = new Map();
 
@@ -1176,14 +1225,7 @@ export default function StockPage() {
       return;
     }
 
-    let { error } = await supabase.from("products").insert(payload);
-
-    if (error && String(error.message || "").includes("product_type")) {
-      const fallbackPayload = { ...payload };
-      delete fallbackPayload.product_type;
-      const fallbackResult = await supabase.from("products").insert(fallbackPayload);
-      error = fallbackResult.error;
-    }
+    const { error } = await insertProductWithSchemaFallback(payload);
 
     if (error) {
       setMessage(error.message || "Ana ürün kartı oluşturulamadı.");
@@ -1532,7 +1574,7 @@ export default function StockPage() {
               source: "Toplu dosya aktarımı",
               notes: "Toplu ana ürün yükleme ile oluşturuldu.",
             };
-            const createResult = await supabase.from("products").insert(payload).select("id").single();
+            const createResult = await insertProductWithSchemaFallback(payload, "id");
             if (createResult.error) throw createResult.error;
             result.processedRows += 1;
             result.createdProducts += 1;
