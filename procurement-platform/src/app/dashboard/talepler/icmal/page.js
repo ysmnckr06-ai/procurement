@@ -168,10 +168,23 @@ function orderAllocationQuantities(orders) {
   return quantities;
 }
 
+function stockMovementReservedQuantities(movements) {
+  const quantities = new Map();
+  (movements || []).forEach((movement) => {
+    if (!movement.project_item_id) return;
+    quantities.set(
+      movement.project_item_id,
+      number(quantities.get(movement.project_item_id)) + number(movement.reserved_quantity),
+    );
+  });
+  return quantities;
+}
+
 function buildSummary(projects, projectItems, products, orders, stockMovements = []) {
   const projectsById = new Map(projects.map((project) => [project.id, project]));
   const itemsById = new Map(projectItems.map((item) => [item.id, item]));
   const orderedByProjectItem = orderAllocationQuantities(orders);
+  const reservedByProjectItem = stockMovementReservedQuantities(stockMovements);
   const productsById = new Map(products.map((product) => [product.id, product]));
   const productsByCode = new Map(
     products
@@ -195,7 +208,10 @@ function buildSummary(projects, projectItems, products, orders, stockMovements =
     .forEach((item) => {
       const estimated = number(item.estimated_quantity);
       const received = number(item.received_quantity);
-      const projectReserved = number(item.reserved_quantity ?? item.reserved_child_quantity);
+      const projectReserved = Math.max(
+        number(item.reserved_quantity ?? item.reserved_child_quantity),
+        number(reservedByProjectItem.get(item.id)),
+      );
       const alreadyOrdered = number(orderedByProjectItem.get(item.id));
       const openQuantity = Math.max(estimated - received - projectReserved - alreadyOrdered, 0);
       if (estimated <= 0 && openQuantity <= 0 && received <= 0 && projectReserved <= 0 && alreadyOrdered <= 0) return;
@@ -437,7 +453,7 @@ export default function ProcurementSummaryPage() {
       supabase.from("project_items").select("*").eq("user_id", user.id).in("project_id", selectedIds),
       supabase.from("products").select("id,product_code,normalized_product_code,product_name,brand,unit,current_stock,reserved_stock").eq("user_id", user.id).is("archived_at", null),
       supabase.from("orders").select("id,status,items").eq("user_id", user.id),
-      supabase.from("stock_movements").select("id,product_id,product_code,product_name,unit,reserved_quantity").eq("user_id", user.id),
+      supabase.from("stock_movements").select("id,project_item_id,product_id,product_code,product_name,unit,reserved_quantity").eq("user_id", user.id),
     ]);
     const error = projectResult.error || itemResult.error || productResult.error || orderResult.error || movementResult.error;
     if (error) {
