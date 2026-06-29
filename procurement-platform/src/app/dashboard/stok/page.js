@@ -437,10 +437,12 @@ function movementFlowInfo(movement, project = null) {
 
 function stockBreakdown(product, movements) {
   const matchedMovements = movements.filter((movement) => movementMatchesProduct(movement, product));
-  const reserved = Number(product.reserved_stock || 0) + matchedMovements.reduce(
+  const productReserved = Number(product.reserved_stock || 0);
+  const movementReserved = matchedMovements.reduce(
     (sum, movement) => sum + Number(movement.reserved_quantity || 0),
     0,
   );
+  const reserved = Math.max(productReserved, movementReserved);
   const production = matchedMovements.reduce(
     (sum, movement) => sum + Number(movement.issued_to_production_quantity || 0),
     0,
