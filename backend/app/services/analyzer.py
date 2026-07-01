@@ -561,6 +561,8 @@ def analyze_groups(groups, exchange_rates, config=None, constraints=None, prefer
 
         analyzed.append({
             "urunKodu": master.get("urunKodu", ""),
+            "marka": master.get("marka", "") or master.get("brand", ""),
+            "brand": master.get("brand", "") or master.get("marka", ""),
             "urunAciklamasi": master.get("urunAciklamasi", ""),
             "birim": master.get("birim", ""),
             "talepEdilenAdet": talep_edilen_adet,

@@ -1,6 +1,7 @@
 from collections import Counter
 from datetime import datetime
 import xlsxwriter
+import re
 
 
 def _safe_num(v, default=0.0):
@@ -20,6 +21,81 @@ def _clean(v):
 
 def _firma_name(row):
     return _clean(row.get("firma") or row.get("firmaAdi") or "")
+
+
+def _normalize_key(value):
+    text = _clean(value).upper()
+    text = text.replace("İ", "I").replace("Ş", "S").replace("Ğ", "G").replace("Ü", "U").replace("Ö", "O").replace("Ç", "C")
+    return re.sub(r"[^A-Z0-9]+", "", text)
+
+
+def _brand_name(row):
+    return _clean(row.get("marka") or row.get("brand") or row.get("urunMarka") or "")
+
+
+def _group_brand(group):
+    brands = [_brand_name(offer) for offer in group.get("offers", []) if _brand_name(offer)]
+    if brands:
+        return Counter(brands).most_common(1)[0][0]
+    return _clean(group.get("marka") or group.get("brand") or "")
+
+
+def _sheet_name(value, used):
+    base = re.sub(r"[\[\]\:\*\?\/\\]", " ", _clean(value) or "Mukayese").strip()[:25] or "Mukayese"
+    name = base
+    index = 2
+    while name in used:
+        suffix = f" {index}"
+        name = f"{base[:31 - len(suffix)]}{suffix}"
+        index += 1
+    used.add(name)
+    return name
+
+
+def _brand_code_groups(analyzed_groups):
+    grouped = {}
+    for group in analyzed_groups:
+        code = _clean(group.get("urunKodu") or group.get("master", {}).get("urunKodu"))
+        group_brand = _group_brand(group)
+        group_desc = _clean(group.get("urunAciklamasi") or group.get("master", {}).get("urunAciklamasi"))
+        group_qty = _safe_num(group.get("purchaseQuantity", group.get("talepEdilenAdet", 0)))
+        offers = group.get("offers", [])
+        for offer in offers:
+            brand = _brand_name(offer) or group_brand
+            offer_code = _clean(offer.get("urunKodu") or code)
+            if not brand or not offer_code:
+                continue
+            key = (_normalize_key(brand), _normalize_key(offer_code))
+            bucket = grouped.setdefault(key, {
+                "brand": brand,
+                "code": offer_code,
+                "description": _clean(offer.get("urunAciklamasi")) or group_desc,
+                "quantity": group_qty or _safe_num(offer.get("firmaAdedi", 0)),
+                "offers": [],
+                "firms": set(),
+            })
+            bucket["offers"].append(offer)
+            firma = _firma_name(offer)
+            if firma:
+                bucket["firms"].add(firma)
+
+    brand_buckets = {}
+    for item in grouped.values():
+        if len(item["firms"]) < 2:
+            continue
+        brand_key = _normalize_key(item["brand"])
+        brand_bucket = brand_buckets.setdefault(brand_key, {
+            "brand": item["brand"],
+            "items": [],
+            "firms": set(),
+        })
+        brand_bucket["items"].append(item)
+        brand_bucket["firms"].update(item["firms"])
+
+    return [
+        item for item in brand_buckets.values()
+        if len(item["firms"]) >= 2 and item["items"]
+    ]
 
 
 def _pick_reason(best_offer, all_offers):
@@ -180,6 +256,95 @@ def _best_firm(performance):
     )[0]
 
 
+def _write_brand_comparison_sheet(wb, bucket, used_sheet_names):
+    sheet_name = _sheet_name(f"{bucket['brand']} Mukayese", used_sheet_names)
+    ws = wb.add_worksheet(sheet_name)
+    ws.hide_gridlines(2)
+    ws.freeze_panes(5, 5)
+    ws.set_landscape()
+    ws.fit_to_pages(1, 0)
+
+    firms = sorted(bucket["firms"])
+    navy = "#08295C"
+    line = "#C8D3E1"
+
+    title_fmt = wb.add_format({"bold": True, "font_size": 18, "font_color": navy, "align": "left", "valign": "vcenter"})
+    sub_fmt = wb.add_format({"font_size": 9, "font_color": "#52657A", "align": "left"})
+    head_fmt = wb.add_format({"bold": True, "font_size": 9, "font_color": "#FFFFFF", "bg_color": navy, "border": 1, "border_color": navy, "align": "center", "valign": "vcenter", "text_wrap": True})
+    sub_head_fmt = wb.add_format({"bold": True, "font_size": 8, "font_color": navy, "bg_color": "#F4F7FB", "border": 1, "border_color": line, "align": "center", "valign": "vcenter", "text_wrap": True})
+    text_fmt = wb.add_format({"font_size": 9, "border": 1, "border_color": line, "valign": "vcenter", "text_wrap": True})
+    num_fmt = wb.add_format({"font_size": 9, "border": 1, "border_color": line, "align": "right", "valign": "vcenter", "num_format": "#,##0.00"})
+    best_fmt = wb.add_format({"font_size": 9, "border": 1, "border_color": line, "bg_color": "#E8F7EE", "font_color": "#08743B", "align": "right", "valign": "vcenter", "num_format": "#,##0.00"})
+    missing_fmt = wb.add_format({"font_size": 9, "border": 1, "border_color": line, "bg_color": "#FDECEC", "font_color": "#B91C1C", "align": "center", "valign": "vcenter"})
+    decision_fmt = wb.add_format({"font_size": 9, "border": 1, "border_color": line, "bg_color": "#FFF7E6", "valign": "vcenter", "text_wrap": True})
+
+    ws.merge_range(0, 0, 0, 8, f"{bucket['brand']} - Marka/Kod Bazlı Mukayese", title_fmt)
+    ws.merge_range(1, 0, 1, 8, "Bu sayfada yalnızca aynı marka ve aynı ürün koduyla en az iki tedarikçiden gelen teklifler karşılaştırılır.", sub_fmt)
+
+    base_headers = ["S.No", "Marka", "Ürün Kodu", "Açıklama", "Talep"]
+    for col, header in enumerate(base_headers):
+        ws.merge_range(3, col, 4, col, header, head_fmt)
+
+    col = len(base_headers)
+    firm_columns = ["Birim", "Toplam TRY", "Vade", "Teslim"]
+    for firma in firms:
+        ws.merge_range(3, col, 3, col + len(firm_columns) - 1, firma.upper(), head_fmt)
+        for offset, header in enumerate(firm_columns):
+            ws.write(4, col + offset, header, sub_head_fmt)
+        col += len(firm_columns)
+
+    ws.merge_range(3, col, 4, col, "Kazanan", head_fmt)
+    ws.merge_range(3, col + 1, 4, col + 1, "Not", head_fmt)
+
+    row = 5
+    for idx, item in enumerate(bucket["items"], start=1):
+        offers = item.get("offers", [])
+        offer_map = {}
+        for offer in offers:
+            firma = _firma_name(offer)
+            if firma:
+                offer_map[firma] = offer
+
+        best = None
+        valid_offers = [offer for offer in offers if _safe_num(offer.get("evaluatedCostTRY", 0)) > 0]
+        if valid_offers:
+            best = sorted(valid_offers, key=lambda offer: _safe_num(offer.get("evaluatedCostTRY", 10**18)))[0]
+        best_firma = _firma_name(best or {})
+
+        ws.write_number(row, 0, idx, text_fmt)
+        ws.write(row, 1, bucket["brand"], text_fmt)
+        ws.write(row, 2, _clean(item.get("code") or "-"), text_fmt)
+        ws.write(row, 3, _clean(item.get("description") or "-"), text_fmt)
+        ws.write_number(row, 4, _safe_num(item.get("quantity", 0)), num_fmt)
+
+        col = len(base_headers)
+        for firma in firms:
+            offer = offer_map.get(firma)
+            if not offer:
+                for offset in range(len(firm_columns)):
+                    ws.write(row, col + offset, "-", missing_fmt)
+                col += len(firm_columns)
+                continue
+
+            is_best = _firma_name(offer) == best_firma
+            price_fmt = best_fmt if is_best else num_fmt
+            ws.write_number(row, col, _safe_num(offer.get("netBirimFiyatTRY", offer.get("netBirimFiyat", 0))), price_fmt)
+            ws.write_number(row, col + 1, _safe_num(offer.get("evaluatedCostTRY", offer.get("netToplamTRY", 0))), price_fmt)
+            ws.write_number(row, col + 2, _safe_num(offer.get("vadeDays", 0)), num_fmt)
+            ws.write_number(row, col + 3, _safe_num(offer.get("terminDays", 0)), num_fmt)
+            col += len(firm_columns)
+
+        ws.write(row, col, best_firma or "-", decision_fmt)
+        ws.write(row, col + 1, "Aynı marka ve ürün kodu içinde en düşük değerlendirilmiş maliyet.", decision_fmt)
+        row += 1
+
+    widths = [8, 18, 22, 34, 12] + ([13, 14, 10, 10] * len(firms)) + [18, 34]
+    for index, width in enumerate(widths):
+        ws.set_column(index, index, width)
+
+    return sheet_name
+
+
 def build_excel_report(analyzed_groups, output_path, company_info=None):
     company_info = company_info or {}
     company_name = str(company_info.get("company_name") or "Firma adı belirtilmedi").strip()
@@ -188,8 +353,10 @@ def build_excel_report(analyzed_groups, output_path, company_info=None):
     firms = summary["firmalar"]
 
     wb = xlsxwriter.Workbook(output_path)
-    summary_ws = wb.add_worksheet("Özet")
-    ws = wb.add_worksheet("Kalem Bazlı Mukayese")
+    used_sheet_names = set()
+    summary_sheet_name = _sheet_name("Ozet", used_sheet_names)
+    summary_ws = wb.add_worksheet(summary_sheet_name)
+    ws = wb.add_worksheet(_sheet_name("Kalem Bazlı Mukayese", used_sheet_names))
     ws.freeze_panes(9, 5)
 
     title_fmt = wb.add_format({
@@ -389,242 +556,165 @@ def build_excel_report(analyzed_groups, output_path, company_info=None):
     summary_ws.hide_gridlines(2)
     summary_ws.set_landscape()
     summary_ws.set_paper(9)
-    summary_ws.fit_to_pages(1, 0)
-    summary_ws.set_column("A:A", 3)
-    summary_ws.set_column("B:B", 16)
-    summary_ws.set_column("C:C", 18)
-    summary_ws.set_column("D:D", 18)
-    summary_ws.set_column("E:E", 18)
-    summary_ws.set_column("F:F", 18)
-    summary_ws.set_column("G:G", 18)
-    summary_ws.set_column("H:H", 18)
-    summary_ws.set_column("I:I", 18)
-    summary_ws.set_column("J:J", 18)
-    summary_ws.set_column("K:K", 18)
-    summary_ws.set_column("L:L", 18)
-    summary_ws.set_column("M:M", 18)
+    summary_ws.fit_to_pages(1, 1)
+    summary_ws.set_margins(left=0.25, right=0.25, top=0.35, bottom=0.35)
+    summary_ws.set_column("A:A", 2)
+    summary_ws.set_column("B:B", 18)
+    summary_ws.set_column("C:C", 15)
+    summary_ws.set_column("D:D", 15)
+    summary_ws.set_column("E:E", 14)
+    summary_ws.set_column("F:F", 14)
+    summary_ws.set_column("G:G", 14)
+    summary_ws.set_column("H:H", 14)
+    summary_ws.set_column("I:I", 16)
+    summary_ws.set_column("J:J", 16)
+    summary_ws.set_column("K:K", 16)
+    summary_ws.set_column("L:L", 16)
+    summary_ws.set_column("M:M", 16)
 
-    dashboard_title_fmt = wb.add_format({
-        "bold": True,
-        "font_size": 22,
-        "align": "center",
-        "valign": "vcenter",
-        "font_color": "#0F2748",
-    })
-    dashboard_label_fmt = wb.add_format({
-        "bold": True,
-        "font_size": 9,
-        "font_color": "#52657A",
-        "bottom": 1,
-        "bottom_color": "#E2E8F0",
-    })
-    dashboard_value_fmt = wb.add_format({
-        "bold": True,
-        "font_size": 13,
-        "font_color": "#0F2748",
-        "bottom": 1,
-        "bottom_color": "#E2E8F0",
-    })
-    dashboard_card_title = wb.add_format({
-        "bold": True,
-        "font_size": 10,
-        "align": "center",
-        "valign": "vcenter",
-        "border": 1,
-        "bg_color": "#F8FAFC",
-        "font_color": "#334155",
-    })
-    dashboard_card_value = wb.add_format({
-        "bold": True,
-        "font_size": 14,
-        "align": "center",
-        "valign": "vcenter",
-        "border": 1,
-        "bg_color": "#FFFFFF",
-        "font_color": "#0F2748",
-    })
-    dashboard_green_value = wb.add_format({
-        "bold": True,
-        "font_size": 14,
-        "align": "center",
-        "valign": "vcenter",
-        "border": 1,
-        "bg_color": "#ECFDF5",
-        "font_color": "#047857",
-        "num_format": '#,##0.00',
-    })
-    dashboard_red_value = wb.add_format({
-        "bold": True,
-        "font_size": 14,
-        "align": "center",
-        "valign": "vcenter",
-        "border": 1,
-        "bg_color": "#FEF2F2",
-        "font_color": "#B91C1C",
-        "num_format": '#,##0.00',
-    })
-    dashboard_section_fmt = wb.add_format({
-        "bold": True,
-        "font_size": 11,
-        "font_color": "#0F2748",
-        "bg_color": "#F8FAFC",
-        "border": 1,
-        "align": "left",
-    })
-    dashboard_header_fmt = wb.add_format({
-        "bold": True,
-        "font_size": 9,
-        "align": "center",
-        "valign": "vcenter",
-        "border": 1,
-        "bg_color": "#EEF2F7",
-        "font_color": "#334155",
-    })
-    dashboard_text_fmt = wb.add_format({
-        "font_size": 9,
-        "border": 1,
-        "valign": "vcenter",
-    })
-    dashboard_num_fmt = wb.add_format({
-        "font_size": 9,
-        "border": 1,
-        "align": "right",
-        "valign": "vcenter",
-        "num_format": '#,##0.00',
-    })
-    dashboard_pct_fmt = wb.add_format({
-        "font_size": 9,
-        "border": 1,
-        "align": "right",
-        "valign": "vcenter",
-        "num_format": '0%',
-    })
-    dashboard_note_fmt = wb.add_format({
-        "font_size": 9,
-        "border": 1,
-        "bg_color": "#FFFBEB",
-        "font_color": "#92400E",
-        "text_wrap": True,
-        "valign": "top",
-    })
+    navy = "#08295C"
+    navy_dark = "#061D42"
+    gold = "#D8A029"
+    line = "#C8D3E1"
 
-    summary_ws.merge_range("B1:M2", "MUKAYESE RAPORU", dashboard_title_fmt)
-    summary_ws.write("B4", "Firma", dashboard_label_fmt)
-    summary_ws.write("C4", company_name, dashboard_value_fmt)
-    summary_ws.write("E4", "Rapor Tarihi", dashboard_label_fmt)
-    summary_ws.write("F4", report_date, dashboard_value_fmt)
-    summary_ws.write("H4", "Para Birimi", dashboard_label_fmt)
-    summary_ws.write("I4", "TRY", dashboard_value_fmt)
-    summary_ws.write("K4", "Teklif Sayısı", dashboard_label_fmt)
-    summary_ws.write("L4", len(firms), dashboard_value_fmt)
+    dashboard_title_fmt = wb.add_format({"bold": True, "font_size": 26, "align": "center", "valign": "vcenter", "font_color": navy})
+    company_fmt = wb.add_format({"bold": True, "font_size": 18, "align": "left", "valign": "vcenter", "font_color": navy})
+    meta_label_fmt = wb.add_format({"bold": True, "font_size": 9, "font_color": navy, "align": "left"})
+    meta_value_fmt = wb.add_format({"bold": True, "font_size": 10, "font_color": navy_dark, "align": "left"})
+    summary_box_title = wb.add_format({"bold": True, "font_size": 11, "font_color": "#FFFFFF", "bg_color": navy, "border": 1, "border_color": navy, "align": "left", "valign": "vcenter"})
+    summary_box_text = wb.add_format({"font_size": 9, "font_color": navy_dark, "border": 1, "border_color": line, "text_wrap": True, "valign": "top"})
+    kpi_label_fmt = wb.add_format({"bold": True, "font_size": 9, "font_color": navy, "align": "center", "valign": "vcenter", "top": 1, "bottom": 1, "left": 1, "right": 1, "border_color": line})
+    kpi_value_fmt = wb.add_format({"bold": True, "font_size": 13, "font_color": navy_dark, "align": "center", "valign": "vcenter", "top": 1, "bottom": 1, "left": 1, "right": 1, "border_color": line, "num_format": '#,##0.00'})
+    kpi_green_fmt = wb.add_format({"bold": True, "font_size": 13, "font_color": "#16803B", "align": "center", "valign": "vcenter", "top": 1, "bottom": 1, "left": 1, "right": 1, "border_color": line, "num_format": '#,##0.00'})
+    kpi_red_fmt = wb.add_format({"bold": True, "font_size": 13, "font_color": "#D10F0F", "align": "center", "valign": "vcenter", "top": 1, "bottom": 1, "left": 1, "right": 1, "border_color": line, "num_format": '#,##0.00'})
+    section_dark = wb.add_format({"bold": True, "font_size": 11, "font_color": "#FFFFFF", "bg_color": navy, "border": 1, "border_color": navy, "align": "left", "valign": "vcenter"})
+    table_head = wb.add_format({"bold": True, "font_size": 9, "font_color": navy, "bg_color": "#F4F7FB", "border": 1, "border_color": line, "align": "center", "valign": "vcenter"})
+    table_text = wb.add_format({"font_size": 9, "font_color": navy_dark, "border": 1, "border_color": line, "valign": "vcenter"})
+    table_num = wb.add_format({"font_size": 9, "font_color": navy_dark, "border": 1, "border_color": line, "align": "right", "valign": "vcenter", "num_format": '#,##0.00'})
+    table_pct = wb.add_format({"font_size": 9, "font_color": navy_dark, "border": 1, "border_color": line, "align": "right", "valign": "vcenter", "num_format": '0%'})
+    recommendation_fmt = wb.add_format({"font_size": 10, "font_color": navy_dark, "bg_color": "#FFF7E6", "border": 1, "border_color": "#F2C879", "text_wrap": True, "valign": "vcenter"})
+    note_line_fmt = wb.add_format({"font_size": 9, "font_color": navy_dark, "bottom": 1, "bottom_color": "#DDE5EF"})
+    footer_fmt = wb.add_format({"bold": True, "font_size": 10, "font_color": "#FFFFFF", "bg_color": navy, "align": "center", "valign": "vcenter"})
+
+    summary_ws.set_row(0, 28)
+    summary_ws.set_row(1, 28)
+    summary_ws.merge_range("B1:D2", company_name.upper(), company_fmt)
+    summary_ws.merge_range("E1:J2", "MUKAYESE RAPORU", dashboard_title_fmt)
+    summary_ws.merge_range("K1:M1", "RAPOR ?ZET?", summary_box_title)
+    summary_ws.merge_range("K2:M4", "Bu rapor, al?nan teklifler do?rultusunda en avantajl? se?ene?i belirlemek i?in haz?rlanm??t?r.", summary_box_text)
+    summary_ws.merge_range("E3:J3", "", wb.add_format({"bottom": 2, "bottom_color": gold}))
+
+    meta_items = [
+        ("B5", "Rapor Tarihi", "C5", report_date),
+        ("D5", "Para Birimi", "E5", "TRY"),
+        ("F5", "Teklif Say?s?", "G5", len(firms)),
+        ("H5", "Analiz Kalemi", "I5", summary["toplam_urun"]),
+    ]
+    for label_cell, label, value_cell, value in meta_items:
+        summary_ws.write(label_cell, label, meta_label_fmt)
+        summary_ws.write(value_cell, value, meta_value_fmt)
 
     cards = [
-        ("Toplam Kalem", summary["toplam_urun"], None),
-        ("Toplam Miktar", total_quantity, None),
-        ("Ortalama Teslim", round(average_delivery, 1), " Gün"),
-        ("En Düşük Toplam", min(firm_totals) if firm_totals else 0, "green"),
-        ("Ortalama Toplam", sum(firm_totals) / len(firm_totals) if firm_totals else 0, None),
-        ("En Yüksek Toplam", max(firm_totals) if firm_totals else 0, "red"),
+        ("TOPLAM KALEM", summary["toplam_urun"], kpi_value_fmt),
+        ("TOPLAM M?KTAR", total_quantity, kpi_value_fmt),
+        ("ORTALAMA TESL?M", f"{round(average_delivery, 1):g} G?n", kpi_value_fmt),
+        ("EN D???K TOPLAM", min(firm_totals) if firm_totals else 0, kpi_green_fmt),
+        ("ORTALAMA TOPLAM", sum(firm_totals) / len(firm_totals) if firm_totals else 0, kpi_value_fmt),
+        ("EN Y?KSEK TOPLAM", max(firm_totals) if firm_totals else 0, kpi_red_fmt),
     ]
     card_col = 1
-    for title, value, tone in cards:
-        summary_ws.merge_range(6, card_col, 6, card_col + 1, title, dashboard_card_title)
-        fmt = dashboard_green_value if tone == "green" else dashboard_red_value if tone == "red" else dashboard_card_value
-        if title == "Ortalama Teslim":
-            summary_ws.merge_range(7, card_col, 7, card_col + 1, f"{value:g} Gün", fmt)
+    for title, value, fmt in cards:
+        summary_ws.merge_range(6, card_col, 7, card_col + 1, title, kpi_label_fmt)
+        if isinstance(value, str):
+            summary_ws.merge_range(8, card_col, 8, card_col + 1, value, fmt)
         else:
-            summary_ws.merge_range(7, card_col, 7, card_col + 1, value, fmt)
+            summary_ws.merge_range(8, card_col, 8, card_col + 1, value, fmt)
         card_col += 2
 
-    summary_ws.merge_range("B11:G11", "TEKLİF VEREN FİRMALARIN PERFORMANSI", dashboard_section_fmt)
+    summary_ws.merge_range("B11:G11", "TEKL?F VEREN F?RMALARIN PERFORMANSI", section_dark)
     perf_headers = ["Firma", "Toplam Tutar (TRY)", "Kapsama", "Ort. Vade", "Ort. Teslim", "Kazanan Kalem"]
     for col, header in enumerate(perf_headers, start=1):
-        summary_ws.write(11, col, header, dashboard_header_fmt)
+        summary_ws.write(11, col, header, table_head)
     perf_start = 12
     for r, item in enumerate(performance, start=perf_start):
-        summary_ws.write(r, 1, item["firma"], dashboard_text_fmt)
-        summary_ws.write_number(r, 2, item["evaluated_total"], dashboard_num_fmt)
-        summary_ws.write_number(r, 3, item["coverage"], dashboard_pct_fmt)
-        summary_ws.write_number(r, 4, item["avg_vade"], dashboard_num_fmt)
-        summary_ws.write_number(r, 5, item["avg_termin"], dashboard_num_fmt)
-        summary_ws.write_number(r, 6, item["wins"], dashboard_text_fmt)
+        summary_ws.write(r, 1, item["firma"], table_text)
+        summary_ws.write_number(r, 2, item["evaluated_total"], table_num)
+        summary_ws.write_number(r, 3, item["coverage"], table_pct)
+        summary_ws.write_number(r, 4, item["avg_vade"], table_num)
+        summary_ws.write_number(r, 5, item["avg_termin"], table_num)
+        summary_ws.write_number(r, 6, item["wins"], table_num)
 
     data_start = 28
     data_col = 15
-    summary_ws.set_column(data_col, data_col + 4, None, None, {"hidden": True})
-    summary_ws.write(data_start, data_col, "Firma", dashboard_header_fmt)
-    summary_ws.write(data_start, data_col + 1, "Toplam", dashboard_header_fmt)
-    summary_ws.write(data_start, data_col + 3, "Durum", dashboard_header_fmt)
-    summary_ws.write(data_start, data_col + 4, "Adet", dashboard_header_fmt)
+    summary_ws.set_column(data_col, data_col + 4, 1, None, {"hidden": True})
+    summary_ws.write(data_start, data_col, "Firma")
+    summary_ws.write(data_start, data_col + 1, "Toplam")
+    summary_ws.write(data_start, data_col + 3, "Durum")
+    summary_ws.write(data_start, data_col + 4, "Adet")
     for idx, item in enumerate(performance, start=data_start + 1):
-        summary_ws.write(idx, data_col, item["firma"], dashboard_text_fmt)
-        summary_ws.write_number(idx, data_col + 1, item["evaluated_total"], dashboard_num_fmt)
-    summary_ws.write(data_start + 1, data_col + 3, "Kapsanan Kalem", dashboard_text_fmt)
-    summary_ws.write_number(data_start + 1, data_col + 4, covered_groups, dashboard_num_fmt)
-    summary_ws.write(data_start + 2, data_col + 3, "Kapsanmayan Kalem", dashboard_text_fmt)
-    summary_ws.write_number(data_start + 2, data_col + 4, max(summary["toplam_urun"] - covered_groups, 0), dashboard_num_fmt)
+        summary_ws.write(idx, data_col, item["firma"])
+        summary_ws.write_number(idx, data_col + 1, item["evaluated_total"])
+    summary_ws.write(data_start + 1, data_col + 3, "Kapsanan Kalem")
+    summary_ws.write_number(data_start + 1, data_col + 4, covered_groups)
+    summary_ws.write(data_start + 2, data_col + 3, "Kapsanmayan Kalem")
+    summary_ws.write_number(data_start + 2, data_col + 4, max(summary["toplam_urun"] - covered_groups, 0))
 
     if performance:
-        chart = wb.add_chart({"type": "column"})
+        chart = wb.add_chart({"type": "bar"})
         chart.add_series({
             "name": "Toplam Tutar",
-            "categories": ["Özet", data_start + 1, data_col, data_start + len(performance), data_col],
-            "values": ["Özet", data_start + 1, data_col + 1, data_start + len(performance), data_col + 1],
-            "data_labels": {"value": True, "num_format": '#,##0'},
+            "categories": [summary_sheet_name, data_start + 1, data_col, data_start + len(performance), data_col],
+            "values": [summary_sheet_name, data_start + 1, data_col + 1, data_start + len(performance), data_col + 1],
+            "data_labels": {"value": True, "num_format": '#,##0.00'},
+            "fill": {"color": navy},
         })
-        chart.set_title({"name": "Tekliflerin Toplam Tutar Karşılaştırması"})
-        chart.set_y_axis({"name": "TRY"})
+        chart.set_title({"name": "TEKL?F DA?ILIMI (TOPLAM TUTAR)"})
+        chart.set_x_axis({"visible": False})
+        chart.set_y_axis({"major_gridlines": {"visible": False}})
         chart.set_legend({"none": True})
-        summary_ws.insert_chart("H11", chart, {"x_scale": 1.25, "y_scale": 1.15})
+        chart.set_plotarea({"border": {"none": True}, "fill": {"color": "#FFFFFF"}})
+        summary_ws.insert_chart("H11", chart, {"x_scale": 1.18, "y_scale": 1.35})
 
-    doughnut = wb.add_chart({"type": "doughnut"})
-    doughnut.add_series({
-        "name": "Kapsama",
-        "categories": ["Özet", data_start + 1, data_col + 3, data_start + 2, data_col + 3],
-        "values": ["Özet", data_start + 1, data_col + 4, data_start + 2, data_col + 4],
-        "data_labels": {"percentage": True},
-    })
-    doughnut.set_title({"name": f"Kapsama Durumu (%{round(coverage_rate * 100)})"})
-    summary_ws.insert_chart("H26", doughnut, {"x_scale": 1.0, "y_scale": 1.0})
-
-    summary_ws.merge_range("B21:G21", "ÖNERİ", dashboard_section_fmt)
+    summary_ws.merge_range("B21:G21", "?NER?", section_dark)
     if best_firm:
         recommendation = (
-            f"{best_firm['firma']} firması; {best_firm['wins']} kalemde avantajlı, "
-            f"%{round(best_firm['coverage'] * 100)} kapsama oranına sahip ve "
-            f"değerlendirilmiş toplamı {best_firm['evaluated_total']:,.2f} TRY olduğu için öne çıkıyor."
+            f"{best_firm['firma']} firmas?; {best_firm['wins']} kalemde avantajl?, "
+            f"%{round(best_firm['coverage'] * 100)} kapsama oran?na sahip ve "
+            f"de?erlendirildi?inde toplam {best_firm['evaluated_total']:,.2f} TRY oldu?u i?in ?ne ??k?yor."
         )
     else:
-        recommendation = "Uygun teklif bulunamadı. PDF/Excel okuma sonuçları ve kalem eşleşmeleri kontrol edilmelidir."
-    summary_ws.merge_range("B22:G25", recommendation, dashboard_note_fmt)
+        recommendation = "Uygun teklif bulunamad?. PDF/Excel okuma sonu?lar? ve kalem e?le?meleri kontrol edilmelidir."
+    summary_ws.merge_range("B22:G24", recommendation, recommendation_fmt)
 
-    summary_ws.merge_range("B27:G27", "KAPSANMAYAN / UYARI KALEMLERİ", dashboard_section_fmt)
-    uncovered = [
-        g for g in analyzed_groups
-        if not g.get("offers")
-    ]
-    summary_ws.write("B28", "Ürün Kodu", dashboard_header_fmt)
-    summary_ws.write("C28", "Açıklama", dashboard_header_fmt)
-    summary_ws.write("D28", "Miktar", dashboard_header_fmt)
-    summary_ws.write("E28", "Sebep", dashboard_header_fmt)
-    for idx, item in enumerate(uncovered[:8], start=28):
-        summary_ws.write(idx + 1, 1, _clean(item.get("urunKodu", "-")), dashboard_text_fmt)
-        summary_ws.write(idx + 1, 2, _clean(item.get("urunAciklamasi", "-")), dashboard_text_fmt)
-        summary_ws.write_number(idx + 1, 3, _safe_num(item.get("purchaseQuantity", item.get("talepEdilenAdet", 0))), dashboard_num_fmt)
-        summary_ws.write(idx + 1, 4, "Teklif eşleşmedi", dashboard_text_fmt)
-    if not uncovered:
-        summary_ws.merge_range("B29:E31", "Kapsanmayan kalem bulunmadı.", dashboard_text_fmt)
+    summary_ws.merge_range("B26:G26", "KAPSANMAYAN / UYARI KALEMLER?", section_dark)
+    uncovered = [g for g in analyzed_groups if not g.get("offers")]
+    for col, header in enumerate(["?r?n Kodu", "A??klama", "Miktar", "Sebep"], start=1):
+        summary_ws.write(27, col, header, table_head)
+    if uncovered:
+        for idx, item in enumerate(uncovered[:6], start=28):
+            summary_ws.write(idx, 1, _clean(item.get("urunKodu", "-")), table_text)
+            summary_ws.write(idx, 2, _clean(item.get("urunAciklamasi", "-")), table_text)
+            summary_ws.write_number(idx, 3, _safe_num(item.get("purchaseQuantity", item.get("talepEdilenAdet", 0))), table_num)
+            summary_ws.write(idx, 4, "Teklif e?le?medi", table_text)
+    else:
+        summary_ws.merge_range("B29:G31", "Kapsanmayan kalem bulunmad?.", table_text)
 
-    summary_ws.merge_range("H41:M41", "HESAPLAMA NOTLARI", dashboard_section_fmt)
+    summary_ws.merge_range("H26:M26", "NOTLAR", section_dark)
+    for r in range(27, 35):
+        summary_ws.merge_range(r, 7, r, 12, "", note_line_fmt)
+
+    summary_ws.merge_range("B36:G36", "HESAPLAMA NOTLARI", section_dark)
     summary_ws.merge_range(
-        "H42:M47",
-        "• Kurlu teklifler analiz kuru ile TRY karşılığına çevrilir.\n"
-        "• Vade avantajı finansman oranı üzerinden hesaplanır.\n"
-        "• Teslim süresi, risk ve eksik adet maliyeti değerlendirilmiş maliyete yansıtılır.\n"
-        "• Kalem eşleştirme ürün kodu ve açıklama benzerliğine göre yapılır.\n"
-        "• Kazanan firma kalem bazında en avantajlı değerlendirilmiş maliyete göre belirlenir.",
-        note_box_cell,
+        "B37:G41",
+        "? Kurlu teklifler analiz kuru ile TRY kar??l???na ?evrilir.\n"
+        "? Vade avantaj? finansman oran? ?zerinden hesaplan?r.\n"
+        "? Teslim s?resi, risk ve eksik adet maliyeti de?erlendirilmi? maliyete yans?t?l?r.\n"
+        "? Kalem e?le?tirme ?r?n kodu, marka ve a??klama benzerli?ine g?re yap?l?r.\n"
+        "? Kazanan firma kalem baz?nda en avantajl? de?erlendirilmi? maliyete g?re belirlenir.",
+        summary_box_text,
     )
+
+    summary_ws.merge_range("B43:M44", f"{company_name.upper()}        |        {report_date}        |        CORVIAN Business Suite", footer_fmt)
 
     ws.write("A1", "TEKLİF KARŞILAŞTIRMA RAPORU", title_fmt)
     ws.write("A2", f"{company_name} · {product_name}", small_gray)
@@ -670,6 +760,7 @@ def build_excel_report(analyzed_groups, output_path, company_info=None):
 
     base_headers = [
         "S.No",
+        "Marka",
         "Ürün Kodu",
         "Ürün Açıklaması",
         "Birim",
@@ -758,14 +849,16 @@ def build_excel_report(analyzed_groups, output_path, company_info=None):
         )
         aciklama = _clean(group.get("urunAciklamasi", ""))
         birim = _clean(group.get("birim", ""))
+        marka = _group_brand(group)
 
         ws.write(row, 0, idx, base_cell)
-        ws.write(row, 1, kod, text_cell)
-        ws.write(row, 2, aciklama, text_cell)
-        ws.write(row, 3, birim, base_cell)
-        ws.write_number(row, 4, talep, base_cell)
-        ws.write_number(row, 5, _safe_num(group.get("stockCoverableQuantity", 0)), base_cell)
-        ws.write_number(row, 6, _safe_num(group.get("purchaseQuantity", talep)), base_cell)
+        ws.write(row, 1, marka or "-", text_cell)
+        ws.write(row, 2, kod, text_cell)
+        ws.write(row, 3, aciklama, text_cell)
+        ws.write(row, 4, birim, base_cell)
+        ws.write_number(row, 5, talep, base_cell)
+        ws.write_number(row, 6, _safe_num(group.get("stockCoverableQuantity", 0)), base_cell)
+        ws.write_number(row, 7, _safe_num(group.get("purchaseQuantity", talep)), base_cell)
 
         c = len(base_headers)
 
@@ -1024,14 +1117,15 @@ def build_excel_report(analyzed_groups, output_path, company_info=None):
     )
 
     ws.set_column("A:A", 7)
-    ws.set_column("B:B", 14)
-    ws.set_column("C:C", 28)
-    ws.set_column("D:D", 10)
-    ws.set_column("E:E", 16)
+    ws.set_column("B:B", 18)
+    ws.set_column("C:C", 18)
+    ws.set_column("D:D", 30)
+    ws.set_column("E:E", 10)
+    ws.set_column("F:H", 16)
 
-    total_cols = 5 + (len(firms) * 6) + 4
+    total_cols = len(base_headers) + (len(firms) * len(firm_columns)) + len(karar_cols)
 
-    for col in range(5, total_cols):
+    for col in range(len(base_headers), total_cols):
         ws.set_column(col, col, 14)
 
     ws.set_row(0, 26)
@@ -1040,6 +1134,9 @@ def build_excel_report(analyzed_groups, output_path, company_info=None):
     ws.set_row(4, 22)
     ws.set_row(7, 24)
     ws.set_row(8, 38)
+
+    for bucket in _brand_code_groups(analyzed_groups):
+        _write_brand_comparison_sheet(wb, bucket, used_sheet_names)
 
     wb.close()
 

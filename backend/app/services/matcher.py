@@ -108,6 +108,11 @@ def build_master_row(offers):
     codes = [o.get("urunKodu", "") for o in offers if o.get("urunKodu")]
     descs = [o.get("urunAciklamasi", "") for o in offers if o.get("urunAciklamasi")]
     birims = [o.get("birim", "") for o in offers if o.get("birim")]
+    brands = [
+        o.get("marka") or o.get("brand") or o.get("urunMarka") or ""
+        for o in offers
+        if o.get("marka") or o.get("brand") or o.get("urunMarka")
+    ]
 
     real_codes = [
         c for c in codes
@@ -117,6 +122,7 @@ def build_master_row(offers):
     best_code = real_codes[0] if real_codes else (codes[0] if codes else "")
     best_desc = Counter(descs).most_common(1)[0][0] if descs else ""
     best_birim = Counter(birims).most_common(1)[0][0] if birims else "adet"
+    best_brand = Counter(brands).most_common(1)[0][0] if brands else ""
 
     adetler = []
 
@@ -133,6 +139,8 @@ def build_master_row(offers):
 
     return {
         "urunKodu": best_code,
+        "marka": best_brand,
+        "brand": best_brand,
         "urunAciklamasi": best_desc,
         "birim": best_birim,
         "talepEdilenAdet": talep_edilen_adet,
@@ -174,6 +182,8 @@ def match_offers_to_requests(offers, requests):
         groups.append({
             "master": {
                 "urunKodu": req.get("urunKodu", ""),
+                "marka": req.get("marka", "") or req.get("brand", "") or req.get("urunMarka", ""),
+                "brand": req.get("brand", "") or req.get("marka", "") or req.get("urunMarka", ""),
                 "urunAciklamasi": req.get("urunAciklamasi", ""),
                 "birim": req.get("birim", "adet"),
                 "talepEdilenAdet": safe_float(
