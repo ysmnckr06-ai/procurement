@@ -23,16 +23,24 @@ const defaultCompanySettings = {
   approval_required: true,
 };
 
-const OFFER_FILE_EXTENSIONS = [".xlsx", ".xls"];
+const OFFER_FILE_EXTENSIONS = [".xlsx", ".xls", ".pdf", ".png", ".jpg", ".jpeg", ".webp"];
 const OFFER_FILE_MIME_TYPES = new Set([
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   "application/vnd.ms-excel",
+  "application/pdf",
+  "image/png",
+  "image/jpeg",
+  "image/webp",
 ]);
 
 function offerFileExtension(fileName = "") {
   const normalized = String(fileName || "").toLowerCase();
   const dotIndex = normalized.lastIndexOf(".");
   return dotIndex >= 0 ? normalized.slice(dotIndex) : "";
+}
+
+function isOfferSpreadsheet(file) {
+  return [".xlsx", ".xls"].includes(offerFileExtension(file?.name));
 }
 
 async function validateOfferWorkbook(file) {
@@ -315,14 +323,11 @@ const loadCompanySettings = async () => {
     const invalidTypeFile = uploadedFiles.find((file) => {
       const extension = offerFileExtension(file.name);
       const mimeType = String(file.type || "").trim();
-      return (
-        !OFFER_FILE_EXTENSIONS.includes(extension) ||
-        (mimeType && !OFFER_FILE_MIME_TYPES.has(mimeType))
-      );
+      return !OFFER_FILE_EXTENSIONS.includes(extension) || (mimeType && !OFFER_FILE_MIME_TYPES.has(mimeType));
     });
 
     if (invalidTypeFile) {
-      setMessage(`${invalidTypeFile.name} desteklenmiyor. Sadece .xlsx veya .xls teklif dosyası yükleyin.`);
+      setMessage(`${invalidTypeFile.name} desteklenmiyor. Excel, PDF veya görsel teklif dosyası yükleyin.`);
       resetInput();
       return;
     }
@@ -330,7 +335,7 @@ const loadCompanySettings = async () => {
     const emptyFile = uploadedFiles.find((file) => file.size <= 0);
 
     if (emptyFile) {
-      setMessage(`${emptyFile.name} boş görünüyor. İçinde veri olan bir Excel dosyası yükleyin.`);
+      setMessage(`${emptyFile.name} boş görünüyor. İçinde veri olan bir teklif dosyası yükleyin.`);
       resetInput();
       return;
     }
@@ -345,6 +350,7 @@ const loadCompanySettings = async () => {
 
     try {
       for (const file of uploadedFiles) {
+        if (!isOfferSpreadsheet(file)) continue;
         const hasRows = await validateOfferWorkbook(file);
         if (!hasRows) {
           setMessage(`${file.name} içinde okunabilir teklif satırı bulunamadı.`);
@@ -354,7 +360,7 @@ const loadCompanySettings = async () => {
       }
     } catch (error) {
       console.error(error);
-      setMessage("Excel dosyası okunamadı. Lütfen geçerli bir .xlsx veya .xls dosyası yükleyin.");
+      setMessage("Dosya okunamadı. Lütfen geçerli bir Excel, PDF veya görsel teklif dosyası yükleyin.");
       resetInput();
       return;
     }
@@ -759,13 +765,13 @@ const loadCompanySettings = async () => {
                   Dosyaları seçin veya sürükleyin
                 </div>
                 <p className="mt-1 text-sm text-slate-500">
-                  Sadece .xlsx ve .xls teklif dosyaları desteklenir.
+                  Excel, PDF ve görsel teklif dosyaları desteklenir.
                 </p>
 
                 <input
                   type="file"
                   multiple
-                  accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+                  accept=".xlsx,.xls,.pdf,.png,.jpg,.jpeg,.webp,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/pdf,image/png,image/jpeg,image/webp"
                   onChange={handleFileUpload}
                   className="mx-auto mt-5 block w-full max-w-xl rounded-xl border border-slate-300 bg-white p-3"
                 />

@@ -851,10 +851,14 @@ def extract_order_document_metadata(ocr_text: str):
 MAX_UPLOAD_FILES = 15
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024
 ALLOWED_UPLOAD_EXTENSIONS = {".pdf", ".xlsx", ".xls", ".xlsm", ".xlsb", ".csv", ".ods", ".png", ".jpg", ".jpeg", ".webp"}
-OFFER_UPLOAD_EXTENSIONS = {".xlsx", ".xls"}
+OFFER_UPLOAD_EXTENSIONS = {".pdf", ".xlsx", ".xls", ".png", ".jpg", ".jpeg", ".webp"}
 OFFER_UPLOAD_MIME_TYPES = {
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     "application/vnd.ms-excel",
+    "application/pdf",
+    "image/png",
+    "image/jpeg",
+    "image/webp",
 }
 
 def safe_upload_name(filename: str) -> str:
@@ -871,19 +875,19 @@ def validate_offer_upload_metadata(upload: UploadFile, contents: bytes) -> None:
     if ext not in OFFER_UPLOAD_EXTENSIONS:
         raise HTTPException(
             status_code=400,
-            detail=f"{original_name} desteklenmiyor. Sadece .xlsx veya .xls teklif dosyası yükleyin.",
+            detail=f"{original_name} desteklenmiyor. Excel, PDF veya görsel teklif dosyası yükleyin.",
         )
 
     if content_type and content_type not in OFFER_UPLOAD_MIME_TYPES:
         raise HTTPException(
             status_code=400,
-            detail=f"{original_name} dosya türü geçersiz. Sadece Excel teklif dosyası yükleyin.",
+            detail=f"{original_name} dosya türü geçersiz. Excel, PDF veya görsel teklif dosyası yükleyin.",
         )
 
     if len(contents) == 0:
         raise HTTPException(
             status_code=400,
-            detail=f"{original_name} boş dosya. İçinde veri olan bir Excel dosyası yükleyin.",
+            detail=f"{original_name} boş dosya. İçinde veri olan bir teklif dosyası yükleyin.",
         )
 
 def ensure_xlsx_workbook_has_data(file_path: str, original_name: str) -> None:
@@ -1659,6 +1663,15 @@ async def analyze_offers(
                 rows = audit["rows"]
                 warnings.extend(audit.get("warnings", []))
                 warnings.extend(audit.get("errors", []))
+
+            elif file_type == "pdf":
+                audit = parse_pdf_with_audit(save_path, firma_adi, original_name)
+                rows = audit["rows"]
+                warnings.extend(audit.get("warnings", []))
+                warnings.extend(audit.get("errors", []))
+
+            elif file_type == "image":
+                rows = parse_image(save_path, firma_adi, original_name)
 
             else:
                 rows = []
