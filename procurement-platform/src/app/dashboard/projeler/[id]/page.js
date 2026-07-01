@@ -5534,7 +5534,10 @@ export default function ProjectDetailPage() {
   }, [stockAnalysisItems]);
 
   const stockCoverableItems = useMemo(() => {
-    return stockAnalysisItems.filter((item) => canCoverFromStock(item));
+    return stockAnalysisItems.filter((item) => {
+      const info = stockInfoForItem(item);
+      return canCoverFromStock(item) && Number(info.requiredQuantity || 0) <= 0;
+    });
   }, [stockAnalysisItems]);
 
   const actionablePurchaseItems = useMemo(() => {
