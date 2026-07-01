@@ -162,6 +162,13 @@ function quantityFromItem(item, fields) {
   }, 0);
 }
 
+function formatQuantity(value) {
+  return new Intl.NumberFormat("tr-TR", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 4,
+  }).format(Number(value || 0));
+}
+
 
 function StatCard({ title, value, text }) {
   return (
