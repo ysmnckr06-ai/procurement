@@ -6992,19 +6992,14 @@ export default function ProjectDetailPage() {
                                   Daralt
                                 </button>
                               )}
-                              <span className="rounded-full bg-blue-50 px-2 py-1 text-blue-700">
-                                Toplam: {formatQuantity(usage.totalOpenQuantity)} {item.unit || "adet"}
-                              </span>
                             </div>
                           )}
-                          <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-bold">
-                            <span className="rounded-full bg-red-50 px-2 py-1 text-red-700">Eksik: {formatQuantity(info.requiredQuantity)}</span>
-                            {info.isCritical && <span className="rounded-full bg-amber-50 px-2 py-1 text-amber-700">Kritik stok</span>}
-                          </div>
                         </div>
                         <div className="text-right text-xs font-bold text-slate-600">
                           <div>İhtiyaç: {formatQuantity(info.openQuantity)}</div>
                           <div>Stok: {formatQuantity(info.stockQuantity)}</div>
+                          <div className="text-red-700">Eksik: {formatQuantity(info.requiredQuantity)}</div>
+                          {info.isCritical && <div className="text-amber-700">Kritik stok</div>}
                         </div>
                       </div>
                     );
@@ -7081,9 +7076,6 @@ export default function ProjectDetailPage() {
                                   Daralt
                                 </button>
                               )}
-                              <span className="rounded-full bg-blue-50 px-2 py-1 text-blue-700">
-                                Toplam: {formatQuantity(usage.totalOpenQuantity)} {item.unit || "adet"}
-                              </span>
                             </div>
                           )}
                           <div className="mt-2 w-fit rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-700">Karşılanabilir: {formatQuantity(Math.min(Number(info.openQuantity || 0), Number(info.stockQuantity || 0)))}</div>
