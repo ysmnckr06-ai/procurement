@@ -980,6 +980,8 @@ export default function ProjectDetailPage() {
   }
 
   function stockInfoForItem(item) {
+    if (item?.__stockAnalysisInfo) return item.__stockAnalysisInfo;
+
     const code = normalizeCode(item.product_code);
     const name = normalizeText(item.product_name);
 
@@ -1028,6 +1030,84 @@ export default function ProjectDetailPage() {
     };
   }
 
+  function sourceItemsForAction(item) {
+    return Array.isArray(item?.__analysisSourceItems) && item.__analysisSourceItems.length > 0
+      ? item.__analysisSourceItems
+      : [item].filter(Boolean);
+  }
+
+  function itemActionIds(item) {
+    return sourceItemsForAction(item).map((sourceItem) => sourceItem.id).filter(Boolean);
+  }
+
+  function buildStockAnalysisGroups(sourceItems) {
+    const grouped = new Map();
+
+    sourceItems.forEach((item) => {
+      const info = stockInfoForItem(item);
+      if (info.isMainItem) return;
+
+      const productKey = projectItemProductKey(item);
+      const unitKey = normalizeText(item.unit || "adet");
+      const key = productKey ? `${productKey}|unit:${unitKey}` : `item:${item.id}`;
+
+      if (!grouped.has(key)) {
+        grouped.set(key, {
+          key,
+          representative: item,
+          sourceItems: [],
+          stockQuantity: 0,
+          criticalStock: 0,
+          estimatedQuantity: 0,
+          consumedQuantity: 0,
+          reservedQuantity: 0,
+          pendingQuantity: 0,
+          openQuantity: 0,
+        });
+      }
+
+      const group = grouped.get(key);
+      group.sourceItems.push(item);
+      group.stockQuantity = Math.max(group.stockQuantity, Number(info.stockQuantity || 0));
+      group.criticalStock = Math.max(group.criticalStock, Number(info.criticalStock || 0));
+      group.estimatedQuantity += Number(info.estimatedQuantity || 0);
+      group.consumedQuantity += Number(info.consumedQuantity || 0);
+      group.reservedQuantity += Number(info.reservedQuantity || 0);
+      group.pendingQuantity += Number(info.pendingQuantity || 0);
+      group.openQuantity += Number(info.openQuantity || 0);
+    });
+
+    return Array.from(grouped.values()).map((group) => {
+      const requiredQuantity = Math.max(0, Number(group.pendingQuantity || 0) - Number(group.stockQuantity || 0));
+      const stockCoverableQuantity = Math.min(Number(group.pendingQuantity || 0), Number(group.stockQuantity || 0));
+      const analysisInfo = {
+        stockQuantity: group.stockQuantity,
+        matchedProducts: stockInfoForItem(group.representative).matchedProducts || [],
+        criticalStock: group.criticalStock,
+        estimatedQuantity: group.estimatedQuantity,
+        consumedQuantity: group.consumedQuantity,
+        reservedQuantity: group.reservedQuantity,
+        pendingQuantity: group.pendingQuantity,
+        openQuantity: group.openQuantity,
+        requiredQuantity,
+        stockCoverableQuantity,
+        needsPurchase: requiredQuantity > 0,
+        isCritical: group.criticalStock > 0 ? group.stockQuantity < group.criticalStock : requiredQuantity > 0,
+        isMainItem: false,
+      };
+
+      return {
+        ...group.representative,
+        id: `analysis:${group.key}`,
+        estimated_quantity: group.openQuantity,
+        reserved_quantity: group.reservedQuantity,
+        __analysisKey: group.key,
+        __analysisSourceItems: group.sourceItems,
+        __stockAnalysisInfo: analysisInfo,
+      };
+    });
+  }
+
   function stockWarning(item) {
     const info = stockInfoForItem(item);
     const available = info.stockQuantity;
@@ -1058,18 +1138,28 @@ export default function ProjectDetailPage() {
 
   function canCreatePurchaseRequest(item) {
     const info = stockInfoForItem(item);
+    const actionItems = sourceItemsForAction(item);
+    const hasActionableSource = actionItems.some((sourceItem) =>
+      !purchaseActionLockedStatuses.includes(sourceItem.status || "Bekliyor")
+      && !requestedProjectItemIds.has(sourceItem.id)
+    );
+
     return !info.isMainItem
       && Number(info.requiredQuantity || 0) > 0
-      && !purchaseActionLockedStatuses.includes(item.status || "Bekliyor")
-      && !requestedProjectItemIds.has(item.id);
+      && hasActionableSource;
   }
 
   function canCoverFromStock(item) {
     const info = stockInfoForItem(item);
+    const hasActionableSource = sourceItemsForAction(item).some((sourceItem) =>
+      !stockCoverLockedStatuses.includes(sourceItem.status || "Bekliyor")
+      && remainingStockCoverQuantity(sourceItem) > 0
+    );
+
     return !info.isMainItem
       && remainingStockCoverQuantity(item) > 0
       && Number(info.stockQuantity || 0) > 0
-      && !stockCoverLockedStatuses.includes(item.status || "Bekliyor");
+      && hasActionableSource;
   }
 
   function readFirstValue(source, keys) {
@@ -4523,7 +4613,10 @@ export default function ProjectDetailPage() {
     if (!user) return;
 
     const selectedIds = selectedStockCoverableIds.length > 0 ? selectedStockCoverableIds : selectedStockCoverItemIds;
-    const coverableItems = items.filter((item) => selectedIds.includes(item.id) && canCoverFromStock(item));
+    const selectedGroups = actionableStockCoverItems.filter((item) => selectedIds.includes(item.id) && canCoverFromStock(item));
+    const coverableItems = selectedGroups.flatMap((item) =>
+      sourceItemsForAction(item).filter((sourceItem) => canCoverFromStock(sourceItem)),
+    );
 
     if (coverableItems.length === 0) {
       setMessage("Stoktan karşılamak için en az bir uygun alt ürün seçin.");
@@ -4871,18 +4964,24 @@ export default function ProjectDetailPage() {
 
   function mapItemToRequestLine(item, quantityOverride = null) {
     const quantity = quantityOverride ?? Number(item.estimated_quantity || 0);
+    const actionItems = sourceItemsForAction(item);
+    const actionIds = actionItems.map((sourceItem) => sourceItem.id).filter(Boolean);
+    const parentIds = actionItems.map((sourceItem) => sourceItem.parent_item_id).filter(Boolean);
+    const unitPrice = Number(item.estimated_unit_price || 0);
 
     return {
       urunKodu: item.product_code || "",
       urunAciklamasi: item.product_name || "",
       birim: item.unit || "adet",
       talepEdilenAdet: quantity,
-      birimFiyat: Number(item.estimated_unit_price || 0),
-      toplam: Number(item.estimated_total || 0),
+      birimFiyat: unitPrice,
+      toplam: unitPrice * quantity,
       paraBirimi: item.currency || "TRY",
       not: item.note || "",
-      projectItemId: item.id,
-      parentItemId: item.parent_item_id || null,
+      projectItemId: actionIds.length === 1 ? actionIds[0] : null,
+      projectItemIds: actionIds,
+      parentItemId: parentIds.length === 1 ? parentIds[0] : null,
+      parentItemIds: parentIds,
     };
   }
 
@@ -5252,7 +5351,7 @@ export default function ProjectDetailPage() {
     const user = await getUserOrRedirect();
     if (!user) return;
 
-    const selectedItems = items.filter((item) => selectedPurchaseItemIds.includes(item.id) && canCreatePurchaseRequest(item));
+    const selectedItems = actionablePurchaseItems.filter((item) => selectedPurchaseItemIds.includes(item.id) && canCreatePurchaseRequest(item));
     const selectedPurchaseBlocked = selectedPurchaseItemIds.length > 0 && selectedItems.length === 0;
 
     if (selectedPurchaseBlocked) {
@@ -5292,14 +5391,14 @@ export default function ProjectDetailPage() {
     await supabase
       .from("project_items")
       .update({ status: "Talep oluşturuldu", updated_at: new Date().toISOString() })
-      .in("id", selectedItems.map((item) => item.id))
+      .in("id", Array.from(new Set(selectedItems.flatMap((item) => itemActionIds(item)))))
       .eq("project_id", projectId)
       .eq("user_id", user.id);
 
     setProjectRequests((prev) => [data, ...prev]);
     setItems((prev) =>
       prev.map((item) =>
-        selectedItems.some((selected) => selected.id === item.id)
+        selectedItems.some((selected) => itemActionIds(selected).includes(item.id))
           ? { ...item, status: "Talep oluşturuldu", updated_at: new Date().toISOString() }
           : item,
       ),
@@ -5316,7 +5415,7 @@ export default function ProjectDetailPage() {
     const user = await getUserOrRedirect();
     if (!user) return;
 
-    const neededItems = items
+    const neededItems = actionablePurchaseItems
       .map((item) => ({ item, stock: stockInfoForItem(item) }))
       .filter(({ item, stock }) => !stock.isMainItem && stock.requiredQuantity > 0 && canCreatePurchaseRequest(item));
 
@@ -5365,7 +5464,7 @@ export default function ProjectDetailPage() {
     await supabase
       .from("project_items")
       .update({ status: "Talep oluşturuldu", updated_at: new Date().toISOString() })
-      .in("id", neededItems.map(({ item }) => item.id))
+      .in("id", Array.from(new Set(neededItems.flatMap(({ item }) => itemActionIds(item)))))
       .eq("project_id", projectId)
       .eq("user_id", user.id);
 
@@ -5382,7 +5481,7 @@ export default function ProjectDetailPage() {
     setProjectRequests((prev) => [localRequest, ...prev.filter((request) => request.id !== localRequest.id)]);
     setItems((prev) =>
       prev.map((item) =>
-        neededItems.some(({ item: neededItem }) => neededItem.id === item.id)
+        neededItems.some(({ item: neededItem }) => itemActionIds(neededItem).includes(item.id))
           ? { ...item, status: "Talep oluşturuldu", updated_at: new Date().toISOString() }
           : item,
       ),
@@ -5418,21 +5517,25 @@ export default function ProjectDetailPage() {
   }, [projectRequests, items, products, childItemsByParent]);
 
 
-  const purchaseRequiredItems = useMemo(() => {
-    return items.filter((item) => stockInfoForItem(item).needsPurchase);
+  const stockAnalysisItems = useMemo(() => {
+    return buildStockAnalysisGroups(items);
   }, [items, products, childItemsByParent]);
+
+  const purchaseRequiredItems = useMemo(() => {
+    return stockAnalysisItems.filter((item) => stockInfoForItem(item).needsPurchase);
+  }, [stockAnalysisItems]);
 
   const purchaseRequiredQuantity = useMemo(() => {
     return purchaseRequiredItems.reduce((sum, item) => sum + Number(stockInfoForItem(item).requiredQuantity || 0), 0);
   }, [purchaseRequiredItems, products, childItemsByParent]);
 
   const criticalStockItems = useMemo(() => {
-    return items.filter((item) => stockInfoForItem(item).isCritical);
-  }, [items, products, childItemsByParent]);
+    return stockAnalysisItems.filter((item) => stockInfoForItem(item).isCritical);
+  }, [stockAnalysisItems]);
 
   const stockCoverableItems = useMemo(() => {
-    return items.filter((item) => canCoverFromStock(item));
-  }, [items, products, childItemsByParent]);
+    return stockAnalysisItems.filter((item) => canCoverFromStock(item));
+  }, [stockAnalysisItems]);
 
   const actionablePurchaseItems = useMemo(() => {
     return purchaseRequiredItems.filter((item) => canCreatePurchaseRequest(item));
@@ -6852,7 +6955,7 @@ export default function ProjectDetailPage() {
                   {purchaseRequiredItems.map((item) => {
                     const info = stockInfoForItem(item);
                     const purchaseActionable = canCreatePurchaseRequest(item);
-                    const requestLocked = requestedProjectItemIds.has(item.id);
+                    const requestLocked = itemActionIds(item).every((id) => requestedProjectItemIds.has(id));
                     const usageKey = projectItemProductKey(item);
                     const usage = productUsageSummaryByKey[usageKey];
                     const usageExpanded = Boolean(expandedUsageKeys[usageKey]);
