@@ -180,11 +180,55 @@ function stockMovementReservedQuantities(movements) {
   return quantities;
 }
 
-function buildSummary(projects, projectItems, products, orders, stockMovements = []) {
+function requestItemsArray(request) {
+  if (Array.isArray(request?.items)) return request.items;
+  if (typeof request?.items === "string" && request.items.trim()) {
+    try {
+      const parsed = JSON.parse(request.items);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function requestAllocationQuantities(requests) {
+  const quantities = new Map();
+  (requests || [])
+    .filter((request) => !["İptal", "Iptal", "Tamamlandı"].includes(request.durum || request.status))
+    .forEach((request) => {
+      requestItemsArray(request).forEach((item) => {
+        const allocations = Array.isArray(item.allocations) ? item.allocations : [];
+        const directIds = [
+          item.projectItemId,
+          item.project_item_id,
+          ...(item.projectItemIds || []),
+          ...(item.project_item_ids || []),
+        ].filter(Boolean);
+        if (allocations.length === 0) {
+          directIds.forEach((projectItemId) => {
+            const quantity = number(item.purchase_quantity || item.purchaseQuantity || item.quantity || item.talepEdilenAdet);
+            quantities.set(String(projectItemId), number(quantities.get(String(projectItemId))) + quantity);
+          });
+        }
+        allocations.forEach((allocation) => {
+          const projectItemId = allocation.projectItemId || allocation.project_item_id;
+          if (!projectItemId) return;
+          const quantity = number(allocation.purchaseQuantity || allocation.purchase_quantity || allocation.quantity);
+          quantities.set(String(projectItemId), number(quantities.get(String(projectItemId))) + quantity);
+        });
+      });
+    });
+  return quantities;
+}
+
+function buildSummary(projects, projectItems, products, orders, stockMovements = [], requests = []) {
   const projectsById = new Map(projects.map((project) => [project.id, project]));
   const itemsById = new Map(projectItems.map((item) => [item.id, item]));
   const orderedByProjectItem = orderAllocationQuantities(orders);
   const reservedByProjectItem = stockMovementReservedQuantities(stockMovements);
+  const requestedByProjectItem = requestAllocationQuantities(requests);
   const productsById = new Map(products.map((product) => [product.id, product]));
   const productsByCode = new Map(
     products
@@ -213,6 +257,7 @@ function buildSummary(projects, projectItems, products, orders, stockMovements =
         number(reservedByProjectItem.get(item.id)),
       );
       const alreadyOrdered = number(orderedByProjectItem.get(item.id));
+      const alreadyRequested = number(requestedByProjectItem.get(String(item.id)));
       const openQuantity = Math.max(estimated - received - projectReserved - alreadyOrdered, 0);
       if (estimated <= 0 && openQuantity <= 0 && received <= 0 && projectReserved <= 0 && alreadyOrdered <= 0) return;
 
@@ -292,6 +337,7 @@ function buildSummary(projects, projectItems, products, orders, stockMovements =
         receivedQuantity: received,
         reservedQuantity: projectReserved,
         orderedQuantity: alreadyOrdered,
+        requestedPurchaseQuantity: alreadyRequested,
         productId: resolvedProductId,
       });
     });
@@ -306,22 +352,30 @@ function buildSummary(projects, projectItems, products, orders, stockMovements =
       const allocationStockCoverable = Math.min(number(allocation.quantity), remainingStockToAllocate);
       remainingStockToAllocate -= allocationStockCoverable;
       const allocationMissing = Math.max(number(allocation.quantity) - allocationStockCoverable, 0);
+      const allocationRequested = Math.min(number(allocation.requestedPurchaseQuantity), allocationMissing);
+      const allocationPurchaseQuantity = Math.max(allocationMissing - allocationRequested, 0);
       const statusLabel = number(allocation.quantity) <= 0
         ? "Tamamlandı"
+        : allocationPurchaseQuantity <= 0 && allocationRequested > 0
+          ? "Talep oluşturuldu"
         : allocationStockCoverable >= number(allocation.quantity)
           ? "Stoktan karşılanabilir"
-          : allocationStockCoverable > 0
+        : allocationStockCoverable > 0
             ? "Kısmen stoktan"
             : "Satınalma gerekli";
       return {
         ...allocation,
         stockCoverableQuantity: allocationStockCoverable,
-        purchaseQuantity: allocationMissing,
+        requestedPurchaseQuantity: allocationRequested,
+        purchaseQuantity: allocationPurchaseQuantity,
         statusLabel,
       };
     });
+    const purchaseQuantity = allocations.reduce((sum, allocation) => sum + number(allocation.purchaseQuantity), 0);
     const statusLabel = row.totalNeed <= 0
       ? "Tamamlandı"
+      : purchaseQuantity <= 0 && allocations.some((allocation) => number(allocation.requestedPurchaseQuantity) > 0)
+        ? "Talep oluşturuldu"
       : stockCoverable >= row.totalNeed
         ? "Stoktan karşılanabilir"
         : stockCoverable > 0
@@ -335,7 +389,7 @@ function buildSummary(projects, projectItems, products, orders, stockMovements =
       availableStock,
       stockCoverable,
       missingQuantity,
-      purchaseQuantity: missingQuantity,
+      purchaseQuantity,
       statusLabel,
     };
   });
@@ -448,14 +502,15 @@ export default function ProcurementSummaryPage() {
       return;
     }
 
-    const [projectResult, itemResult, productResult, orderResult, movementResult] = await Promise.all([
+    const [projectResult, itemResult, productResult, orderResult, movementResult, requestResult] = await Promise.all([
       supabase.from("projects").select("id,project_code,project_name,status").eq("user_id", user.id).in("id", selectedIds),
       supabase.from("project_items").select("*").eq("user_id", user.id).in("project_id", selectedIds),
       supabase.from("products").select("id,product_code,normalized_product_code,product_name,brand,unit,current_stock,reserved_stock").eq("user_id", user.id).is("archived_at", null),
       supabase.from("orders").select("id,status,items").eq("user_id", user.id),
       supabase.from("stock_movements").select("id,project_item_id,product_id,product_code,product_name,unit,reserved_quantity").eq("user_id", user.id),
+      supabase.from("requests").select("id,project_id,durum,status,items").eq("user_id", user.id),
     ]);
-    const error = projectResult.error || itemResult.error || productResult.error || orderResult.error || movementResult.error;
+    const error = projectResult.error || itemResult.error || productResult.error || orderResult.error || movementResult.error || requestResult.error;
     if (error) {
       setMessage(`Malzeme listesi yüklenemedi: ${error.message}`);
       setLoading(false);
@@ -463,7 +518,15 @@ export default function ProcurementSummaryPage() {
     }
     const tenantProjects = projectResult.data || [];
     setProjects(tenantProjects);
-    setAllRows(buildSummary(tenantProjects, itemResult.data || [], productResult.data || [], orderResult.data || [], movementResult.data || []));
+    const selectedRequests = (requestResult.data || []).filter((request) => {
+      if (request.project_id && selectedIds.includes(request.project_id)) return true;
+      return requestItemsArray(request).some((item) =>
+        (Array.isArray(item.allocations) ? item.allocations : []).some((allocation) =>
+          selectedIds.includes(allocation.projectId || allocation.project_id)
+        )
+      );
+    });
+    setAllRows(buildSummary(tenantProjects, itemResult.data || [], productResult.data || [], orderResult.data || [], movementResult.data || [], selectedRequests));
     setMessage(nextMessage);
     setLoading(false);
   }
@@ -602,7 +665,7 @@ export default function ProcurementSummaryPage() {
     setCreatingRequest(false);
     if (error) { setMessage(`Talep oluşturulamadı: ${error.message}`); return; }
     setLastCreatedRequestId(data.id);
-    setMessage(`Talep listesi oluşturuldu. ${items.length} kalem Talepler modülüne aktarıldı.`);
+    await loadSummaryData(`Talep listesi oluşturuldu. ${items.length} kalem Talepler modülüne aktarıldı.`);
   }
 
   async function reserveVisibleStockRows(selectedOnly = false) {
