@@ -1406,6 +1406,109 @@ def parse_pdf(file_path, firma_adi="", file_name=""):
     return audit["rows"]
 
 
+def _compact_pdf_money(value):
+    text = clean_text(value)
+    text = re.sub(r"[^\d,.\s]", " ", text)
+    text = re.sub(r"\s+", "", text)
+
+    if not text:
+        return 0
+
+    if "," in text:
+        text = text.replace(".", "").replace(",", ".")
+    else:
+        parts = text.split(".")
+        if len(parts) > 2:
+            text = "".join(parts[:-1]) + "." + parts[-1]
+
+    try:
+        return float(text)
+    except Exception:
+        return clean_number(text)
+
+
+def _pdf_money_tokens(value):
+    text = clean_text(value)
+    return re.findall(r"\d[\d\s.]*[,.]\d+", text)
+
+
+def parse_price_table_pdf_fallback(full_text, firma, footer, file_name):
+    fallback_firma = firma
+    firma_norm = normalize_tr(fallback_firma or "")
+    if re.match(r"^\s*\d+\s+\S+", fallback_firma or "") or "duzenleyen" in firma_norm:
+        fallback_firma = os.path.splitext(file_name or "")[0] or "PDF Teklif"
+
+    rows = []
+    for line in [clean_text(item) for item in full_text.split("\n") if clean_text(item)]:
+        if not is_pdf_product_row_start(line):
+            continue
+
+        match = re.match(
+            rf"^\s*\d+\s+"
+            rf"(?P<code>[A-Za-z0-9._/-]+)\s+"
+            rf"(?P<desc>.+?)\s+"
+            rf"(?P<qty>\d+(?:[.,]\d+)?)\s+"
+            rf"(?P<unit>{UNIT_RE})\s+"
+            rf"(?P<tail>.+)$",
+            line,
+            re.IGNORECASE,
+        )
+        if not match:
+            continue
+
+        tail = match.group("tail")
+        discount_match = re.search(r"(?P<discount>\d+(?:[.,]\d+)?)\s*%", tail)
+        if not discount_match:
+            continue
+
+        before_discount = tail[:discount_match.start()]
+        after_discount = tail[discount_match.end():]
+        before_tokens = _pdf_money_tokens(before_discount)
+        after_tokens = _pdf_money_tokens(after_discount)
+        if not before_tokens or len(after_tokens) < 2:
+            continue
+
+        list_price = _compact_pdf_money(before_tokens[-1])
+        net_price = _compact_pdf_money(after_tokens[0])
+        line_total = _compact_pdf_money(after_tokens[1])
+        if net_price <= 0 or line_total <= 0:
+            continue
+
+        term = clean_text(after_discount.split(after_tokens[1], 1)[-1])
+        desc = clean_text(match.group("desc"))
+        brand = ""
+        parts = desc.split()
+        if parts and re.fullmatch(r"[A-ZÇĞİÖŞÜ]{2,}(?:[-/][A-ZÇĞİÖŞÜ]+)?", parts[-1], re.IGNORECASE):
+            brand = parts[-1]
+            desc = clean_text(" ".join(parts[:-1])) or desc
+
+        rows.append({
+            "firma": fallback_firma,
+            "firmaAdi": fallback_firma,
+            "urunKodu": clean_text(match.group("code")),
+            "marka": brand,
+            "brand": brand,
+            "urunAciklamasi": desc,
+            "birim": clean_unit(match.group("unit")),
+            "firmaAdedi": clean_number(match.group("qty")),
+            "paraBirimi": detect_currency(line),
+            "birimFiyat": list_price,
+            "iskonto": clean_number(discount_match.group("discount")),
+            "netBirimFiyat": net_price,
+            "netToplam": line_total,
+            "vade": footer.get("vade", ""),
+            "termin": term,
+            "firmaDipToplam": footer.get("dipToplam", 0),
+            "firmaKdv": footer.get("kdv", 0),
+            "firmaGenelToplam": footer.get("genelToplam", 0),
+            "kaynakDosya": file_name,
+            "kaynakTipi": "pdf",
+            "price_status": "line_priced_fallback",
+        })
+
+    return rows
+
+
 def parse_pdf_with_audit(file_path, firma_adi="", file_name=""):
     rows = []
     sections = []
@@ -1457,7 +1560,17 @@ def parse_pdf_with_audit(file_path, firma_adi="", file_name=""):
             )
         rows = fallback_rows
 
-    if rows and not sections and project_main_group_name:
+    price_fallback_rows = parse_price_table_pdf_fallback(full_text, firma, footer, file_name)
+    priced_rows = [row for row in rows if float(row.get("netToplam") or 0) > 0]
+    if price_fallback_rows and len(price_fallback_rows) >= len(priced_rows):
+        if rows:
+            warnings.append(f"PDF fiyat tablosu fallback okuyucu ile {len(price_fallback_rows)} satır fiyatlı aktarıldı.")
+        rows = price_fallback_rows
+        sections = []
+
+    has_priced_fallback = any(row.get("price_status") == "line_priced_fallback" for row in rows)
+
+    if rows and not sections and project_main_group_name and not has_priced_fallback:
         section_total = footer.get("dipToplam") or sum(float(row.get("netToplam") or 0) for row in rows)
         section = {
             "section_name": project_main_group_name,

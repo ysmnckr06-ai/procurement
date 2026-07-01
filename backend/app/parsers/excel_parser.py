@@ -581,6 +581,108 @@ def parse_excel(file_path, firma_adi="", file_name=""):
     return audit["rows"]
 
 
+def _fallback_find_header(raw_df):
+    for row_idx in range(min(len(raw_df), 40)):
+        values = [normalize_col(value) for value in raw_df.iloc[row_idx].values]
+        joined = " ".join(values)
+        has_item = any(word in joined for word in ["urun", "malzeme", "stok no", "kod"])
+        has_qty = any(word in joined for word in ["miktar", "mik", "adet"])
+        has_price = any(word in joined for word in ["fiyat", "tutar"])
+        if has_item and has_qty and has_price:
+            return row_idx
+    return None
+
+
+def _fallback_find_col(columns, aliases, exclude=None):
+    exclude = exclude or []
+    for col in columns:
+        col_norm = normalize_col(col)
+        if any(bad in col_norm for bad in exclude):
+            continue
+        if any(alias in col_norm for alias in aliases):
+            return col
+    return None
+
+
+def parse_excel_offer_table_fallback(raw_df, firma, footer, default_currency, file_name):
+    header_row = _fallback_find_header(raw_df)
+    if header_row is None:
+        return []
+
+    df = raw_df.copy()
+    df.columns = unique_columns(df.iloc[header_row])
+    df = df[header_row + 1:].dropna(how="all")
+
+    code_col = _fallback_find_col(df.columns, ["stok no", "urun kodu", "malzeme kodu", "kod"], ["sira", "s no"])
+    desc_col = _fallback_find_col(df.columns, ["urun adi", "malzemenin cinsi", "malzeme cinsi", "urun aciklamasi", "aciklama", "urun"], ["kod"])
+    brand_col = _fallback_find_col(df.columns, ["marka", "brand", "uretici"])
+    qty_col = _fallback_find_col(df.columns, ["miktar", "mik", "adet", "quantity"])
+    unit_col = _fallback_find_col(df.columns, ["birim", "br"], ["fiyat"])
+    price_col = _fallback_find_col(df.columns, ["birim fiyat", "b fiyat", "bfiyat", "fiyat"], ["tutar", "toplam"])
+    total_col = _fallback_find_col(df.columns, ["tutar", "toplam"], ["genel", "ara", "kdv"])
+    currency_col = _fallback_find_col(df.columns, ["para birimi", "doviz", "currency"])
+
+    if desc_col is None or qty_col is None or (price_col is None and total_col is None):
+        return []
+
+    rows = []
+    for _, item in df.iterrows():
+        cells = [clean_text(value) for value in item.values]
+        joined = " ".join(cells)
+        if should_skip_context_line(joined):
+            continue
+
+        desc = clean_text(item.get(desc_col))
+        qty = clean_number(item.get(qty_col))
+        total = clean_number(item.get(total_col)) if total_col is not None else 0
+        price = clean_number(item.get(price_col)) if price_col is not None else 0
+
+        if not desc or qty <= 0 or (price <= 0 and total <= 0):
+            continue
+
+        if price <= 0 and total > 0:
+            price = total / qty
+        if total <= 0 and price > 0:
+            total = price * qty
+
+        row_currency = (
+            detect_currency_token(item.get(currency_col)) if currency_col is not None else ""
+        ) or detect_currency_token(joined) or default_currency or "TRY"
+        brand = clean_text(item.get(brand_col)) if brand_col is not None else ""
+
+        rows.append({
+            "firma": firma,
+            "firmaAdi": firma,
+            "urunKodu": clean_text(item.get(code_col)) if code_col is not None else "",
+            "marka": brand,
+            "brand": brand,
+            "urunAciklamasi": desc,
+            "birim": clean_text(item.get(unit_col)) if unit_col is not None else "adet",
+            "firmaAdedi": qty,
+            "paraBirimi": row_currency,
+            "birimFiyat": price,
+            "iskonto": 0,
+            "netBirimFiyat": price,
+            "netToplam": total,
+            "netBirimFiyatDosyadan": price,
+            "satirToplamDosyadan": total,
+            "vade": footer.get("vade", ""),
+            "termin": footer.get("termin", ""),
+            "firmaDipToplam": footer.get("dipToplam", 0),
+            "firmaKdv": footer.get("kdv", 0),
+            "firmaGenelToplam": footer.get("genelToplam", 0),
+            "kaynakDosya": file_name,
+            "kaynakTipi": "excel",
+            "parserUyarilari": [],
+            "section_name": "",
+            "section_total": 0,
+            "section_quantity": 0,
+            "price_status": "line_priced_fallback",
+        })
+
+    return rows
+
+
 def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
     raw_df, selected_sheet_name = read_best_excel_sheet(file_path)
 
@@ -925,6 +1027,12 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
         errors.append(
             f"Excel genel toplam tutmuyor: ürünler {product_total:.2f}, teklif {checked_total:.2f}"
         )
+
+    if not rows:
+        fallback_rows = parse_excel_offer_table_fallback(raw_df, firma, footer, default_sheet_currency, file_name)
+        if fallback_rows:
+            rows = fallback_rows
+            warnings.append(f"Excel teklif formu fallback okuyucu ile {len(rows)} satır aktarıldı.")
 
     return {
         "rows": rows,
