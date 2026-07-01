@@ -24,18 +24,6 @@ function StatCard({ icon, title, value, text }) {
   );
 }
 
-function Step({ no, title, text }) {
-  return (
-    <div>
-      <div className="mb-2 flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 font-bold text-blue-700">
-        {no}
-      </div>
-      <div className="font-bold text-slate-800">{title}</div>
-      <p className="mt-1 text-xs text-slate-500">{text}</p>
-    </div>
-  );
-}
-
 function parseRequestItemArray(value) {
   if (Array.isArray(value)) return value;
   if (!value || typeof value !== "string") return [];
@@ -1669,27 +1657,6 @@ export default function TaleplerPage() {
             </div>
           )}
 
-          <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
-            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-              <h3 className="text-lg font-bold text-blue-700">Nasıl Çalışır?</h3>
-
-              <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
-                <Step no="1" title="Dosya Yükleyin" text="Excel, PDF veya görsel talep dosyalarınızı seçin." />
-                <Step no="2" title="Talep Listesini Oluşturun" text="Sistem ürünleri birleştirip satınalma listesini çıkarır." />
-                <Step no="3" title="Tekliflere Aktarın" text="Oluşan listeyi teklif karşılaştırmada kullanın." />
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-green-200 bg-green-50 p-6 shadow-sm">
-              <h3 className="text-lg font-bold text-green-800">İpuçları</h3>
-
-              <div className="mt-4 space-y-3 text-sm text-green-900">
-                <p>✅ Ürün kodu varsa sistem eşleştirmeyi daha güçlü yapar.</p>
-                <p>✅ Kod yoksa açıklama benzerliğiyle talep listesi oluşturulur.</p>
-                <p>✅ Oluşturulan talep listesi teklif analizinde ana referans olur.</p>
-              </div>
-            </div>
-          </div>
         </div>
       </main>
     </div>
