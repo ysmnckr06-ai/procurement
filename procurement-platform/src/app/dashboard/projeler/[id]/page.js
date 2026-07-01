@@ -7078,11 +7078,11 @@ export default function ProjectDetailPage() {
                               )}
                             </div>
                           )}
-                          <div className="mt-2 w-fit rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-700">Karşılanabilir: {formatQuantity(Math.min(Number(info.openQuantity || 0), Number(info.stockQuantity || 0)))}</div>
                         </div>
                         <div className="text-right text-xs font-bold text-emerald-700">
+                          <div>İhtiyaç: {formatQuantity(info.openQuantity)}</div>
                           <div>Stok: {formatQuantity(info.stockQuantity)}</div>
-                          <div>Açık: {formatQuantity(info.openQuantity)}</div>
+                          <div>Karşılanabilir: {formatQuantity(Math.min(Number(info.openQuantity || 0), Number(info.stockQuantity || 0)))}</div>
                         </div>
                       </div>
                     );
