@@ -1418,6 +1418,7 @@ export default function TaleplerPage() {
                   const projectLabel = requestProjectSummary(req);
                   const priorityLabel = requestPriority(req);
                   const processInfo = requestProcessInfo(req);
+                  const isInProcess = req.durum === "İşleme alındı" || Boolean(processInfo);
 
                   return (
                     <div
@@ -1494,12 +1495,18 @@ export default function TaleplerPage() {
                             İndir
                           </button>
 
-                          <button type="button"
-                            onClick={() => takeRequestIntoProcess(req)}
-                            className="rounded-md bg-blue-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-blue-700"
-                          >
-                            İşleme Al
-                          </button>
+                          {isInProcess ? (
+                            <span className="rounded-md bg-slate-100 px-2.5 py-1.5 text-xs font-black text-slate-600">
+                              İşlemde
+                            </span>
+                          ) : (
+                            <button type="button"
+                              onClick={() => takeRequestIntoProcess(req)}
+                              className="rounded-md bg-blue-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-blue-700"
+                            >
+                              İşleme Al
+                            </button>
+                          )}
                           <button type="button"
                             onClick={() => deleteRequest(req.id)}
                             className="rounded-md bg-red-600 px-2.5 py-1.5 text-xs font-bold text-white"
