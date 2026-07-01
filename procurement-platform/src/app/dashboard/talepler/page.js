@@ -577,6 +577,7 @@ export default function TaleplerPage() {
   const [quantityDrafts, setQuantityDrafts] = useState({});
   const [requestRelations, setRequestRelations] = useState({});
   const [creatingManualRequest, setCreatingManualRequest] = useState(false);
+  const [activeRequestTab, setActiveRequestTab] = useState("upload");
   const [manualRequest, setManualRequest] = useState({
     subject: "",
     requester: "",
@@ -1174,19 +1175,41 @@ export default function TaleplerPage() {
             <StatCard icon="⏳" title="Açık Süreç" value={requestStats.open} text="Teklif/satınalma bekliyor" />
           </div>
 
-          <div className="rounded-2xl border border-purple-200 bg-white p-5 shadow-sm">
-            <div className="flex items-center gap-4">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-purple-100 text-2xl">
-                💡
-              </div>
-              <p className="text-sm font-medium text-purple-900">
-                Burada yüklediğiniz Excel, PDF veya görsel talep dosyaları backend
-                tarafından analiz edilir. Ürün kodu, açıklama, adet ve birim
-                bilgileri talep listesine dönüştürülür.
-              </p>
+          <div className="rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
+            <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+              {[
+                { id: "upload", title: "Dosya Yükle", text: "Excel, PDF ve görselden talep çıkar", icon: "📎" },
+                { id: "manual", title: "Manuel Oluştur", text: "Tek kalem veya hızlı talep ekle", icon: "✍️" },
+                { id: "pool", title: "Talep Havuzu", text: "Tüm talep listelerini takip et", icon: "📥" },
+              ].map((tab) => {
+                const active = activeRequestTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setActiveRequestTab(tab.id)}
+                    className={`flex items-center gap-3 rounded-xl px-4 py-3 text-left transition ${
+                      active
+                        ? "bg-blue-600 text-white shadow-sm"
+                        : "bg-slate-50 text-slate-700 hover:bg-slate-100"
+                    }`}
+                  >
+                    <span className={`flex h-10 w-10 items-center justify-center rounded-xl text-xl ${active ? "bg-white/15" : "bg-white"}`}>
+                      {tab.icon}
+                    </span>
+                    <span>
+                      <span className="block text-sm font-black">{tab.title}</span>
+                      <span className={`mt-0.5 block text-xs font-semibold ${active ? "text-blue-50" : "text-slate-500"}`}>
+                        {tab.text}
+                      </span>
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
+          {activeRequestTab === "upload" && (
           <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
             <h2 className="text-xl font-bold text-slate-800">
               Yeni Talep Listesi Oluştur
@@ -1258,7 +1281,9 @@ export default function TaleplerPage() {
               </div>
             )}
           </div>
+          )}
 
+          {activeRequestTab === "manual" && (
           <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
               <div>
@@ -1286,8 +1311,10 @@ export default function TaleplerPage() {
               {creatingManualRequest ? "Kaydediliyor..." : "Manuel Talep Ekle"}
             </button>
           </div>
+          )}
 
-          <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          {activeRequestTab === "pool" && (
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <h2 className="text-lg font-bold text-slate-900">Talep Havuzu</h2>
@@ -1573,15 +1600,16 @@ export default function TaleplerPage() {
             </div>
           )}
         </div>
+          )}
 
-          {selectedRequests.length > 0 && (
+          {activeRequestTab === "pool" && selectedRequests.length > 0 && (
             <MergedPurchasePreview
               rows={mergedPurchasePreview}
               onCreateOrder={createOrderFromMergedRequests}
             />
           )}
 
-          {rows.length > 0 && (
+          {activeRequestTab === "upload" && rows.length > 0 && (
             <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
               <div className="flex items-center justify-between border-b border-slate-100 p-5">
                 <div>
