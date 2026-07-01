@@ -7049,6 +7049,8 @@ export default function ProjectDetailPage() {
                     const visibleUsageParents = usage
                       ? (usageExpanded ? usage.parentDistribution : usage.parentDistribution.slice(0, 4))
                       : [];
+                    const stockCoverableQuantity = Math.min(Number(info.openQuantity || 0), Number(info.stockQuantity || 0));
+                    const remainingStockAfterReserve = Math.max(Number(info.stockQuantity || 0) - stockCoverableQuantity, 0);
                     return (
                       <div key={item.id} className="grid grid-cols-[auto_minmax(0,1fr)_auto] gap-3 p-4 text-sm">
                         {stockActionable ? (
@@ -7085,7 +7087,8 @@ export default function ProjectDetailPage() {
                         <div className="text-right text-xs font-bold text-emerald-700">
                           <div>İhtiyaç: {formatQuantity(info.openQuantity)}</div>
                           <div>Stok: {formatQuantity(info.stockQuantity)}</div>
-                          <div>Karşılanabilir: {formatQuantity(Math.min(Number(info.openQuantity || 0), Number(info.stockQuantity || 0)))}</div>
+                          <div>Karşılanabilir: {formatQuantity(stockCoverableQuantity)}</div>
+                          <div>Kalan Stok: {formatQuantity(remainingStockAfterReserve)}</div>
                         </div>
                       </div>
                     );
