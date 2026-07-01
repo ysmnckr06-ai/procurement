@@ -252,7 +252,7 @@ export default function ProjectsPage() {
       supabase.from("reports").select("id,project_id").eq("user_id", user.id),
       supabase.from("offers").select("id,project_id").eq("user_id", user.id),
       supabase.from("orders").select("*").eq("user_id", user.id),
-      supabase.from("stock_movements").select("id,project_id").eq("user_id", user.id),
+      supabase.from("stock_movements").select("id,project_id,project_item_id,reserved_quantity,quantity,movement_type,source").eq("user_id", user.id),
       supabase.from("project_payments").select("id,project_id").eq("user_id", user.id),
       supabase.from("project_revisions").select("id,project_id").eq("user_id", user.id),
     ]);
@@ -916,7 +916,6 @@ export default function ProjectsPage() {
     const trackedItems = materialItems.length > 0 ? materialItems : items;
     const missingStatuses = ["Satınalma gerekli", "Eksik geldi", "Tedarikçiden bekleniyor"];
     const requestedStatuses = ["Talep oluşturuldu"];
-    const stockCoveredStatuses = ["Depoda", "Projeye Ayrıldı", "Projeye rezerve edildi", "Stoktan karşılandı"];
     const orderedStatuses = ["Sipariş verildi", "Tedarikçiden bekleniyor", "Kısmi geldi"];
     const completedItems = items.filter((item) =>
       ["Depoda", "Tamamlandı", "Sevk edildi"].includes(item.status),
@@ -930,23 +929,13 @@ export default function ProjectsPage() {
     const requestedItems = trackedItems.filter((item) =>
       requestedStatuses.includes(item.status),
     ).length;
-    const stockCoveredItems = trackedItems.filter((item) => {
-      const reservedQuantity = quantityFromItem(item, [
-        "reserved_quantity",
-        "reserved_child_quantity",
-        "consumed_child_quantity",
-        "issued_to_production_quantity",
-        "received_quantity",
-      ]);
-      const itemMovements = movements.filter((movement) => movement.project_item_id === item.id);
-      const hasStockMovement = itemMovements.some((movement) => {
-        const source = String(movement.source || movement.reference_type || "").toLowerCase();
-        const movementType = String(movement.movement_type || "").toLowerCase();
-        return source.includes("stock") || source.includes("stok") || source.includes("reserve") || movementType === "out";
-      });
-
-      return reservedQuantity > 0 || hasStockMovement || stockCoveredStatuses.includes(item.status);
-    }).length;
+    const stockCoveredQuantity = trackedItems.reduce((sum, item) => {
+      const itemReserved = quantityFromItem(item, ["reserved_quantity", "reserved_child_quantity"]);
+      const movementReserved = movements
+        .filter((movement) => movement.project_item_id === item.id)
+        .reduce((movementSum, movement) => movementSum + quantityFromItem(movement, ["reserved_quantity"]), 0);
+      return sum + Math.max(itemReserved, movementReserved);
+    }, 0);
     const openOrders = orders.filter((order) =>
       !["Tam Teslim", "Teslim Edildi", "İptal"].includes(order.status),
     ).length;
@@ -958,13 +947,13 @@ export default function ProjectsPage() {
           ? { label: `${missingMaterials} eksik`, tone: "red" }
           : requestedItems > 0
             ? { label: `${requestedItems} talepte`, tone: "blue" }
-          : stockCoveredItems > 0
-            ? { label: `${stockCoveredItems} stoktan karşılandı`, tone: "green" }
+          : stockCoveredQuantity > 0
+            ? { label: `${formatQuantity(stockCoveredQuantity)} stoktan karşılandı`, tone: "green" }
             : completedItems > 0
               ? { label: "Tamamlandı", tone: "green" }
               : { label: "Bekliyor", tone: "slate" };
     const materialStatusParts = [
-      stockCoveredItems > 0 ? `Stoktan ${stockCoveredItems}` : null,
+      stockCoveredQuantity > 0 ? `Stoktan ${formatQuantity(stockCoveredQuantity)}` : null,
       requestedItems > 0 ? `Talepte ${requestedItems}` : null,
       missingMaterials > 0 ? `Eksik ${missingMaterials}` : null,
       orderedItems > 0 ? `Siparişte ${orderedItems}` : null,
@@ -993,7 +982,7 @@ export default function ProjectsPage() {
 
     return {
       completion: items.length > 0 ? Math.round((completedItems / items.length) * 100) : 0,
-      stockCoveredItems,
+      stockCoveredItems: stockCoveredQuantity,
       requestedItems,
       orderedItems,
       openOrders,
