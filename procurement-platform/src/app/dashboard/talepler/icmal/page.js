@@ -695,8 +695,7 @@ export default function ProcurementSummaryPage() {
             </button>
           </div>
           <div className="flex flex-wrap gap-2">
-            <button type="button" onClick={downloadExcel} disabled={!rows.length} className="rounded-xl bg-emerald-700 px-4 py-3 font-bold text-white disabled:bg-slate-300">Excel İndir</button>
-            <button type="button" onClick={downloadPdf} disabled={!rows.length} className="rounded-xl bg-red-700 px-4 py-3 font-bold text-white disabled:bg-slate-300">PDF İndir</button>
+            <button type="button" onClick={downloadExcel} disabled={!rows.length} className="rounded-xl bg-emerald-700 px-4 py-3 font-bold text-white disabled:bg-slate-300">İndir</button>
           {mode === "stock" ? (
             <>
               <button

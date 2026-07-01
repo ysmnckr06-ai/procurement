@@ -168,6 +168,84 @@ const emptyExpense = {
 };
 
 const projectClosureStatuses = ["Açık", "Devam Ediyor", "Teslim Edildi", "Kapandı"];
+const mainStageKeys = ["pending", "manufacturing", "assembly", "ready", "shipped"];
+const mainStageLabels = {
+  pending: "Bekleyen",
+  manufacturing: "İmalat",
+  assembly: "Montaj",
+  ready: "Hazır",
+  shipped: "Sevk",
+};
+const mainStageStatuses = {
+  pending: "Bekliyor",
+  manufacturing: "İşleme alındı",
+  assembly: "Uygulamada",
+  ready: "Hazır",
+  shipped: "Sevk edildi",
+};
+const stageDistributionPattern = /\[\[main_stage_distribution:([\s\S]*?)\]\]/;
+
+function cleanItemNote(note = "") {
+  return String(note || "").replace(stageDistributionPattern, "").trim();
+}
+
+function parseStageDistribution(item) {
+  const total = Math.max(Number(item?.estimated_quantity || 0), 0);
+  const fallbackActive =
+    Math.max(Number(item?.produced_parent_quantity ?? item?.received_quantity ?? 0), 0);
+  const note = String(item?.note || "");
+  const match = note.match(stageDistributionPattern);
+
+  if (match?.[1]) {
+    try {
+      const parsed = JSON.parse(match[1]);
+      const distribution = mainStageKeys.reduce((result, key) => ({
+        ...result,
+        [key]: Math.max(Number(parsed?.[key] || 0), 0),
+      }), {});
+      const used = mainStageKeys.reduce((sum, key) => sum + distribution[key], 0);
+      if (used > 0 || total === 0) return distribution;
+    } catch (error) {
+      console.warn("Ana ürün aşama dağılımı okunamadı:", error);
+    }
+  }
+
+  const pending = Math.max(total - fallbackActive, 0);
+  const status = item?.status || "Bekliyor";
+  return {
+    pending,
+    manufacturing: ["İşleme alındı", "İşlemde"].includes(status) ? fallbackActive : 0,
+    assembly: status === "Uygulamada" ? fallbackActive : 0,
+    ready: ["Hazır", "Sevke hazır"].includes(status) ? fallbackActive : 0,
+    shipped: status === "Sevk edildi" ? fallbackActive : 0,
+  };
+}
+
+function noteWithStageDistribution(note, distribution) {
+  const cleanNote = cleanItemNote(note);
+  const marker = `[[main_stage_distribution:${JSON.stringify(distribution)}]]`;
+  return [cleanNote, marker].filter(Boolean).join("\n");
+}
+
+function normalizeStageDistribution(rawDistribution, totalQuantity) {
+  let remaining = Math.max(Number(totalQuantity || 0), 0);
+  const normalized = {};
+  for (const key of ["manufacturing", "assembly", "ready", "shipped"]) {
+    const value = Math.min(Math.max(Number(rawDistribution?.[key] || 0), 0), remaining);
+    normalized[key] = value;
+    remaining -= value;
+  }
+  normalized.pending = Math.max(remaining, 0);
+  return normalized;
+}
+
+function statusForStageDistribution(distribution) {
+  if (Number(distribution.shipped || 0) > 0) return mainStageStatuses.shipped;
+  if (Number(distribution.ready || 0) > 0) return mainStageStatuses.ready;
+  if (Number(distribution.assembly || 0) > 0) return mainStageStatuses.assembly;
+  if (Number(distribution.manufacturing || 0) > 0) return mainStageStatuses.manufacturing;
+  return mainStageStatuses.pending;
+}
 
 function formatMoney(value, currency = "TRY") {
   return `${new Intl.NumberFormat("tr-TR", {
@@ -368,6 +446,7 @@ export default function ProjectDetailPage() {
   const [itemStockFilter, setItemStockFilter] = useState("all");
   const [itemPriceDrafts, setItemPriceDrafts] = useState({});
   const [processQuantityDrafts, setProcessQuantityDrafts] = useState({});
+  const [mainStageDrafts, setMainStageDrafts] = useState({});
   const [processingParentId, setProcessingParentId] = useState("");
   const [createdRequestId, setCreatedRequestId] = useState("");
   const [previewRows, setPreviewRows] = useState([]);
@@ -2792,6 +2871,75 @@ export default function ProjectDetailPage() {
     }
 
     setItems((prev) => prev.map((item) => (item.id === itemId ? { ...item, status } : item)));
+  }
+
+  function updateMainStageDraft(item, key, value) {
+    const current = mainStageDrafts[item.id] || parseStageDistribution(item);
+    const nextValue = Math.max(Number(String(value || "").replace(",", ".")) || 0, 0);
+    setMainStageDrafts((prev) => ({
+      ...prev,
+      [item.id]: normalizeStageDistribution({ ...current, [key]: nextValue }, item.estimated_quantity),
+    }));
+  }
+
+  async function saveMainStageDistribution(item) {
+    setMessage("");
+
+    const user = await getUserOrRedirect();
+    if (!user) return;
+
+    const distribution = normalizeStageDistribution(
+      mainStageDrafts[item.id] || parseStageDistribution(item),
+      item.estimated_quantity,
+    );
+    const activeQuantity = ["manufacturing", "assembly", "ready", "shipped"]
+      .reduce((sum, key) => sum + Number(distribution[key] || 0), 0);
+    const nextStatus = statusForStageDistribution(distribution);
+    const now = new Date().toISOString();
+    const payload = {
+      note: noteWithStageDistribution(item.note, distribution),
+      received_quantity: activeQuantity,
+      produced_parent_quantity: activeQuantity,
+      remaining_parent_quantity: Math.max(Number(item.estimated_quantity || 0) - activeQuantity, 0),
+      status: nextStatus,
+      updated_at: now,
+    };
+
+    let result = await supabase
+      .from("project_items")
+      .update(payload)
+      .eq("id", item.id)
+      .eq("project_id", projectId)
+      .eq("user_id", user.id)
+      .select("*")
+      .single();
+
+    if (result.error) {
+      const fallbackPayload = {
+        note: payload.note,
+        received_quantity: payload.received_quantity,
+        status: payload.status,
+        updated_at: payload.updated_at,
+      };
+      result = await supabase
+        .from("project_items")
+        .update(fallbackPayload)
+        .eq("id", item.id)
+        .eq("project_id", projectId)
+        .eq("user_id", user.id)
+        .select("*")
+        .single();
+    }
+
+    if (result.error) {
+      setMessage(result.error.message || "Ana ürün aşama dağılımı kaydedilemedi.");
+      return;
+    }
+
+    const updatedItem = result.data || { ...item, ...payload };
+    setItems((prev) => prev.map((candidate) => (candidate.id === item.id ? updatedItem : candidate)));
+    setMainStageDrafts((prev) => ({ ...prev, [item.id]: distribution }));
+    setMessage(`${item.product_name} için aşama dağılımı kaydedildi.`);
   }
 
   function startAddingChildItem(parentItem) {
@@ -7988,13 +8136,7 @@ export default function ProjectDetailPage() {
                   const stock = stockWarning(item);
                   const stockInfo = stockInfoForItem(item);
                   const quoteTotal = sectionQuoteTotalFor(item.product_name, Number(item.quote_total || item.estimated_total || 0) || 0);
-                  const mainStageRows = [
-                    { label: "Bekleyen", status: "Bekliyor", className: "bg-slate-100 text-slate-700", active: !item.status || item.status === "Bekliyor" },
-                    { label: "İmalat", status: "İşleme alındı", className: "bg-blue-50 text-blue-700", active: ["İşleme alındı", "İşlemde"].includes(item.status) },
-                    { label: "Montaj", status: "Uygulamada", className: "bg-violet-50 text-violet-700", active: item.status === "Uygulamada" },
-                    { label: "Hazır", status: "Hazır", className: "bg-emerald-50 text-emerald-700", active: ["Hazır", "Sevke hazır"].includes(item.status) },
-                    { label: "Sevk", status: "Sevk edildi", className: "bg-slate-900 text-white", active: item.status === "Sevk edildi" },
-                  ];
+                  const stageDistribution = mainStageDrafts[item.id] || parseStageDistribution(item);
 
                   return (
                     <div key={item.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
@@ -8032,17 +8174,30 @@ export default function ProjectDetailPage() {
                               <span className="text-emerald-700">Teklif bedeli: {formatMoney(quoteTotal, projectCurrencyForDisplay())}</span>
                             </div>
                             {stockInfo.isMainItem ? (
-                              <div className="mt-3 flex flex-wrap gap-2 text-xs font-bold">
-                                {mainStageRows.map((stage) => (
-                                  <button
-                                    key={stage.label}
-                                    type="button"
-                                    onClick={() => updateItemStatus(item.id, stage.status)}
-                                    className={`rounded-full px-3 py-1 transition ${stage.active ? stage.className : "bg-slate-50 text-slate-400 hover:bg-slate-100"}`}
-                                  >
-                                    {stage.label}: {stage.active ? formatQuantity(parentProcess.parentQuantity) : 0}
-                                  </button>
+                              <div className="mt-3 flex flex-wrap items-end gap-2 rounded-xl bg-slate-50 p-3 text-xs font-bold">
+                                <div className="rounded-lg bg-white px-3 py-2 text-slate-700 ring-1 ring-slate-200">
+                                  {mainStageLabels.pending}: {formatQuantity(stageDistribution.pending)}
+                                </div>
+                                {["manufacturing", "assembly", "ready", "shipped"].map((stageKey) => (
+                                  <label key={stageKey} className="flex w-24 flex-col gap-1">
+                                    <span className="text-[11px] font-black text-slate-500">{mainStageLabels[stageKey]}</span>
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      step="1"
+                                      value={stageDistribution[stageKey] ?? 0}
+                                      onChange={(event) => updateMainStageDraft(item, stageKey, event.target.value)}
+                                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-900"
+                                    />
+                                  </label>
                                 ))}
+                                <button
+                                  type="button"
+                                  onClick={() => saveMainStageDistribution(item)}
+                                  className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-black text-white hover:bg-slate-800"
+                                >
+                                  Kaydet
+                                </button>
                               </div>
                             ) : (
                               <div className="mt-1 text-xs font-bold text-slate-600">
@@ -8105,6 +8260,40 @@ export default function ProjectDetailPage() {
                           </button>
                         </div>
                       </div>
+                      {addingItemParentId === item.id && (
+                        <form onSubmit={addProjectItem} className="border-t border-indigo-100 bg-indigo-50/40 p-4">
+                          <div className="mb-3 flex items-center justify-between gap-3">
+                            <div>
+                              <div className="text-sm font-black text-slate-900">Bu ana ürüne malzeme ekle</div>
+                              <div className="text-xs text-slate-500">{item.product_name}</div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setAddingItemParentId("");
+                                setItemForm(emptyItem);
+                              }}
+                              className="rounded-lg bg-white px-3 py-2 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-50"
+                            >
+                              Vazgeç
+                            </button>
+                          </div>
+                          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                            <input className="rounded-xl border border-slate-300 p-3" placeholder="Ürün kodu" value={itemForm.product_code} onChange={(e) => updateItemProductCode(e.target.value)} />
+                            <input className="rounded-xl border border-slate-300 p-3" placeholder="Ürün adı" value={itemForm.product_name} onChange={(e) => updateItemForm("product_name", e.target.value)} />
+                            <input className="rounded-xl border border-slate-300 p-3" placeholder="Birim" value={itemForm.unit} onChange={(e) => updateItemForm("unit", e.target.value)} />
+                            <input type="number" className="rounded-xl border border-slate-300 p-3" placeholder="Miktar" value={itemForm.estimated_quantity} onChange={(e) => updateItemForm("estimated_quantity", e.target.value)} />
+                            <input type="number" className="rounded-xl border border-slate-300 p-3" placeholder="Birim fiyat" value={itemForm.estimated_unit_price} onChange={(e) => updateItemForm("estimated_unit_price", e.target.value)} />
+                            <select className="rounded-xl border border-slate-300 p-3" value={itemForm.status} onChange={(e) => updateItemForm("status", e.target.value)}>
+                              {componentItemStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
+                            </select>
+                            <textarea className="rounded-xl border border-slate-300 p-3 md:col-span-2" rows={2} placeholder="Not" value={itemForm.note} onChange={(e) => updateItemForm("note", e.target.value)} />
+                          </div>
+                          <button type="submit" className="mt-3 rounded-xl bg-indigo-600 px-5 py-3 text-sm font-bold text-white hover:bg-indigo-700">
+                            Malzemeyi Kaydet
+                          </button>
+                        </form>
+                      )}
                       {expandedItems[item.id] && (
                         <div className="border-t border-blue-100 bg-blue-50/40 p-4">
                           <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
@@ -8204,40 +8393,6 @@ export default function ProjectDetailPage() {
                               );
                             })}
                           </div>
-                          {addingItemParentId === item.id && (
-                            <form onSubmit={addProjectItem} className="mt-4 rounded-xl border border-indigo-100 bg-white p-4">
-                              <div className="mb-3 flex items-center justify-between gap-3">
-                                <div>
-                                  <div className="text-sm font-black text-slate-900">Bu ana ürüne malzeme ekle</div>
-                                  <div className="text-xs text-slate-500">{item.product_name}</div>
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setAddingItemParentId("");
-                                    setItemForm(emptyItem);
-                                  }}
-                                  className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-200"
-                                >
-                                  Vazgeç
-                                </button>
-                              </div>
-                              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                                <input className="rounded-xl border border-slate-300 p-3" placeholder="Ürün kodu" value={itemForm.product_code} onChange={(e) => updateItemProductCode(e.target.value)} />
-                                <input className="rounded-xl border border-slate-300 p-3" placeholder="Ürün adı" value={itemForm.product_name} onChange={(e) => updateItemForm("product_name", e.target.value)} />
-                                <input className="rounded-xl border border-slate-300 p-3" placeholder="Birim" value={itemForm.unit} onChange={(e) => updateItemForm("unit", e.target.value)} />
-                                <input type="number" className="rounded-xl border border-slate-300 p-3" placeholder="Miktar" value={itemForm.estimated_quantity} onChange={(e) => updateItemForm("estimated_quantity", e.target.value)} />
-                                <input type="number" className="rounded-xl border border-slate-300 p-3" placeholder="Birim fiyat" value={itemForm.estimated_unit_price} onChange={(e) => updateItemForm("estimated_unit_price", e.target.value)} />
-                                <select className="rounded-xl border border-slate-300 p-3" value={itemForm.status} onChange={(e) => updateItemForm("status", e.target.value)}>
-                                  {componentItemStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
-                                </select>
-                                <textarea className="rounded-xl border border-slate-300 p-3 md:col-span-2" rows={2} placeholder="Not" value={itemForm.note} onChange={(e) => updateItemForm("note", e.target.value)} />
-                              </div>
-                              <button type="submit" className="mt-3 rounded-xl bg-indigo-600 px-5 py-3 text-sm font-bold text-white hover:bg-indigo-700">
-                                Malzemeyi Kaydet
-                              </button>
-                            </form>
-                          )}
                         </div>
                       )}
                     </div>
