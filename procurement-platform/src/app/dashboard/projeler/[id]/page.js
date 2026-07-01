@@ -710,7 +710,6 @@ export default function ProjectDetailPage() {
       supabase
         .from("requests")
         .select("*")
-        .eq("project_id", projectId)
         .eq("user_id", user.id)
         .order("created_at", { ascending: false }),
       supabase
@@ -863,25 +862,35 @@ export default function ProjectDetailPage() {
       }));
     console.table(unlinkedItems);
     setItems(linkedItems);
-    let nextProjectRequests = requestRes.data || [];
-    if (projectRes.data?.project_code) {
-      const { data: fallbackRequests, error: fallbackRequestError } = await supabase
-        .from("requests")
-        .select("*")
-        .eq("user_id", user.id)
-        .ilike("ad", `${projectRes.data.project_code}%`)
-        .order("created_at", { ascending: false });
+    const linkedItemIds = new Set(linkedItems.map((item) => String(item.id)));
+    const requestBelongsToCurrentProject = (request) => {
+      if (String(request.project_id || "") === String(projectId)) return true;
+      if (projectRes.data?.project_code && String(request.ad || "").startsWith(projectRes.data.project_code)) return true;
 
-      if (fallbackRequestError) {
-        console.warn("Proje talepleri yedek listeleme uyarisi:", fallbackRequestError);
-      } else {
-        const seenRequestIds = new Set(nextProjectRequests.map((request) => request.id));
-        nextProjectRequests = [
-          ...nextProjectRequests,
-          ...(fallbackRequests || []).filter((request) => !seenRequestIds.has(request.id)),
-        ];
+      let requestItems = [];
+      if (Array.isArray(request.items)) {
+        requestItems = request.items;
+      } else if (typeof request.items === "string" && request.items.trim()) {
+        try {
+          const parsed = JSON.parse(request.items);
+          requestItems = Array.isArray(parsed) ? parsed : [];
+        } catch {
+          requestItems = [];
+        }
       }
-    } else if (requestRes.error) {
+
+      return requestItems.some((line) => {
+        if (String(line.projectId || line.project_id || "") === String(projectId)) return true;
+        if (line.projectItemId && linkedItemIds.has(String(line.projectItemId))) return true;
+        if ((line.projectItemIds || []).some((id) => linkedItemIds.has(String(id)))) return true;
+        return (Array.isArray(line.allocations) ? line.allocations : []).some((allocation) =>
+          String(allocation.projectId || allocation.project_id || "") === String(projectId)
+          || (allocation.projectItemId && linkedItemIds.has(String(allocation.projectItemId)))
+        );
+      });
+    };
+    const nextProjectRequests = (requestRes.data || []).filter(requestBelongsToCurrentProject);
+    if (requestRes.error) {
       console.warn("Proje talepleri listelenemedi:", requestRes.error);
     }
     setProjectRequests(nextProjectRequests);
@@ -4985,6 +4994,22 @@ export default function ProjectDetailPage() {
     };
   }
 
+  function projectItemIdsFromRequestLine(line) {
+    return Array.from(new Set([
+      ...(line.projectItemIds || []),
+      line.projectItemId,
+      ...(Array.isArray(line.allocations) ? line.allocations.map((allocation) => allocation.projectItemId || allocation.project_item_id) : []),
+    ].filter(Boolean)));
+  }
+
+  function parentItemIdsFromRequestLine(line) {
+    return Array.from(new Set([
+      ...(line.parentItemIds || []),
+      line.parentItemId,
+      ...(Array.isArray(line.allocations) ? line.allocations.map((allocation) => allocation.parentItemId || allocation.parent_item_id) : []),
+    ].filter(Boolean)));
+  }
+
   function summarizeRequestItems(lines) {
     const grouped = new Map();
 
@@ -4999,6 +5024,8 @@ export default function ProjectDetailPage() {
       const unitPrice = Number(line.birimFiyat ?? line.unit_price ?? line.estimated_unit_price ?? 0) || 0;
       const total = Number(line.toplam ?? line.total ?? line.estimated_total ?? 0) || unitPrice * quantity;
       const note = line.not || line.note || "";
+      const projectItemIds = projectItemIdsFromRequestLine(line);
+      const parentItemIds = parentItemIdsFromRequestLine(line);
 
       if (!grouped.has(key)) {
         grouped.set(key, {
@@ -5010,8 +5037,8 @@ export default function ProjectDetailPage() {
           toplam: total,
           paraBirimi: line.paraBirimi || line.currency || "TRY",
           not: note,
-          projectItemIds: line.projectItemIds || (line.projectItemId ? [line.projectItemId] : []),
-          parentItemIds: line.parentItemIds || (line.parentItemId ? [line.parentItemId] : []),
+          projectItemIds,
+          parentItemIds,
           sourceLineCount: 1,
         });
         return;
@@ -5029,8 +5056,8 @@ export default function ProjectDetailPage() {
         toplam: Number(existing.toplam || 0) + total,
         paraBirimi: existing.paraBirimi || line.paraBirimi || line.currency || "TRY",
         not: Array.from(notes).join(" | "),
-        projectItemIds: Array.from(new Set([...(existing.projectItemIds || []), ...(line.projectItemIds || []), line.projectItemId].filter(Boolean))),
-        parentItemIds: Array.from(new Set([...(existing.parentItemIds || []), ...(line.parentItemIds || []), line.parentItemId].filter(Boolean))),
+        projectItemIds: Array.from(new Set([...(existing.projectItemIds || []), ...projectItemIds])),
+        parentItemIds: Array.from(new Set([...(existing.parentItemIds || []), ...parentItemIds])),
         sourceLineCount: Number(existing.sourceLineCount || 1) + 1,
       });
     });
@@ -6893,37 +6920,7 @@ export default function ProjectDetailPage() {
             <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
               <SummaryCard title="Ana Kalem" value={parentItems.length} text="Takip edilen proje malzemesi" tone="blue" />
               <SummaryCard title="Stoktan Karşılanabilir" value={stockCoverableItems.length} text="Rezervasyona uygun alt ürün" tone="green" />
-              <SummaryCard title="Satınalma / Kritik" value={purchaseRequiredItems.length} text="Talep veya kontrol bekleyen alt ürün" tone="red" />
-            </div>
-
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-              <div className={`rounded-2xl border p-4 shadow-sm ${projectRequests.length > 0 ? "border-blue-100 bg-blue-50" : "border-amber-100 bg-amber-50"}`}>
-                <div className={`text-xs font-black uppercase ${projectRequests.length > 0 ? "text-blue-700" : "text-amber-700"}`}>Talep durumu</div>
-                <div className="mt-2 text-lg font-black text-slate-950">
-                  {projectRequests.length > 0 ? `${projectRequests.length} talep oluşturuldu` : "Henüz talep oluşturulmadı"}
-                </div>
-                <div className="mt-1 text-xs font-bold text-slate-600">
-                  Satınalma listesine aktarılan kalemler Talepler sekmesinde takip edilir.
-                </div>
-              </div>
-              <div className={`rounded-2xl border p-4 shadow-sm ${stockMovements.length > 0 ? "border-emerald-100 bg-emerald-50" : "border-slate-200 bg-white"}`}>
-                <div className={`text-xs font-black uppercase ${stockMovements.length > 0 ? "text-emerald-700" : "text-slate-500"}`}>Stoktan karşılama</div>
-                <div className="mt-2 text-lg font-black text-slate-950">
-                  {stockMovements.length > 0 ? `${stockMovements.length} stok hareketi ayrıldı` : "Stoktan ayrılan kalem yok"}
-                </div>
-                <div className="mt-1 text-xs font-bold text-slate-600">
-                  Ayrılan miktarlar bu projeye bağlanır; stok listesinde boştaki miktar azalır.
-                </div>
-              </div>
-              <div className={`rounded-2xl border p-4 shadow-sm ${purchaseRequiredItems.length > 0 ? "border-red-100 bg-red-50" : "border-emerald-100 bg-emerald-50"}`}>
-                <div className={`text-xs font-black uppercase ${purchaseRequiredItems.length > 0 ? "text-red-700" : "text-emerald-700"}`}>Açık satınalma</div>
-                <div className="mt-2 text-lg font-black text-slate-950">
-                  {purchaseRequiredItems.length > 0 ? `${purchaseRequiredItems.length} kalem açık` : "Açık satınalma kalemi yok"}
-                </div>
-                <div className="mt-1 text-xs font-bold text-slate-600">
-                  Talep veya stok karşılama yapılmadıysa kalemler burada açık görünür.
-                </div>
-              </div>
+              <SummaryCard title="Satınalma / Kritik" value={purchaseRequiredItems.length} text="Stokla kapanmayan alt ürün" tone="red" />
             </div>
 
             <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
