@@ -955,12 +955,12 @@ export default function ProjectsPage() {
           : requestedItems > 0
             ? { label: `${requestedItems} talepte`, tone: "blue" }
           : stockCoveredQuantity > 0
-            ? { label: `${formatQuantity(stockCoveredQuantity)} stoktan karşılandı`, tone: "green" }
+            ? { label: `${formatQuantity(stockCoveredQuantity)} rezerve`, tone: "green" }
             : completedItems > 0
               ? { label: "Tamamlandı", tone: "green" }
               : { label: "Bekliyor", tone: "slate" };
     const materialStatusParts = [
-      stockCoveredQuantity > 0 ? `Stoktan ${formatQuantity(stockCoveredQuantity)}` : null,
+      stockCoveredQuantity > 0 ? `Stoktan ayrılan ${formatQuantity(stockCoveredQuantity)}` : null,
       requestedItems > 0 ? `Talepte ${requestedItems}` : null,
       missingMaterials > 0 ? `Eksik ${missingMaterials}` : null,
       orderedItems > 0 ? `Siparişte ${orderedItems}` : null,
