@@ -6524,6 +6524,7 @@ export default function ProjectDetailPage() {
   const offerTotalsByCurrency = compactMoneyGroups(projectOffers, offerAmount, (offer) => offer.para_birimi || offer.currency || projectCurrencyForDisplay());
   const stockTotalsByCurrency = compactMoneyGroups(stockMovements, movementAmount, (movement) => movement.currency || projectCurrencyForDisplay());
   const dependencySummary = projectDependencySummary();
+  const showLiveRatePanel = activeTab === tabs[0] || activeTab === tabs[6];
 
   if (loading) {
     return <div className="p-6 text-sm text-slate-500">Proje yükleniyor...</div>;
@@ -6818,62 +6819,64 @@ export default function ProjectDetailPage() {
           </div>
         )}
 
-        <section className="rounded-2xl border border-blue-100 bg-blue-50 p-4 shadow-sm">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-            <div>
-              <div className="text-sm font-black text-blue-900">Canlı kur bilgisi</div>
-              <p className="mt-1 text-xs font-semibold text-blue-700">
-                Proje kuru sabitlenirse bütçe ve finans takibinde kayıtlı kur esas alınır.
-              </p>
-              <div className="mt-3 flex flex-wrap gap-2">
-                {liveCurrencyOptions.map((currency) => (
-                  <span key={currency} className="rounded-xl bg-white px-3 py-2 text-xs font-black text-blue-900">
-                    {currency}: {liveRateFor(currency, liveRates) ? formatMoney(liveRateFor(currency, liveRates), "TRY") : "Alınamadı"}
-                  </span>
-                ))}
-                {liveRates?.date && (
-                  <span className="rounded-xl bg-blue-100 px-3 py-2 text-xs font-bold text-blue-800">
-                    {liveRates.date}
-                  </span>
-                )}
-                {liveRates?.source && (
-                  <span className={`rounded-xl px-3 py-2 text-xs font-bold ${liveRates.fallback ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"}`}>
-                    {liveRates.fallback ? "Kayıtlı kur kullanılıyor" : liveRates.source}
-                  </span>
-                )}
+        {showLiveRatePanel && (
+          <section className="rounded-2xl border border-blue-100 bg-blue-50 p-4 shadow-sm">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <div className="text-sm font-black text-blue-900">Canlı kur bilgisi</div>
+                <p className="mt-1 text-xs font-semibold text-blue-700">
+                  Proje kuru sabitlenirse bütçe ve finans takibinde kayıtlı kur esas alınır.
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {liveCurrencyOptions.map((currency) => (
+                    <span key={currency} className="rounded-xl bg-white px-3 py-2 text-xs font-black text-blue-900">
+                      {currency}: {liveRateFor(currency, liveRates) ? formatMoney(liveRateFor(currency, liveRates), "TRY") : "Alınamadı"}
+                    </span>
+                  ))}
+                  {liveRates?.date && (
+                    <span className="rounded-xl bg-blue-100 px-3 py-2 text-xs font-bold text-blue-800">
+                      {liveRates.date}
+                    </span>
+                  )}
+                  {liveRates?.source && (
+                    <span className={`rounded-xl px-3 py-2 text-xs font-bold ${liveRates.fallback ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"}`}>
+                      {liveRates.fallback ? "Kayıtlı kur kullanılıyor" : liveRates.source}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div className="grid min-w-0 grid-cols-1 gap-2 text-xs font-bold text-slate-700 sm:grid-cols-2 lg:min-w-[420px]">
+                {[
+                  ["Sözleşme", project?.contract_currency, project?.contract_exchange_rate],
+                  ["Bütçe", project?.estimated_budget_currency, project?.estimated_budget_exchange_rate],
+                ].map(([label, currency, savedRate]) => {
+                  const liveRate = liveRateFor(currency, liveRates);
+                  return (
+                    <div key={label} className="rounded-xl bg-white p-3">
+                      <div className="font-black text-slate-950">{label}: {currency || "TRY"}</div>
+                      <div className="mt-1">Kayıt kuru: {Number(savedRate || 1).toLocaleString("tr-TR")}</div>
+                      <div className="mt-1">
+                        Canlı: {liveRate ? liveRate.toLocaleString("tr-TR", { maximumFractionDigits: 4 }) : "-"}
+                      </div>
+                      {liveRate && Number(savedRate || 0) > 0 && (
+                        <div className="mt-1 text-blue-700">
+                          Fark %{rateDiffPercent(savedRate, liveRate).toFixed(1)}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                <button
+                  type="button"
+                  onClick={lockProjectRates}
+                  className="rounded-xl bg-blue-600 px-4 py-3 text-sm font-black text-white hover:bg-blue-700 sm:col-span-2"
+                >
+                  Proje Kuru Sabitle
+                </button>
               </div>
             </div>
-            <div className="grid min-w-0 grid-cols-1 gap-2 text-xs font-bold text-slate-700 sm:grid-cols-2 lg:min-w-[420px]">
-              {[
-                ["Sözleşme", project?.contract_currency, project?.contract_exchange_rate],
-                ["Bütçe", project?.estimated_budget_currency, project?.estimated_budget_exchange_rate],
-              ].map(([label, currency, savedRate]) => {
-                const liveRate = liveRateFor(currency, liveRates);
-                return (
-                  <div key={label} className="rounded-xl bg-white p-3">
-                    <div className="font-black text-slate-950">{label}: {currency || "TRY"}</div>
-                    <div className="mt-1">Kayıt kuru: {Number(savedRate || 1).toLocaleString("tr-TR")}</div>
-                    <div className="mt-1">
-                      Canlı: {liveRate ? liveRate.toLocaleString("tr-TR", { maximumFractionDigits: 4 }) : "-"}
-                    </div>
-                    {liveRate && Number(savedRate || 0) > 0 && (
-                      <div className="mt-1 text-blue-700">
-                        Fark %{rateDiffPercent(savedRate, liveRate).toFixed(1)}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-              <button
-                type="button"
-                onClick={lockProjectRates}
-                className="rounded-xl bg-blue-600 px-4 py-3 text-sm font-black text-white hover:bg-blue-700 sm:col-span-2"
-              >
-                Proje Kuru Sabitle
-              </button>
-            </div>
-          </div>
-        </section>
+          </section>
+        )}
 
         <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
           <div className="flex min-w-max gap-2">

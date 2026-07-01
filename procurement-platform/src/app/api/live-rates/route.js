@@ -2,6 +2,30 @@ import { NextResponse } from "next/server";
 
 const TARGETS = ["USD", "EUR", "GBP"];
 
+function textBetween(text, start, end) {
+  const match = String(text || "").match(new RegExp(`${start}([\\s\\S]*?)${end}`));
+  return match?.[1]?.trim() || "";
+}
+
+function normalizeRatesFromTcmb(xmlText) {
+  const rates = { TRY: 1 };
+  const currencyBlocks = String(xmlText || "").match(/<Currency[\s\S]*?<\/Currency>/g) || [];
+  TARGETS.forEach((currency) => {
+    const block = currencyBlocks.find((row) =>
+      row.includes(`CurrencyCode="${currency}"`) || row.includes(`Kod="${currency}"`)
+    ) || "";
+    const unit = Number(textBetween(block, "<Unit>", "</Unit>")) || 1;
+    const selling = Number(textBetween(block, "<ForexSelling>", "</ForexSelling>"));
+    if (selling > 0) rates[currency] = selling / unit;
+  });
+  const date = String(xmlText || "").match(/Tarih="([^"]+)"/)?.[1] || new Date().toISOString().slice(0, 10);
+  return {
+    date,
+    source: "TCMB döviz satış",
+    rates,
+  };
+}
+
 function normalizeRatesFromFrankfurter(data) {
   const rates = { TRY: 1 };
   TARGETS.forEach((currency) => {
@@ -36,8 +60,25 @@ async function fetchJson(url) {
   return response.json();
 }
 
+async function fetchText(url) {
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) throw new Error(`Kur servisi yanıt vermedi: ${response.status}`);
+  return response.text();
+}
+
 export async function GET() {
   const errors = [];
+
+  try {
+    const data = await fetchText("https://www.tcmb.gov.tr/kurlar/today.xml");
+    const result = normalizeRatesFromTcmb(data);
+    if (TARGETS.every((currency) => Number(result.rates[currency] || 0) > 0)) {
+      return NextResponse.json(result);
+    }
+    errors.push("TCMB eksik kur döndürdü.");
+  } catch (error) {
+    errors.push(error?.message || "TCMB alınamadı.");
+  }
 
   try {
     const data = await fetchJson("https://api.frankfurter.app/latest?from=TRY&to=USD,EUR,GBP");
