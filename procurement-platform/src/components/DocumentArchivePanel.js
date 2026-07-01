@@ -1,6 +1,7 @@
 "use client";
 
 const documentTypeLabels = {
+  proje: "Proje Kaynak Dosyası",
   fatura: "Fatura",
   irsaliye: "İrsaliye",
   depo_giris: "Teslim Fişi",
@@ -72,7 +73,7 @@ export default function DocumentArchivePanel({
     groups[type].push(document);
     return groups;
   }, {});
-  const orderedTypes = ["fatura", "irsaliye", "depo_giris", "teslim_fisi", "teklif", "siparis_formu", "diger", "odeme"];
+  const orderedTypes = ["proje", "fatura", "irsaliye", "depo_giris", "teslim_fisi", "teklif", "siparis_formu", "diger", "odeme"];
   const visibleTypes = [
     ...orderedTypes.filter((type) => groupedDocuments[type]?.length),
     ...Object.keys(groupedDocuments).filter((type) => !orderedTypes.includes(type)),
@@ -148,6 +149,7 @@ export default function DocumentArchivePanel({
               <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
                 {groupedDocuments[type].map((document) => {
                   const pdfDocument = isPdfDocument(document);
+                  const hasStoredFile = Boolean(document.storage_path);
                   return (
                     <article key={document.id} className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm">
                       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -174,7 +176,7 @@ export default function DocumentArchivePanel({
                       <div className="mt-4 flex flex-wrap gap-2">
                         <button
                           type="button"
-                          disabled={!pdfDocument || loadingDocumentId === document.id}
+                          disabled={!hasStoredFile || !pdfDocument || loadingDocumentId === document.id}
                           onClick={() => onPreview?.(document)}
                           className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-black text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300"
                         >
@@ -182,7 +184,7 @@ export default function DocumentArchivePanel({
                         </button>
                         <button
                           type="button"
-                          disabled={loadingDocumentId === document.id}
+                          disabled={!hasStoredFile || loadingDocumentId === document.id}
                           onClick={() => onOpen?.(document)}
                           className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100"
                         >
@@ -190,13 +192,19 @@ export default function DocumentArchivePanel({
                         </button>
                         <button
                           type="button"
-                          disabled={loadingDocumentId === document.id}
+                          disabled={!hasStoredFile || loadingDocumentId === document.id}
                           onClick={() => onDownload?.(document)}
                           className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100"
                         >
                           İndir
                         </button>
                       </div>
+
+                      {!hasStoredFile && (
+                        <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs font-bold text-amber-800">
+                          Bu proje eski akışta açıldığı için orijinal dosya arşive kaydedilmemiş; burada proje kaydından okunan kaynak dosya adı gösteriliyor.
+                        </div>
+                      )}
 
                       {renderExtra?.(document)}
                     </article>

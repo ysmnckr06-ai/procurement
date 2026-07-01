@@ -539,6 +539,84 @@ export default function ProjectsPage() {
     };
   }
 
+  async function fileSha256(file) {
+    const buffer = await file.arrayBuffer();
+    const digest = await crypto.subtle.digest("SHA-256", buffer);
+    return Array.from(new Uint8Array(digest))
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("");
+  }
+
+  async function archiveProjectSourceFiles(files, projectId, userId, projectPayload) {
+    const warnings = [];
+    for (const file of files) {
+      try {
+        const contentSha256 = await fileSha256(file);
+        const { data: existingDocument, error: existingDocumentError } = await supabase
+          .from("documents")
+          .select("id")
+          .eq("user_id", userId)
+          .eq("content_sha256", contentSha256)
+          .maybeSingle();
+
+        if (existingDocumentError) {
+          warnings.push(`${file.name} belge mükerrer kontrolü yapılamadı.`);
+          continue;
+        }
+
+        if (existingDocument) {
+          warnings.push(`${file.name} daha önce belge arşivine kaydedilmiş.`);
+          continue;
+        }
+
+        const safeFileName = String(file.name || "proje-dosyasi")
+          .replace(/[^a-zA-Z0-9._-]/g, "-")
+          .replace(/-+/g, "-");
+        const fileId = typeof crypto !== "undefined" && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        const storagePath = `${userId}/projects/${projectId}/${fileId}-${safeFileName}`;
+        const { error: uploadError } = await supabase.storage
+          .from("order-documents")
+          .upload(storagePath, file, {
+            cacheControl: "3600",
+            contentType: file.type || undefined,
+            upsert: false,
+          });
+
+        if (uploadError) {
+          warnings.push(`${file.name} belge arşivine yüklenemedi.`);
+          continue;
+        }
+
+        const { error: documentError } = await supabase
+          .from("documents")
+          .insert({
+            user_id: userId,
+            document_type: "proje",
+            original_file_name: file.name,
+            storage_bucket: "order-documents",
+            storage_path: storagePath,
+            mime_type: file.type || null,
+            file_size: file.size || null,
+            content_sha256: contentSha256,
+            supplier_name: projectPayload.customer_partner_name || projectPayload.customer_name || null,
+            document_date: projectPayload.start_date || null,
+            currency: projectPayload.estimated_budget_currency || projectPayload.contract_currency || getBaseCurrency(settings),
+          });
+
+        if (documentError) {
+          await supabase.storage.from("order-documents").remove([storagePath]);
+          warnings.push(`${file.name} belge bilgisi kaydedilemedi.`);
+        }
+      } catch (error) {
+        warnings.push(`${file.name} belge arşivine alınamadı.`);
+      }
+    }
+
+    return warnings;
+  }
+
   async function importProjectFilesForProject(files, projectId, userId, projectPayload) {
     if (!files.length) return { imported: 0, parents: 0, children: 0, warnings: [] };
 
@@ -801,12 +879,14 @@ export default function ProjectsPage() {
     if (projectFiles.length > 0 && targetProjectId) {
       setMessage("Proje kaydedildi. Seçilen teklif/dosya analiz ediliyor...");
       try {
+        const archiveWarnings = await archiveProjectSourceFiles(projectFiles, targetProjectId, user.id, payload);
         const importResult = await importProjectFilesForProject(projectFiles, targetProjectId, user.id, payload);
         fileImportMessage = importResult.imported > 0
           ? `Dosyadan ${importResult.imported} kalem aktarıldı (${importResult.parents || 0} ana kalem, ${importResult.children || 0} alt kalem, ${importResult.standalone || 0} bağımsız kalem).`
           : "Proje kaydedildi ancak dosyadan aktarılacak kalem bulunamadı.";
-        if (importResult.warnings?.length) {
-          fileImportMessage += ` ${importResult.warnings.slice(0, 2).join(" ")}`;
+        const combinedWarnings = [...archiveWarnings, ...(importResult.warnings || [])];
+        if (combinedWarnings.length) {
+          fileImportMessage += ` ${combinedWarnings.slice(0, 2).join(" ")}`;
         }
       } catch (fileError) {
         console.error("Yeni proje dosyası aktarımı başarısız:", fileError);

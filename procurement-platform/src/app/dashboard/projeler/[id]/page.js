@@ -910,7 +910,30 @@ export default function ProjectDetailPage() {
       }
     }
 
-    setProjectDocuments(nextProjectDocuments);
+    const { data: sourceDocumentRows, error: sourceDocumentError } = await supabase
+      .from("documents")
+      .select("*")
+      .eq("user_id", user.id)
+      .like("storage_path", `${user.id}/projects/${projectId}/%`)
+      .order("created_at", { ascending: false });
+
+    if (sourceDocumentError) {
+      console.warn("Proje kaynak belgeleri okunamadı:", sourceDocumentError);
+    } else if (sourceDocumentRows?.length) {
+      const existingDocumentIds = new Set(nextProjectDocuments.map((document) => String(document.id)));
+      nextProjectDocuments = [
+        ...sourceDocumentRows
+          .filter((document) => !existingDocumentIds.has(String(document.id)))
+          .map((document) => ({
+            ...document,
+            document_type: document.document_type || "proje",
+            linked_project_id: projectId,
+            linked_project_code: projectRes.data?.project_code || null,
+          })),
+        ...nextProjectDocuments,
+      ];
+    }
+
     setProjectOrderPayments(nextProjectOrderPayments);
     setFinanceLoadWarnings(nextFinanceWarnings);
 
@@ -921,6 +944,8 @@ export default function ProjectDetailPage() {
     setProducts(productRes.data || []);
     const loadedItems = itemRes.data || [];
     const linkedItems = await ensureProductCardsForProjectItems(loadedItems, user.id, productRes.data || []);
+    const sourceFileDocuments = sourceFileDocumentsFromItems(projectRes.data, linkedItems, nextProjectDocuments);
+    setProjectDocuments([...sourceFileDocuments, ...nextProjectDocuments]);
     const linkedCount = linkedItems.filter((item) => item.product_id).length;
     const parentIdsWithChildren = new Set(linkedItems.map((item) => item.parent_item_id).filter(Boolean));
     const unlinkedItems = linkedItems
@@ -6518,6 +6543,35 @@ export default function ProjectDetailPage() {
     return `${new Intl.NumberFormat("tr-TR", {
       maximumFractionDigits: 2,
     }).format(Number(quantity || 0))} ${unit || "adet"}`;
+  }
+
+  function sourceFileDocumentsFromItems(projectRow, projectItems, storedDocuments = []) {
+    const storedNames = new Set(
+      (storedDocuments || [])
+        .map((document) => String(document.original_file_name || "").trim().toLocaleLowerCase("tr-TR"))
+        .filter(Boolean),
+    );
+    const sourceNames = Array.from(new Set(
+      (projectItems || [])
+        .map((item) => String(item.source_file || "").trim())
+        .filter(Boolean),
+    ));
+
+    return sourceNames
+      .filter((fileName) => !storedNames.has(fileName.toLocaleLowerCase("tr-TR")))
+      .map((fileName) => ({
+        id: `source-file-${projectId}-${fileName}`,
+        document_type: "proje",
+        original_file_name: fileName,
+        mime_type: fileName.toLocaleLowerCase("tr-TR").endsWith(".pdf")
+          ? "application/pdf"
+          : "application/vnd.ms-excel",
+        file_size: 0,
+        created_at: projectRow?.created_at || projectRow?.updated_at || null,
+        linked_project_id: projectId,
+        linked_project_code: projectRow?.project_code || null,
+        ocr_status: "source_only",
+      }));
   }
 
   const projectReportTotal = projectReports.reduce((sum, report) => sum + reportAmount(report), 0);
