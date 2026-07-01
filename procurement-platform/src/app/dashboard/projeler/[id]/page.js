@@ -7987,11 +7987,14 @@ export default function ProjectDetailPage() {
                   const children = allChildren;
                   const stock = stockWarning(item);
                   const stockInfo = stockInfoForItem(item);
-                  const itemPrice = resolveProjectItemPrice(item);
                   const quoteTotal = sectionQuoteTotalFor(item.product_name, Number(item.quote_total || item.estimated_total || 0) || 0);
-                  const childResolvedTotal = allChildren.reduce((sum, child) => sum + resolveProjectItemPrice(child).total, 0);
-                  const itemDifference = quoteTotal - childResolvedTotal;
-                  const priceLivesOnParent = allChildren.length > 0 && quoteTotal > 0 && childResolvedTotal === 0;
+                  const mainStageRows = [
+                    { label: "Bekleyen", status: "Bekliyor", className: "bg-slate-100 text-slate-700", active: !item.status || item.status === "Bekliyor" },
+                    { label: "İmalat", status: "İşleme alındı", className: "bg-blue-50 text-blue-700", active: ["İşleme alındı", "İşlemde"].includes(item.status) },
+                    { label: "Montaj", status: "Uygulamada", className: "bg-violet-50 text-violet-700", active: item.status === "Uygulamada" },
+                    { label: "Hazır", status: "Hazır", className: "bg-emerald-50 text-emerald-700", active: ["Hazır", "Sevke hazır"].includes(item.status) },
+                    { label: "Sevk", status: "Sevk edildi", className: "bg-slate-900 text-white", active: item.status === "Sevk edildi" },
+                  ];
 
                   return (
                     <div key={item.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
@@ -8015,76 +8018,31 @@ export default function ProjectDetailPage() {
                           <div className="min-w-0 flex-1">
                             <div className="flex flex-wrap items-center gap-2">
                               <span className="rounded-full bg-slate-900 px-2.5 py-1 text-[11px] font-black text-white">Ana ürün</span>
-                              <span className="text-xs font-bold text-slate-500">{item.product_code || "-"} · {Number(item.estimated_quantity || 0)} {item.unit || "adet"}</span>
                             </div>
-                            <div className="mt-2 text-lg font-black text-slate-950">{item.product_name}</div>
+                            <div className="mt-2 flex flex-wrap items-center gap-2">
+                              <div className="text-lg font-black text-slate-950">{item.product_name}</div>
+                              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-black text-slate-700">
+                                Toplam {formatQuantity(parentProcess.parentQuantity)} {item.unit || "adet"}
+                              </span>
+                            </div>
                             <div className="mt-1 flex flex-wrap items-center gap-2 text-xs font-bold">
                               {productCardLabel(item) && (
                                 <span className={`rounded-full px-2 py-1 ${productCardLabelClass(item)}`}>{productCardLabel(item)}</span>
                               )}
-                              <span className="text-emerald-700">Teklif bedeli: {formatMoney(quoteTotal)}</span>
-                              {priceLivesOnParent ? (
-                                <span className="text-amber-700">Parça fiyatı yok; bedel ana toplamda</span>
-                              ) : (
-                                <>
-                                  <span className="text-blue-700">Alt malzeme toplamı: {formatMoney(childResolvedTotal)}</span>
-                                  <span className={itemDifference >= 0 ? "text-emerald-700" : "text-red-700"}>Fark: {formatMoney(itemDifference)}</span>
-                                </>
-                              )}
-                              <span className={`rounded-full px-2 py-1 ${priceSourceClass(itemPrice.source)}`}>{itemPrice.source}</span>
+                              <span className="text-emerald-700">Teklif bedeli: {formatMoney(quoteTotal, projectCurrencyForDisplay())}</span>
                             </div>
                             {stockInfo.isMainItem ? (
-                              <div className="mt-3 space-y-3">
-                                <div className="grid grid-cols-2 gap-2 text-xs md:grid-cols-4">
-                                  <div className="rounded-xl bg-slate-50 px-3 py-2">
-                                    <div className="font-bold text-slate-500">Toplam</div>
-                                    <div className="mt-1 font-black text-slate-950">{formatQuantity(parentProcess.parentQuantity)} {item.unit || "adet"}</div>
-                                  </div>
-                                  <div className="rounded-xl bg-blue-50 px-3 py-2">
-                                    <div className="font-bold text-blue-700">İşlenen</div>
-                                    <div className="mt-1 font-black text-blue-950">{formatQuantity(parentProcess.producedParentQuantity)}</div>
-                                  </div>
-                                  <div className="rounded-xl bg-emerald-50 px-3 py-2">
-                                    <div className="font-bold text-emerald-700">Kalan</div>
-                                    <div className="mt-1 font-black text-emerald-950">{formatQuantity(parentProcess.remainingParentQuantity)}</div>
-                                  </div>
-                                  <div className="rounded-xl bg-indigo-50 px-3 py-2">
-                                    <div className="font-bold text-indigo-700">Alt ürün</div>
-                                    <div className="mt-1 font-black text-indigo-950">{allChildren.length}</div>
-                                  </div>
-                                </div>
-                                <label className="flex max-w-xs flex-col gap-1 text-[11px] font-bold text-slate-500">
-                                  Ana kalem durumu
-                                  <select
-                                    className="rounded-lg border border-slate-200 bg-white p-2 text-xs font-bold text-slate-800"
-                                    value={item.status || "Bekliyor"}
-                                    onChange={(e) => updateItemStatus(item.id, e.target.value)}
+                              <div className="mt-3 flex flex-wrap gap-2 text-xs font-bold">
+                                {mainStageRows.map((stage) => (
+                                  <button
+                                    key={stage.label}
+                                    type="button"
+                                    onClick={() => updateItemStatus(item.id, stage.status)}
+                                    className={`rounded-full px-3 py-1 transition ${stage.active ? stage.className : "bg-slate-50 text-slate-400 hover:bg-slate-100"}`}
                                   >
-                                    {mainItemStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
-                                  </select>
-                                </label>
-                                {allChildren.length > 0 && (
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <input
-                                      type="number"
-                                      min="0"
-                                      max={parentProcess.remainingParentQuantity}
-                                      step="0.01"
-                                      value={processQuantityDrafts[item.id] || ""}
-                                      onChange={(event) => setProcessQuantityDrafts((prev) => ({ ...prev, [item.id]: event.target.value }))}
-                                      className="w-32 rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold"
-                                      placeholder="Tamamlanan miktar"
-                                    />
-                                    <button
-                                      type="button"
-                                      disabled={processingParentId === item.id || parentProcess.remainingParentQuantity <= 0}
-                                      onClick={() => processParentItem(item)}
-                                      className="rounded-lg bg-violet-50 px-3 py-2 text-xs font-bold text-violet-700 hover:bg-violet-100 disabled:bg-slate-100 disabled:text-slate-400"
-                                    >
-                                      {processingParentId === item.id ? "Kaydediliyor..." : "Tamamlanan Miktarı Kaydet"}
-                                    </button>
-                                  </div>
-                                )}
+                                    {stage.label}: {stage.active ? formatQuantity(parentProcess.parentQuantity) : 0}
+                                  </button>
+                                ))}
                               </div>
                             ) : (
                               <div className="mt-1 text-xs font-bold text-slate-600">
@@ -8120,15 +8078,19 @@ export default function ProjectDetailPage() {
                           </div>
                         </div>
                         <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
-                          <span className={`rounded-full px-3 py-1 text-xs font-bold ${itemStatusClass(item.status)}`}>Süreç: {item.status || "Bekliyor"}</span>
-                          <span className={`rounded-full px-3 py-1 text-xs font-bold ${
-                            stock.tone === "green" ? "bg-green-100 text-green-700" :
-                            stock.tone === "yellow" ? "bg-yellow-100 text-yellow-700" :
-                            stock.tone === "red" ? "bg-red-100 text-red-700" :
-                            "bg-slate-100 text-slate-700"
-                          }`}>
-                            {stockInfo.isMainItem ? "Ana kalem takibi" : `Stok bilgisi: ${stock.available}`}
-                          </span>
+                          {!stockInfo.isMainItem && (
+                            <>
+                              <span className={`rounded-full px-3 py-1 text-xs font-bold ${itemStatusClass(item.status)}`}>Süreç: {item.status || "Bekliyor"}</span>
+                              <span className={`rounded-full px-3 py-1 text-xs font-bold ${
+                                stock.tone === "green" ? "bg-green-100 text-green-700" :
+                                stock.tone === "yellow" ? "bg-yellow-100 text-yellow-700" :
+                                stock.tone === "red" ? "bg-red-100 text-red-700" :
+                                "bg-slate-100 text-slate-700"
+                              }`}>
+                                Stok bilgisi: {stock.available}
+                              </span>
+                            </>
+                          )}
                           <button type="button" onClick={() => setExpandedItems((prev) => ({ ...prev, [item.id]: !prev[item.id] }))} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-black text-white hover:bg-blue-700">
                             {expandedItems[item.id] ? "Alt ürünleri gizle" : `Alt ürünleri göster (${allChildren.length})`}
                           </button>
