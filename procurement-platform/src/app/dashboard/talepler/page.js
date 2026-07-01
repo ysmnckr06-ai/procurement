@@ -66,18 +66,34 @@ function requestProjectSummary(request) {
   const names = new Set();
   items.forEach((item) => {
     (Array.isArray(item.allocations) ? item.allocations : []).forEach((allocation) => {
-      const label = [allocation.projectCode, allocation.projectName].filter(Boolean).join(" - ");
+      const label = allocation.projectCode || allocation.projectName;
       if (label) names.add(label);
     });
   });
   if (names.size === 0) return request?.project_id ? "Proje bağlantılı" : "Proje bağımsız";
   const values = Array.from(names);
-  return values.length > 1 ? `${values[0]} +${values.length - 1}` : values[0];
+  return values.join(" / ");
 }
 
 function requestOwnerSummary(request) {
   const meta = getRequestMeta(request);
   return [meta.requester || meta.createdBy, meta.department].filter(Boolean).join(" / ") || "Sistem kullanıcısı";
+}
+
+function requestPriority(request) {
+  return getRequestMeta(request).priority || "Normal";
+}
+
+function requestProcessInfo(request) {
+  const meta = getRequestMeta(request);
+  if (!meta.processedBy && !meta.processedAt) return "";
+  return [meta.processedBy, meta.processedAt ? new Date(meta.processedAt).toLocaleDateString("tr-TR") : ""]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function requestSequenceLabel(index, total) {
+  return `TLB-${String(Math.max(total - index, 1)).padStart(5, "0")}`;
 }
 
 function readItemField(item, keys, fallback = "") {
@@ -213,7 +229,7 @@ async function fetchTenantStockProducts(userId) {
     const from = page * 1000;
     const { data, error } = await supabase
       .from("products")
-      .select("id,product_code,product_name,current_stock,reserved_stock")
+      .select("id,product_code,product_name,brand,unit,current_stock,reserved_stock")
       .eq("user_id", userId)
       .is("archived_at", null)
       .range(from, from + 999);
@@ -565,7 +581,7 @@ export default function TaleplerPage() {
   const [quantityDrafts, setQuantityDrafts] = useState({});
   const [requestRelations, setRequestRelations] = useState({});
   const [creatingManualRequest, setCreatingManualRequest] = useState(false);
-  const [activeRequestTab, setActiveRequestTab] = useState("upload");
+  const [activeRequestTab, setActiveRequestTab] = useState("pool");
   const [manualRequest, setManualRequest] = useState({
     subject: "",
     requester: "",
@@ -573,6 +589,7 @@ export default function TaleplerPage() {
     priority: "Orta",
     note: "",
     productCode: "",
+    brand: "",
     productName: "",
     quantity: "1",
     unit: "adet",
@@ -751,6 +768,25 @@ export default function TaleplerPage() {
     setManualRequest((current) => ({ ...current, [field]: value }));
   };
 
+  const findManualProductByCode = (code) => {
+    const normalizedCode = normalizeRequestProductCode(code);
+    if (!normalizedCode) return null;
+    return stockProducts.find(
+      (product) => normalizeRequestProductCode(product.product_code) === normalizedCode,
+    ) || null;
+  };
+
+  const updateManualProductCode = (value) => {
+    const product = findManualProductByCode(value);
+    setManualRequest((current) => ({
+      ...current,
+      productCode: value,
+      brand: product?.brand || current.brand,
+      productName: product?.product_name || current.productName,
+      unit: product?.unit || current.unit || "adet",
+    }));
+  };
+
   async function createManualRequest() {
     const productName = manualRequest.productName.trim();
     const quantity = Number(manualRequest.quantity || 0);
@@ -770,6 +806,8 @@ export default function TaleplerPage() {
     const item = {
       urunKodu: manualRequest.productCode.trim(),
       product_code: manualRequest.productCode.trim(),
+      marka: manualRequest.brand.trim(),
+      brand: manualRequest.brand.trim(),
       urunAciklamasi: productName,
       product_name: productName,
       talepEdilenAdet: quantity,
@@ -802,9 +840,10 @@ export default function TaleplerPage() {
       return;
     }
 
-    setManualRequest({ subject: "", requester: "", department: "", priority: "Orta", note: "", productCode: "", productName: "", quantity: "1", unit: "adet" });
+    setManualRequest({ subject: "", requester: "", department: "", priority: "Orta", note: "", productCode: "", brand: "", productName: "", quantity: "1", unit: "adet" });
     setExpandedRequestId(data.id);
-    setMessage("Manuel talep oluşturuldu. Talep havuzundan teklif toplamaya geçebilirsiniz.");
+    setActiveRequestTab("pool");
+    setMessage("Manuel talep oluşturuldu ve talep havuzuna eklendi.");
     await loadRequests();
   }
 
@@ -818,6 +857,40 @@ export default function TaleplerPage() {
     }
     setSavedRequests((current) => current.map((item) => item.id === request.id ? { ...item, durum: status } : item));
     setMessage("Talep durumu güncellendi.");
+  }
+
+  async function takeRequestIntoProcess(request) {
+    const processor = window.prompt("Talebi işleme alan kişi kim?");
+    if (!processor || !processor.trim()) return;
+
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    const processedAt = new Date().toISOString();
+    const items = getRequestItems(request).map((item) => ({
+      ...item,
+      request_meta: {
+        ...(item.request_meta || {}),
+        processedBy: processor.trim(),
+        processedAt,
+      },
+    }));
+
+    const { error } = await supabase
+      .from("requests")
+      .update({ durum: "İşleme alındı", items })
+      .eq("id", request.id)
+      .eq("user_id", user.id);
+
+    if (error) {
+      setMessage(`Talep işleme alınamadı: ${error.message}`);
+      return;
+    }
+
+    setSavedRequests((current) => current.map((item) => (
+      item.id === request.id ? { ...item, durum: "İşleme alındı", items } : item
+    )));
+    setMessage("Talep işleme alındı.");
   }
 
   async function startOfferCollection(request) {
@@ -1166,9 +1239,9 @@ export default function TaleplerPage() {
           <div className="rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
             <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
               {[
+                { id: "pool", title: "Talep Havuzu", text: "Tüm talep listelerini takip et", icon: "📥" },
                 { id: "upload", title: "Dosya Yükle", text: "Excel, PDF ve görselden talep çıkar", icon: "📎" },
                 { id: "manual", title: "Manuel Oluştur", text: "Tek kalem veya hızlı talep ekle", icon: "✍️" },
-                { id: "pool", title: "Talep Havuzu", text: "Tüm talep listelerini takip et", icon: "📥" },
               ].map((tab) => {
                 const active = activeRequestTab === tab.id;
                 return (
@@ -1242,23 +1315,7 @@ export default function TaleplerPage() {
                 disabled={isLoading}
                 className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300"
               >
-                {isLoading ? "Talep Listesi Oluşturuluyor..." : "+ Talep Listesini Oluştur"}
-              </button>
-
-              <button type="button"
-                onClick={handleDownload}
-                disabled={!reportPath}
-                className="rounded-xl bg-green-600 px-5 py-3 text-sm font-bold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-              >
-                Excel İndir
-              </button>
-
-              <button type="button"
-                onClick={handleSendToOffers}
-                disabled={rows.length === 0}
-                className="rounded-xl bg-purple-600 px-5 py-3 text-sm font-bold text-white hover:bg-purple-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-              >
-                Tekliflere Aktar
+                {isLoading ? "Talep listesi oluşturuluyor..." : "Talep Listesi Oluştur"}
               </button>
 
             </div>
@@ -1288,7 +1345,8 @@ export default function TaleplerPage() {
               <select value={manualRequest.priority} onChange={(e) => updateManualRequest("priority", e.target.value)} className="rounded-xl border border-slate-300 px-4 py-3 text-sm">
                 <option>Düşük</option><option>Orta</option><option>Yüksek</option><option>Kritik</option>
               </select>
-              <input value={manualRequest.productCode} onChange={(e) => updateManualRequest("productCode", e.target.value)} placeholder="Ürün kodu (opsiyonel)" className="rounded-xl border border-slate-300 px-4 py-3 text-sm" />
+              <input value={manualRequest.productCode} onChange={(e) => updateManualProductCode(e.target.value)} placeholder="Ürün kodu (opsiyonel)" className="rounded-xl border border-slate-300 px-4 py-3 text-sm" />
+              <input value={manualRequest.brand} onChange={(e) => updateManualRequest("brand", e.target.value)} placeholder="Marka" className="rounded-xl border border-slate-300 px-4 py-3 text-sm" />
               <input value={manualRequest.productName} onChange={(e) => updateManualRequest("productName", e.target.value)} placeholder="Ürün / hizmet açıklaması" className="rounded-xl border border-slate-300 px-4 py-3 text-sm" />
               <input type="number" min="0" value={manualRequest.quantity} onChange={(e) => updateManualRequest("quantity", e.target.value)} placeholder="Miktar" className="rounded-xl border border-slate-300 px-4 py-3 text-sm" />
               <input value={manualRequest.unit} onChange={(e) => updateManualRequest("unit", e.target.value)} placeholder="Birim" className="rounded-xl border border-slate-300 px-4 py-3 text-sm" />
@@ -1306,7 +1364,7 @@ export default function TaleplerPage() {
             <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <h2 className="text-lg font-bold text-slate-900">Talep Havuzu</h2>
-                <p className="text-sm text-slate-500">Projelerden aktarılan ve manuel oluşturulan tüm talepler burada izlenir. Kaynak, açan kişi, tarih, teklif ve rapor bağlantıları tek yerde takip edilir.</p>
+                <p className="text-sm text-slate-500">Projelerden, dosyadan ve manuel oluşturulan talepler kayıt defteri düzeninde izlenir.</p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <span className="rounded-full bg-blue-50 px-3 py-1 text-sm font-semibold text-blue-700">
@@ -1327,14 +1385,7 @@ export default function TaleplerPage() {
                       disabled={selectedRequests.length === 0}
                       className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300"
                     >
-                      Seçilenleri Excel indir ({selectedRequests.length})
-                    </button>
-                    <button type="button"
-                      onClick={() => downloadRequestsAsPdf(selectedRequests)}
-                      disabled={selectedRequests.length === 0}
-                      className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
-                    >
-                      Seçilenleri PDF indir ({selectedRequests.length})
+                      Seçilenleri indir ({selectedRequests.length})
                     </button>
                   </>
                 )}
@@ -1347,22 +1398,33 @@ export default function TaleplerPage() {
               </div>
             ) : (
               <div className="space-y-3">
+                <div className="hidden grid-cols-[34px_110px_1.2fr_1fr_150px_110px_150px_220px] gap-3 rounded-xl bg-slate-50 px-4 py-3 text-xs font-black uppercase text-slate-500 xl:grid">
+                  <span>Seç</span>
+                  <span>No</span>
+                  <span>Kaynak</span>
+                  <span>Açan / Birim</span>
+                  <span>Tarih</span>
+                  <span>Aciliyet</span>
+                  <span>Durum</span>
+                  <span>İşlem</span>
+                </div>
                 {visibleSavedRequests.map((req, index) => {
                   const requestItems = getRequestItems(req);
                   const isExpanded = expandedRequestId === req.id;
                   const isSelected = selectedRequestIds.includes(req.id);
-                  const relations = requestRelations[req.id] || { offers: [], reports: [] };
                   const sourceLabel = requestSourceLabel(req);
                   const ownerLabel = requestOwnerSummary(req);
                   const projectLabel = requestProjectSummary(req);
+                  const priorityLabel = requestPriority(req);
+                  const processInfo = requestProcessInfo(req);
 
                   return (
                     <div
                       key={req.id}
                       className={`rounded-xl border bg-white p-4 ${isSelected ? "border-blue-300 ring-2 ring-blue-100" : "border-slate-200"}`}
                     >
-                      <div className="grid grid-cols-1 gap-4 md:grid-cols-[32px_80px_1fr_auto]">
-                        <div className="pt-1">
+                      <div className="grid grid-cols-1 gap-3 xl:grid-cols-[34px_110px_1.2fr_1fr_150px_110px_150px_220px] xl:items-center">
+                        <div className="xl:pt-0">
                           <input
                             type="checkbox"
                             checked={isSelected}
@@ -1373,28 +1435,41 @@ export default function TaleplerPage() {
                         </div>
 
                         <div>
-                          <div className="text-xs font-semibold text-slate-500">Sıra No</div>
-                          <div className="mt-1 font-bold text-slate-900">{index + 1}</div>
+                          <div className="text-xs font-semibold text-slate-500 xl:hidden">No</div>
+                          <div className="font-black text-slate-900">{requestSequenceLabel(index, savedRequests.length)}</div>
+                        </div>
+
+                        <div className="min-w-0">
+                          <div className="text-xs font-semibold text-slate-500 xl:hidden">Kaynak</div>
+                          <div className="truncate font-black text-slate-900">{projectLabel}</div>
+                          <div className="mt-1 flex flex-wrap gap-1.5 text-xs font-semibold">
+                            <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-600">{sourceLabel}</span>
+                            <span className="rounded-full bg-blue-50 px-2 py-1 text-blue-700">{req.totalitems || requestItems.length || 0} kalem</span>
+                          </div>
                         </div>
 
                         <div>
-                          <div className="text-xs font-semibold text-slate-500">Talep</div>
-                          <div className="mt-1 font-bold text-slate-900">{req.ad || "Talep Listesi"}</div>
-                          <div className="mt-1 flex flex-wrap gap-2 text-xs font-semibold text-slate-600">
-                            <span className="rounded-full bg-slate-100 px-2 py-1">{sourceLabel}</span>
-                            <span className="rounded-full bg-blue-50 px-2 py-1 text-blue-700">{req.totalitems || requestItems.length || 0} kalem</span>
-                            <span className="rounded-full bg-purple-50 px-2 py-1 text-purple-700">Teklif {relations.offers.length}</span>
-                            <span className="rounded-full bg-emerald-50 px-2 py-1 text-emerald-700">Rapor {relations.reports.length}</span>
-                          </div>
-                          <div className="mt-3 grid grid-cols-1 gap-2 text-xs sm:grid-cols-2 lg:grid-cols-4">
-                            <div><span className="font-semibold text-slate-500">Kaynak:</span><div className="font-bold text-slate-900">{projectLabel}</div></div>
-                            <div><span className="font-semibold text-slate-500">Açan / birim:</span><div className="font-bold text-slate-900">{ownerLabel}</div></div>
-                            <div><span className="font-semibold text-slate-500">Tarih:</span><div className="font-bold text-slate-900">{formatDateTime(req.created_at || req.tarih)}</div></div>
-                            <div><span className="font-semibold text-slate-500">Durum:</span><div className="font-bold text-slate-900">{req.durum || "Oluşturuldu"}</div></div>
-                          </div>
+                          <div className="text-xs font-semibold text-slate-500 xl:hidden">Açan / Birim</div>
+                          <div className="font-bold text-slate-800">{ownerLabel}</div>
                         </div>
 
-                        <div className="flex flex-wrap items-start gap-2 md:justify-end">
+                        <div>
+                          <div className="text-xs font-semibold text-slate-500 xl:hidden">Tarih</div>
+                          <div className="text-sm font-bold text-slate-800">{formatDateTime(req.created_at || req.tarih)}</div>
+                        </div>
+
+                        <div>
+                          <div className="text-xs font-semibold text-slate-500 xl:hidden">Aciliyet</div>
+                          <span className="inline-flex rounded-full bg-amber-50 px-2.5 py-1 text-xs font-black text-amber-700">{priorityLabel}</span>
+                        </div>
+
+                        <div>
+                          <div className="text-xs font-semibold text-slate-500 xl:hidden">Durum</div>
+                          <div className="font-black text-slate-900">{req.durum || "Bekliyor"}</div>
+                          {processInfo && <div className="mt-1 text-xs font-semibold text-slate-500">{processInfo}</div>}
+                        </div>
+
+                        <div className="flex flex-wrap items-start gap-2 xl:justify-end">
                           <button type="button"
                             onClick={() => setExpandedRequestId(isExpanded ? "" : req.id)}
                             className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
@@ -1415,21 +1490,14 @@ export default function TaleplerPage() {
                             onClick={() => downloadRequestsAsExcel([req])}
                             className="rounded-lg bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-100"
                           >
-                            Excel indir
+                            İndir
                           </button>
 
                           <button type="button"
-                            onClick={() => downloadRequestsAsPdf([req])}
-                            className="rounded-lg bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-200"
+                            onClick={() => takeRequestIntoProcess(req)}
+                            className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700"
                           >
-                            PDF indir
-                          </button>
-
-                          <button type="button"
-                            onClick={() => startOfferCollection(req)}
-                            className="rounded-lg bg-purple-600 px-3 py-2 text-sm font-semibold text-white"
-                          >
-                            Teklif Topla
+                            İşleme Al
                           </button>
                           <button type="button"
                             onClick={() => deleteRequest(req.id)}

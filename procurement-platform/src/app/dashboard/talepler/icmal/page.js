@@ -634,6 +634,8 @@ export default function ProcurementSummaryPage() {
     setLastCreatedRequestId("");
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { router.push("/login"); return; }
+    const requester = window.prompt("Talebi açan kişi kim?") || "";
+    const department = window.prompt("Talebi açan birim / departman nedir?") || "";
     const items = actionRows.map((row) => ({
       product_id: row.productId,
       product_code: row.productCode,
@@ -648,6 +650,13 @@ export default function ProcurementSummaryPage() {
       stock_coverable_quantity: row.stockCoverable,
       purchase_quantity: row.purchaseQuantity,
       allocations: purchaseAllocations(row.allocations, row.purchaseQuantity),
+      request_meta: {
+        source: "project",
+        requester: requester.trim(),
+        department: department.trim(),
+        priority: "Normal",
+        createdBy: user.email || user.id,
+      },
     }));
     if (items.length === 0) {
       setMessage("Satın alınacak açık miktar bulunmuyor.");
