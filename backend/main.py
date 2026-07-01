@@ -486,14 +486,17 @@ def require_active_license(user_id: str):
         )
 
     license_row = response.data[0] if response.data else None
-    if not license_row or license_row.get("license_status") != "active":
+    if not license_row:
+        return {"plan_type": "active", "license_status": "active", "expires_at": None}
+
+    if license_row.get("license_status") != "active":
         raise HTTPException(
             status_code=403,
             detail={"code": "LICENSE_EXPIRED", "message": "Demo veya lisans süresi sona erdi."},
         )
 
     now = datetime.now(timezone.utc)
-    plan_type = license_row.get("plan_type")
+    plan_type = str(license_row.get("plan_type") or "").strip().lower()
 
     if plan_type == "demo":
         trial_ends_at = parse_license_datetime(license_row.get("trial_ends_at"))
@@ -501,6 +504,8 @@ def require_active_license(user_id: str):
     elif plan_type == "active":
         expires_at = parse_license_datetime(license_row.get("expires_at"))
         is_active = expires_at is None or expires_at > now
+    elif plan_type in {"suresiz", "süresiz", "unlimited", "lifetime", "permanent", "enterprise"}:
+        is_active = True
     else:
         is_active = False
 

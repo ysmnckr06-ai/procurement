@@ -34,13 +34,17 @@ export async function proxy(request) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
-  const { data: license } = await supabase
+  const { data: license, error: licenseError } = await supabase
     .from("user_licenses")
     .select("plan_type, license_status, trial_ends_at, expires_at")
     .eq("user_id", user.id)
     .maybeSingle();
 
-  if (!isLicenseActive(license)) {
+  if (licenseError) {
+    return response;
+  }
+
+  if (license && !isLicenseActive(license)) {
     return NextResponse.redirect(new URL("/license-expired", request.url));
   }
 
