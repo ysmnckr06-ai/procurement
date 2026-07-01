@@ -445,6 +445,7 @@ export default function ProjectDetailPage() {
   const [isDeletingStockMovements, setIsDeletingStockMovements] = useState(false);
   const [itemStockFilter, setItemStockFilter] = useState("all");
   const [itemPriceDrafts, setItemPriceDrafts] = useState({});
+  const [itemCurrencyDrafts, setItemCurrencyDrafts] = useState({});
   const [processQuantityDrafts, setProcessQuantityDrafts] = useState({});
   const [mainStageDrafts, setMainStageDrafts] = useState({});
   const [processingParentId, setProcessingParentId] = useState("");
@@ -1230,6 +1231,107 @@ export default function ProjectDetailPage() {
     if (info.requiredQuantity <= 0) return { available, text: "Karşılanabilir", tone: "green" };
     if (available > 0) return { available, text: "Kısmi stok var", tone: "yellow" };
     return { available, text: "Satınalma gerekli", tone: "red" };
+  }
+
+  function orderLineProjectItemIds(line) {
+    return [
+      line?.projectItemId,
+      line?.project_item_id,
+      line?.projectItemID,
+      ...(line?.projectItemIds || []),
+      ...(line?.project_item_ids || []),
+      ...(Array.isArray(line?.allocations)
+        ? line.allocations.map((allocation) => allocation.projectItemId || allocation.project_item_id)
+        : []),
+    ].filter(Boolean).map(String);
+  }
+
+  function orderItemsArray(order) {
+    if (Array.isArray(order?.items)) return order.items;
+    if (typeof order?.items === "string" && order.items.trim()) {
+      try {
+        const parsed = JSON.parse(order.items);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    }
+    return [];
+  }
+
+  function orderMatchesProjectItem(order, item) {
+    const lines = orderItemsArray(order);
+    return lines.some((line) => {
+      const ids = orderLineProjectItemIds(line);
+      if (ids.includes(String(item.id))) return true;
+      return projectItemMatchScore(item, {
+        productCode: readFirstValue(line, ["productCode", "urunKodu", "product_code", "code", "kod"]),
+        productName: readFirstValue(line, ["productName", "urunAciklamasi", "product_name", "description", "urunAdi", "name", "aciklama"]),
+      }) >= 0.85;
+    });
+  }
+
+  function movementMatchesProjectItem(movement, item) {
+    if (movement?.project_item_id && String(movement.project_item_id) === String(item.id)) return true;
+    return projectItemMatchScore(item, {
+      productCode: movement?.product_code,
+      productName: movement?.product_name,
+    }) >= 0.85;
+  }
+
+  function childProcessSummary(item) {
+    const info = stockInfoForItem(item);
+    const itemOrders = projectOrders.filter((order) => orderMatchesProjectItem(order, item));
+    const itemMovements = stockMovements.filter((movement) => movementMatchesProjectItem(movement, item));
+    const receivedQuantity = Math.max(
+      Number(item.received_quantity || 0),
+      itemMovements
+        .filter((movement) => String(movement.movement_type || "").toLowerCase() === "in")
+        .reduce((sum, movement) => sum + Number(movement.quantity || 0), 0),
+    );
+    const ordered = itemOrders.length > 0;
+    const hasRequest = requestedProjectItemIds.has(item.id) || item.status === "Talep oluşturuldu";
+    const requiredQuantity = Number(info.requiredQuantity || 0);
+    const reservedQuantity = Number(info.reservedQuantity || 0);
+    const totalQuantity = Number(info.estimatedQuantity || item.estimated_quantity || 0);
+
+    if (totalQuantity > 0 && receivedQuantity >= totalQuantity) {
+      return { label: "Tamamlandı", detail: `${formatQuantity(receivedQuantity)} ${item.unit || "adet"} teslim`, tone: "green" };
+    }
+    if (receivedQuantity > 0) {
+      return { label: "Kısmi teslim", detail: `${formatQuantity(receivedQuantity)} / ${formatQuantity(totalQuantity)} ${item.unit || "adet"}`, tone: "amber" };
+    }
+    if (ordered) {
+      const orderStatus = itemOrders.find((order) => order.status)?.status || "Sipariş verildi";
+      return { label: orderStatus, detail: `${itemOrders.length} sipariş bağlantısı`, tone: "blue" };
+    }
+    if (reservedQuantity > 0 && reservedQuantity >= Math.max(Number(info.openQuantity || totalQuantity), 0)) {
+      return { label: "Stoktan karşılandı", detail: `${formatQuantity(reservedQuantity)} ${item.unit || "adet"} ayrıldı`, tone: "green" };
+    }
+    if (reservedQuantity > 0) {
+      return { label: "Kısmen stoktan karşılandı", detail: `${formatQuantity(reservedQuantity)} ${item.unit || "adet"} ayrıldı`, tone: "amber" };
+    }
+    if (hasRequest) {
+      return { label: "Talep oluşturuldu", detail: requiredQuantity > 0 ? `${formatQuantity(requiredQuantity)} ${item.unit || "adet"} alımda` : "Talep listesinde", tone: "blue" };
+    }
+    if (requiredQuantity > 0) {
+      return { label: "Eksik", detail: `${formatQuantity(requiredQuantity)} ${item.unit || "adet"} alım gerekli`, tone: "red" };
+    }
+    if (Number(info.stockQuantity || 0) >= Number(info.pendingQuantity || 0) && Number(info.pendingQuantity || 0) > 0) {
+      return { label: "Stoktan karşılanabilir", detail: `${formatQuantity(info.stockQuantity)} ${item.unit || "adet"} stokta`, tone: "green" };
+    }
+    return { label: "Bekliyor", detail: "", tone: "slate" };
+  }
+
+  function processToneClass(tone) {
+    const classes = {
+      green: "bg-emerald-100 text-emerald-800",
+      blue: "bg-blue-100 text-blue-800",
+      amber: "bg-amber-100 text-amber-800",
+      red: "bg-red-100 text-red-800",
+      slate: "bg-slate-100 text-slate-700",
+    };
+    return classes[tone] || classes.slate;
   }
 
   function productCardLabel(item) {
@@ -5504,13 +5606,16 @@ export default function ProjectDetailPage() {
     const draft = itemPriceDrafts[item.id];
     const nextUnitPrice = Number(draft ?? item.estimated_unit_price ?? 0);
     const oldUnitPrice = Number(item.estimated_unit_price || item.quote_unit_price || 0);
-    if (nextUnitPrice === oldUnitPrice) return;
+    const nextCurrency = itemCurrencyDrafts[item.id] || item.currency || projectCurrencyForDisplay();
+    const oldCurrency = item.currency || projectCurrencyForDisplay();
+    if (nextUnitPrice === oldUnitPrice && nextCurrency === oldCurrency) return;
 
     const quantity = Number(item.estimated_quantity || 0);
     const nextItem = {
       ...item,
       estimated_unit_price: nextUnitPrice,
       estimated_total: quantity * nextUnitPrice,
+      currency: nextCurrency,
       updated_at: new Date().toISOString(),
     };
 
@@ -5519,6 +5624,7 @@ export default function ProjectDetailPage() {
       .update({
         estimated_unit_price: nextItem.estimated_unit_price,
         estimated_total: nextItem.estimated_total,
+        currency: nextItem.currency,
         updated_at: nextItem.updated_at,
       })
       .eq("id", item.id)
@@ -5533,6 +5639,7 @@ export default function ProjectDetailPage() {
     const nextItems = items.map((candidate) => candidate.id === item.id ? nextItem : candidate);
     setItems(nextItems);
     setItemPriceDrafts((prev) => ({ ...prev, [item.id]: String(nextUnitPrice) }));
+    setItemCurrencyDrafts((prev) => ({ ...prev, [item.id]: nextCurrency }));
     await recordMaterialRevision({
       actionType: "price",
       beforeItem: item,
@@ -8367,10 +8474,11 @@ export default function ProjectDetailPage() {
                             {children.map((child) => {
                               const childStock = stockWarning(child);
                               const childStockInfo = stockInfoForItem(child);
-                              const childPrice = resolveProjectItemPrice(child);
-                              const relation = componentRelationForItem(child, items);
+                              const matchedProduct = childStockInfo.matchedProducts?.[0];
+                              const childBrand = child.brand || matchedProduct?.brand || "-";
+                              const childProcess = childProcessSummary(child);
                               return (
-                                <div key={child.id} className="grid grid-cols-1 gap-3 rounded-xl border border-blue-100 border-l-4 border-l-blue-500 bg-white p-3 text-sm shadow-sm md:grid-cols-[1fr_auto_auto_auto] md:items-center">
+                                <div key={child.id} className="grid grid-cols-1 gap-3 rounded-xl border border-blue-100 border-l-4 border-l-blue-500 bg-white p-3 text-sm shadow-sm md:grid-cols-[1fr_auto_auto_auto] md:items-start">
                                   <div className="flex items-start gap-3">
                                     <input
                                       type="checkbox"
@@ -8388,20 +8496,11 @@ export default function ProjectDetailPage() {
                                       />
                                     )}
                                     <div>
-                                      <div className="flex flex-wrap items-center gap-2">
-                                        <span className="rounded-full bg-blue-100 px-2 py-1 text-[11px] font-black text-blue-700">Alt ürün</span>
-                                        <span className="text-xs font-bold text-slate-500">Ana ürün: {item.product_name}</span>
-                                      </div>
                                       <div className="mt-1 font-bold text-slate-900">{child.product_name}</div>
-                                      <div className="text-xs text-slate-500">{child.product_code || "-"} · {Number(child.estimated_quantity || 0)} {child.unit || "adet"}</div>
-                                      <div className="mt-1 flex flex-wrap items-center gap-2 text-xs font-bold">
-                                        <span className={`rounded-full px-2 py-1 ${productCardLabelClass(child)}`}>{productCardLabel(child)}</span>
-                                        <span className="text-emerald-700">Birim fiyat: {formatMoney(childPrice.unitPrice)}</span>
-                                        <span className="text-blue-700">Toplam: {formatMoney(childPrice.total)}</span>
-                                        <span className={`rounded-full px-2 py-1 ${priceSourceClass(childPrice.source)}`}>{childPrice.source}</span>
-                                      </div>
-                                      <div className="mt-1 text-xs font-bold text-slate-600">
-                                        Toplam ihtiyaç: {formatQuantity(childStockInfo.estimatedQuantity)} {child.unit || "adet"} · Birim kullanım: {formatQuantity(relation.childQuantityPerParent)} · Kullanılan: {formatQuantity(childStockInfo.consumedQuantity)} · Projeye ayrılan: {formatQuantity(childStockInfo.reservedQuantity)} · Bekleyen: {formatQuantity(childStockInfo.pendingQuantity)} · Satınalma gereken: {formatQuantity(childStockInfo.requiredQuantity)}
+                                      <div className="mt-1 flex flex-wrap gap-2 text-xs font-bold text-slate-500">
+                                        <span>Kod: {child.product_code || "-"}</span>
+                                        <span>Marka: {childBrand}</span>
+                                        <span>Adet: {formatQuantity(childStockInfo.estimatedQuantity)} {child.unit || "adet"}</span>
                                       </div>
                                       <div className="mt-3 flex flex-wrap items-end gap-2 rounded-xl bg-slate-50 p-3">
                                         <div className="pb-2 text-xs font-black text-slate-600">Miktar düzelt</div>
@@ -8423,18 +8522,31 @@ export default function ProjectDetailPage() {
                                             placeholder="Birim fiyat"
                                           />
                                         </label>
+                                        <label className="flex flex-col gap-1">
+                                          <span className="text-[11px] font-bold text-slate-500">Para birimi</span>
+                                          <select
+                                            value={itemCurrencyDrafts[child.id] || child.currency || projectCurrencyForDisplay()}
+                                            onChange={(event) => setItemCurrencyDrafts((prev) => ({ ...prev, [child.id]: event.target.value }))}
+                                            className="w-24 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold"
+                                          >
+                                            {currencyOptions.map((currency) => <option key={currency} value={currency}>{currency}</option>)}
+                                          </select>
+                                        </label>
                                         <button type="button" onClick={() => updateProjectItemUnitPrice(child)} className="rounded-lg bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700 hover:bg-blue-100">
                                           Fiyatı kaydet
                                         </button>
                                       </div>
                                     </div>
                                   </div>
-                                  <label className="flex min-w-40 flex-col gap-1 text-[11px] font-bold text-slate-500">
-                                    Alt ürün süreci
-                                    <select className="rounded-lg border border-slate-200 p-2 text-xs font-bold text-slate-800" value={child.status || "Bekliyor"} onChange={(e) => updateItemStatus(child.id, e.target.value)}>
-                                      {componentItemStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
-                                    </select>
-                                  </label>
+                                  <div className="min-w-44">
+                                    <div className="text-[11px] font-black text-slate-500">Süreç</div>
+                                    <div className={`mt-1 rounded-full px-3 py-1 text-xs font-black ${processToneClass(childProcess.tone)}`}>
+                                      {childProcess.label}
+                                    </div>
+                                    {childProcess.detail && (
+                                      <div className="mt-1 text-[11px] font-bold text-slate-500">{childProcess.detail}</div>
+                                    )}
+                                  </div>
                                   <span className={`rounded-full px-3 py-1 text-xs font-bold ${
                                     childStock.tone === "green" ? "bg-green-100 text-green-700" :
                                     childStock.tone === "yellow" ? "bg-yellow-100 text-yellow-700" :
