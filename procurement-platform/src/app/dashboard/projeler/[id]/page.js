@@ -8095,10 +8095,7 @@ export default function ProjectDetailPage() {
                             {expandedItems[item.id] ? "Alt ürünleri gizle" : `Alt ürünleri göster (${allChildren.length})`}
                           </button>
                           <button type="button" onClick={() => downloadProjectItemChildren(item, "xlsx")} className="rounded-lg bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700 hover:bg-emerald-100">
-                            Excel indir
-                          </button>
-                          <button type="button" onClick={() => downloadProjectItemChildren(item, "pdf")} className="rounded-lg bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100">
-                            PDF indir
+                            İndir
                           </button>
                           <button type="button" onClick={() => startAddingChildItem(item)} className="rounded-lg bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-100">
                             Malzeme ekle
@@ -8423,14 +8420,7 @@ export default function ProjectDetailPage() {
                               onClick={() => downloadRequestItems(request, "xlsx")}
                               className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white shadow-sm hover:bg-emerald-700"
                             >
-                              Excel indir
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => downloadRequestItems(request, "pdf")}
-                              className="rounded-lg bg-slate-800 px-3 py-2 text-xs font-bold text-white shadow-sm hover:bg-slate-900"
-                            >
-                              PDF indir
+                              İndir
                             </button>
                           </div>
                         </div>
