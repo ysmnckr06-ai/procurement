@@ -1412,6 +1412,7 @@ export default function TaleplerPage() {
                   const requestItems = getRequestItems(req);
                   const isExpanded = expandedRequestId === req.id;
                   const isSelected = selectedRequestIds.includes(req.id);
+                  const relations = requestRelations[req.id] || { offers: [], reports: [] };
                   const sourceLabel = requestSourceLabel(req);
                   const ownerLabel = requestOwnerSummary(req);
                   const projectLabel = requestProjectSummary(req);
