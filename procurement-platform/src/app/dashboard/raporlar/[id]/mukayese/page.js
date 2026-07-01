@@ -16,6 +16,16 @@ function normalizedCurrency(value) { return String(value || "").trim().toUpperCa
 function comparisonOrderKey(name, currency, exchangeRate) {
   return `${normalize(name)}|${normalizedCurrency(currency)}|${num(exchangeRate).toFixed(6)}`;
 }
+function offerOriginalTotal(group, offer) {
+  return num(offer?.netToplam) || num(offer?.netBirimFiyat) * num(group?.purchaseQuantity || group?.talepEdilenAdet || offer?.firmaAdedi);
+}
+function offerTryTotal(group, offer) {
+  const explicitTryTotal = num(offer?.netToplamTRY);
+  if (explicitTryTotal > 0) return explicitTryTotal;
+  const currency = normalizedCurrency(offer?.paraBirimi) || "TRY";
+  const rate = currency === "TRY" ? 1 : num(offer?.kur);
+  return offerOriginalTotal(group, offer) * (rate || 1);
+}
 
 function proportionalAllocations(allocations, targetQuantity) {
   const source = Array.isArray(allocations) ? allocations.filter((row) => num(row.quantity) > 0) : [];
@@ -68,6 +78,16 @@ export default function ComparisonPage() {
 
   const groups = useMemo(() => Array.isArray(report?.analysis) ? report.analysis : [], [report]);
   const supplierMap = useMemo(() => new Map(suppliers.map((supplier) => [normalize(supplier.name), supplier])), [suppliers]);
+  const selectedSummary = useMemo(() => {
+    const selectedRows = groups
+      .map((group, index) => ({ group, offer: group.offers?.[selectedOffers[groupKey(index)]] }))
+      .filter((row) => row.offer);
+    const totalTry = selectedRows.reduce((sum, row) => sum + offerTryTotal(row.group, row.offer), 0);
+    const foreignCurrencies = Array.from(new Set(selectedRows
+      .map((row) => normalizedCurrency(row.offer?.paraBirimi))
+      .filter((currency) => currency && currency !== "TRY")));
+    return { selectedCount: selectedRows.length, totalTry, foreignCurrencies };
+  }, [groups, selectedOffers]);
 
   async function createOrders() {
     if (!report || creatingRef.current) return;
@@ -210,13 +230,30 @@ export default function ComparisonPage() {
   return <div className="min-h-screen bg-slate-100 p-4 sm:p-8"><main className="mx-auto max-w-7xl space-y-5">
     <div className="rounded-3xl bg-slate-950 p-6 text-white"><Link href={`/dashboard/raporlar/${report.id}`} className="text-sm font-bold text-blue-200">← Rapor detayına dön</Link><div className="mt-3 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><h1 className="text-3xl font-black">Profesyonel Mukayese</h1><p className="mt-2 text-sm text-slate-300">Kalem bazında en iyi veya alternatif teklifi seçin; siparişler tedarikçiye göre gruplanır.</p></div><button type="button" onClick={createOrders} disabled={creating} className="rounded-xl bg-emerald-600 px-5 py-3 font-black text-white disabled:bg-slate-500">{creating ? "Siparişler oluşturuluyor..." : "Seçilenlerden Sipariş Oluştur"}</button></div></div>
     {message && <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 font-semibold text-blue-900">{message} {message.includes("oluşturuldu") && <Link href="/dashboard/siparisler" className="ml-2 underline">Siparişlere git</Link>}</div>}
+    <section className="rounded-2xl border border-blue-100 bg-blue-50 p-5 shadow-sm">
+      <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+        <div>
+          <h2 className="text-lg font-black text-blue-950">Seçili teklif TL dip toplamı</h2>
+          <p className="mt-1 text-sm font-semibold text-blue-800">
+            Dövizli teklifler analizde kaydedilen kurla TL karşılığına çevrilir.
+          </p>
+        </div>
+        <div className="text-right">
+          <div className="text-3xl font-black text-blue-950">{money(selectedSummary.totalTry, "TRY")}</div>
+          <div className="mt-1 text-xs font-bold text-blue-700">
+            {selectedSummary.selectedCount} seçili kalem
+            {selectedSummary.foreignCurrencies.length > 0 ? ` · Döviz: ${selectedSummary.foreignCurrencies.join(", ")}` : ""}
+          </div>
+        </div>
+      </div>
+    </section>
     {groups.map((group, groupIndex) => {
       const offers = Array.isArray(group.offers) ? group.offers : [];
       const bestName = normalize(supplierName(group.bestOffer));
       return <section key={groupKey(groupIndex)} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="border-b bg-slate-50 p-4"><div className="font-black text-blue-900">{group.urunKodu || "Kodsuz"} · {group.urunAciklamasi}</div><div className="mt-1 flex flex-wrap gap-3 text-xs font-bold text-slate-600"><span>İhtiyaç: {group.talepEdilenAdet} {group.birim}</span><span>Stoktan: {num(group.stockCoverableQuantity)}</span><span>Satın alınacak: {num(group.purchaseQuantity || group.talepEdilenAdet)}</span><span>Proje: {(group.allocations || []).map((row) => `${row.projectCode || row.projectId}: ${row.quantity}`).join(" | ") || "-"}</span></div></div>
         <div className="overflow-x-auto"><table className="min-w-[1450px] w-full text-left text-xs"><thead className="bg-white text-slate-500"><tr><th className="p-3">Seç</th><th className="p-3">Tedarikçi / Puan</th><th className="p-3">Miktar</th><th className="p-3">Birim fiyat</th><th className="p-3">İskonto</th><th className="p-3">Net fiyat</th><th className="p-3">Toplam</th><th className="p-3">Para birimi</th><th className="p-3">Kur</th><th className="p-3">TL karşılığı</th><th className="p-3">Vade</th><th className="p-3">Termin</th><th className="p-3">Sonuç</th></tr></thead><tbody>
-          {offers.map((offer, offerIndex) => { const name = supplierName(offer); const isBest = normalize(name) === bestName; const supplier = supplierMap.get(normalize(name)); return <tr key={`${name}-${offerIndex}`} className={`border-t ${isBest ? "bg-emerald-50" : ""}`}><td className="p-3"><input type="radio" name={groupKey(groupIndex)} checked={selectedOffers[groupKey(groupIndex)] === offerIndex} onChange={() => setSelectedOffers((current) => ({ ...current, [groupKey(groupIndex)]: offerIndex }))} /></td><td className="p-3"><div className="font-black text-slate-900">{name}</div><div className="text-blue-700">Puan: {supplier?.score ?? 80}/100</div></td><td className="p-3">{offer.firmaAdedi || group.purchaseQuantity || group.talepEdilenAdet}</td><td className="p-3">{money(offer.birimFiyat, offer.paraBirimi)}</td><td className="p-3">%{num(offer.iskonto)}</td><td className="p-3">{money(offer.netBirimFiyat, offer.paraBirimi)}</td><td className="p-3">{money(offer.netToplam || num(offer.netBirimFiyat) * num(group.purchaseQuantity || group.talepEdilenAdet), offer.paraBirimi)}</td><td className="p-3">{offer.paraBirimi || "TRY"}</td><td className="p-3">{num(offer.kur) || 1}</td><td className="p-3 font-black">{money(offer.netToplamTRY, "TRY")}</td><td className="p-3">{offer.vade || `${offer.vadeDays || 0} gün`}</td><td className="p-3">{offer.termin || `${offer.terminDays || 0} gün`}</td><td className="p-3">{isBest ? <span className="rounded-full bg-emerald-600 px-3 py-1 font-black text-white">En iyi teklif</span> : <span className="rounded-full bg-slate-200 px-3 py-1 font-bold text-slate-700">Alternatif</span>}</td></tr>; })}
+          {offers.map((offer, offerIndex) => { const name = supplierName(offer); const isBest = normalize(name) === bestName; const supplier = supplierMap.get(normalize(name)); return <tr key={`${name}-${offerIndex}`} className={`border-t ${isBest ? "bg-emerald-50" : ""}`}><td className="p-3"><input type="radio" name={groupKey(groupIndex)} checked={selectedOffers[groupKey(groupIndex)] === offerIndex} onChange={() => setSelectedOffers((current) => ({ ...current, [groupKey(groupIndex)]: offerIndex }))} /></td><td className="p-3"><div className="font-black text-slate-900">{name}</div><div className="text-blue-700">Puan: {supplier?.score ?? 80}/100</div></td><td className="p-3">{offer.firmaAdedi || group.purchaseQuantity || group.talepEdilenAdet}</td><td className="p-3">{money(offer.birimFiyat, offer.paraBirimi)}</td><td className="p-3">%{num(offer.iskonto)}</td><td className="p-3">{money(offer.netBirimFiyat, offer.paraBirimi)}</td><td className="p-3">{money(offer.netToplam || num(offer.netBirimFiyat) * num(group.purchaseQuantity || group.talepEdilenAdet), offer.paraBirimi)}</td><td className="p-3">{offer.paraBirimi || "TRY"}</td><td className="p-3">{num(offer.kur) || 1}</td><td className="p-3 font-black">{money(offerTryTotal(group, offer), "TRY")}</td><td className="p-3">{offer.vade || `${offer.vadeDays || 0} gün`}</td><td className="p-3">{offer.termin || `${offer.terminDays || 0} gün`}</td><td className="p-3">{isBest ? <span className="rounded-full bg-emerald-600 px-3 py-1 font-black text-white">En iyi teklif</span> : <span className="rounded-full bg-slate-200 px-3 py-1 font-bold text-slate-700">Alternatif</span>}</td></tr>; })}
         </tbody></table></div>
       </section>;
     })}

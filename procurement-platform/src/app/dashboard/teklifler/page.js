@@ -4,6 +4,8 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { findOrCreateBusinessPartner } from "@/lib/businessPartners";
+import { formatMoney } from "@/lib/currency";
+import { fetchLiveTryRates, liveCurrencyOptions, liveRateFor } from "@/lib/liveCurrency";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL;
 
@@ -155,6 +157,8 @@ function TekliflerPageContent() {
   const [qualityHistory, setQualityHistory] = useState("unknown");
   const [currencyRisk, setCurrencyRisk] = useState("medium");
   const [companySettings, setCompanySettings] = useState(defaultCompanySettings);
+  const [liveRates, setLiveRates] = useState(null);
+  const [liveRateWarning, setLiveRateWarning] = useState("");
 
   const [exchangeRates, setExchangeRates] = useState({
     TRY: 1,
@@ -236,8 +240,32 @@ const loadCompanySettings = async () => {
     });
   } catch (err) {
     console.error(err);
+  } finally {
+    await loadLiveExchangeRates();
   }
 };
+
+  const loadLiveExchangeRates = async () => {
+    try {
+      const live = await fetchLiveTryRates();
+      setLiveRates(live);
+      setLiveRateWarning("");
+      setExchangeRates((prev) => ({
+        ...prev,
+        TRY: 1,
+        ...Object.fromEntries(
+          liveCurrencyOptions.map((currency) => [
+            currency,
+            liveRateFor(currency, live) || Number(prev[currency] || defaultCompanySettings[`${currency.toLowerCase()}_rate`]),
+          ]),
+        ),
+      }));
+    } catch (error) {
+      console.error(error);
+      setLiveRates(null);
+      setLiveRateWarning("Canlı kur alınamadı. Kayıtlı kur veya manuel değer kullanılacak.");
+    }
+  };
 
   const allParsedRows = useMemo(() => {
     return parsedSources.flatMap((item) => item.rows || []);
@@ -444,7 +472,17 @@ const loadCompanySettings = async () => {
       formData.append("quality_history", qualityHistory);
 
       formData.append("currency_risk", currencyRisk);
-      formData.append("exchange_rates_json", JSON.stringify(exchangeRates));
+      const analysisExchangeRates = {
+        TRY: 1,
+        ...Object.fromEntries(liveCurrencyOptions.map((currency) => [currency, Number(exchangeRates[currency])])),
+      };
+      const invalidRate = liveCurrencyOptions.find((currency) => !Number.isFinite(analysisExchangeRates[currency]) || analysisExchangeRates[currency] <= 0);
+      if (invalidRate) {
+        setMessage(`${invalidRate} analiz kuru 0'dan büyük olmalıdır.`);
+        setIsAnalyzing(false);
+        return;
+      }
+      formData.append("exchange_rates_json", JSON.stringify(analysisExchangeRates));
       const {
         data: { session },
       } = await supabase.auth.getSession();
@@ -1036,14 +1074,33 @@ const loadCompanySettings = async () => {
             <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
               <h2 className="text-xl font-bold text-slate-800">Kur Bilgileri</h2>
               <p className="mt-2 text-sm text-slate-600">
-                Dövizli teklifler varsa kur bilgilerini kontrol edin.
+                Dövizli teklifler analiz edilirken bu kurla TL karşılığı hesaplanır.
               </p>
+              <div className="mt-4 rounded-2xl border border-blue-100 bg-blue-50 p-4">
+                <div className="text-sm font-black text-blue-900">Canlı kur bilgisi</div>
+                <div className="mt-1 text-xs font-semibold text-blue-800">
+                  {liveRates?.date ? `${liveRates.date} tarihli canlı kur` : "Canlı kur bekleniyor"}
+                  {liveRates?.source ? ` · ${liveRates.source}` : ""}
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {liveCurrencyOptions.map((currency) => (
+                    <span key={currency} className="rounded-full bg-white px-3 py-2 text-xs font-black text-blue-900">
+                      {currency}: {liveRateFor(currency, liveRates) ? formatMoney(liveRateFor(currency, liveRates), "TRY") : "Alınamadı"}
+                    </span>
+                  ))}
+                </div>
+                {liveRateWarning && (
+                  <div className="mt-3 rounded-xl border border-yellow-200 bg-yellow-50 p-3 text-xs font-bold text-yellow-900">
+                    {liveRateWarning}
+                  </div>
+                )}
+              </div>
 
               <div className="mt-5 space-y-4">
-                {["USD", "EUR", "GBP"].map((currency) => (
+                {liveCurrencyOptions.map((currency) => (
                   <div key={currency}>
                     <label className="mb-2 block text-sm font-bold text-slate-700">
-                      {currency} Kuru
+                      {currency} analiz kuru
                     </label>
                     <input
                       type="number"
