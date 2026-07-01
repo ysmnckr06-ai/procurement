@@ -56,6 +56,29 @@ function productCriticalLimit(product) {
   );
 }
 
+function requestItemsArray(request) {
+  if (Array.isArray(request?.items)) return request.items;
+  if (typeof request?.items === "string") {
+    try {
+      const parsed = JSON.parse(request.items);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function requestHasProjectLink(request) {
+  if (request?.project_id) return true;
+  return requestItemsArray(request).some((item) => {
+    if (item?.projectId || item?.project_id) return true;
+    return (item?.allocations || []).some(
+      (allocation) => allocation?.projectId || allocation?.project_id,
+    );
+  });
+}
+
 function StatCard({ icon, title, value, text, href, tone = "blue" }) {
   const tones = {
     blue: "bg-blue-50 text-blue-700 border-blue-100",
@@ -343,7 +366,7 @@ export default function DashboardPage() {
       (report) => report.id && !orderReportIds.has(report.id),
     );
     const requestsWithoutProject = requests.filter(
-      (request) => !request.project_id,
+      (request) => !requestHasProjectLink(request),
     );
     const ordersWithoutProject = orders.filter((order) => !order.project_id);
     const ordersWithoutTermin = openOrders.filter(
