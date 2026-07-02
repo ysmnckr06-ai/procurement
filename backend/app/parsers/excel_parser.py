@@ -922,7 +922,7 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
             section = {
                 "section_name": display_section_name,
                 "section_total": section_total,
-                "section_quantity": qty if qty > 0 else 0,
+                "section_quantity": qty if qty > 0 else 1,
                 "product_code": code,
                 "unit": unit or "adet",
                 "currency": row_currency,

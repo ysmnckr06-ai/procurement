@@ -4460,7 +4460,10 @@ export default function ProjectDetailPage() {
       const duplicateCategorySet = new Set(duplicateCategories);
 
       const missingParentQuantity = groupedEntries
-        .filter(([category, rows]) => !isUncategorizedPreviewCategory(category) && !rows.some((row) => Number(row.section_quantity || 0) > 0))
+        .filter(([category, rows]) =>
+          !isUncategorizedPreviewCategory(category)
+          && !rows.some((row) => Number(row.section_quantity || 0) > 0 || Number(row.section_total || 0) > 0)
+        )
         .map(([category]) => category);
       const missingParentQuantitySet = new Set(missingParentQuantity);
       const validHierarchyEntries = groupedEntries.filter(([category]) =>
@@ -4497,7 +4500,7 @@ export default function ProjectDetailPage() {
 
       const parentPayload = validHierarchyEntries.map(([category, rows]) => {
         const quoteTotal = sectionQuoteTotalFor(category, rows.reduce((sum, row) => sum + Number(row.estimated_total || 0), 0));
-        const parentQuantity = Number(rows.find((row) => Number(row.section_quantity || 0) > 0)?.section_quantity || 0) || 0;
+        const parentQuantity = Number(rows.find((row) => Number(row.section_quantity || 0) > 0)?.section_quantity || 0) || 1;
         return {
           user_id: user.id,
           project_id: projectId,
@@ -4511,7 +4514,7 @@ export default function ProjectDetailPage() {
           estimated_total: quoteTotal,
           quote_total: quoteTotal,
           status: "Bekliyor",
-          note: parentQuantity > 0 ? "Dosya önizleme ana kalem grubu" : "Ana kalem miktarı kontrol gerekli",
+          note: "Dosya önizleme ana kalem grubu",
           item_type: "main",
           updated_at: new Date().toISOString(),
         };
