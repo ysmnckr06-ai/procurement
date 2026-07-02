@@ -87,7 +87,7 @@ function requestPriority(request) {
 function requestProcessInfo(request) {
   const meta = getRequestMeta(request);
   if (!meta.processedBy && !meta.processedAt) return "";
-  return [meta.processedBy, meta.processedAt ? new Date(meta.processedAt).toLocaleDateString("tr-TR") : ""]
+  return [meta.processedBy, meta.processedDepartment, meta.processedAt ? new Date(meta.processedAt).toLocaleDateString("tr-TR") : ""]
     .filter(Boolean)
     .join(" · ");
 }
@@ -582,6 +582,12 @@ export default function TaleplerPage() {
   const [requestRelations, setRequestRelations] = useState({});
   const [creatingManualRequest, setCreatingManualRequest] = useState(false);
   const [activeRequestTab, setActiveRequestTab] = useState("pool");
+  const [processModal, setProcessModal] = useState({
+    request: null,
+    processor: "",
+    department: "",
+    priority: "Normal",
+  });
   const [manualRequest, setManualRequest] = useState({
     subject: "",
     requester: "",
@@ -859,9 +865,35 @@ export default function TaleplerPage() {
     setMessage("Talep durumu güncellendi.");
   }
 
-  async function takeRequestIntoProcess(request) {
-    const processor = window.prompt("Talebi işleme alan kişi kim?");
-    if (!processor || !processor.trim()) return;
+  function openProcessModal(request) {
+    setProcessModal({
+      request,
+      processor: "",
+      department: "",
+      priority: requestPriority(request),
+    });
+  }
+
+  function closeProcessModal() {
+    setProcessModal({
+      request: null,
+      processor: "",
+      department: "",
+      priority: "Normal",
+    });
+  }
+
+  function updateProcessModal(field, value) {
+    setProcessModal((current) => ({ ...current, [field]: value }));
+  }
+
+  async function takeRequestIntoProcess() {
+    const request = processModal.request;
+    const processor = processModal.processor.trim();
+    if (!request || !processor) {
+      setMessage("Talebi işleme alan kişi zorunlu.");
+      return;
+    }
 
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
@@ -871,7 +903,9 @@ export default function TaleplerPage() {
       ...item,
       request_meta: {
         ...(item.request_meta || {}),
-        processedBy: processor.trim(),
+        processedBy: processor,
+        processedDepartment: processModal.department.trim(),
+        priority: processModal.priority,
         processedAt,
       },
     }));
@@ -890,6 +924,7 @@ export default function TaleplerPage() {
     setSavedRequests((current) => current.map((item) => (
       item.id === request.id ? { ...item, durum: "İşleme alındı", items } : item
     )));
+    closeProcessModal();
     setMessage("Talep işleme alındı.");
   }
 
@@ -1501,7 +1536,7 @@ export default function TaleplerPage() {
                             </span>
                           ) : (
                             <button type="button"
-                              onClick={() => takeRequestIntoProcess(req)}
+                              onClick={() => openProcessModal(req)}
                               className="rounded-md bg-blue-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-blue-700"
                             >
                               İşleme Al
@@ -1735,6 +1770,83 @@ export default function TaleplerPage() {
 
         </div>
       </main>
+      {processModal.request && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4">
+          <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-black text-slate-900">Talebi İşleme Al</h2>
+                <p className="mt-1 text-sm font-semibold text-slate-500">
+                  Talebi kimin işleme aldığını, ilgili birimi ve aciliyet seviyesini kaydedin.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeProcessModal}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-black text-slate-600 hover:bg-slate-50"
+              >
+                Kapat
+              </button>
+            </div>
+
+            <div className="mt-5 space-y-4">
+              <label className="block text-sm font-black text-slate-700">
+                İşleme alan kişi
+                <input
+                  value={processModal.processor}
+                  onChange={(event) => updateProcessModal("processor", event.target.value)}
+                  className="mt-2 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-semibold outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  placeholder="Ad soyad"
+                  autoFocus
+                />
+              </label>
+
+              <label className="block text-sm font-black text-slate-700">
+                Birim / departman
+                <input
+                  value={processModal.department}
+                  onChange={(event) => updateProcessModal("department", event.target.value)}
+                  className="mt-2 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-semibold outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  placeholder="Satınalma, ÜR-GE, Şantiye..."
+                />
+              </label>
+
+              <label className="block text-sm font-black text-slate-700">
+                Aciliyet
+                <select
+                  value={processModal.priority}
+                  onChange={(event) => updateProcessModal("priority", event.target.value)}
+                  className="mt-2 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-semibold outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                >
+                  <option>Normal</option>
+                  <option>Düşük</option>
+                  <option>Orta</option>
+                  <option>Yüksek</option>
+                  <option>Kritik</option>
+                </select>
+              </label>
+            </div>
+
+            <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={closeProcessModal}
+                className="rounded-xl border border-slate-200 px-4 py-3 text-sm font-black text-slate-600 hover:bg-slate-50"
+              >
+                Vazgeç
+              </button>
+              <button
+                type="button"
+                disabled={!processModal.processor.trim()}
+                onClick={takeRequestIntoProcess}
+                className="rounded-xl bg-blue-600 px-4 py-3 text-sm font-black text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+              >
+                İşleme Al
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
