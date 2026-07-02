@@ -508,7 +508,7 @@ export default function ProcurementSummaryPage() {
       supabase.from("products").select("id,product_code,normalized_product_code,product_name,brand,unit,current_stock,reserved_stock").eq("user_id", user.id).is("archived_at", null),
       supabase.from("orders").select("id,status,items").eq("user_id", user.id),
       supabase.from("stock_movements").select("id,project_item_id,product_id,product_code,product_name,unit,reserved_quantity").eq("user_id", user.id),
-      supabase.from("requests").select("id,project_id,durum,status,items").eq("user_id", user.id),
+      supabase.from("requests").select("id,project_id,durum,items").eq("user_id", user.id),
     ]);
     const error = projectResult.error || itemResult.error || productResult.error || orderResult.error || movementResult.error || requestResult.error;
     if (error) {
