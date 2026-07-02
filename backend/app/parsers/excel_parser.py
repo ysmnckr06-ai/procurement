@@ -204,6 +204,50 @@ def clean_text(val):
     return text
 
 
+KNOWN_BRAND_PREFIXES = [
+    ("ONKA-KLEMSAN", "ONKA-KLEMSAN"),
+    ("MAKEL-BAYLAN", "MAKEL-BAYLAN"),
+    ("EKA-OMSAN", "EKA-OMSAN"),
+    ("MPSYSTEM", "MPSYSTEM"),
+    ("GRUPARGE", "GRUPARGE"),
+    ("TWOMASTER", "TWOMASTER"),
+    ("EUROWEST", "EUROWEST"),
+    ("FEDERAL", "FEDERAL"),
+    ("ENTES", "ENTES"),
+    ("CHINT", "CHINT"),
+    ("NE-AD", "NE-AD"),
+    ("ABB", "ABB"),
+    ("TSE", "TSE"),
+]
+
+
+def split_brand_from_description(brand, desc):
+    brand = clean_text(brand)
+    desc = clean_text(desc)
+
+    if brand or not desc:
+        return brand, desc
+
+    desc_norm = normalize_col(desc)
+    for prefix_norm, display_brand in KNOWN_BRAND_PREFIXES:
+        normalized_prefix = normalize_col(prefix_norm)
+        if desc_norm == normalized_prefix:
+            return display_brand, ""
+        if desc_norm.startswith(f"{normalized_prefix} "):
+            return display_brand, desc[len(desc.split()[0]):].strip()
+
+    match = re.match(r"^([A-ZÇĞİÖŞÜ0-9][A-ZÇĞİÖŞÜ0-9.&/_-]{1,24})\s+(.+)$", desc)
+    if not match:
+        return brand, desc
+
+    candidate = match.group(1).strip()
+    rest = match.group(2).strip()
+    if normalize_col(candidate) in ["seri", "tipi", "pano", "trafo", "transfer", "kompanzasyon"]:
+        return brand, desc
+
+    return candidate, rest
+
+
 def clean_number(val):
     if val is None or pd.isna(val):
         return 0.0
@@ -645,10 +689,11 @@ def parse_excel_offer_table_fallback(raw_df, firma, footer, default_currency, fi
         if total <= 0 and price > 0:
             total = price * qty
 
+        brand = clean_text(item.get(brand_col)) if brand_col is not None else ""
+        brand, desc = split_brand_from_description(brand, desc)
         row_currency = (
             detect_currency_token(item.get(currency_col)) if currency_col is not None else ""
         ) or detect_currency_token(joined) or default_currency or "TRY"
-        brand = clean_text(item.get(brand_col)) if brand_col is not None else ""
 
         rows.append({
             "firma": firma,
@@ -888,6 +933,7 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
         code = clean_text(r.get(code_col)) if code_col is not None else ""
         brand = clean_text(r.get(brand_col)) if brand_col is not None else ""
         desc = clean_text(r.get(desc_col)) if desc_col is not None else ""
+        brand, desc = split_brand_from_description(brand, desc)
         cells = [clean_text(x) for x in r.values]
         joined = " ".join(cells)
 
