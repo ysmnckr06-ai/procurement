@@ -211,6 +211,7 @@ async function insertProductWithSchemaFallback(payload, select = "") {
     "reserved_stock",
     "min_stock",
     "critical_stock",
+    "last_unit_price",
     "manual_unit_price",
     "last_currency",
     "last_movement_at",
@@ -1410,7 +1411,7 @@ export default function StockPage() {
       const items = Array.isArray(payload.items) ? payload.items : [];
       if (!items.length) throw new Error(`${file.name}: OCR ürün satırı çıkaramadı; Excel yükleyin veya belgeyi kontrol edin.`);
       const matrix = [
-        ["Ürün kodu", "Ürün açıklaması", "Marka", "Birim", "Miktar", "Birim fiyat"],
+        ["Ürün kodu", "Ürün açıklaması", "Marka", "Birim", "Miktar", "Birim fiyat", "Para birimi", "Kritik stok"],
         ...items.map((item) => [
           item.product_code || item.code || "",
           item.product_name || item.description || item.name || "",
@@ -1418,6 +1419,8 @@ export default function StockPage() {
           item.unit || "adet",
           item.quantity ?? item.qty ?? "",
           item.unit_price ?? item.price ?? "",
+          item.currency || item.paraBirimi || "TRY",
+          item.critical_stock ?? item.criticalStock ?? "",
         ]),
       ];
       const sheetName = "PDF OCR";
@@ -1519,6 +1522,25 @@ export default function StockPage() {
       .reduce((sum, product) => sum + Number(product.current_stock || 0), 0);
   }
 
+  async function updateImportedProductDetails(productId, row) {
+    if (!productId) return;
+    const details = { updated_at: new Date().toISOString() };
+    const unitPrice = row.unitPrice === null || row.unitPrice === undefined ? null : Number(row.unitPrice);
+    const criticalStock = row.criticalStock === null || row.criticalStock === undefined ? null : Number(row.criticalStock);
+
+    if (Number.isFinite(unitPrice) && unitPrice > 0) {
+      details.last_unit_price = unitPrice;
+      details.manual_unit_price = unitPrice;
+      details.last_currency = row.currency || "TRY";
+    }
+    if (!details.last_currency && row.currency) details.last_currency = row.currency;
+    if (Number.isFinite(criticalStock) && criticalStock >= 0) details.critical_stock = criticalStock;
+
+    if (Object.keys(details).length <= 1) return;
+    const { error } = await supabase.from("products").update(details).eq("id", productId);
+    if (error) throw error;
+  }
+
   async function applyStockImportAnalysis() {
     const analysis = stockImportPreview;
     if (!analysis?.canApply || !analysis.rows.length || stockImportApplying) return;
@@ -1572,7 +1594,10 @@ export default function StockPage() {
               current_stock: 0,
               reserved_stock: 0,
               min_stock: 0,
-              critical_stock: 0,
+              critical_stock: Number(row.criticalStock || 0),
+              last_unit_price: Number(row.unitPrice || 0),
+              manual_unit_price: Number(row.unitPrice || 0),
+              last_currency: row.currency || "TRY",
               source: "Toplu dosya aktarımı",
               notes: "Toplu ana ürün yükleme ile oluşturuldu.",
             };
@@ -1609,6 +1634,7 @@ export default function StockPage() {
           result.appliedIncrease += Number(rpcResult.applied_quantity || 0);
           if (rpcResult.created) result.createdProducts += 1;
           else result.updatedProducts += 1;
+          await updateImportedProductDetails(rpcResult.product_id || row.matchedProduct?.id, row);
           result.rows.push({
             ...row,
             status: "success",
@@ -1661,6 +1687,9 @@ export default function StockPage() {
       "Ürün adı": row.productName || "-",
       Miktar: Number(row.quantity || 0),
       Birim: row.unit || "adet",
+      "Birim fiyat": row.unitPrice ?? "-",
+      "Para birimi": row.currency || "TRY",
+      "Kritik stok": row.criticalStock ?? "-",
       Durum: row.status === "success" ? "İşlendi" : row.status === "skipped" ? "Atlandı" : "Başarısız",
       "Kart işlemi": row.productAction === "new" ? "Yeni kart" : row.productAction === "existing" ? "Mevcut kart" : "Uygulanmadı",
       "Eski stok": row.rpcResult?.old_stock ?? "-",
@@ -3005,11 +3034,11 @@ export default function StockPage() {
                 </div>
                 {stockImportPreview.rows.length > 0 && (
                   <div className="mt-5 overflow-x-auto rounded-xl border border-slate-200">
-                    <table className="w-full min-w-[760px] text-left text-sm">
-                      <thead className="bg-slate-100 text-xs uppercase text-slate-500"><tr><th className="p-3">Satır</th><th className="p-3">Ürün kodu</th><th className="p-3">Ürün adı</th><th className="p-3">Eklenecek miktar</th><th className="p-3">Durum</th></tr></thead>
+                    <table className="w-full min-w-[980px] text-left text-sm">
+                      <thead className="bg-slate-100 text-xs uppercase text-slate-500"><tr><th className="p-3">Satır</th><th className="p-3">Ürün kodu</th><th className="p-3">Ürün adı</th><th className="p-3">Eklenecek miktar</th><th className="p-3">Birim fiyat</th><th className="p-3">Kritik stok</th><th className="p-3">Durum</th></tr></thead>
                       <tbody>{stockImportPreview.rows.slice(0, 20).map((row, index) => (
                         <tr key={`${row.fileName}-${row.rowNumber}-${index}`} className="border-t border-slate-100">
-                          <td className="p-3">{row.rowNumber}</td><td className="p-3 font-bold">{row.productCode || "-"}</td><td className="p-3">{row.productName}</td><td className="p-3">{row.quantity} {row.unit}</td><td className="p-3"><span className={`rounded-full px-2 py-1 text-xs font-black ${stockImportDecisionTone(row.decision)}`}>{stockImportDecisionText(row.decision)}</span></td>
+                          <td className="p-3">{row.rowNumber}</td><td className="p-3 font-bold">{row.productCode || "-"}</td><td className="p-3">{row.productName}</td><td className="p-3">{row.quantity} {row.unit}</td><td className="p-3">{row.unitPrice ?? "-"} {row.currency || "TRY"}</td><td className="p-3">{row.criticalStock ?? "-"}</td><td className="p-3"><span className={`rounded-full px-2 py-1 text-xs font-black ${stockImportDecisionTone(row.decision)}`}>{stockImportDecisionText(row.decision)}</span></td>
                         </tr>
                       ))}</tbody>
                     </table>
