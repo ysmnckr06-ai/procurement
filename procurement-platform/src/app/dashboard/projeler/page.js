@@ -371,8 +371,31 @@ export default function ProjectsPage() {
 
   async function createCustomerPartnerFromProject() {
     const cleanName = String(customerPartnerDraft.name || form.customer_name || "").trim().replace(/\s+/g, " ");
+    const cleanPhone = String(customerPartnerDraft.phone || "").trim();
+    const cleanEmail = String(customerPartnerDraft.email || "").trim();
+    const cleanTaxNumber = String(customerPartnerDraft.tax_number || "").trim();
+    const cleanCity = String(customerPartnerDraft.city || "").trim();
+    const phoneDigits = cleanPhone.replace(/\D/g, "");
+    const taxDigits = cleanTaxNumber.replace(/\D/g, "");
+
     if (!cleanName) {
-      setMessage("Firma adı zorunlu.");
+      setMessage("Firma adi zorunlu.");
+      return;
+    }
+    if (!cleanPhone || phoneDigits.length < 10) {
+      setMessage("Telefon numarasi zorunlu ve en az 10 rakam olmali.");
+      return;
+    }
+    if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      setMessage("Gecerli bir e-posta adresi zorunlu.");
+      return;
+    }
+    if (!cleanTaxNumber || ![10, 11].includes(taxDigits.length)) {
+      setMessage("Vergi no zorunlu ve 10 ya da 11 rakam olmali.");
+      return;
+    }
+    if (!cleanCity) {
+      setMessage("Sehir zorunlu.");
       return;
     }
 
@@ -392,10 +415,10 @@ export default function ProjectsPage() {
       name: cleanName,
       partnerType: "Müşteri",
       contactPerson: customerPartnerDraft.contact_person,
-      phone: customerPartnerDraft.phone,
-      email: customerPartnerDraft.email,
-      taxNumber: customerPartnerDraft.tax_number,
-      city: customerPartnerDraft.city,
+      phone: cleanPhone,
+      email: cleanEmail,
+      taxNumber: cleanTaxNumber,
+      city: cleanCity,
       allowCreate: true,
       allowProbableMatch: true,
     });
@@ -1185,6 +1208,20 @@ export default function ProjectsPage() {
       .sort((left, right) => String(left.name || "").localeCompare(String(right.name || ""), "tr"))
       .slice(0, 8);
   }, [businessPartners, form.customer_name]);
+  const customerPartnerDraftIsValid = useMemo(() => {
+    const name = String(customerPartnerDraft.name || form.customer_name || "").trim();
+    const phoneDigits = String(customerPartnerDraft.phone || "").replace(/\D/g, "");
+    const email = String(customerPartnerDraft.email || "").trim();
+    const taxDigits = String(customerPartnerDraft.tax_number || "").replace(/\D/g, "");
+    const city = String(customerPartnerDraft.city || "").trim();
+    return Boolean(
+      name
+        && phoneDigits.length >= 10
+        && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+        && [10, 11].includes(taxDigits.length)
+        && city,
+    );
+  }, [customerPartnerDraft, form.customer_name]);
   const customerNameNeedsPartner = Boolean(form.customer_name.trim()) && !selectedCustomerPartner;
 
   function toggleProjectSelection(projectId) {
@@ -1435,8 +1472,9 @@ export default function ProjectsPage() {
                       <div className="mt-3 space-y-3 rounded-xl border border-amber-200 bg-white p-3">
                         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                           <label className="text-xs font-black text-slate-700">
-                            Firma adı
+                            Firma adı *
                             <input
+                              required
                               className="mt-1 w-full rounded-lg border border-slate-300 p-2"
                               value={customerPartnerDraft.name}
                               onChange={(event) => updateCustomerPartnerDraft("name", event.target.value)}
@@ -1451,16 +1489,20 @@ export default function ProjectsPage() {
                             />
                           </label>
                           <label className="text-xs font-black text-slate-700">
-                            Telefon
+                            Telefon *
                             <input
+                              required
+                              type="tel"
+                              inputMode="tel"
                               className="mt-1 w-full rounded-lg border border-slate-300 p-2"
                               value={customerPartnerDraft.phone}
                               onChange={(event) => updateCustomerPartnerDraft("phone", event.target.value)}
                             />
                           </label>
                           <label className="text-xs font-black text-slate-700">
-                            E-posta
+                            E-posta *
                             <input
+                              required
                               type="email"
                               className="mt-1 w-full rounded-lg border border-slate-300 p-2"
                               value={customerPartnerDraft.email}
@@ -1468,16 +1510,20 @@ export default function ProjectsPage() {
                             />
                           </label>
                           <label className="text-xs font-black text-slate-700">
-                            Vergi no
+                            Vergi no *
                             <input
+                              required
+                              inputMode="numeric"
+                              pattern="[0-9]{10,11}"
                               className="mt-1 w-full rounded-lg border border-slate-300 p-2"
                               value={customerPartnerDraft.tax_number}
                               onChange={(event) => updateCustomerPartnerDraft("tax_number", event.target.value)}
                             />
                           </label>
                           <label className="text-xs font-black text-slate-700">
-                            Şehir
+                            Şehir *
                             <input
+                              required
                               className="mt-1 w-full rounded-lg border border-slate-300 p-2"
                               value={customerPartnerDraft.city}
                               onChange={(event) => updateCustomerPartnerDraft("city", event.target.value)}
@@ -1487,7 +1533,7 @@ export default function ProjectsPage() {
                         <div className="flex flex-wrap gap-2">
                           <button
                             type="button"
-                            disabled={savingPartner}
+                            disabled={savingPartner || !customerPartnerDraftIsValid}
                             onClick={createCustomerPartnerFromProject}
                             className="rounded-lg bg-amber-500 px-3 py-2 font-black text-white hover:bg-amber-600 disabled:cursor-not-allowed disabled:bg-slate-300"
                           >
