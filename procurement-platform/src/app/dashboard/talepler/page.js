@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { CORVIAN_PRODUCT_NAME, fetchCompanyBranding } from "@/lib/companyBranding";
 import { matchProduct } from "@/lib/productMatching";
+import ProductCodeInput from "@/components/ProductCodeInput";
 import { useState, useMemo, useEffect, useRef } from "react";
 
 function StatCard({ icon, title, value, text }) {
@@ -1380,7 +1381,13 @@ export default function TaleplerPage() {
               <select value={manualRequest.priority} onChange={(e) => updateManualRequest("priority", e.target.value)} className="rounded-xl border border-slate-300 px-4 py-3 text-sm">
                 <option>Düşük</option><option>Orta</option><option>Yüksek</option><option>Kritik</option>
               </select>
-              <input value={manualRequest.productCode} onChange={(e) => updateManualProductCode(e.target.value)} placeholder="Ürün kodu (opsiyonel)" className="rounded-xl border border-slate-300 px-4 py-3 text-sm" />
+              <ProductCodeInput
+                products={stockProducts}
+                value={manualRequest.productCode}
+                onChange={updateManualProductCode}
+                placeholder="Ürün kodu (opsiyonel)"
+                className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm"
+              />
               <input value={manualRequest.brand} onChange={(e) => updateManualRequest("brand", e.target.value)} placeholder="Marka" className="rounded-xl border border-slate-300 px-4 py-3 text-sm" />
               <input value={manualRequest.productName} onChange={(e) => updateManualRequest("productName", e.target.value)} placeholder="Ürün / hizmet açıklaması" className="rounded-xl border border-slate-300 px-4 py-3 text-sm" />
               <input type="number" min="0" value={manualRequest.quantity} onChange={(e) => updateManualRequest("quantity", e.target.value)} placeholder="Miktar" className="rounded-xl border border-slate-300 px-4 py-3 text-sm" />

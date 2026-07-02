@@ -894,6 +894,26 @@ export default function ProjectsPage() {
 
     const customerName = form.customer_name.trim();
     const customerPartner = customerName ? findBusinessPartnerByName(businessPartners, customerName) : null;
+    const requiredProjectFields = [
+      ["Proje adı", form.project_name],
+      ["Müşteri adı", form.customer_name],
+      ["Proje sorumlusu", form.project_owner],
+      ["Başlangıç tarihi", form.start_date],
+      ["Planlanan bitiş", form.planned_end_date],
+      ["Durum", form.status],
+    ].filter(([, value]) => !String(value || "").trim());
+
+    if (requiredProjectFields.length > 0) {
+      setMessage(`Zorunlu proje alanları eksik: ${requiredProjectFields.map(([label]) => label).join(", ")}.`);
+      setSaving(false);
+      return;
+    }
+
+    if (form.start_date && form.planned_end_date && form.planned_end_date < form.start_date) {
+      setMessage("Planlanan bitiş tarihi başlangıç tarihinden önce olamaz.");
+      setSaving(false);
+      return;
+    }
 
     if (customerName && !customerPartner) {
       setMessage("Bu firma iş ortakları arasında bulunamadı. Lütfen önce firma bilgisi oluşturun veya mevcut bir firmayı seçin.");
@@ -944,12 +964,6 @@ export default function ProjectsPage() {
       updated_at: new Date().toISOString(),
     };
     if (!editingId) payload.actual_cost = 0;
-
-    if (!payload.project_name) {
-      setMessage("Proje adı zorunlu.");
-      setSaving(false);
-      return;
-    }
 
     const request = editingId
       ? supabase
@@ -1418,13 +1432,14 @@ export default function ProjectsPage() {
                 <span className="mt-1 block text-xs font-semibold text-slate-500">Elle değiştirmezseniz sistem ilk boş PRJ numarasını verir.</span>
               </label>
               <label className="text-sm font-bold text-slate-700">
-                Proje Adı
-                <input className="mt-2 w-full rounded-xl border border-slate-300 p-3" value={form.project_name} onChange={(e) => updateForm("project_name", e.target.value)} />
+                Proje Adı *
+                <input required className="mt-2 w-full rounded-xl border border-slate-300 p-3" value={form.project_name} onChange={(e) => updateForm("project_name", e.target.value)} />
               </label>
               <label className="text-sm font-bold text-slate-700">
-                Müşteri Adı
+                Müşteri Adı *
                 <div className="relative mt-2">
                   <input
+                    required
                     className="w-full rounded-xl border border-slate-300 p-3"
                     value={form.customer_name}
                     onFocus={() => setShowCustomerSuggestions(true)}
@@ -1617,20 +1632,20 @@ export default function ProjectsPage() {
                 </div>
               </div>
               <label className="text-sm font-bold text-slate-700">
-                Proje Sorumlusu
-                <input className="mt-2 w-full rounded-xl border border-slate-300 p-3" value={form.project_owner} onChange={(e) => updateForm("project_owner", e.target.value)} />
+                Proje Sorumlusu *
+                <input required className="mt-2 w-full rounded-xl border border-slate-300 p-3" value={form.project_owner} onChange={(e) => updateForm("project_owner", e.target.value)} />
               </label>
               <label className="text-sm font-bold text-slate-700">
-                Başlangıç Tarihi
-                <input type="date" className="mt-2 w-full rounded-xl border border-slate-300 p-3" value={form.start_date} onChange={(e) => updateForm("start_date", e.target.value)} />
+                Başlangıç Tarihi *
+                <input required type="date" className="mt-2 w-full rounded-xl border border-slate-300 p-3" value={form.start_date} onChange={(e) => updateForm("start_date", e.target.value)} />
               </label>
               <label className="text-sm font-bold text-slate-700">
-                Planlanan Bitiş
-                <input type="date" className="mt-2 w-full rounded-xl border border-slate-300 p-3" value={form.planned_end_date} onChange={(e) => updateForm("planned_end_date", e.target.value)} />
+                Planlanan Bitiş *
+                <input required type="date" className="mt-2 w-full rounded-xl border border-slate-300 p-3" value={form.planned_end_date} onChange={(e) => updateForm("planned_end_date", e.target.value)} />
               </label>
               <label className="text-sm font-bold text-slate-700">
-                Durum
-                <select className="mt-2 w-full rounded-xl border border-slate-300 p-3" value={form.status} onChange={(e) => updateForm("status", e.target.value)}>
+                Durum *
+                <select required className="mt-2 w-full rounded-xl border border-slate-300 p-3" value={form.status} onChange={(e) => updateForm("status", e.target.value)}>
                   {statusOptions.map((status) => (
                     <option key={status} value={status}>{status}</option>
                   ))}

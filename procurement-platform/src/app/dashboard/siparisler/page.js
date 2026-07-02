@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
+import ProductCodeInput from "@/components/ProductCodeInput";
 import { supabase } from "@/lib/supabase";
 import { calculateBaseAmount, currencyOptions, getBaseCurrency, getExchangeRate } from "@/lib/currency";
 import { fetchLiveTryRates, liveCurrencyOptions, liveRateFor, rateDiffPercent } from "@/lib/liveCurrency";
@@ -283,6 +284,7 @@ export default function OrdersPage() {
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [projectOrderItems, setProjectOrderItems] = useState([]);
   const [projectStockProducts, setProjectStockProducts] = useState([]);
+  const [stockProducts, setStockProducts] = useState([]);
   const [selectedProjectItemIds, setSelectedProjectItemIds] = useState([]);
   const [projectItemQuantities, setProjectItemQuantities] = useState({});
   const [showCompletedProjectItems, setShowCompletedProjectItems] = useState(false);
@@ -339,9 +341,18 @@ export default function OrdersPage() {
       .eq("user_id", user.id)
       .limit(1);
 
+    const { data: stockProductData } = await supabase
+      .from("products")
+      .select("id,product_code,normalized_product_code,product_name,brand,unit,current_stock,reserved_stock")
+      .eq("user_id", user.id)
+      .is("archived_at", null)
+      .order("product_code", { ascending: true })
+      .limit(5000);
+
     setOrders(data || []);
     setSuppliers(supplierData || []);
     setProjects(projectData || []);
+    setStockProducts(stockProductData || []);
     if (settingsData?.[0]) {
       setCompanySettings({
         ...defaultCompanySettings,
@@ -638,7 +649,7 @@ export default function OrdersPage() {
 
     const { data: productData, error: productError } = await supabase
       .from("products")
-      .select("id,product_code,product_name,current_stock,reserved_stock,unit")
+      .select("id,product_code,normalized_product_code,product_name,brand,current_stock,reserved_stock,unit")
       .eq("user_id", user.id)
       .is("archived_at", null)
       .limit(5000);
@@ -1085,6 +1096,7 @@ export default function OrdersPage() {
               onCancel={resetForm}
               onSubmit={handleSubmit}
               liveRates={liveRates}
+              stockProducts={stockProducts}
             />
           )}
 
@@ -1344,6 +1356,7 @@ function OrderForm({
   onCancel,
   onSubmit,
   liveRates,
+  stockProducts = [],
 }) {
   const items = useMemo(() => normalizeItems(formData.items), [formData.items]);
   const missingRequiredFields = [
@@ -1546,11 +1559,14 @@ function OrderForm({
                   className="border-t border-slate-200"
                 >
                   <td className="p-3">
-                    <input
+                    <ProductCodeInput
+                      products={stockProducts}
                       value={item.productCode}
-                      onChange={(event) =>
-                        onItemChange(index, "productCode", event.target.value)
-                      }
+                      onChange={(value) => onItemChange(index, "productCode", value)}
+                      onSelect={(product) => {
+                        onItemChange(index, "productName", product.product_name || "");
+                        onItemChange(index, "unit", product.unit || item.unit || "adet");
+                      }}
                       placeholder="Kod"
                       className="w-28 rounded border border-slate-300 px-2 py-1"
                     />

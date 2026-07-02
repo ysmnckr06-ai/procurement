@@ -5,6 +5,7 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import DocumentArchivePanel from "@/components/DocumentArchivePanel";
+import ProductCodeInput from "@/components/ProductCodeInput";
 import { calculateBaseAmount, currencyOptions, getBaseCurrency, getExchangeRate } from "@/lib/currency";
 import { createDocumentSignedUrl, downloadDocumentFile, isPdfDocument } from "@/lib/documentAccess";
 import { fetchLiveTryRates, liveCurrencyOptions, liveRateFor, rateDiffPercent } from "@/lib/liveCurrency";
@@ -7761,7 +7762,17 @@ export default function ProjectDetailPage() {
                                     {isEditing ? (
                                       <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
                                         <input className="rounded-lg border border-slate-200 p-2" value={row.product_name || ""} onChange={(event) => updatePreviewRow(row.preview_id, "product_name", event.target.value)} />
-                                        <input className="rounded-lg border border-slate-200 p-2" value={row.product_code || ""} onChange={(event) => updatePreviewRow(row.preview_id, "product_code", event.target.value)} />
+                                        <ProductCodeInput
+                                          products={products}
+                                          value={row.product_code || ""}
+                                          onChange={(value) => updatePreviewRow(row.preview_id, "product_code", value)}
+                                          onSelect={(product) => {
+                                            updatePreviewRow(row.preview_id, "product_name", product.product_name || row.product_name || "");
+                                            updatePreviewRow(row.preview_id, "brand", product.brand || row.brand || "");
+                                            updatePreviewRow(row.preview_id, "unit", product.unit || row.unit || "adet");
+                                          }}
+                                          className="w-full rounded-lg border border-slate-200 p-2"
+                                        />
                                         <input className="rounded-lg border border-slate-200 p-2" value={row.brand || ""} onChange={(event) => updatePreviewRow(row.preview_id, "brand", event.target.value)} placeholder="Marka" />
                                         <input className="rounded-lg border border-slate-200 p-2" value={row.unit || ""} onChange={(event) => updatePreviewRow(row.preview_id, "unit", event.target.value)} placeholder="Birim" />
                                       </div>
@@ -8286,11 +8297,11 @@ export default function ProjectDetailPage() {
                     </button>
                   </div>
                   <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                    <input
-                      className="rounded-xl border border-slate-300 p-3"
-                      placeholder="Ürün kodu"
+                    <ProductCodeInput
+                      products={products}
                       value={itemForm.product_code}
-                      onChange={(event) => updateItemProductCode(event.target.value)}
+                      onChange={updateItemProductCode}
+                      className="w-full rounded-xl border border-slate-300 p-3"
                     />
                     <input
                       className="rounded-xl border border-slate-300 p-3"
@@ -8491,7 +8502,7 @@ export default function ProjectDetailPage() {
                             </button>
                           </div>
                           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                            <input className="rounded-xl border border-slate-300 p-3" placeholder="Ürün kodu" value={itemForm.product_code} onChange={(e) => updateItemProductCode(e.target.value)} />
+                            <ProductCodeInput products={products} value={itemForm.product_code} onChange={updateItemProductCode} className="w-full rounded-xl border border-slate-300 p-3" />
                             <input className="rounded-xl border border-slate-300 p-3" placeholder="Ürün adı" value={itemForm.product_name} onChange={(e) => updateItemForm("product_name", e.target.value)} />
                             <input className="rounded-xl border border-slate-300 p-3" placeholder="Birim" value={itemForm.unit} onChange={(e) => updateItemForm("unit", e.target.value)} />
                             <input type="number" className="rounded-xl border border-slate-300 p-3" placeholder="Miktar" value={itemForm.estimated_quantity} onChange={(e) => updateItemForm("estimated_quantity", e.target.value)} />
