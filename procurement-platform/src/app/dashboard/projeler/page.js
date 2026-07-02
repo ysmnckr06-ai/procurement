@@ -651,6 +651,32 @@ export default function ProjectsPage() {
 
   async function archiveProjectSourceFiles(files, projectId, userId, projectPayload) {
     const warnings = [];
+    async function linkDocumentToProject(documentId) {
+      if (!documentId) return false;
+
+      const { data: existingLink, error: linkLookupError } = await supabase
+        .from("document_links")
+        .select("id")
+        .eq("user_id", userId)
+        .eq("document_id", documentId)
+        .eq("project_id", projectId)
+        .limit(1)
+        .maybeSingle();
+
+      if (linkLookupError) return false;
+      if (existingLink) return true;
+
+      const { error: linkError } = await supabase
+        .from("document_links")
+        .insert({
+          user_id: userId,
+          document_id: documentId,
+          project_id: projectId,
+        });
+
+      return !linkError;
+    }
+
     for (const file of files) {
       try {
         const contentSha256 = await fileSha256(file);
@@ -667,7 +693,8 @@ export default function ProjectsPage() {
         }
 
         if (existingDocument) {
-          warnings.push(`${file.name} daha önce belge arşivine kaydedilmiş.`);
+          const linked = await linkDocumentToProject(existingDocument.id);
+          if (!linked) warnings.push(`${file.name} arsivde var ancak projeye baglanamadi.`);
           continue;
         }
 
@@ -691,7 +718,7 @@ export default function ProjectsPage() {
           continue;
         }
 
-        const { error: documentError } = await supabase
+        const { data: documentRow, error: documentError } = await supabase
           .from("documents")
           .insert({
             user_id: userId,
@@ -705,11 +732,16 @@ export default function ProjectsPage() {
             supplier_name: projectPayload.customer_partner_name || projectPayload.customer_name || null,
             document_date: projectPayload.start_date || null,
             currency: projectPayload.estimated_budget_currency || projectPayload.contract_currency || getBaseCurrency(settings),
-          });
+          })
+          .select("id")
+          .single();
 
         if (documentError) {
           await supabase.storage.from("order-documents").remove([storagePath]);
           warnings.push(`${file.name} belge bilgisi kaydedilemedi.`);
+        } else {
+          const linked = await linkDocumentToProject(documentRow?.id);
+          if (!linked) warnings.push(`${file.name} belge arsivi projeye baglanamadi.`);
         }
       } catch (error) {
         warnings.push(`${file.name} belge arşivine alınamadı.`);

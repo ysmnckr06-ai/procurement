@@ -919,6 +919,45 @@ export default function ProjectDetailPage() {
       }
     }
 
+    const { data: directProjectDocumentLinks, error: directProjectDocumentLinkError } = await supabase
+      .from("document_links")
+      .select("document_id")
+      .eq("project_id", projectId)
+      .eq("user_id", user.id);
+
+    if (directProjectDocumentLinkError) {
+      console.warn("Proje belge baglantilari okunamadi:", directProjectDocumentLinkError);
+    } else {
+      const directProjectDocumentIds = Array.from(
+        new Set((directProjectDocumentLinks || []).map((link) => link.document_id).filter(Boolean)),
+      );
+
+      if (directProjectDocumentIds.length > 0) {
+        const { data: directProjectDocuments, error: directProjectDocumentError } = await supabase
+          .from("documents")
+          .select("*")
+          .in("id", directProjectDocumentIds)
+          .eq("user_id", user.id);
+
+        if (directProjectDocumentError) {
+          console.warn("Proje belgeleri okunamadi:", directProjectDocumentError);
+        } else if (directProjectDocuments?.length) {
+          const existingDocumentIds = new Set(nextProjectDocuments.map((document) => String(document.id)));
+          nextProjectDocuments = [
+            ...directProjectDocuments
+              .filter((document) => !existingDocumentIds.has(String(document.id)))
+              .map((document) => ({
+                ...document,
+                document_type: document.document_type || "proje",
+                linked_project_id: projectId,
+                linked_project_code: projectRes.data?.project_code || null,
+              })),
+            ...nextProjectDocuments,
+          ];
+        }
+      }
+    }
+
     const { data: sourceDocumentRows, error: sourceDocumentError } = await supabase
       .from("documents")
       .select("*")
