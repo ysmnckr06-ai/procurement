@@ -68,6 +68,7 @@ export default function DocumentArchivePanel({
   onDelete,
   renderExtra,
   compact = false,
+  allowMissingStorageOpen = false,
 }) {
   const groupedDocuments = documents.reduce((groups, document) => {
     const type = String(document.document_type || "diger").toLocaleLowerCase("tr-TR");
@@ -166,7 +167,7 @@ export default function DocumentArchivePanel({
                           </div>
                           <button
                             type="button"
-                            disabled={!hasStoredFile || loadingDocumentId === document.id}
+                            disabled={(!hasStoredFile && !allowMissingStorageOpen) || loadingDocumentId === document.id}
                             onClick={() => onOpen?.(document)}
                             className="rounded-lg bg-blue-600 px-4 py-2 text-xs font-black text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300"
                           >

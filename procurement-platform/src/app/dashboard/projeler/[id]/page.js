@@ -723,7 +723,10 @@ export default function ProjectDetailPage() {
     const targetWindow = window.open("about:blank", "_blank");
 
     try {
-      const signedUrl = await createDocumentSignedUrl(supabase, document);
+      const openableDocument = document.storage_path
+        ? document
+        : await resolveProjectStorageDocument(document);
+      const signedUrl = await createDocumentSignedUrl(supabase, openableDocument);
       if (targetWindow) {
         targetWindow.location.href = signedUrl;
       } else {
@@ -736,6 +739,49 @@ export default function ProjectDetailPage() {
     } finally {
       setDocumentAccessLoadingId(null);
     }
+  }
+
+  async function resolveProjectStorageDocument(document) {
+    const user = await getUserOrRedirect();
+    if (!user) throw new Error("Oturum bulunamadı. Lütfen tekrar giriş yapın.");
+
+    const targetName = normalizedDocumentFileName(document?.original_file_name);
+    if (!targetName) {
+      throw new Error("Belge dosya adı bulunamadı.");
+    }
+
+    const folderPath = `${user.id}/projects/${projectId}`;
+    const { data: storedFiles, error } = await supabase.storage
+      .from("order-documents")
+      .list(folderPath, { limit: 1000, sortBy: { column: "created_at", order: "desc" } });
+
+    if (error) {
+      throw new Error(error.message || "Proje dosya klasörü okunamadı.");
+    }
+
+    const matchedFile = (storedFiles || []).find((file) => {
+      const storedName = normalizedDocumentFileName(file.name);
+      return storedName === targetName || storedName.endsWith(targetName) || targetName.endsWith(storedName);
+    });
+
+    if (!matchedFile?.name) {
+      throw new Error("Bu belge için açılabilir dosya yolu bulunamadı. Dosyayı Belgeler > Dosya Seç ile tekrar yükleyin.");
+    }
+
+    const storagePath = `${folderPath}/${matchedFile.name}`;
+    const openableDocument = {
+      ...document,
+      storage_bucket: document.storage_bucket || "order-documents",
+      storage_path: storagePath,
+      mime_type: document.mime_type || matchedFile.metadata?.mimetype || null,
+      file_size: document.file_size || matchedFile.metadata?.size || null,
+    };
+
+    setProjectDocuments((current) =>
+      current.map((entry) => (entry.id === document.id ? openableDocument : entry)),
+    );
+
+    return openableDocument;
   }
 
   async function downloadDocument(document) {
@@ -9649,6 +9695,7 @@ export default function ProjectDetailPage() {
               onPreview={previewDocument}
               onOpen={openDocumentInNewTab}
               onDownload={downloadDocument}
+              allowMissingStorageOpen
               renderExtra={(document) => {
                 const fileName = String(document.original_file_name || "").trim();
                 const affectedCount = items.filter((item) => String(item.source_file || "").trim() === fileName).length;
