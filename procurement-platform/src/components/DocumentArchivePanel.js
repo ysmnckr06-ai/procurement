@@ -65,6 +65,7 @@ export default function DocumentArchivePanel({
   onPreview,
   onOpen,
   onDownload,
+  onDelete,
   renderExtra,
   compact = false,
 }) {

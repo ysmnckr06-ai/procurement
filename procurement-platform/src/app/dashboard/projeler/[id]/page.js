@@ -752,6 +752,204 @@ export default function ProjectDetailPage() {
     }
   }
 
+  async function fileSha256(file) {
+    const buffer = await file.arrayBuffer();
+    const digest = await crypto.subtle.digest("SHA-256", buffer);
+    return Array.from(new Uint8Array(digest))
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("");
+  }
+
+  async function linkDocumentToProject(userId, documentId) {
+    if (!documentId) return false;
+
+    const { data: existingLink, error: linkLookupError } = await supabase
+      .from("document_links")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("document_id", documentId)
+      .eq("project_id", projectId)
+      .limit(1)
+      .maybeSingle();
+
+    if (linkLookupError) return false;
+    if (existingLink) return true;
+
+    const { error: linkError } = await supabase
+      .from("document_links")
+      .insert({
+        user_id: userId,
+        document_id: documentId,
+        project_id: projectId,
+      });
+
+    return !linkError;
+  }
+
+  async function archiveProjectSourceFiles(files, userId) {
+    const warnings = [];
+
+    for (const file of files) {
+      try {
+        const contentSha256 = await fileSha256(file);
+        const { data: existingDocument, error: existingDocumentError } = await supabase
+          .from("documents")
+          .select("id")
+          .eq("user_id", userId)
+          .eq("content_sha256", contentSha256)
+          .maybeSingle();
+
+        if (existingDocumentError) {
+          warnings.push(`${file.name} belge kontrolu yapilamadi.`);
+          continue;
+        }
+
+        if (existingDocument) {
+          const linked = await linkDocumentToProject(userId, existingDocument.id);
+          if (!linked) warnings.push(`${file.name} arsivde var ancak projeye baglanamadi.`);
+          continue;
+        }
+
+        const safeUploadName = String(file.name || "proje-dosyasi")
+          .replace(/[^a-zA-Z0-9._-]/g, "-")
+          .replace(/-+/g, "-");
+        const fileId = typeof crypto !== "undefined" && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        const storagePath = `${userId}/projects/${projectId}/${fileId}-${safeUploadName}`;
+        const { error: uploadError } = await supabase.storage
+          .from("order-documents")
+          .upload(storagePath, file, {
+            cacheControl: "3600",
+            contentType: file.type || undefined,
+            upsert: false,
+          });
+
+        if (uploadError) {
+          warnings.push(`${file.name} belge arsivine yuklenemedi.`);
+          continue;
+        }
+
+        const { data: documentRow, error: documentError } = await supabase
+          .from("documents")
+          .insert({
+            user_id: userId,
+            document_type: "proje",
+            original_file_name: file.name,
+            storage_bucket: "order-documents",
+            storage_path: storagePath,
+            mime_type: file.type || null,
+            file_size: file.size || null,
+            content_sha256: contentSha256,
+            supplier_name: project?.customer_partner_name || project?.customer_name || null,
+            document_date: project?.start_date || null,
+            currency: project?.estimated_budget_currency || project?.contract_currency || projectCurrencyForDisplay(),
+          })
+          .select("id")
+          .single();
+
+        if (documentError) {
+          await supabase.storage.from("order-documents").remove([storagePath]);
+          warnings.push(`${file.name} belge bilgisi kaydedilemedi.`);
+        } else {
+          const linked = await linkDocumentToProject(userId, documentRow?.id);
+          if (!linked) warnings.push(`${file.name} belge arsivi projeye baglanamadi.`);
+        }
+      } catch (error) {
+        warnings.push(`${file.name} belge arsivine alinamadi.`);
+      }
+    }
+
+    return warnings;
+  }
+
+  async function deleteProjectSourceDocument(document) {
+    const fileName = String(document?.original_file_name || "").trim();
+    if (!fileName) {
+      setDocumentAccessError("Silinecek dosya adi bulunamadi.");
+      return;
+    }
+
+    const relatedItems = items.filter((item) => String(item.source_file || "").trim() === fileName);
+    const approved = window.confirm(
+      `${fileName} proje dosyasi kaldirilsin mi?\n\nBu islem bu dosyadan aktarilan ${relatedItems.length} proje malzemesini de silecek. Proje bilgileri silinmez.`
+    );
+    if (!approved) return;
+
+    const user = await getUserOrRedirect();
+    if (!user) return;
+
+    setDocumentAccessError("");
+    setDocumentAccessLoadingId(document.id);
+    setMessage(`${fileName} kaldiriliyor...`);
+
+    try {
+      if (relatedItems.length > 0) {
+        const relatedIds = relatedItems.map((item) => item.id).filter(Boolean);
+        const { error: itemDeleteError } = await supabase
+          .from("project_items")
+          .delete()
+          .in("id", relatedIds)
+          .eq("project_id", projectId)
+          .eq("user_id", user.id);
+
+        if (itemDeleteError) {
+          throw new Error(itemDeleteError.message || "Dosyadan gelen proje malzemeleri silinemedi.");
+        }
+      }
+
+      const isStoredDocument = document?.id && !String(document.id).startsWith("source-file-");
+      if (isStoredDocument) {
+        await supabase
+          .from("document_links")
+          .delete()
+          .eq("user_id", user.id)
+          .eq("document_id", document.id)
+          .eq("project_id", projectId);
+
+        const { data: remainingLinks } = await supabase
+          .from("document_links")
+          .select("id")
+          .eq("user_id", user.id)
+          .eq("document_id", document.id)
+          .limit(1);
+
+        const hasRemainingLinks = Boolean(remainingLinks?.length);
+        const storagePath = String(document.storage_path || "");
+        const isProjectLocalStorage = storagePath.includes(`/projects/${projectId}/`);
+
+        if (!hasRemainingLinks && isProjectLocalStorage) {
+          if (storagePath) {
+            await supabase.storage
+              .from(document.storage_bucket || "order-documents")
+              .remove([storagePath]);
+          }
+
+          await supabase
+            .from("documents")
+            .delete()
+            .eq("id", document.id)
+            .eq("user_id", user.id);
+        }
+      }
+
+      const removedIds = new Set(relatedItems.map((item) => item.id));
+      const nextItems = items.filter((item) => !removedIds.has(item.id));
+      setItems(nextItems);
+      setProjectDocuments((prev) => prev.filter((row) => row.id !== document.id));
+      setDocumentPreview((prev) => (prev?.document?.id === document.id ? null : prev));
+      await refreshProjectBudget(nextItems);
+      await loadProject();
+      setMessage(`${fileName} kaldirildi. Proje bilgileri korundu; yeni dosya yukleyebilirsiniz.`);
+    } catch (error) {
+      console.error(error);
+      setDocumentAccessError(error.message || "Proje dosyasi kaldirilamadi.");
+      setMessage("Proje dosyasi kaldirilamadi.");
+    } finally {
+      setDocumentAccessLoadingId(null);
+    }
+  }
+
   async function loadProject() {
     setLoading(true);
     setDocumentPreview(null);
@@ -3991,6 +4189,8 @@ export default function ProjectDetailPage() {
         return;
       }
 
+      const archiveWarnings = await archiveProjectSourceFiles(files, session.user.id);
+
       const formData = new FormData();
       files.forEach((file) => {
         formData.append("files", file);
@@ -4003,7 +4203,7 @@ export default function ProjectDetailPage() {
       });
 
       const data = await response.json();
-      const warnings = data.warnings || [];
+      const warnings = [...archiveWarnings, ...(data.warnings || [])];
 
       if (!response.ok || !data.success) {
         setPreviewWarnings(warnings.length > 0 ? warnings : [data.detail || "Dosyadan ürün okunamadı."]);
@@ -9216,7 +9416,33 @@ export default function ProjectDetailPage() {
         )}
 
         {activeTab === "Belgeler" && (
-          <section>
+          <section className="space-y-4">
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <h2 className="text-lg font-black text-slate-900">Proje kaynak dosyasi yukle</h2>
+                  <p className="mt-1 text-sm font-semibold text-slate-500">
+                    Yanlis dosyayi kaldirdiktan sonra yeni Excel/PDF kaynak dosyasini buradan yukleyebilirsiniz.
+                  </p>
+                </div>
+                <label className="inline-flex cursor-pointer items-center justify-center rounded-xl bg-blue-600 px-5 py-3 text-sm font-black text-white hover:bg-blue-700">
+                  Dosya Sec
+                  <input
+                    type="file"
+                    multiple
+                    accept=".xlsx,.xls,.xlsm,.xlsb,.csv,.ods,.pdf,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/vnd.ms-excel.sheet.macroEnabled.12,text/csv"
+                    onChange={parseProjectItemFiles}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+              {isParsing && (
+                <div className="mt-4 flex items-center gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-bold text-blue-800">
+                  <span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-blue-200 border-t-blue-700" />
+                  <span>{parsingFileCount || 1} dosya okunuyor. Okunan satirlar Malzeme Listesi sekmesinde onizlemeye alinir.</span>
+                </div>
+              )}
+            </div>
             <DocumentArchivePanel
               documents={projectDocuments}
               title="Proje Belgeleri"
@@ -9227,6 +9453,26 @@ export default function ProjectDetailPage() {
               onPreview={previewDocument}
               onOpen={openDocumentInNewTab}
               onDownload={downloadDocument}
+              renderExtra={(document) => {
+                const fileName = String(document.original_file_name || "").trim();
+                const affectedCount = items.filter((item) => String(item.source_file || "").trim() === fileName).length;
+                if (String(document.document_type || "").toLocaleLowerCase("tr-TR") !== "proje") return null;
+                return (
+                  <div className="mt-3 flex flex-col gap-2 border-t border-slate-200 pt-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="text-xs font-bold text-slate-500">
+                      Bu dosyadan gelen malzeme: {affectedCount}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => deleteProjectSourceDocument(document)}
+                      disabled={documentAccessLoadingId === document.id}
+                      className="rounded-lg bg-red-50 px-4 py-2 text-xs font-black text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+                    >
+                      {documentAccessLoadingId === document.id ? "Kaldiriliyor..." : "Dosyayi ve malzemeleri kaldir"}
+                    </button>
+                  </div>
+                );
+              }}
               compact
             />
           </section>
