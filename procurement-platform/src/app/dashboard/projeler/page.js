@@ -213,6 +213,7 @@ export default function ProjectsPage() {
   const [selectedProjectIds, setSelectedProjectIds] = useState([]);
   const [projectCodeEdited, setProjectCodeEdited] = useState(false);
   const [showCustomerPartnerForm, setShowCustomerPartnerForm] = useState(false);
+  const [showCustomerSuggestions, setShowCustomerSuggestions] = useState(false);
   const [customerPartnerDraft, setCustomerPartnerDraft] = useState({
     name: "",
     contact_person: "",
@@ -1176,6 +1177,14 @@ export default function ProjectsPage() {
     () => findBusinessPartnerByName(businessPartners, form.customer_name),
     [businessPartners, form.customer_name],
   );
+  const customerPartnerSuggestions = useMemo(() => {
+    const needle = normalizeProjectFilter(form.customer_name);
+    if (!needle) return [];
+    return businessPartners
+      .filter((partner) => normalizeProjectFilter(partner.name).startsWith(needle))
+      .sort((left, right) => String(left.name || "").localeCompare(String(right.name || ""), "tr"))
+      .slice(0, 8);
+  }, [businessPartners, form.customer_name]);
   const customerNameNeedsPartner = Boolean(form.customer_name.trim()) && !selectedCustomerPartner;
 
   function toggleProjectSelection(projectId) {
@@ -1377,19 +1386,37 @@ export default function ProjectsPage() {
               </label>
               <label className="text-sm font-bold text-slate-700">
                 Müşteri Adı
-                <input
-                  list="customer-partner-options"
-                  className="mt-2 w-full rounded-xl border border-slate-300 p-3"
-                  value={form.customer_name}
-                  onChange={(e) => updateForm("customer_name", e.target.value)}
-                />
-                <datalist id="customer-partner-options">
-                  {businessPartners.map((partner) => (
-                    <option key={partner.id} value={partner.name}>
-                      {partner.partner_type || "İş Ortağı"}
-                    </option>
-                  ))}
-                </datalist>
+                <div className="relative mt-2">
+                  <input
+                    className="w-full rounded-xl border border-slate-300 p-3"
+                    value={form.customer_name}
+                    onFocus={() => setShowCustomerSuggestions(true)}
+                    onBlur={() => setTimeout(() => setShowCustomerSuggestions(false), 120)}
+                    onChange={(e) => {
+                      updateForm("customer_name", e.target.value);
+                      setShowCustomerSuggestions(true);
+                    }}
+                  />
+                  {showCustomerSuggestions && customerPartnerSuggestions.length > 0 && (
+                    <div className="absolute left-0 right-0 top-full z-30 mt-1 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
+                      {customerPartnerSuggestions.map((partner) => (
+                        <button
+                          key={partner.id}
+                          type="button"
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            updateForm("customer_name", partner.name);
+                            setShowCustomerSuggestions(false);
+                          }}
+                          className="block w-full px-3 py-2 text-left text-xs font-bold text-slate-900 hover:bg-blue-50"
+                        >
+                          <span className="block">{partner.name}</span>
+                          <span className="mt-0.5 block font-semibold text-slate-500">{partner.partner_type || "İş Ortağı"}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 {customerNameNeedsPartner && (
                   <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-900">
                     <p>Bu firma iş ortakları arasında bulunamadı. Firma kaydını bu formdan oluşturup projeye devam edebilirsiniz.</p>
