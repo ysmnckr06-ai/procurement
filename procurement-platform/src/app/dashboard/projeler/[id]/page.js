@@ -907,8 +907,18 @@ export default function ProjectDetailPage() {
         }
 
         if (documentError) {
-          await supabase.storage.from("order-documents").remove([storagePath]);
-          warnings.push(`${file.name} belge bilgisi kaydedilemedi.`);
+          warnings.push(`${file.name} dosyasi yuklendi ancak belge bilgisi kaydedilemedi; depodaki dosyadan gosterilecek.`);
+          archivedDocuments.push({
+            id: `storage-only-${projectId}-${storagePath}`,
+            document_type: "proje",
+            original_file_name: file.name,
+            storage_bucket: "order-documents",
+            storage_path: storagePath,
+            mime_type: file.type || null,
+            file_size: file.size || null,
+            linked_project_id: projectId,
+            linked_project_code: project?.project_code || null,
+          });
         } else {
           const linked = await linkDocumentToProject(userId, documentRow?.id);
           if (!linked) warnings.push(`${file.name} belge arsivi projeye baglanamadi.`);
@@ -987,6 +997,21 @@ export default function ProjectDetailPage() {
 
       if (documentError || !documentRow) {
         console.warn("Proje storage dosyasi belge arsivine baglanamadi:", documentError);
+        repairRows.push({
+          id: `storage-only-${projectId}-${storagePath}`,
+          document_type: "proje",
+          original_file_name: matchedSourceName,
+          storage_bucket: "order-documents",
+          storage_path: storagePath,
+          mime_type: file.metadata?.mimetype || null,
+          file_size: file.metadata?.size || null,
+          created_at: file.created_at || file.updated_at || projectRow?.created_at || null,
+          linked_project_id: projectId,
+          linked_project_code: projectRow?.project_code || null,
+          ocr_status: "source_only",
+        });
+        existingPaths.add(storagePath);
+        existingNames.add(normalizedDocumentFileName(matchedSourceName));
         continue;
       }
 
@@ -1038,7 +1063,9 @@ export default function ProjectDetailPage() {
         }
       }
 
-      const isStoredDocument = document?.id && !String(document.id).startsWith("source-file-");
+      const isStoredDocument = document?.id
+        && !String(document.id).startsWith("source-file-")
+        && !String(document.id).startsWith("storage-only-");
       if (isStoredDocument) {
         await supabase
           .from("document_links")

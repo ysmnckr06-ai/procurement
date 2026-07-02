@@ -688,6 +688,7 @@ export default function ProjectsPage() {
 
   async function archiveProjectSourceFiles(files, projectId, userId, projectPayload) {
     const warnings = [];
+    const archivedDocuments = [];
     async function linkDocumentToProject(documentId) {
       if (!documentId) return false;
 
@@ -732,6 +733,7 @@ export default function ProjectsPage() {
         if (existingDocument?.storage_path) {
           const linked = await linkDocumentToProject(existingDocument.id);
           if (!linked) warnings.push(`${file.name} arsivde var ancak projeye baglanamadi.`);
+          if (linked) archivedDocuments.push(existingDocument);
           continue;
         }
 
@@ -778,7 +780,7 @@ export default function ProjectsPage() {
             .from("documents")
             .insert(documentPayload);
         let { data: documentRow, error: documentError } = await documentWriteQuery
-          .select("id")
+          .select("id,storage_path,original_file_name")
           .single();
 
         if (documentError && isDocumentHashColumnError(documentError)) {
@@ -793,25 +795,34 @@ export default function ProjectsPage() {
               .from("documents")
               .insert(documentPayloadWithoutHash);
           const fallbackDocumentResult = await fallbackDocumentWriteQuery
-            .select("id")
+            .select("id,storage_path,original_file_name")
             .single();
           documentRow = fallbackDocumentResult.data;
           documentError = fallbackDocumentResult.error;
         }
 
         if (documentError) {
-          await supabase.storage.from("order-documents").remove([storagePath]);
-          warnings.push(`${file.name} belge bilgisi kaydedilemedi.`);
+          warnings.push(`${file.name} dosyasi yuklendi ancak belge bilgisi kaydedilemedi; proje detayinda depodaki dosyadan gosterilecek.`);
+          archivedDocuments.push({
+            id: `storage-only-${projectId}-${storagePath}`,
+            document_type: "proje",
+            original_file_name: file.name,
+            storage_bucket: "order-documents",
+            storage_path: storagePath,
+            mime_type: file.type || null,
+            file_size: file.size || null,
+          });
         } else {
           const linked = await linkDocumentToProject(documentRow?.id);
           if (!linked) warnings.push(`${file.name} belge arsivi projeye baglanamadi.`);
+          if (linked) archivedDocuments.push(documentRow);
         }
       } catch (error) {
         warnings.push(`${file.name} belge arşivine alınamadı.`);
       }
     }
 
-    return warnings;
+    return { warnings, documents: archivedDocuments };
   }
 
   async function importProjectFilesForProject(files, projectId, userId, projectPayload) {
@@ -1090,7 +1101,12 @@ export default function ProjectsPage() {
     if (projectFiles.length > 0 && targetProjectId) {
       setMessage("Proje kaydedildi. Seçilen teklif/dosya analiz ediliyor...");
       try {
-        const archiveWarnings = await archiveProjectSourceFiles(projectFiles, targetProjectId, user.id, payload);
+        const archiveResult = await archiveProjectSourceFiles(projectFiles, targetProjectId, user.id, payload);
+        const archiveWarnings = archiveResult.warnings || [];
+        const archivedFileCount = (archiveResult.documents || []).filter((document) => document?.storage_path).length;
+        if (archivedFileCount < projectFiles.length) {
+          archiveWarnings.push("Seçilen dosyalardan bazıları proje belgelerine kaydedilemedi. Belgeler sekmesinde açılabilir dosya oluşması için dosyayı tekrar yükleyin.");
+        }
         const importResult = await importProjectFilesForProject(projectFiles, targetProjectId, user.id, payload);
         fileImportMessage = importResult.imported > 0
           ? `Dosyadan ${importResult.imported} kalem aktarıldı (${importResult.parents || 0} ana kalem, ${importResult.children || 0} alt kalem, ${importResult.standalone || 0} bağımsız kalem).`
