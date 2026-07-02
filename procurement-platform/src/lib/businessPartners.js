@@ -65,15 +65,44 @@ export function canonicalPartnerName(value) {
 }
 
 function normalizePhone(value) {
-  return String(value || "").replace(/\D/g, "").replace(/^90/, "");
+  return String(value || "")
+    .replace(/\D/g, "")
+    .replace(/^90/, "");
 }
 
 function normalizeEmail(value) {
-  return String(value || "").trim().toLowerCase();
+  return String(value || "")
+    .trim()
+    .toLowerCase();
 }
 
-function normalizeTax(value) {
+export function normalizeTaxNumber(value) {
   return String(value || "").replace(/\D/g, "");
+}
+
+export function findPartnerByTaxNumber(
+  partners,
+  taxNumber,
+  { excludeId = "" } = {},
+) {
+  const normalizedTax = normalizeTaxNumber(taxNumber);
+  if (!normalizedTax) return null;
+
+  return (
+    (partners || [])
+      .map(normalizePartnerRecord)
+      .find(
+        (partner) =>
+          partner.id !== excludeId &&
+          normalizeTaxNumber(partner.tax_number || partner.tax_no) ===
+            normalizedTax,
+      ) || null
+  );
+}
+
+export function duplicateTaxNumberMessage(partner) {
+  const partnerName = partner?.name ? ` (${partner.name})` : "";
+  return `Bu vergi numarasıyla kayıtlı bir firma var${partnerName}. Aynı vergi numarasıyla ikinci firma kaydedilemez.`;
 }
 
 function levenshtein(a, b) {
@@ -83,7 +112,10 @@ function levenshtein(a, b) {
   if (!left) return right.length;
   if (!right) return left.length;
 
-  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  const previous = Array.from(
+    { length: right.length + 1 },
+    (_, index) => index,
+  );
   const current = Array.from({ length: right.length + 1 }, () => 0);
 
   for (let i = 1; i <= left.length; i += 1) {
@@ -121,17 +153,19 @@ export function normalizePartnerRecord(partner = {}) {
   return {
     ...partner,
     partner_type: partner.partner_type || partner.category || "Tedarikçi",
-    contact_person: partner.contact_person || partner.contact_name || partner.contact || "",
+    contact_person:
+      partner.contact_person || partner.contact_name || partner.contact || "",
     tax_number: partner.tax_number || partner.tax_no || partner.taxNo || "",
-    normalized_name: partner.normalized_name || normalizePartnerName(partner.name),
+    normalized_name:
+      partner.normalized_name || normalizePartnerName(partner.name),
     canonical_name: canonicalPartnerName(partner.name),
   };
 }
 
 export function partnerMatchScore(candidate, input) {
   const partner = normalizePartnerRecord(candidate);
-  const inputTax = normalizeTax(input.taxNumber);
-  const partnerTax = normalizeTax(partner.tax_number || partner.tax_no);
+  const inputTax = normalizeTaxNumber(input.taxNumber);
+  const partnerTax = normalizeTaxNumber(partner.tax_number || partner.tax_no);
   if (inputTax && partnerTax && inputTax === partnerTax) return 1;
 
   const inputEmail = normalizeEmail(input.email);
@@ -149,7 +183,11 @@ export function partnerMatchScore(candidate, input) {
   return similarity(partner.name, input.name);
 }
 
-export function findPartnerMatches(partners, input, { threshold = 0.65, limit = 5 } = {}) {
+export function findPartnerMatches(
+  partners,
+  input,
+  { threshold = 0.65, limit = 5 } = {},
+) {
   return (partners || [])
     .map((partner) => ({
       partner: normalizePartnerRecord(partner),
@@ -176,7 +214,9 @@ export function findBestPartnerMatch(partners, input, threshold = 0.9) {
     }
   }
 
-  return best && bestScore >= threshold ? { partner: normalizePartnerRecord(best), score: bestScore } : null;
+  return best && bestScore >= threshold
+    ? { partner: normalizePartnerRecord(best), score: bestScore }
+    : null;
 }
 
 export async function findOrCreateBusinessPartner(
@@ -195,10 +235,14 @@ export async function findOrCreateBusinessPartner(
     allowCreate = true,
     forceCreate = false,
     allowProbableMatch = false,
+    rejectDuplicateTax = false,
   } = {},
 ) {
-  const cleanName = String(name || "").trim().replace(/\s+/g, " ");
+  const cleanName = String(name || "")
+    .trim()
+    .replace(/\s+/g, " ");
   if (!supabase || !userId || !cleanName) return null;
+  const cleanTaxNumber = normalizeTaxNumber(taxNumber);
 
   const { data: partners, error: lookupError } = await supabase
     .from("suppliers")
@@ -206,6 +250,17 @@ export async function findOrCreateBusinessPartner(
     .eq("user_id", userId);
 
   if (lookupError) console.error("İş ortağı arama hatası:", lookupError);
+
+  const duplicateTaxPartner = findPartnerByTaxNumber(
+    partners || [],
+    cleanTaxNumber,
+  );
+  if (rejectDuplicateTax && duplicateTaxPartner) {
+    const error = new Error(duplicateTaxNumberMessage(duplicateTaxPartner));
+    error.code = "DUPLICATE_TAX_NUMBER";
+    error.partner = duplicateTaxPartner;
+    throw error;
+  }
 
   const match = forceCreate
     ? null
@@ -224,9 +279,12 @@ export async function findOrCreateBusinessPartner(
     const existing = match.partner;
     const patch = {};
     if (!existing.partner_type) patch.partner_type = partnerType;
-    if (!existing.normalized_name) patch.normalized_name = normalizePartnerName(existing.name);
-    if (contactPerson && !existing.contact_person && !existing.contact_name) patch.contact_person = contactPerson;
-    if (taxNumber && !existing.tax_number && !existing.tax_no) patch.tax_number = taxNumber;
+    if (!existing.normalized_name)
+      patch.normalized_name = normalizePartnerName(existing.name);
+    if (contactPerson && !existing.contact_person && !existing.contact_name)
+      patch.contact_person = contactPerson;
+    if (cleanTaxNumber && !existing.tax_number && !existing.tax_no)
+      patch.tax_number = cleanTaxNumber;
     if (email && !existing.email) patch.email = email;
     if (phone && !existing.phone) patch.phone = phone;
     if (city && !existing.city) patch.city = city;
@@ -256,8 +314,8 @@ export async function findOrCreateBusinessPartner(
     status: "Aktif",
     contact_person: contactPerson,
     contact_name: contactPerson,
-    tax_number: taxNumber,
-    tax_no: taxNumber,
+    tax_number: cleanTaxNumber,
+    tax_no: cleanTaxNumber,
     email,
     phone,
     city,
@@ -283,12 +341,28 @@ export async function findOrCreateBusinessPartner(
 async function updatePartnerReferences(supabase, userId, duplicate, master) {
   const oldNames = [duplicate.name, duplicate.normalized_name].filter(Boolean);
   const tables = [
-    { table: "projects", idColumn: "customer_partner_id", nameColumn: "customer_partner_name" },
+    {
+      table: "projects",
+      idColumn: "customer_partner_id",
+      nameColumn: "customer_partner_name",
+    },
     { table: "orders", idColumn: "partner_id", nameColumn: "partner_name" },
     { table: "reports", idColumn: "partner_id", nameColumn: "partner_name" },
-    { table: "order_receipts", idColumn: "partner_id", nameColumn: "partner_name" },
-    { table: "order_payments", idColumn: "partner_id", nameColumn: "partner_name" },
-    { table: "stock_movements", idColumn: "partner_id", nameColumn: "partner_name" },
+    {
+      table: "order_receipts",
+      idColumn: "partner_id",
+      nameColumn: "partner_name",
+    },
+    {
+      table: "order_payments",
+      idColumn: "partner_id",
+      nameColumn: "partner_name",
+    },
+    {
+      table: "stock_movements",
+      idColumn: "partner_id",
+      nameColumn: "partner_name",
+    },
   ];
 
   for (const item of tables) {
@@ -298,7 +372,11 @@ async function updatePartnerReferences(supabase, userId, duplicate, master) {
       .eq("user_id", userId)
       .eq(item.idColumn, duplicate.id);
 
-    if (idUpdate.error) console.error(`${item.table} iş ortağı id güncellenemedi:`, idUpdate.error);
+    if (idUpdate.error)
+      console.error(
+        `${item.table} iş ortağı id güncellenemedi:`,
+        idUpdate.error,
+      );
 
     for (const oldName of oldNames) {
       const nameUpdate = await supabase
@@ -307,12 +385,20 @@ async function updatePartnerReferences(supabase, userId, duplicate, master) {
         .eq("user_id", userId)
         .eq(item.nameColumn, oldName);
 
-      if (nameUpdate.error) console.error(`${item.table} iş ortağı adı güncellenemedi:`, nameUpdate.error);
+      if (nameUpdate.error)
+        console.error(
+          `${item.table} iş ortağı adı güncellenemedi:`,
+          nameUpdate.error,
+        );
     }
   }
 }
 
-export async function deduplicateBusinessPartners(supabase, userId, partners = []) {
+export async function deduplicateBusinessPartners(
+  supabase,
+  userId,
+  partners = [],
+) {
   const activePartners = (partners || []).map(normalizePartnerRecord);
   const groups = [];
 
@@ -322,12 +408,14 @@ export async function deduplicateBusinessPartners(supabase, userId, partners = [
     const group = groups.find((existingGroup) =>
       existingGroup.some((existing) => {
         if (partner.partner_type !== existing.partner_type) return false;
-        return partnerMatchScore(existing, {
-          name: partner.name,
-          taxNumber: partner.tax_number,
-          email: partner.email,
-          phone: partner.phone,
-        }) >= 0.9;
+        return (
+          partnerMatchScore(existing, {
+            name: partner.name,
+            taxNumber: partner.tax_number,
+            email: partner.email,
+            phone: partner.phone,
+          }) >= 0.9
+        );
       }),
     );
 
@@ -339,7 +427,9 @@ export async function deduplicateBusinessPartners(supabase, userId, partners = [
 
   for (const group of groups.filter((items) => items.length > 1)) {
     const sorted = [...group].sort(
-      (a, b) => new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime(),
+      (a, b) =>
+        new Date(a.created_at || 0).getTime() -
+        new Date(b.created_at || 0).getTime(),
     );
     const master = sorted[0];
     const duplicates = sorted.slice(1);
@@ -350,7 +440,12 @@ export async function deduplicateBusinessPartners(supabase, userId, partners = [
         .from("suppliers")
         .update({
           status: "Pasif",
-          notes: [duplicate.notes, `Mükerrer kayıt: ${master.name} kartına bağlandı.`].filter(Boolean).join("\n"),
+          notes: [
+            duplicate.notes,
+            `Mükerrer kayıt: ${master.name} kartına bağlandı.`,
+          ]
+            .filter(Boolean)
+            .join("\n"),
           updated_at: new Date().toISOString(),
         })
         .eq("id", duplicate.id)
@@ -361,19 +456,29 @@ export async function deduplicateBusinessPartners(supabase, userId, partners = [
     }
   }
 
-
   return { duplicateCount };
 }
 
-export async function backfillProjectCustomerPartners(supabase, userId, projects = [], partners = []) {
+export async function backfillProjectCustomerPartners(
+  supabase,
+  userId,
+  projects = [],
+  partners = [],
+) {
   const customerProjects = (projects || []).filter((project) => {
-    const customerName = String(project.customer_partner_name || project.customer_name || "").trim();
+    const customerName = String(
+      project.customer_partner_name || project.customer_name || "",
+    ).trim();
     return customerName.length > 0;
   });
   const uniqueCustomers = new Map();
 
   customerProjects.forEach((project) => {
-    const customerName = String(project.customer_partner_name || project.customer_name || "").trim().replace(/\s+/g, " ");
+    const customerName = String(
+      project.customer_partner_name || project.customer_name || "",
+    )
+      .trim()
+      .replace(/\s+/g, " ");
     const key = canonicalPartnerName(customerName);
     if (!uniqueCustomers.has(key)) uniqueCustomers.set(key, customerName);
   });
@@ -390,11 +495,16 @@ export async function backfillProjectCustomerPartners(supabase, userId, projects
       existingCustomers += 1;
       const patch = {};
       if (partner.partner_type !== "Müşteri") patch.partner_type = "Müşteri";
-      if (!partner.normalized_name) patch.normalized_name = normalizePartnerName(partner.name);
+      if (!partner.normalized_name)
+        patch.normalized_name = normalizePartnerName(partner.name);
       if (Object.keys(patch).length > 0) {
         const { data: updatedPartner, error } = await supabase
           .from("suppliers")
-          .update({ ...patch, category: "Müşteri", updated_at: new Date().toISOString() })
+          .update({
+            ...patch,
+            category: "Müşteri",
+            updated_at: new Date().toISOString(),
+          })
           .eq("id", partner.id)
           .eq("user_id", userId)
           .select("*")
@@ -417,13 +527,17 @@ export async function backfillProjectCustomerPartners(supabase, userId, projects
   }
 
   const projectsToUpdate = customerProjects.filter((project) => {
-    const key = canonicalPartnerName(project.customer_partner_name || project.customer_name);
+    const key = canonicalPartnerName(
+      project.customer_partner_name || project.customer_name,
+    );
     const partner = partnerByCustomerKey.get(key);
     return partner?.id && project.customer_partner_id !== partner.id;
   });
 
   for (const project of projectsToUpdate) {
-    const key = canonicalPartnerName(project.customer_partner_name || project.customer_name);
+    const key = canonicalPartnerName(
+      project.customer_partner_name || project.customer_name,
+    );
     const partner = partnerByCustomerKey.get(key);
     const { error } = await supabase
       .from("projects")
@@ -444,7 +558,6 @@ export async function backfillProjectCustomerPartners(supabase, userId, projects
     existingCustomers,
     linkedProjects: projectsToUpdate.length,
   };
-
 
   return summary;
 }

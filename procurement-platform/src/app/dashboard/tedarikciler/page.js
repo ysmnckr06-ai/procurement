@@ -5,10 +5,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   backfillProjectCustomerPartners,
   deduplicateBusinessPartners,
+  duplicateTaxNumberMessage,
+  findPartnerByTaxNumber,
   findOrCreateBusinessPartner,
   findPartnerMatches,
   normalizePartnerName,
   normalizePartnerRecord,
+  normalizeTaxNumber,
   partnerTypes,
 } from "@/lib/businessPartners";
 import { supabase } from "@/lib/supabase";
@@ -685,6 +688,10 @@ export default function BusinessPartnersPage() {
   const selectedPartner =
     enrichedPartners.find((partner) => partner.id === selectedId) ||
     null;
+  const duplicateTaxPartner = useMemo(
+    () => findPartnerByTaxNumber(partners, form.tax_number, { excludeId: editingId || "" }),
+    [editingId, form.tax_number, partners],
+  );
 
   function updateForm(field, value) {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -752,14 +759,20 @@ export default function BusinessPartnersPage() {
       contact_name: form.contact_person || "",
       phone: form.phone || "",
       email: form.email || "",
-      tax_number: form.tax_number || "",
-      tax_no: form.tax_number || "",
+      tax_number: normalizeTaxNumber(form.tax_number),
+      tax_no: normalizeTaxNumber(form.tax_number),
       city: form.city || "",
       address: form.address || "",
       notes: form.notes || "",
       status: form.status || "Aktif",
       updated_at: new Date().toISOString(),
     };
+    const duplicateTaxPartner = findPartnerByTaxNumber(partners, payload.tax_number, { excludeId: editingId || "" });
+    if (duplicateTaxPartner) {
+      setSaving(false);
+      setMessage(duplicateTaxNumberMessage(duplicateTaxPartner));
+      return;
+    }
 
     if (!editingId) {
       const matches = findPartnerMatches(partners, {
@@ -772,34 +785,43 @@ export default function BusinessPartnersPage() {
         ? partners.find((item) => item.id === partnerChoice.partnerId)
         : matches.find((match) => match.type === "exact")?.partner;
 
-      if (!partner) {
-        partner = await findOrCreateBusinessPartner(supabase, user.id, {
-          name: payload.name,
-          partnerType: payload.partner_type,
-          taxNumber: payload.tax_number,
-          email: payload.email,
-          phone: payload.phone,
-          contactPerson: payload.contact_person,
-          city: payload.city,
-          address: payload.address,
-          notes: payload.notes,
-          allowCreate: false,
-        });
-      }
+      try {
+        if (!partner) {
+          partner = await findOrCreateBusinessPartner(supabase, user.id, {
+            name: payload.name,
+            partnerType: payload.partner_type,
+            taxNumber: payload.tax_number,
+            email: payload.email,
+            phone: payload.phone,
+            contactPerson: payload.contact_person,
+            city: payload.city,
+            address: payload.address,
+            notes: payload.notes,
+            allowCreate: false,
+          });
+        }
 
-      if (!partner && (partnerChoice?.mode === "new" || matches.length === 0)) {
-        partner = await findOrCreateBusinessPartner(supabase, user.id, {
-          name: payload.name,
-          partnerType: payload.partner_type,
-          taxNumber: payload.tax_number,
-          email: payload.email,
-          phone: payload.phone,
-          contactPerson: payload.contact_person,
-          city: payload.city,
-          address: payload.address,
-          notes: payload.notes,
-          forceCreate: true,
-        });
+        if (!partner && (partnerChoice?.mode === "new" || matches.length === 0)) {
+          partner = await findOrCreateBusinessPartner(supabase, user.id, {
+            name: payload.name,
+            partnerType: payload.partner_type,
+            taxNumber: payload.tax_number,
+            email: payload.email,
+            phone: payload.phone,
+            contactPerson: payload.contact_person,
+            city: payload.city,
+            address: payload.address,
+            notes: payload.notes,
+            forceCreate: true,
+            rejectDuplicateTax: true,
+          });
+        }
+      } catch (error) {
+        setSaving(false);
+        setMessage(error.code === "DUPLICATE_TAX_NUMBER"
+          ? error.message
+          : error.message || "İş ortağı kaydedilemedi.");
+        return;
       }
 
       setSaving(false);
@@ -837,7 +859,8 @@ export default function BusinessPartnersPage() {
 
     if (error) {
       console.error(error);
-      setMessage(error.message || "İş ortağı kaydedilemedi.");
+      const isDuplicateTax = error.code === "23505" && String(error.message || "").includes("suppliers_user_tax_number_unique_idx");
+      setMessage(isDuplicateTax ? "Bu vergi numarasıyla kayıtlı bir firma var. Aynı vergi numarasıyla ikinci firma kaydedilemez." : error.message || "İş ortağı kaydedilemedi.");
       return;
     }
 
@@ -1140,6 +1163,11 @@ export default function BusinessPartnersPage() {
                   updateForm("tax_number", event.target.value)
                 }
               />
+              {duplicateTaxPartner && (
+                <span className="mt-2 block rounded-lg bg-red-50 p-2 text-xs font-black text-red-700">
+                  {duplicateTaxNumberMessage(duplicateTaxPartner)}
+                </span>
+              )}
             </label>
             <label className="text-sm font-bold text-slate-700 md:col-span-12">
               Şehir
@@ -1170,7 +1198,7 @@ export default function BusinessPartnersPage() {
           <div className="mt-6 flex flex-wrap gap-3">
             <button
               type="submit"
-              disabled={saving}
+              disabled={saving || Boolean(duplicateTaxPartner)}
               className="rounded-xl bg-blue-600 px-6 py-3 text-sm font-bold text-white shadow-sm hover:bg-blue-700 disabled:bg-slate-300"
             >
               {saving ? "Kaydediliyor..." : "Kaydet"}

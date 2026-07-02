@@ -4,7 +4,12 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import { findOrCreateBusinessPartner } from "@/lib/businessPartners";
+import {
+  duplicateTaxNumberMessage,
+  findOrCreateBusinessPartner,
+  findPartnerByTaxNumber,
+  normalizeTaxNumber,
+} from "@/lib/businessPartners";
 import { calculateBaseAmount, currencyOptions, formatMoney, getBaseCurrency, getExchangeRate } from "@/lib/currency";
 import { fetchLiveTryRates, liveCurrencyOptions, liveRateFor } from "@/lib/liveCurrency";
 import { hierarchyQuantityFields } from "@/lib/projectHierarchy";
@@ -373,10 +378,10 @@ export default function ProjectsPage() {
     const cleanName = String(customerPartnerDraft.name || form.customer_name || "").trim().replace(/\s+/g, " ");
     const cleanPhone = String(customerPartnerDraft.phone || "").trim();
     const cleanEmail = String(customerPartnerDraft.email || "").trim();
-    const cleanTaxNumber = String(customerPartnerDraft.tax_number || "").trim();
+    const cleanTaxNumber = normalizeTaxNumber(customerPartnerDraft.tax_number);
     const cleanCity = String(customerPartnerDraft.city || "").trim();
     const phoneDigits = cleanPhone.replace(/\D/g, "");
-    const taxDigits = cleanTaxNumber.replace(/\D/g, "");
+    const taxDigits = cleanTaxNumber;
 
     if (!cleanName) {
       setMessage("Firma adi zorunlu.");
@@ -399,6 +404,12 @@ export default function ProjectsPage() {
       return;
     }
 
+    const duplicateTaxPartner = findPartnerByTaxNumber(businessPartners, cleanTaxNumber);
+    if (duplicateTaxPartner) {
+      setMessage(duplicateTaxNumberMessage(duplicateTaxPartner));
+      return;
+    }
+
     setSavingPartner(true);
     setMessage("");
 
@@ -411,17 +422,27 @@ export default function ProjectsPage() {
       return;
     }
 
-    const partner = await findOrCreateBusinessPartner(supabase, user.id, {
-      name: cleanName,
-      partnerType: "Müşteri",
-      contactPerson: customerPartnerDraft.contact_person,
-      phone: cleanPhone,
-      email: cleanEmail,
-      taxNumber: cleanTaxNumber,
-      city: cleanCity,
-      allowCreate: true,
-      allowProbableMatch: true,
-    });
+    let partner = null;
+    try {
+      partner = await findOrCreateBusinessPartner(supabase, user.id, {
+        name: cleanName,
+        partnerType: "Müşteri",
+        contactPerson: customerPartnerDraft.contact_person,
+        phone: cleanPhone,
+        email: cleanEmail,
+        taxNumber: cleanTaxNumber,
+        city: cleanCity,
+        allowCreate: true,
+        allowProbableMatch: true,
+        rejectDuplicateTax: true,
+      });
+    } catch (error) {
+      setMessage(error.code === "DUPLICATE_TAX_NUMBER"
+        ? error.message
+        : error.message || "Firma bilgisi kaydedilemedi.");
+      setSavingPartner(false);
+      return;
+    }
 
     if (!partner?.id) {
       setMessage("Firma bilgisi kaydedilemedi.");
@@ -1268,6 +1289,10 @@ export default function ProjectsPage() {
         && city,
     );
   }, [customerPartnerDraft, form.customer_name]);
+  const customerPartnerTaxDuplicate = useMemo(
+    () => findPartnerByTaxNumber(businessPartners, customerPartnerDraft.tax_number),
+    [businessPartners, customerPartnerDraft.tax_number],
+  );
   const customerNameNeedsPartner = Boolean(form.customer_name.trim()) && !selectedCustomerPartner;
 
   function toggleProjectSelection(projectId) {
@@ -1566,6 +1591,11 @@ export default function ProjectsPage() {
                               value={customerPartnerDraft.tax_number}
                               onChange={(event) => updateCustomerPartnerDraft("tax_number", event.target.value)}
                             />
+                            {customerPartnerTaxDuplicate && (
+                              <span className="mt-1 block rounded-lg bg-red-50 p-2 text-[11px] font-black text-red-700">
+                                {duplicateTaxNumberMessage(customerPartnerTaxDuplicate)}
+                              </span>
+                            )}
                           </label>
                           <label className="text-xs font-black text-slate-700">
                             Şehir *
@@ -1580,7 +1610,7 @@ export default function ProjectsPage() {
                         <div className="flex flex-wrap gap-2">
                           <button
                             type="button"
-                            disabled={savingPartner || !customerPartnerDraftIsValid}
+                            disabled={savingPartner || !customerPartnerDraftIsValid || Boolean(customerPartnerTaxDuplicate)}
                             onClick={createCustomerPartnerFromProject}
                             className="rounded-lg bg-amber-500 px-3 py-2 font-black text-white hover:bg-amber-600 disabled:cursor-not-allowed disabled:bg-slate-300"
                           >
