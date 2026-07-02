@@ -66,6 +66,7 @@ export default function DocumentArchivePanel({
   onOpen,
   onDownload,
   renderExtra,
+  compact = false,
 }) {
   const groupedDocuments = documents.reduce((groups, document) => {
     const type = String(document.document_type || "diger").toLocaleLowerCase("tr-TR");
@@ -85,9 +86,9 @@ export default function DocumentArchivePanel({
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 className="text-lg font-black text-blue-950">{title}</h2>
-            <p className="mt-1 text-sm font-semibold text-blue-800">
+            {!compact && <p className="mt-1 text-sm font-semibold text-blue-800">
               Orijinal PDF ve belge dosyaları private storage içinde saklanır; OCR sadece analiz özeti olarak kullanılır.
-            </p>
+            </p>}
           </div>
           <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-blue-800">
             {documents.length} belge
@@ -101,7 +102,7 @@ export default function DocumentArchivePanel({
         </div>
       )}
 
-      {preview?.url && (
+      {!compact && preview?.url && (
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <div>
@@ -146,10 +147,35 @@ export default function DocumentArchivePanel({
                   {groupedDocuments[type].length}
                 </span>
               </div>
-              <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+              <div className={compact ? "grid grid-cols-1 gap-3" : "grid grid-cols-1 gap-3 xl:grid-cols-2"}>
                 {groupedDocuments[type].map((document) => {
                   const pdfDocument = isPdfDocument(document);
                   const hasStoredFile = Boolean(document.storage_path);
+                  if (compact) {
+                    return (
+                      <article key={document.id} className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="min-w-0">
+                            <div className="truncate font-black text-slate-950" title={document.original_file_name || "Belge"}>
+                              {document.original_file_name || "Belge"}
+                            </div>
+                            <div className="mt-1 text-xs font-bold text-slate-500">
+                              Yükleme tarihi: {formatDateTime(document.created_at)}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            disabled={!hasStoredFile || loadingDocumentId === document.id}
+                            onClick={() => onOpen?.(document)}
+                            className="rounded-lg bg-blue-600 px-4 py-2 text-xs font-black text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                          >
+                            {loadingDocumentId === document.id ? "Açılıyor..." : "Aç"}
+                          </button>
+                        </div>
+                        {renderExtra?.(document)}
+                      </article>
+                    );
+                  }
                   return (
                     <article key={document.id} className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm">
                       <div className="flex flex-wrap items-start justify-between gap-3">

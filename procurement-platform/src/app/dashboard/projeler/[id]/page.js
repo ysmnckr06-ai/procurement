@@ -718,13 +718,19 @@ export default function ProjectDetailPage() {
   async function openDocumentInNewTab(document) {
     setDocumentAccessError("");
     setDocumentAccessLoadingId(document.id);
+    const targetWindow = window.open("about:blank", "_blank");
 
     try {
       const signedUrl = await createDocumentSignedUrl(supabase, document);
-      window.open(signedUrl, "_blank", "noopener,noreferrer");
+      if (targetWindow) {
+        targetWindow.location.href = signedUrl;
+      } else {
+        window.location.href = signedUrl;
+      }
     } catch (error) {
+      if (targetWindow) targetWindow.close();
       console.error(error);
-      setDocumentAccessError(error.message || "Belge yeni sekmede açılamadı.");
+      setDocumentAccessError(error.message || "Belge acilamadi.");
     } finally {
       setDocumentAccessLoadingId(null);
     }
@@ -945,6 +951,48 @@ export default function ProjectDetailPage() {
     setProducts(productRes.data || []);
     const loadedItems = itemRes.data || [];
     const linkedItems = await ensureProductCardsForProjectItems(loadedItems, user.id, productRes.data || []);
+    const archivedDocumentNames = new Set(
+      nextProjectDocuments
+        .map((document) => String(document.original_file_name || "").trim().toLocaleLowerCase("tr-TR"))
+        .filter(Boolean),
+    );
+    const missingArchivedSourceNames = Array.from(new Set(
+      linkedItems
+        .map((item) => String(item.source_file || "").trim())
+        .filter((fileName) => fileName && !archivedDocumentNames.has(fileName.toLocaleLowerCase("tr-TR"))),
+    ));
+    if (missingArchivedSourceNames.length > 0) {
+      const { data: matchingSourceDocuments, error: matchingSourceDocumentError } = await supabase
+        .from("documents")
+        .select("*")
+        .eq("user_id", user.id)
+        .in("original_file_name", missingArchivedSourceNames)
+        .order("created_at", { ascending: false });
+
+      if (matchingSourceDocumentError) {
+        console.warn("Proje kaynak belge eslesmesi yapilamadi:", matchingSourceDocumentError);
+      } else if (matchingSourceDocuments?.length) {
+        const existingDocumentIds = new Set(nextProjectDocuments.map((document) => String(document.id)));
+        const matchedDocumentsByName = new Map();
+        matchingSourceDocuments.forEach((document) => {
+          const fileName = String(document.original_file_name || "").trim().toLocaleLowerCase("tr-TR");
+          if (fileName && document.storage_path && !matchedDocumentsByName.has(fileName)) {
+            matchedDocumentsByName.set(fileName, document);
+          }
+        });
+        nextProjectDocuments = [
+          ...Array.from(matchedDocumentsByName.values())
+            .filter((document) => !existingDocumentIds.has(String(document.id)))
+            .map((document) => ({
+              ...document,
+              document_type: document.document_type || "proje",
+              linked_project_id: projectId,
+              linked_project_code: projectRes.data?.project_code || null,
+            })),
+          ...nextProjectDocuments,
+        ];
+      }
+    }
     const sourceFileDocuments = sourceFileDocumentsFromItems(projectRes.data, linkedItems, nextProjectDocuments);
     setProjectDocuments([...sourceFileDocuments, ...nextProjectDocuments]);
     const linkedCount = linkedItems.filter((item) => item.product_id).length;
@@ -9116,6 +9164,7 @@ export default function ProjectDetailPage() {
               onPreview={previewDocument}
               onOpen={openDocumentInNewTab}
               onDownload={downloadDocument}
+              compact
             />
           </section>
         )}
