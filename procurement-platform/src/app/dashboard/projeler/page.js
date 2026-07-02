@@ -682,6 +682,10 @@ export default function ProjectsPage() {
       .join("");
   }
 
+  function isDocumentHashColumnError(error) {
+    return /content_sha256|schema cache|column/i.test(error?.message || "");
+  }
+
   async function archiveProjectSourceFiles(files, projectId, userId, projectPayload) {
     const warnings = [];
     async function linkDocumentToProject(documentId) {
@@ -720,7 +724,7 @@ export default function ProjectsPage() {
           .eq("content_sha256", contentSha256)
           .maybeSingle();
 
-        if (existingDocumentError) {
+        if (existingDocumentError && !isDocumentHashColumnError(existingDocumentError)) {
           warnings.push(`${file.name} belge mükerrer kontrolü yapılamadı.`);
           continue;
         }
@@ -751,9 +755,7 @@ export default function ProjectsPage() {
           continue;
         }
 
-        const { data: documentRow, error: documentError } = await supabase
-          .from("documents")
-          .insert({
+        const documentPayload = {
             user_id: userId,
             document_type: "proje",
             original_file_name: file.name,
@@ -765,9 +767,23 @@ export default function ProjectsPage() {
             supplier_name: projectPayload.customer_partner_name || projectPayload.customer_name || null,
             document_date: projectPayload.start_date || null,
             currency: projectPayload.estimated_budget_currency || projectPayload.contract_currency || getBaseCurrency(settings),
-          })
+        };
+        let { data: documentRow, error: documentError } = await supabase
+          .from("documents")
+          .insert(documentPayload)
           .select("id")
           .single();
+
+        if (documentError && isDocumentHashColumnError(documentError)) {
+          const { content_sha256: _contentSha256, ...documentPayloadWithoutHash } = documentPayload;
+          const fallbackDocumentResult = await supabase
+            .from("documents")
+            .insert(documentPayloadWithoutHash)
+            .select("id")
+            .single();
+          documentRow = fallbackDocumentResult.data;
+          documentError = fallbackDocumentResult.error;
+        }
 
         if (documentError) {
           await supabase.storage.from("order-documents").remove([storagePath]);

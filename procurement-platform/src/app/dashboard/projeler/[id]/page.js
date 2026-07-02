@@ -760,6 +760,10 @@ export default function ProjectDetailPage() {
       .join("");
   }
 
+  function isDocumentHashColumnError(error) {
+    return /content_sha256|schema cache|column/i.test(error?.message || "");
+  }
+
   function safeProjectUploadName(fileName) {
     return String(fileName || "proje-dosyasi")
       .replace(/[^a-zA-Z0-9._-]/g, "-")
@@ -812,7 +816,7 @@ export default function ProjectDetailPage() {
           .eq("content_sha256", contentSha256)
           .maybeSingle();
 
-        if (existingDocumentError) {
+        if (existingDocumentError && !isDocumentHashColumnError(existingDocumentError)) {
           warnings.push(`${file.name} belge kontrolu yapilamadi.`);
           continue;
         }
@@ -858,9 +862,7 @@ export default function ProjectDetailPage() {
           continue;
         }
 
-        const { data: documentRow, error: documentError } = await supabase
-          .from("documents")
-          .insert({
+        const documentPayload = {
             user_id: userId,
             document_type: "proje",
             original_file_name: file.name,
@@ -872,9 +874,23 @@ export default function ProjectDetailPage() {
             supplier_name: project?.customer_partner_name || project?.customer_name || null,
             document_date: project?.start_date || null,
             currency: project?.estimated_budget_currency || project?.contract_currency || projectCurrencyForDisplay(),
-          })
+        };
+        let { data: documentRow, error: documentError } = await supabase
+          .from("documents")
+          .insert(documentPayload)
           .select("*")
           .single();
+
+        if (documentError && isDocumentHashColumnError(documentError)) {
+          const { content_sha256: _contentSha256, ...documentPayloadWithoutHash } = documentPayload;
+          const fallbackDocumentResult = await supabase
+            .from("documents")
+            .insert(documentPayloadWithoutHash)
+            .select("*")
+            .single();
+          documentRow = fallbackDocumentResult.data;
+          documentError = fallbackDocumentResult.error;
+        }
 
         if (documentError) {
           await supabase.storage.from("order-documents").remove([storagePath]);
@@ -4945,6 +4961,7 @@ export default function ProjectDetailPage() {
       setHierarchyGroups([]);
       setPreviewParentId("");
       await refreshProjectAfterMaterialChange(nextItems, user);
+      await loadProject();
       const controlCount = rowsToImport.length - importedRows.length;
       const controlSuffix = controlCount > 0 ? ` ${controlCount} kalem kontrol bekliyor.` : "";
       const successMessage = parentUsedFallback || childUsedFallback
