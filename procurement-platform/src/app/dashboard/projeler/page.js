@@ -1514,14 +1514,13 @@ export default function ProjectsPage() {
                       onChange={toggleVisibleProjects}
                     />
                   </th>
-                  <th className="w-[15%] p-2">Proje</th>
-                  <th className="w-[13%] p-2">Müşteri</th>
-                  <th className="w-[18%] p-2">Ürün durumu</th>
+                  <th className="w-[20%] p-2">Proje</th>
+                  <th className="w-[16%] p-2">Müşteri</th>
                   <th className="w-[15%] p-2">Sipariş durumu</th>
-                  <th className="w-[10%] p-2">Tamamlanma</th>
-                  <th className="w-[12%] p-2">Tarih</th>
-                  <th className="w-[8%] p-2">Durum</th>
-                  <th className="w-[15%] p-2">İşlem</th>
+                  <th className="w-[12%] p-2">Tamamlanma</th>
+                  <th className="w-[13%] p-2">Tarih</th>
+                  <th className="w-[9%] p-2">Durum</th>
+                  <th className="w-[11%] p-2">İşlem</th>
                 </tr>
               </thead>
               <tbody>
@@ -1550,16 +1549,6 @@ export default function ProjectsPage() {
                       <td className="p-4">
                         <div className="max-w-[105px] truncate" title={project.customer_name || "-"}>
                           {project.customer_name || "-"}
-                        </div>
-                      </td>
-                      <td className="p-4">
-                        <div className="flex flex-wrap gap-1.5">
-                          <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-black ${projectListBadgeClass(metrics.productStatus.tone)}`}>
-                            {metrics.productStatus.label}
-                          </span>
-                        </div>
-                        <div className="mt-1 text-[11px] font-semibold text-slate-500">
-                          {metrics.materialStatusText}
                         </div>
                       </td>
                       <td className="p-4">
