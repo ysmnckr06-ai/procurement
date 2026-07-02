@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { findOrCreateBusinessPartner } from "@/lib/businessPartners";
 import { calculateBaseAmount, currencyOptions, formatMoney, getBaseCurrency, getExchangeRate } from "@/lib/currency";
 import { fetchLiveTryRates, liveCurrencyOptions, liveRateFor } from "@/lib/liveCurrency";
 import { hierarchyQuantityFields } from "@/lib/projectHierarchy";
@@ -207,9 +208,19 @@ export default function ProjectsPage() {
   const [liveRateWarning, setLiveRateWarning] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [savingPartner, setSavingPartner] = useState(false);
   const [projectView, setProjectView] = useState("active");
   const [selectedProjectIds, setSelectedProjectIds] = useState([]);
   const [projectCodeEdited, setProjectCodeEdited] = useState(false);
+  const [showCustomerPartnerForm, setShowCustomerPartnerForm] = useState(false);
+  const [customerPartnerDraft, setCustomerPartnerDraft] = useState({
+    name: "",
+    contact_person: "",
+    phone: "",
+    email: "",
+    tax_number: "",
+    city: "",
+  });
 
   useEffect(() => {
     loadProjects();
@@ -303,6 +314,8 @@ export default function ProjectsPage() {
     setProjectCodeEdited(false);
     setProjectFiles([]);
     setProjectFileSummary("");
+    setShowCustomerPartnerForm(false);
+    setCustomerPartnerDraft({ name: "", contact_person: "", phone: "", email: "", tax_number: "", city: "" });
     setForm({
       ...emptyForm,
       project_code: nextProjectCode(projects),
@@ -319,6 +332,8 @@ export default function ProjectsPage() {
     setProjectCodeEdited(true);
     setProjectFiles([]);
     setProjectFileSummary("");
+    setShowCustomerPartnerForm(false);
+    setCustomerPartnerDraft({ name: "", contact_person: "", phone: "", email: "", tax_number: "", city: "" });
     setForm({
       ...emptyForm,
       project_code: project.project_code || "",
@@ -342,7 +357,63 @@ export default function ProjectsPage() {
 
   function updateForm(field, value) {
     if (field === "project_code") setProjectCodeEdited(true);
+    if (field === "customer_name") {
+      setShowCustomerPartnerForm(false);
+      setCustomerPartnerDraft((prev) => ({ ...prev, name: value }));
+    }
     setForm((prev) => ({ ...prev, [field]: value }));
+  }
+
+  function updateCustomerPartnerDraft(field, value) {
+    setCustomerPartnerDraft((prev) => ({ ...prev, [field]: value }));
+  }
+
+  async function createCustomerPartnerFromProject() {
+    const cleanName = String(customerPartnerDraft.name || form.customer_name || "").trim().replace(/\s+/g, " ");
+    if (!cleanName) {
+      setMessage("Firma adı zorunlu.");
+      return;
+    }
+
+    setSavingPartner(true);
+    setMessage("");
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      router.push("/login");
+      return;
+    }
+
+    const partner = await findOrCreateBusinessPartner(supabase, user.id, {
+      name: cleanName,
+      partnerType: "Müşteri",
+      contactPerson: customerPartnerDraft.contact_person,
+      phone: customerPartnerDraft.phone,
+      email: customerPartnerDraft.email,
+      taxNumber: customerPartnerDraft.tax_number,
+      city: customerPartnerDraft.city,
+      allowCreate: true,
+      allowProbableMatch: true,
+    });
+
+    if (!partner?.id) {
+      setMessage("Firma bilgisi kaydedilemedi.");
+      setSavingPartner(false);
+      return;
+    }
+
+    setBusinessPartners((current) => {
+      const withoutDuplicate = current.filter((item) => item.id !== partner.id);
+      return [...withoutDuplicate, partner].sort((left, right) => String(left.name || "").localeCompare(String(right.name || ""), "tr"));
+    });
+    setForm((prev) => ({ ...prev, customer_name: partner.name }));
+    setCustomerPartnerDraft({ name: partner.name, contact_person: "", phone: "", email: "", tax_number: "", city: "" });
+    setShowCustomerPartnerForm(false);
+    setMessage("Firma bilgisi oluşturuldu. Proje formuna devam edebilirsiniz.");
+    setSavingPartner(false);
   }
 
   async function fetchProjectCodes(userId) {
@@ -1321,10 +1392,91 @@ export default function ProjectsPage() {
                 </datalist>
                 {customerNameNeedsPartner && (
                   <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-900">
-                    <p>Bu firma iş ortakları arasında bulunamadı. Sistem firma kaydını otomatik oluşturmaz.</p>
-                    <Link href="/dashboard/tedarikciler" className="mt-2 inline-flex rounded-lg bg-amber-100 px-3 py-2 text-amber-900 hover:bg-amber-200">
-                      Firma bilgisi oluştur
-                    </Link>
+                    <p>Bu firma iş ortakları arasında bulunamadı. Firma kaydını bu formdan oluşturup projeye devam edebilirsiniz.</p>
+                    {!showCustomerPartnerForm ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCustomerPartnerDraft((prev) => ({ ...prev, name: form.customer_name }));
+                          setShowCustomerPartnerForm(true);
+                        }}
+                        className="mt-2 inline-flex rounded-lg bg-amber-100 px-3 py-2 font-black text-amber-900 hover:bg-amber-200"
+                      >
+                        Firma bilgisi oluştur
+                      </button>
+                    ) : (
+                      <div className="mt-3 space-y-3 rounded-xl border border-amber-200 bg-white p-3">
+                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                          <label className="text-xs font-black text-slate-700">
+                            Firma adı
+                            <input
+                              className="mt-1 w-full rounded-lg border border-slate-300 p-2"
+                              value={customerPartnerDraft.name}
+                              onChange={(event) => updateCustomerPartnerDraft("name", event.target.value)}
+                            />
+                          </label>
+                          <label className="text-xs font-black text-slate-700">
+                            Yetkili
+                            <input
+                              className="mt-1 w-full rounded-lg border border-slate-300 p-2"
+                              value={customerPartnerDraft.contact_person}
+                              onChange={(event) => updateCustomerPartnerDraft("contact_person", event.target.value)}
+                            />
+                          </label>
+                          <label className="text-xs font-black text-slate-700">
+                            Telefon
+                            <input
+                              className="mt-1 w-full rounded-lg border border-slate-300 p-2"
+                              value={customerPartnerDraft.phone}
+                              onChange={(event) => updateCustomerPartnerDraft("phone", event.target.value)}
+                            />
+                          </label>
+                          <label className="text-xs font-black text-slate-700">
+                            E-posta
+                            <input
+                              type="email"
+                              className="mt-1 w-full rounded-lg border border-slate-300 p-2"
+                              value={customerPartnerDraft.email}
+                              onChange={(event) => updateCustomerPartnerDraft("email", event.target.value)}
+                            />
+                          </label>
+                          <label className="text-xs font-black text-slate-700">
+                            Vergi no
+                            <input
+                              className="mt-1 w-full rounded-lg border border-slate-300 p-2"
+                              value={customerPartnerDraft.tax_number}
+                              onChange={(event) => updateCustomerPartnerDraft("tax_number", event.target.value)}
+                            />
+                          </label>
+                          <label className="text-xs font-black text-slate-700">
+                            Şehir
+                            <input
+                              className="mt-1 w-full rounded-lg border border-slate-300 p-2"
+                              value={customerPartnerDraft.city}
+                              onChange={(event) => updateCustomerPartnerDraft("city", event.target.value)}
+                            />
+                          </label>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            disabled={savingPartner}
+                            onClick={createCustomerPartnerFromProject}
+                            className="rounded-lg bg-amber-500 px-3 py-2 font-black text-white hover:bg-amber-600 disabled:cursor-not-allowed disabled:bg-slate-300"
+                          >
+                            {savingPartner ? "Kaydediliyor..." : "Firmayı kaydet"}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={savingPartner}
+                            onClick={() => setShowCustomerPartnerForm(false)}
+                            className="rounded-lg border border-slate-200 px-3 py-2 font-black text-slate-600 hover:bg-slate-50"
+                          >
+                            Vazgeç
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </label>
