@@ -179,7 +179,7 @@ def has_material_identity(value):
 
 
 def looks_like_section_row(cells, code, brand, desc, qty, unit_price, net_price, row_total):
-    if not desc or qty <= 0 or row_total <= 0:
+    if not desc or row_total <= 0:
         return False
 
     if should_skip_context_line(" ".join(clean_text(cell) for cell in cells)):

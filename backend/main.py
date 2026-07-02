@@ -254,6 +254,10 @@ def raw_item_looks_like_material(raw_item):
     unit_price = safe_number_from_raw(raw_item.get("unit_price"))
     total = safe_number_from_raw(raw_item.get("total")) or safe_number_from_raw(raw_item.get("section_total"))
     price_status = raw_item.get("price_status") or ""
+    code = str(raw_item.get("product_code") or "").strip()
+
+    if price_status == "section_total_only" and raw_item.get("section_name") and code:
+        return bool(text and quantity > 0)
 
     if price_status == "section_total_only" or raw_item.get("section_name"):
         return False
@@ -277,7 +281,16 @@ def score_main_product_candidate(raw_item, raw_items, index):
     code = str(raw_item.get("product_code") or "").strip()
     code_empty_or_short = len(normalize_offer_keyword(code).split()) <= 1 and len(code) <= 8
     description_only = bool(text) and not code and unit_price_empty
-    section_total_like = price_status == "section_total_only" or bool(raw_item.get("section_name")) or section_total > 0
+    section_child_row = price_status == "section_total_only" and bool(raw_item.get("section_name")) and bool(code)
+    if section_child_row:
+        return {
+            "is_candidate": False,
+            "score": 0,
+            "confidence_score": 25,
+            "reasons": ["bolum altinda urun satiri; ana urun degil"],
+        }
+
+    section_total_like = price_status == "section_total_only" or section_total > 0
     raw_cells_total_like = bool(raw_cells_text and len(raw_cells_text.split()) <= 8 and has_total and unit_price_empty)
     neighbors = raw_items[max(0, index - 4):index] + raw_items[index + 1:index + 5]
     material_neighbors = sum(1 for item in neighbors if raw_item_looks_like_material(item))
