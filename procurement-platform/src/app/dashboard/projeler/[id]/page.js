@@ -483,6 +483,7 @@ export default function ProjectDetailPage() {
   const [selectedMissingProductKeys, setSelectedMissingProductKeys] = useState([]);
   const [missingProductCodeDrafts, setMissingProductCodeDrafts] = useState({});
   const [creatingMissingProducts, setCreatingMissingProducts] = useState(false);
+  const [missingProductActionLabel, setMissingProductActionLabel] = useState("");
   const [loading, setLoading] = useState(true);
   const visiblePreviewSections = useMemo(() => {
     const seen = new Set();
@@ -1724,6 +1725,9 @@ export default function ProjectDetailPage() {
       return;
     }
 
+    setMissingProductActionLabel(
+      `${rowsToCreate.length} ürün ${options.productType === "main_product" ? "ana ürün" : "alt ürün"} stok kartına bağlanıyor...`,
+    );
     setCreatingMissingProducts(true);
     const createdProducts = [];
     const updatedProducts = [];
@@ -1873,6 +1877,7 @@ export default function ProjectDetailPage() {
       .filter((item) => !targetKeys.has(missingProductKey(item)) || failedKeys.has(missingProductKey(item)));
     const failedMissingItems = updateMissingProductWarning(candidateRows, nextProducts);
     setCreatingMissingProducts(false);
+    setMissingProductActionLabel("");
     const linkedProductCount = linkedProductIds.size;
     setMessage(
       failedMissingItems.length > 0
@@ -6826,7 +6831,7 @@ export default function ProjectDetailPage() {
                   )}
                   className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-black text-white hover:bg-blue-700 disabled:bg-slate-300"
                 >
-                  Seçilenleri ana ürün kartı yap
+                  {creatingMissingProducts ? "İşleniyor..." : "Seçilenleri ana ürün kartı yap"}
                 </button>
                 <button
                   type="button"
@@ -6837,10 +6842,15 @@ export default function ProjectDetailPage() {
                   )}
                   className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-black text-white hover:bg-slate-800 disabled:bg-slate-300"
                 >
-                  Seçilenleri alt ürün kartı yap
+                  {creatingMissingProducts ? "İşleniyor..." : "Seçilenleri alt ürün kartı yap"}
                 </button>
               </div>
             </div>
+            {creatingMissingProducts && (
+              <div className="mt-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-black text-blue-900">
+                {missingProductActionLabel || "Stok kartları oluşturuluyor, lütfen bekleyin..."}
+              </div>
+            )}
             {missingProductDetailsOpen && (
               <div className="mt-4 overflow-x-auto rounded-xl border border-red-100 bg-white">
                 <table className="min-w-[1160px] w-full text-left text-xs text-slate-700">
