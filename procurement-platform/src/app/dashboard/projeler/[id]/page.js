@@ -760,6 +760,18 @@ export default function ProjectDetailPage() {
       .join("");
   }
 
+  function safeProjectUploadName(fileName) {
+    return String(fileName || "proje-dosyasi")
+      .replace(/[^a-zA-Z0-9._-]/g, "-")
+      .replace(/-+/g, "-");
+  }
+
+  function normalizedDocumentFileName(fileName) {
+    return safeProjectUploadName(fileName)
+      .replace(/^[0-9a-f-]{20,}-/i, "")
+      .toLocaleLowerCase("tr-TR");
+  }
+
   async function linkDocumentToProject(userId, documentId) {
     if (!documentId) return false;
 
@@ -788,13 +800,14 @@ export default function ProjectDetailPage() {
 
   async function archiveProjectSourceFiles(files, userId) {
     const warnings = [];
+    const archivedDocuments = [];
 
     for (const file of files) {
       try {
         const contentSha256 = await fileSha256(file);
         const { data: existingDocument, error: existingDocumentError } = await supabase
           .from("documents")
-          .select("id")
+          .select("*")
           .eq("user_id", userId)
           .eq("content_sha256", contentSha256)
           .maybeSingle();
@@ -805,14 +818,29 @@ export default function ProjectDetailPage() {
         }
 
         if (existingDocument) {
+          let documentForArchive = existingDocument;
+          if (file.name && existingDocument.original_file_name !== file.name) {
+            const { data: renamedDocument, error: renameError } = await supabase
+              .from("documents")
+              .update({ original_file_name: file.name, updated_at: new Date().toISOString() })
+              .eq("id", existingDocument.id)
+              .eq("user_id", userId)
+              .select("*")
+              .maybeSingle();
+            if (!renameError && renamedDocument) documentForArchive = renamedDocument;
+          }
           const linked = await linkDocumentToProject(userId, existingDocument.id);
           if (!linked) warnings.push(`${file.name} arsivde var ancak projeye baglanamadi.`);
+          archivedDocuments.push({
+            ...documentForArchive,
+            original_file_name: documentForArchive.original_file_name || file.name,
+            linked_project_id: projectId,
+            linked_project_code: project?.project_code || null,
+          });
           continue;
         }
 
-        const safeUploadName = String(file.name || "proje-dosyasi")
-          .replace(/[^a-zA-Z0-9._-]/g, "-")
-          .replace(/-+/g, "-");
+        const safeUploadName = safeProjectUploadName(file.name);
         const fileId = typeof crypto !== "undefined" && crypto.randomUUID
           ? crypto.randomUUID()
           : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -845,7 +873,7 @@ export default function ProjectDetailPage() {
             document_date: project?.start_date || null,
             currency: project?.estimated_budget_currency || project?.contract_currency || projectCurrencyForDisplay(),
           })
-          .select("id")
+          .select("*")
           .single();
 
         if (documentError) {
@@ -854,13 +882,95 @@ export default function ProjectDetailPage() {
         } else {
           const linked = await linkDocumentToProject(userId, documentRow?.id);
           if (!linked) warnings.push(`${file.name} belge arsivi projeye baglanamadi.`);
+          archivedDocuments.push({
+            ...documentRow,
+            linked_project_id: projectId,
+            linked_project_code: project?.project_code || null,
+          });
         }
       } catch (error) {
         warnings.push(`${file.name} belge arsivine alinamadi.`);
       }
     }
 
-    return warnings;
+    return { warnings, documents: archivedDocuments };
+  }
+
+  async function repairProjectSourceDocuments(userId, sourceFileNames, existingDocuments = [], projectRow = project) {
+    const wantedNames = new Set(
+      (sourceFileNames || [])
+        .map(normalizedDocumentFileName)
+        .filter(Boolean),
+    );
+    if (!wantedNames.size) return [];
+
+    const existingPaths = new Set(
+      (existingDocuments || [])
+        .map((document) => String(document.storage_path || ""))
+        .filter(Boolean),
+    );
+    const existingNames = new Set(
+      (existingDocuments || [])
+        .map((document) => normalizedDocumentFileName(document.original_file_name))
+        .filter(Boolean),
+    );
+    const repairRows = [];
+    const folderPath = `${userId}/projects/${projectId}`;
+    const { data: storedFiles, error: listError } = await supabase.storage
+      .from("order-documents")
+      .list(folderPath, { limit: 1000, sortBy: { column: "created_at", order: "desc" } });
+
+    if (listError || !storedFiles?.length) {
+      if (listError) console.warn("Proje storage dosyalari listelenemedi:", listError);
+      return [];
+    }
+
+    for (const file of storedFiles) {
+      const objectName = String(file.name || "").trim();
+      if (!objectName) continue;
+      const storagePath = `${folderPath}/${objectName}`;
+      if (existingPaths.has(storagePath)) continue;
+
+      const normalizedStoredName = normalizedDocumentFileName(objectName);
+      const matchedSourceName = (sourceFileNames || []).find((fileName) =>
+        normalizedStoredName.endsWith(normalizedDocumentFileName(fileName))
+        || normalizedDocumentFileName(fileName).endsWith(normalizedStoredName)
+      );
+      if (!matchedSourceName || existingNames.has(normalizedDocumentFileName(matchedSourceName))) continue;
+
+      const { data: documentRow, error: documentError } = await supabase
+        .from("documents")
+        .insert({
+          user_id: userId,
+          document_type: "proje",
+          original_file_name: matchedSourceName,
+          storage_bucket: "order-documents",
+          storage_path: storagePath,
+          mime_type: file.metadata?.mimetype || null,
+          file_size: file.metadata?.size || null,
+          supplier_name: projectRow?.customer_partner_name || projectRow?.customer_name || null,
+          document_date: projectRow?.start_date || null,
+          currency: projectRow?.estimated_budget_currency || projectRow?.contract_currency || projectCurrencyForDisplay(),
+        })
+        .select("*")
+        .single();
+
+      if (documentError || !documentRow) {
+        console.warn("Proje storage dosyasi belge arsivine baglanamadi:", documentError);
+        continue;
+      }
+
+      await linkDocumentToProject(userId, documentRow.id);
+      repairRows.push({
+        ...documentRow,
+        linked_project_id: projectId,
+        linked_project_code: projectRow?.project_code || null,
+      });
+      existingPaths.add(storagePath);
+      existingNames.add(normalizedDocumentFileName(matchedSourceName));
+    }
+
+    return repairRows;
   }
 
   async function deleteProjectSourceDocument(document) {
@@ -1190,16 +1300,32 @@ export default function ProjectDetailPage() {
     setProducts(productRes.data || []);
     const loadedItems = itemRes.data || [];
     const linkedItems = await ensureProductCardsForProjectItems(loadedItems, user.id, productRes.data || []);
-    const archivedDocumentNames = new Set(
-      nextProjectDocuments
-        .map((document) => String(document.original_file_name || "").trim().toLocaleLowerCase("tr-TR"))
-        .filter(Boolean),
-    );
-    const missingArchivedSourceNames = Array.from(new Set(
+    const linkedSourceFileNames = Array.from(new Set(
       linkedItems
         .map((item) => String(item.source_file || "").trim())
-        .filter((fileName) => fileName && !archivedDocumentNames.has(fileName.toLocaleLowerCase("tr-TR"))),
+        .filter(Boolean),
     ));
+    const repairedSourceDocuments = await repairProjectSourceDocuments(
+      user.id,
+      linkedSourceFileNames,
+      nextProjectDocuments,
+      projectRes.data,
+    );
+    if (repairedSourceDocuments.length > 0) {
+      const existingDocumentIds = new Set(nextProjectDocuments.map((document) => String(document.id)));
+      nextProjectDocuments = [
+        ...repairedSourceDocuments.filter((document) => !existingDocumentIds.has(String(document.id))),
+        ...nextProjectDocuments,
+      ];
+    }
+    const archivedDocumentNames = new Set(
+      nextProjectDocuments
+        .map((document) => normalizedDocumentFileName(document.original_file_name))
+        .filter(Boolean),
+    );
+    const missingArchivedSourceNames = linkedSourceFileNames.filter((fileName) =>
+      !archivedDocumentNames.has(normalizedDocumentFileName(fileName))
+    );
     if (missingArchivedSourceNames.length > 0) {
       const { data: matchingSourceDocuments, error: matchingSourceDocumentError } = await supabase
         .from("documents")
@@ -4189,7 +4315,19 @@ export default function ProjectDetailPage() {
         return;
       }
 
-      const archiveWarnings = await archiveProjectSourceFiles(files, session.user.id);
+      const archiveResult = await archiveProjectSourceFiles(files, session.user.id);
+      const archiveWarnings = archiveResult.warnings || [];
+      if (archiveResult.documents?.length) {
+        setProjectDocuments((current) => {
+          const existingIds = new Set(current.map((document) => String(document.id)));
+          const existingNames = new Set(current.map((document) => normalizedDocumentFileName(document.original_file_name)));
+          const nextDocuments = archiveResult.documents.filter((document) =>
+            !existingIds.has(String(document.id))
+            && !existingNames.has(normalizedDocumentFileName(document.original_file_name))
+          );
+          return [...nextDocuments, ...current];
+        });
+      }
 
       const formData = new FormData();
       files.forEach((file) => {
@@ -6951,7 +7089,7 @@ export default function ProjectDetailPage() {
   function sourceFileDocumentsFromItems(projectRow, projectItems, storedDocuments = []) {
     const storedNames = new Set(
       (storedDocuments || [])
-        .map((document) => String(document.original_file_name || "").trim().toLocaleLowerCase("tr-TR"))
+        .map((document) => normalizedDocumentFileName(document.original_file_name))
         .filter(Boolean),
     );
     const sourceNames = Array.from(new Set(
@@ -6961,7 +7099,7 @@ export default function ProjectDetailPage() {
     ));
 
     return sourceNames
-      .filter((fileName) => !storedNames.has(fileName.toLocaleLowerCase("tr-TR")))
+      .filter((fileName) => !storedNames.has(normalizedDocumentFileName(fileName)))
       .map((fileName) => ({
         id: `source-file-${projectId}-${fileName}`,
         document_type: "proje",
