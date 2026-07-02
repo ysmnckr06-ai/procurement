@@ -41,6 +41,18 @@ function formatDate(value) {
   return new Date(value).toLocaleDateString("tr-TR");
 }
 
+function dateValue(value) {
+  if (!value) return null;
+  const date = new Date(`${value}T00:00:00`);
+  return Number.isNaN(date.getTime()) ? null : date.getTime();
+}
+
+function plannedEndBeforeStart(startDate, plannedEndDate) {
+  const start = dateValue(startDate);
+  const end = dateValue(plannedEndDate);
+  return start !== null && end !== null && end < start;
+}
+
 function normalizeProjectFilter(value) {
   return String(value || "")
     .trim()
@@ -962,7 +974,7 @@ export default function ProjectsPage() {
       return;
     }
 
-    if (form.start_date && form.planned_end_date && form.planned_end_date < form.start_date) {
+    if (plannedEndBeforeStart(form.start_date, form.planned_end_date)) {
       setMessage("Planlanan bitiş tarihi başlangıç tarihinden önce olamaz.");
       setSaving(false);
       return;
@@ -1293,6 +1305,7 @@ export default function ProjectsPage() {
     () => findPartnerByTaxNumber(businessPartners, customerPartnerDraft.tax_number),
     [businessPartners, customerPartnerDraft.tax_number],
   );
+  const projectDateInvalid = plannedEndBeforeStart(form.start_date, form.planned_end_date);
   const customerNameNeedsPartner = Boolean(form.customer_name.trim()) && !selectedCustomerPartner;
 
   function toggleProjectSelection(projectId) {
@@ -1699,11 +1712,16 @@ export default function ProjectsPage() {
               </label>
               <label className="text-sm font-bold text-slate-700">
                 Başlangıç Tarihi *
-                <input required type="date" className="mt-2 w-full rounded-xl border border-slate-300 p-3" value={form.start_date} onChange={(e) => updateForm("start_date", e.target.value)} />
+                <input required type="date" max={form.planned_end_date || undefined} className="mt-2 w-full rounded-xl border border-slate-300 p-3" value={form.start_date} onChange={(e) => updateForm("start_date", e.target.value)} />
               </label>
               <label className="text-sm font-bold text-slate-700">
                 Planlanan Bitiş *
-                <input required type="date" className="mt-2 w-full rounded-xl border border-slate-300 p-3" value={form.planned_end_date} onChange={(e) => updateForm("planned_end_date", e.target.value)} />
+                <input required type="date" min={form.start_date || undefined} className={`mt-2 w-full rounded-xl border p-3 ${projectDateInvalid ? "border-red-400 bg-red-50" : "border-slate-300"}`} value={form.planned_end_date} onChange={(e) => updateForm("planned_end_date", e.target.value)} />
+                {projectDateInvalid && (
+                  <span className="mt-2 block rounded-lg bg-red-50 p-2 text-xs font-black text-red-700">
+                    Planlanan bitiş tarihi başlangıç tarihinden önce olamaz.
+                  </span>
+                )}
               </label>
               <label className="text-sm font-bold text-slate-700">
                 Durum *
@@ -1747,7 +1765,7 @@ export default function ProjectsPage() {
             <div className="mt-5 flex justify-end">
               <button
                 type="submit"
-                disabled={saving}
+                disabled={saving || projectDateInvalid}
                 className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white hover:bg-blue-700 disabled:bg-slate-300"
               >
                 {saving
