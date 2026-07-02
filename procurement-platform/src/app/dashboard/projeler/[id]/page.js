@@ -821,7 +821,7 @@ export default function ProjectDetailPage() {
           continue;
         }
 
-        if (existingDocument) {
+        if (existingDocument?.storage_path) {
           let documentForArchive = existingDocument;
           if (file.name && existingDocument.original_file_name !== file.name) {
             const { data: renamedDocument, error: renameError } = await supabase
@@ -875,17 +875,31 @@ export default function ProjectDetailPage() {
             document_date: project?.start_date || null,
             currency: project?.estimated_budget_currency || project?.contract_currency || projectCurrencyForDisplay(),
         };
-        let { data: documentRow, error: documentError } = await supabase
-          .from("documents")
-          .insert(documentPayload)
+        let documentWriteQuery = existingDocument?.id
+          ? supabase
+            .from("documents")
+            .update({ ...documentPayload, updated_at: new Date().toISOString() })
+            .eq("id", existingDocument.id)
+            .eq("user_id", userId)
+          : supabase
+            .from("documents")
+            .insert(documentPayload);
+        let { data: documentRow, error: documentError } = await documentWriteQuery
           .select("*")
           .single();
 
         if (documentError && isDocumentHashColumnError(documentError)) {
           const { content_sha256: _contentSha256, ...documentPayloadWithoutHash } = documentPayload;
-          const fallbackDocumentResult = await supabase
-            .from("documents")
-            .insert(documentPayloadWithoutHash)
+          const fallbackDocumentWriteQuery = existingDocument?.id
+            ? supabase
+              .from("documents")
+              .update({ ...documentPayloadWithoutHash, updated_at: new Date().toISOString() })
+              .eq("id", existingDocument.id)
+              .eq("user_id", userId)
+            : supabase
+              .from("documents")
+              .insert(documentPayloadWithoutHash);
+          const fallbackDocumentResult = await fallbackDocumentWriteQuery
             .select("*")
             .single();
           documentRow = fallbackDocumentResult.data;

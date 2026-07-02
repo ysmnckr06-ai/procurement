@@ -719,7 +719,7 @@ export default function ProjectsPage() {
         const contentSha256 = await fileSha256(file);
         const { data: existingDocument, error: existingDocumentError } = await supabase
           .from("documents")
-          .select("id")
+          .select("id,storage_path,original_file_name")
           .eq("user_id", userId)
           .eq("content_sha256", contentSha256)
           .maybeSingle();
@@ -729,7 +729,7 @@ export default function ProjectsPage() {
           continue;
         }
 
-        if (existingDocument) {
+        if (existingDocument?.storage_path) {
           const linked = await linkDocumentToProject(existingDocument.id);
           if (!linked) warnings.push(`${file.name} arsivde var ancak projeye baglanamadi.`);
           continue;
@@ -768,17 +768,31 @@ export default function ProjectsPage() {
             document_date: projectPayload.start_date || null,
             currency: projectPayload.estimated_budget_currency || projectPayload.contract_currency || getBaseCurrency(settings),
         };
-        let { data: documentRow, error: documentError } = await supabase
-          .from("documents")
-          .insert(documentPayload)
+        let documentWriteQuery = existingDocument?.id
+          ? supabase
+            .from("documents")
+            .update({ ...documentPayload, updated_at: new Date().toISOString() })
+            .eq("id", existingDocument.id)
+            .eq("user_id", userId)
+          : supabase
+            .from("documents")
+            .insert(documentPayload);
+        let { data: documentRow, error: documentError } = await documentWriteQuery
           .select("id")
           .single();
 
         if (documentError && isDocumentHashColumnError(documentError)) {
           const { content_sha256: _contentSha256, ...documentPayloadWithoutHash } = documentPayload;
-          const fallbackDocumentResult = await supabase
-            .from("documents")
-            .insert(documentPayloadWithoutHash)
+          const fallbackDocumentWriteQuery = existingDocument?.id
+            ? supabase
+              .from("documents")
+              .update({ ...documentPayloadWithoutHash, updated_at: new Date().toISOString() })
+              .eq("id", existingDocument.id)
+              .eq("user_id", userId)
+            : supabase
+              .from("documents")
+              .insert(documentPayloadWithoutHash);
+          const fallbackDocumentResult = await fallbackDocumentWriteQuery
             .select("id")
             .single();
           documentRow = fallbackDocumentResult.data;
