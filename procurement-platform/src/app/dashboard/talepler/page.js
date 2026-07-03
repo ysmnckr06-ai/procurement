@@ -48,6 +48,21 @@ function getRequestItems(request) {
   return candidates.find((items) => items.length > 0) || [];
 }
 
+function requestProjectItemIds(request) {
+  const ids = new Set();
+  getRequestItems(request).forEach((item) => {
+    if (item?.projectItemId) ids.add(item.projectItemId);
+    if (item?.project_item_id) ids.add(item.project_item_id);
+    (Array.isArray(item?.projectItemIds) ? item.projectItemIds : []).forEach((id) => ids.add(id));
+    (Array.isArray(item?.project_item_ids) ? item.project_item_ids : []).forEach((id) => ids.add(id));
+    (Array.isArray(item?.allocations) ? item.allocations : []).forEach((allocation) => {
+      if (allocation?.projectItemId) ids.add(allocation.projectItemId);
+      if (allocation?.project_item_id) ids.add(allocation.project_item_id);
+    });
+  });
+  return Array.from(ids).filter(Boolean);
+}
+
 function getRequestMeta(request) {
   const items = getRequestItems(request);
   return items.find((item) => item?.request_meta)?.request_meta || {};
@@ -1229,33 +1244,56 @@ export default function TaleplerPage() {
   }
 
   async function deleteRequest(requestId) {
-  const onay = window.confirm("Bu talep listesini silmek istediğine emin misin?");
-  if (!onay) return;
+    const onay = window.confirm("Bu talep listesini silmek istediğine emin misin?");
+    if (!onay) return;
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
 
-  if (!user) {
-    alert("Kullanıcı bulunamadı.");
-    return;
+    if (!user) {
+      alert("Kullanıcı bulunamadı.");
+      return;
+    }
+
+    const requestToDelete = savedRequests.find((request) => request.id === requestId);
+    const deletedProjectItemIds = requestProjectItemIds(requestToDelete);
+    const remainingProjectItemIds = new Set(
+      savedRequests
+        .filter((request) => request.id !== requestId)
+        .flatMap(requestProjectItemIds),
+    );
+    const projectItemIdsToUnlock = deletedProjectItemIds.filter((id) => !remainingProjectItemIds.has(id));
+
+    const { error } = await supabase
+      .from("requests")
+      .delete()
+      .eq("id", requestId)
+      .eq("user_id", user.id);
+
+    if (error) {
+      alert("Talep silinemedi: " + error.message);
+      console.error(error);
+      return;
+    }
+
+    if (projectItemIdsToUnlock.length > 0) {
+      const { error: itemError } = await supabase
+        .from("project_items")
+        .update({ status: "Satınalma gerekli", updated_at: new Date().toISOString() })
+        .in("id", projectItemIdsToUnlock)
+        .eq("user_id", user.id)
+        .eq("status", "Talep oluşturuldu");
+
+      if (itemError) {
+        console.warn("Talep silindi ama proje kalemi durumları güncellenemedi:", itemError);
+      }
+    }
+
+    setSavedRequests((prev) => prev.filter((r) => r.id !== requestId));
+    setSelectedRequestIds((prev) => prev.filter((id) => id !== requestId));
+    setMessage("Talep silindi. Bağlı proje kalemleri yeniden satınalma gerekli durumuna alındı.");
   }
-
-  const { error } = await supabase
-    .from("requests")
-    .delete()
-    .eq("id", requestId)
-    .eq("user_id", user.id);
-
-  if (error) {
-    alert("Talep silinemedi: " + error.message);
-    console.error(error);
-    return;
-  }
-
-  setSavedRequests((prev) => prev.filter((r) => r.id !== requestId));
-  setSelectedRequestIds((prev) => prev.filter((id) => id !== requestId));
-}
 
   return (
     <div className="bg-slate-100">

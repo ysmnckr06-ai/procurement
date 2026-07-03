@@ -1489,7 +1489,6 @@ export default function ProjectDetailPage() {
               : "Eşleşme/oluşturma sonrası product_id boş kaldı",
       }));
     console.table(unlinkedItems);
-    setItems(linkedItems);
     const linkedItemIds = new Set(linkedItems.map((item) => String(item.id)));
     const requestBelongsToCurrentProject = (request) => {
       if (String(request.project_id || "") === String(projectId)) return true;
@@ -1521,6 +1520,43 @@ export default function ProjectDetailPage() {
     if (requestRes.error) {
       console.warn("Proje talepleri listelenemedi:", requestRes.error);
     }
+    const activeRequestItemIds = new Set();
+    nextProjectRequests.forEach((request) => {
+      parseRequestItems(request).forEach((line) => {
+        if (line.projectItemId) activeRequestItemIds.add(String(line.projectItemId));
+        (line.projectItemIds || []).forEach((id) => activeRequestItemIds.add(String(id)));
+        (Array.isArray(line.allocations) ? line.allocations : []).forEach((allocation) => {
+          if (allocation.projectItemId || allocation.project_item_id) {
+            activeRequestItemIds.add(String(allocation.projectItemId || allocation.project_item_id));
+          }
+        });
+      });
+    });
+    const staleRequestItemIds = linkedItems
+      .filter((item) => item.status === "Talep oluşturuldu" && !activeRequestItemIds.has(String(item.id)))
+      .map((item) => item.id)
+      .filter(Boolean);
+    const normalizedLinkedItems = staleRequestItemIds.length > 0
+      ? linkedItems.map((item) =>
+        staleRequestItemIds.includes(item.id)
+          ? { ...item, status: "Satınalma gerekli", updated_at: new Date().toISOString() }
+          : item,
+      )
+      : linkedItems;
+    if (staleRequestItemIds.length > 0) {
+      const { error: staleStatusError } = await supabase
+        .from("project_items")
+        .update({ status: "Satınalma gerekli", updated_at: new Date().toISOString() })
+        .in("id", staleRequestItemIds)
+        .eq("project_id", projectId)
+        .eq("user_id", user.id)
+        .eq("status", "Talep oluşturuldu");
+
+      if (staleStatusError) {
+        console.warn("Silinmiş talep durumları temizlenemedi:", staleStatusError);
+      }
+    }
+    setItems(normalizedLinkedItems);
     setProjectRequests(nextProjectRequests);
     setProjectReports(reportRes.data || []);
     setProjectOffers(offerRes.data || []);
@@ -1813,7 +1849,7 @@ export default function ProjectDetailPage() {
         .reduce((sum, movement) => sum + Number(movement.quantity || 0), 0),
     );
     const ordered = itemOrders.length > 0;
-    const hasRequest = requestedProjectItemIds.has(item.id) || item.status === "Talep oluşturuldu";
+    const hasRequest = requestedProjectItemIds.has(item.id);
     const requiredQuantity = Number(info.requiredQuantity || 0);
     const reservedQuantity = Number(info.reservedQuantity || 0);
     const totalQuantity = Number(info.estimatedQuantity || item.estimated_quantity || 0);
@@ -1877,10 +1913,12 @@ export default function ProjectDetailPage() {
   function canCreatePurchaseRequest(item) {
     const info = stockInfoForItem(item);
     const actionItems = sourceItemsForAction(item);
-    const hasActionableSource = actionItems.some((sourceItem) =>
-      !purchaseActionLockedStatuses.includes(sourceItem.status || "Bekliyor")
-      && !requestedProjectItemIds.has(sourceItem.id)
-    );
+    const hasActionableSource = actionItems.some((sourceItem) => {
+      const hasActiveRequest = requestedProjectItemIds.has(sourceItem.id);
+      const status = sourceItem.status || "Bekliyor";
+      const lockedByStatus = purchaseActionLockedStatuses.includes(status) && !(status === "Talep oluşturuldu" && !hasActiveRequest);
+      return !lockedByStatus && !hasActiveRequest;
+    });
 
     return !info.isMainItem
       && Number(info.requiredQuantity || 0) > 0
