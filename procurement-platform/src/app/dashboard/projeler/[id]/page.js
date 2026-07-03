@@ -451,6 +451,13 @@ export default function ProjectDetailPage() {
   const [mainStageDrafts, setMainStageDrafts] = useState({});
   const [processingParentId, setProcessingParentId] = useState("");
   const [createdRequestId, setCreatedRequestId] = useState("");
+  const [purchaseRequestModal, setPurchaseRequestModal] = useState({
+    open: false,
+    selectedOnly: false,
+    requester: "",
+    department: "",
+    priority: "Normal",
+  });
   const [previewRows, setPreviewRows] = useState([]);
   const [selectedPreviewRowIds, setSelectedPreviewRowIds] = useState([]);
   const [previewSearch, setPreviewSearch] = useState("");
@@ -5852,6 +5859,7 @@ export default function ProjectDetailPage() {
           not: note,
           projectItemIds,
           parentItemIds,
+          request_meta: line.request_meta || null,
           sourceLineCount: 1,
         });
         return;
@@ -5871,6 +5879,7 @@ export default function ProjectDetailPage() {
         not: Array.from(notes).join(" | "),
         projectItemIds: Array.from(new Set([...(existing.projectItemIds || []), ...projectItemIds])),
         parentItemIds: Array.from(new Set([...(existing.parentItemIds || []), ...parentItemIds])),
+        request_meta: existing.request_meta || line.request_meta || null,
         sourceLineCount: Number(existing.sourceLineCount || 1) + 1,
       });
     });
@@ -6187,6 +6196,163 @@ export default function ProjectDetailPage() {
     });
     await refreshProjectBudget(nextItems);
     await loadProject();
+  }
+
+  function openProjectPurchaseRequestModal(selectedOnly = false) {
+    setMessage("");
+    setCreatedRequestId("");
+
+    if (selectedOnly) {
+      const selectedItems = actionablePurchaseItems.filter((item) => selectedPurchaseItemIds.includes(item.id) && canCreatePurchaseRequest(item));
+      const selectedPurchaseBlocked = selectedPurchaseItemIds.length > 0 && selectedItems.length === 0;
+      if (selectedPurchaseBlocked) {
+        setMessage("Seçili kalemler için talep daha önce oluşturulmuş veya işlem başlamış. Aynı kalem için ikinci talep açılamaz.");
+        return;
+      }
+      if (selectedItems.length === 0) {
+        setMessage("Talep oluşturmak için en az bir ürün seçin.");
+        return;
+      }
+    } else {
+      const neededItems = actionablePurchaseItems
+        .map((item) => ({ item, stock: stockInfoForItem(item) }))
+        .filter(({ item, stock }) => !stock.isMainItem && stock.requiredQuantity > 0 && canCreatePurchaseRequest(item));
+      if (neededItems.length === 0) {
+        const lockedNeededCount = items.filter((item) => {
+          const stock = stockInfoForItem(item);
+          return !stock.isMainItem && stock.requiredQuantity > 0 && !canCreatePurchaseRequest(item);
+        }).length;
+        setMessage(
+          lockedNeededCount > 0
+            ? "Satınalma gereken kalemlerin talebi daha önce oluşturulmuş veya işlem başlamış. Aynı kalemler için ikinci talep açılamaz."
+            : "Satınalma gereken ürün bulunamadı.",
+        );
+        return;
+      }
+    }
+
+    setPurchaseRequestModal({
+      open: true,
+      selectedOnly,
+      requester: "",
+      department: "",
+      priority: "Normal",
+    });
+  }
+
+  function closeProjectPurchaseRequestModal() {
+    setPurchaseRequestModal({
+      open: false,
+      selectedOnly: false,
+      requester: "",
+      department: "",
+      priority: "Normal",
+    });
+  }
+
+  async function submitProjectPurchaseRequest(event) {
+    event.preventDefault();
+    setMessage("");
+    setCreatedRequestId("");
+
+    const requester = purchaseRequestModal.requester.trim();
+    const department = purchaseRequestModal.department.trim();
+    const priority = purchaseRequestModal.priority || "Normal";
+    if (!requester) {
+      setMessage("Talebi açan kişi bilgisini girin.");
+      return;
+    }
+
+    const user = await getUserOrRedirect();
+    if (!user) return;
+
+    const requestRows = purchaseRequestModal.selectedOnly
+      ? actionablePurchaseItems
+        .filter((item) => selectedPurchaseItemIds.includes(item.id) && canCreatePurchaseRequest(item))
+        .map((item) => ({ item, stock: stockInfoForItem(item) }))
+      : actionablePurchaseItems
+        .map((item) => ({ item, stock: stockInfoForItem(item) }))
+        .filter(({ item, stock }) => !stock.isMainItem && stock.requiredQuantity > 0 && canCreatePurchaseRequest(item));
+
+    if (requestRows.length === 0) {
+      setMessage("Talep oluşturulacak uygun kalem bulunamadı.");
+      closeProjectPurchaseRequestModal();
+      return;
+    }
+
+    const requestMeta = {
+      source: "project-detail",
+      requester,
+      department,
+      priority,
+      createdBy: user.email || user.id,
+    };
+    const requestItems = summarizeRequestItems(requestRows.map(({ item, stock }) => ({
+      ...mapItemToRequestLine(item, stock.requiredQuantity || Number(item.estimated_quantity || 0)),
+      request_meta: requestMeta,
+    })));
+    const title = purchaseRequestModal.selectedOnly
+      ? `${project.project_code || "PRJ"} - Satınalma Talebi`
+      : `${project.project_code || "PRJ"} - Satınalma Gerekenler`;
+    const fullPayload = {
+      user_id: user.id,
+      project_id: projectId,
+      ad: title,
+      durum: "Proje Talebi",
+      priority,
+      filepath: null,
+      totalitems: requestItems.length,
+      items: requestItems,
+    };
+
+    const { data, error } = await supabase
+      .from("requests")
+      .insert(fullPayload)
+      .select("*")
+      .single();
+
+    if (error) {
+      console.error("Proje talep insert hatasi:", error);
+      setMessage(error.message || "Satınalma talebi oluşturulamadı.");
+      return;
+    }
+
+    if (!data?.id) {
+      setMessage("Talep oluşturuldu ama kayıt id bilgisi alınamadı.");
+      return;
+    }
+
+    await supabase
+      .from("project_items")
+      .update({ status: "Talep oluşturuldu", updated_at: new Date().toISOString() })
+      .in("id", Array.from(new Set(requestRows.flatMap(({ item }) => itemActionIds(item)))))
+      .eq("project_id", projectId)
+      .eq("user_id", user.id);
+
+    const localRequest = {
+      ...fullPayload,
+      ...data,
+      project_id: data.project_id || projectId,
+      items: data.items || requestItems,
+      totalitems: data.totalitems || requestItems.length,
+      ad: data.ad || title,
+      durum: data.durum || "Proje Talebi",
+    };
+
+    setProjectRequests((prev) => [localRequest, ...prev.filter((request) => request.id !== localRequest.id)]);
+    setItems((prev) =>
+      prev.map((item) =>
+        requestRows.some(({ item: requestItem }) => itemActionIds(requestItem).includes(item.id))
+          ? { ...item, status: "Talep oluşturuldu", updated_at: new Date().toISOString() }
+          : item,
+      ),
+    );
+    setSelectedPurchaseItemIds([]);
+    closeProjectPurchaseRequestModal();
+    setCreatedRequestId(localRequest.id);
+    setActiveTab("Talepler");
+    setMessage(`${requestItems.length} kalem için talep oluşturuldu. Bu kalemler tekrar talep edilemez.`);
+    await loadProjectItems();
   }
 
   async function createRequestFromSelectedItems() {
@@ -7291,6 +7457,65 @@ export default function ProjectDetailPage() {
           </div>
         )}
 
+        {purchaseRequestModal.open && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
+            <form onSubmit={submitProjectPurchaseRequest} className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl">
+              <div className="text-xs font-black uppercase tracking-wide text-blue-700">Talep bilgisi</div>
+              <h2 className="mt-1 text-xl font-black text-slate-950">Talebi açan kişi kim?</h2>
+              <p className="mt-2 text-sm font-semibold text-slate-500">
+                Talep oluşturulmadan önce açan kişi ve aciliyet bilgisi kaydedilir.
+              </p>
+              <label className="mt-5 block text-sm font-bold text-slate-700">
+                Talebi açan kişi
+                <input
+                  autoFocus
+                  value={purchaseRequestModal.requester}
+                  onChange={(event) => setPurchaseRequestModal((current) => ({ ...current, requester: event.target.value }))}
+                  className="mt-2 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  placeholder="Ad soyad"
+                />
+              </label>
+              <label className="mt-4 block text-sm font-bold text-slate-700">
+                Birim / departman
+                <input
+                  value={purchaseRequestModal.department}
+                  onChange={(event) => setPurchaseRequestModal((current) => ({ ...current, department: event.target.value }))}
+                  className="mt-2 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  placeholder="Satınalma, proje, saha..."
+                />
+              </label>
+              <label className="mt-4 block text-sm font-bold text-slate-700">
+                Aciliyet
+                <select
+                  value={purchaseRequestModal.priority}
+                  onChange={(event) => setPurchaseRequestModal((current) => ({ ...current, priority: event.target.value }))}
+                  className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                >
+                  <option value="Normal">Normal</option>
+                  <option value="Acil">Acil</option>
+                  <option value="Kritik">Kritik</option>
+                  <option value="Düşük">Düşük</option>
+                </select>
+              </label>
+              <div className="mt-6 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={closeProjectPurchaseRequestModal}
+                  className="rounded-xl border border-slate-200 px-4 py-3 text-sm font-black text-slate-700 hover:bg-slate-50"
+                >
+                  Vazgeç
+                </button>
+                <button
+                  type="submit"
+                  className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-black text-white hover:bg-blue-700"
+                >
+                  Talebi oluştur
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+
         {productCardWarning && (
           <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-800">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -7799,7 +8024,7 @@ export default function ProjectDetailPage() {
                     <button
                       type="button"
                       disabled={actionablePurchaseItems.length === 0 && selectedPurchaseRequiredIds.length === 0}
-                      onClick={selectedPurchaseRequiredIds.length > 0 ? createRequestFromSelectedItems : createRequestFromNeededItems}
+                      onClick={() => openProjectPurchaseRequestModal(selectedPurchaseRequiredIds.length > 0)}
                       className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 disabled:bg-slate-300"
                     >
                       {selectedPurchaseRequiredIds.length > 0 ? "Seçilenlerden Talep Oluştur (" + selectedPurchaseRequiredIds.length + ")" : "Tümü İçin Talep Oluştur"}
