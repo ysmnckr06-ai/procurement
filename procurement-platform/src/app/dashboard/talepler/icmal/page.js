@@ -501,6 +501,7 @@ export default function ProcurementSummaryPage() {
     selectedOnly: false,
     requester: "",
     department: "",
+    priority: "Normal",
   });
 
   async function loadSummaryData(nextMessage = "") {
@@ -661,6 +662,7 @@ export default function ProcurementSummaryPage() {
       selectedOnly,
       requester: "",
       department: "",
+      priority: "Normal",
     });
   }
 
@@ -671,6 +673,7 @@ export default function ProcurementSummaryPage() {
       selectedOnly: false,
       requester: "",
       department: "",
+      priority: "Normal",
     });
   }
 
@@ -679,6 +682,7 @@ export default function ProcurementSummaryPage() {
     const actionRows = rowsForAction(requestModal.selectedOnly).filter((row) => row.purchaseQuantity > 0);
     const requester = requestModal.requester.trim();
     const department = requestModal.department.trim();
+    const priority = requestModal.priority || "Normal";
     if (!requester) {
       setMessage("Talebi açan kişi bilgisini girin.");
       return;
@@ -705,7 +709,7 @@ export default function ProcurementSummaryPage() {
         source: "project",
         requester,
         department,
-        priority: "Normal",
+        priority,
         createdBy: user.email || user.id,
       },
     }));
@@ -719,6 +723,7 @@ export default function ProcurementSummaryPage() {
       project_id: projects.length === 1 ? projects[0].id : null,
       ad: `${modeConfig.title} · ${new Date().toLocaleDateString("tr-TR")}`,
       durum: "Teklif Bekliyor",
+      priority,
       totalitems: items.length,
       items,
     }).select("id").single();
@@ -729,6 +734,7 @@ export default function ProcurementSummaryPage() {
       selectedOnly: false,
       requester: "",
       department: "",
+      priority: "Normal",
     });
     setLastCreatedRequestId(data.id);
     await loadSummaryData(`Talep listesi oluşturuldu. ${items.length} kalem Talepler modülüne aktarıldı.`);
@@ -927,6 +933,19 @@ export default function ProcurementSummaryPage() {
                   className="mt-2 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                   placeholder="Satın alma, şantiye, depo..."
                 />
+              </label>
+              <label className="mt-4 block text-sm font-bold text-slate-700">
+                Aciliyet
+                <select
+                  value={requestModal.priority}
+                  onChange={(event) => setRequestModal((current) => ({ ...current, priority: event.target.value }))}
+                  className="mt-2 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                >
+                  <option>Normal</option>
+                  <option>Acil</option>
+                  <option>Kritik</option>
+                  <option>Düşük</option>
+                </select>
               </label>
               <div className="mt-6 flex justify-end gap-2">
                 <button
