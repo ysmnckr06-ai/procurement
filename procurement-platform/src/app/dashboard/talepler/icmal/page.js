@@ -496,6 +496,8 @@ export default function ProcurementSummaryPage() {
   const [selectedRowKeys, setSelectedRowKeys] = useState([]);
   const [lastCreatedRequestId, setLastCreatedRequestId] = useState("");
   const [allocationDetailRow, setAllocationDetailRow] = useState(null);
+  const [stockSnapshotRows, setStockSnapshotRows] = useState([]);
+  const [showStockSnapshot, setShowStockSnapshot] = useState(false);
   const [requestModal, setRequestModal] = useState({
     open: false,
     selectedOnly: false,
@@ -595,6 +597,54 @@ export default function ProcurementSummaryPage() {
 
   function rowsForAction(selectedOnly = false) {
     return selectedOnly && selectedRows.length > 0 ? selectedRows : rows;
+  }
+
+  async function fetchStockSnapshot(actionRows) {
+    const productsToCheck = new Map();
+    actionRows.forEach((row) => {
+      if (!row.productId) return;
+      const current = productsToCheck.get(row.productId) || {
+        productId: row.productId,
+        productCode: row.productCode || row.normalizedProductCode || "-",
+        productName: row.productName || "-",
+        brand: row.brand || "-",
+        unit: row.unit || "adet",
+        reservedNow: 0,
+      };
+      current.reservedNow += number(row.stockCoverable);
+      productsToCheck.set(row.productId, current);
+    });
+
+    const productIds = Array.from(productsToCheck.keys());
+    if (productIds.length === 0) return [];
+
+    const { data, error } = await supabase
+      .from("products")
+      .select("id,product_code,normalized_product_code,product_name,brand,unit,current_stock,reserved_stock")
+      .in("id", productIds);
+
+    if (error) {
+      setMessage(`Stoktan ayırma yapıldı ancak güncel stok durumu okunamadı: ${error.message}`);
+      return [];
+    }
+
+    const productsById = new Map((data || []).map((product) => [product.id, product]));
+    return productIds.map((productId) => {
+      const fallback = productsToCheck.get(productId);
+      const product = productsById.get(productId) || {};
+      const currentStock = number(product.current_stock);
+      const reservedStock = number(product.reserved_stock);
+      return {
+        ...fallback,
+        productCode: product.product_code || product.normalized_product_code || fallback.productCode,
+        productName: product.product_name || fallback.productName,
+        brand: product.brand || fallback.brand,
+        unit: product.unit || fallback.unit,
+        currentStock,
+        reservedStock,
+        availableStock: Math.max(currentStock - reservedStock, 0),
+      };
+    });
   }
 
   async function downloadExcel() {
@@ -742,6 +792,8 @@ export default function ProcurementSummaryPage() {
 
   async function reserveVisibleStockRows(selectedOnly = false) {
     const actionRows = rowsForAction(selectedOnly).filter((row) => row.stockCoverable > 0);
+    setStockSnapshotRows([]);
+    setShowStockSnapshot(false);
     if (reservingStock || actionRows.length === 0) {
       setMessage("Stoktan karşılamak için stoktan ayrılabilir kalem seçin.");
       return;
@@ -786,6 +838,9 @@ export default function ProcurementSummaryPage() {
     const failed = Array.isArray(result.failed) ? result.failed : [];
     const processed = Number(result.processed || 0);
     const reservedQuantity = Number(result.reserved_quantity || 0);
+    const stockSnapshot = await fetchStockSnapshot(actionRows);
+    setStockSnapshotRows(stockSnapshot);
+    setShowStockSnapshot(stockSnapshot.length > 0);
     setMessage(
       failed.length > 0
         ? `${processed} kalem stoktan ayrıldı (${reservedQuantity} ${rows[0]?.unit || "adet"}). ${failed.length} kalem işlenemedi: ${failed.slice(0, 3).map((item) => item.reason).join(" | ")}`
@@ -816,7 +871,68 @@ export default function ProcurementSummaryPage() {
             {mode !== "stock" && <Metric label="Alinacak" value={totals.purchase} />}
           </div>
         </div>
-        {message && <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 font-semibold text-amber-900">{message}</div>}
+        {message && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 font-semibold text-amber-900">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>{message}</div>
+              {stockSnapshotRows.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowStockSnapshot((current) => !current)}
+                  className="rounded-xl bg-amber-900 px-4 py-2 text-sm font-black text-white hover:bg-amber-800"
+                >
+                  {showStockSnapshot ? "Stok durumunu gizle" : "Güncel stok durumuna bak"}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+        {showStockSnapshot && stockSnapshotRows.length > 0 && (
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 shadow-sm">
+            <div className="flex flex-col gap-1 md:flex-row md:items-end md:justify-between">
+              <div>
+                <div className="text-lg font-black text-emerald-950">Stoktan karşılanan ürünlerin güncel durumu</div>
+                <div className="text-sm font-semibold text-emerald-800">
+                  İşlem sonrası ürün kartındaki mevcut, ayrılmış ve kullanılabilir stok değerleri.
+                </div>
+              </div>
+              <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-emerald-800">
+                {stockSnapshotRows.length} ürün
+              </span>
+            </div>
+            <div className="mt-4 overflow-x-auto rounded-xl border border-emerald-100 bg-white">
+              <table className="min-w-[760px] w-full text-left text-sm">
+                <thead className="bg-emerald-50 text-xs uppercase text-emerald-800">
+                  <tr>
+                    <th className="p-3">Kod / Ürün</th>
+                    <th className="p-3">Marka</th>
+                    <th className="p-3">Birim</th>
+                    <th className="p-3 text-right">Bu işlemde ayrılan</th>
+                    <th className="p-3 text-right">Mevcut stok</th>
+                    <th className="p-3 text-right">Ayrılmış stok</th>
+                    <th className="p-3 text-right">Kullanılabilir</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {stockSnapshotRows.map((product) => (
+                    <tr key={product.productId} className="border-t border-emerald-100">
+                      <td className="p-3">
+                        <div className="font-black text-blue-800">{product.productCode}</div>
+                        <div className="font-semibold text-slate-700">{product.productName}</div>
+                      </td>
+                      <td className="p-3 font-semibold text-slate-700">{product.brand || "-"}</td>
+                      <td className="p-3 font-semibold text-slate-700">{product.unit}</td>
+                      <td className="p-3 text-right font-black text-emerald-700">{number(product.reservedNow).toLocaleString("tr-TR")}</td>
+                      <td className="p-3 text-right font-bold text-slate-900">{number(product.currentStock).toLocaleString("tr-TR")}</td>
+                      <td className="p-3 text-right font-bold text-amber-700">{number(product.reservedStock).toLocaleString("tr-TR")}</td>
+                      <td className="p-3 text-right font-black text-blue-800">{number(product.availableStock).toLocaleString("tr-TR")}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="mb-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
             <div>
