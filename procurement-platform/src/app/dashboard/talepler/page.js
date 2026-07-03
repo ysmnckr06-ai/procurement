@@ -85,6 +85,11 @@ function requestPriority(request) {
   return getRequestMeta(request).priority || "Normal";
 }
 
+function requestQuantityLocked(request) {
+  const status = String(request?.durum || "").trim();
+  return Boolean(status && status !== "Yeni Talep");
+}
+
 function requestProcessInfo(request) {
   const meta = getRequestMeta(request);
   if (!meta.processedBy && !meta.processedAt) return "";
@@ -1170,6 +1175,11 @@ export default function TaleplerPage() {
   }
 
   async function saveRequestItemQuantity(request, itemIndex, nextQuantity) {
+    if (requestQuantityLocked(request)) {
+      setMessage("Talep oluşturulduktan sonra miktar değiştirilemez.");
+      return;
+    }
+
     const quantity = Number(nextQuantity || 0);
     if (quantity < 0) {
       setMessage("Talep miktarı negatif olamaz.");
@@ -1460,6 +1470,7 @@ export default function TaleplerPage() {
                   const projectLabel = requestProjectSummary(req);
                   const priorityLabel = requestPriority(req);
                   const processInfo = requestProcessInfo(req);
+                  const quantityLocked = requestQuantityLocked(req);
                   const isInProcess = req.durum === "İşleme alındı" || Boolean(processInfo);
 
                   return (
@@ -1564,7 +1575,9 @@ export default function TaleplerPage() {
                             <div>
                               <div className="text-sm font-bold text-slate-900">Talep Detayı</div>
                               <div className="text-xs font-medium text-slate-500">
-                                Ürün, stok bilgisi, satın alınacak miktar ve proje dağılımı burada görünür. Gerekirse satın alınacak miktarı revize edebilirsiniz.
+                                {quantityLocked
+                                  ? "Talep oluşturulduğu için miktarlar kilitlidir; ekleme veya çıkarma yapılamaz."
+                                  : "Ürün, stok bilgisi, satın alınacak miktar ve proje dağılımı burada görünür. Gerekirse satın alınacak miktarı revize edebilirsiniz."}
                               </div>
                             </div>
                             <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-bold text-blue-700">
@@ -1639,17 +1652,23 @@ export default function TaleplerPage() {
                                           {readItemField(item, ["urunAciklamasi", "product_name", "description", "name"], "Ürün açıklaması yok")}
                                         </td>
                                         <td className="px-3 py-3 text-right font-bold text-blue-700">
-                                          <input
-                                            type="number"
-                                            min="0"
-                                            value={draftQuantity}
-                                            onChange={(event) => setQuantityDrafts((current) => ({
-                                              ...current,
-                                              [quantityDraftKey(req.id, itemIndex)]: event.target.value,
-                                            }))}
-                                            className="w-24 rounded-lg border border-slate-300 px-2 py-1 text-right font-bold text-blue-700"
-                                            aria-label="Satın alınacak miktar"
-                                          />
+                                          {quantityLocked ? (
+                                            <span className="inline-flex rounded-lg bg-slate-100 px-3 py-1 text-sm font-black text-slate-700">
+                                              {Number(draftQuantity || 0).toLocaleString("tr-TR")}
+                                            </span>
+                                          ) : (
+                                            <input
+                                              type="number"
+                                              min="0"
+                                              value={draftQuantity}
+                                              onChange={(event) => setQuantityDrafts((current) => ({
+                                                ...current,
+                                                [quantityDraftKey(req.id, itemIndex)]: event.target.value,
+                                              }))}
+                                              className="w-24 rounded-lg border border-slate-300 px-2 py-1 text-right font-bold text-blue-700"
+                                              aria-label="Satın alınacak miktar"
+                                            />
+                                          )}
                                         </td>
                                         <td className="px-3 py-3 text-right font-semibold text-emerald-700">
                                           {Number(stockCoverable || 0).toLocaleString("tr-TR")}
@@ -1675,13 +1694,19 @@ export default function TaleplerPage() {
                                           ) : cleanRequestNote(readItemField(item, ["not", "note"], "")) || "-"}
                                         </td>
                                         <td className="px-3 py-3">
-                                          <button
-                                            type="button"
-                                            onClick={() => saveRequestItemQuantity(req, itemIndex, draftQuantity)}
-                                            className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white hover:bg-blue-700"
-                                          >
-                                            Miktarı Kaydet
-                                          </button>
+                                          {quantityLocked ? (
+                                            <span className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-black text-slate-500">
+                                              Talep kilitli
+                                            </span>
+                                          ) : (
+                                            <button
+                                              type="button"
+                                              onClick={() => saveRequestItemQuantity(req, itemIndex, draftQuantity)}
+                                              className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white hover:bg-blue-700"
+                                            >
+                                              Miktarı Kaydet
+                                            </button>
+                                          )}
                                         </td>
                                       </tr>
                                     );
