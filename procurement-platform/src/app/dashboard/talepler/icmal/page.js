@@ -481,6 +481,12 @@ export default function ProcurementSummaryPage() {
   const [selectedRowKeys, setSelectedRowKeys] = useState([]);
   const [lastCreatedRequestId, setLastCreatedRequestId] = useState("");
   const [allocationDetailRow, setAllocationDetailRow] = useState(null);
+  const [requestModal, setRequestModal] = useState({
+    open: false,
+    selectedOnly: false,
+    requester: "",
+    department: "",
+  });
 
   async function loadSummaryData(nextMessage = "") {
     setLoading(true);
@@ -619,7 +625,7 @@ export default function ProcurementSummaryPage() {
     doc.save(`${safeFileName(`${modeConfig.filePrefix}-${new Date().toISOString().slice(0, 10)}`)}.pdf`);
   }
 
-  async function createRequestForOffers(selectedOnly = false) {
+  function createRequestForOffers(selectedOnly = false) {
     const actionRows = rowsForAction(selectedOnly).filter((row) => row.purchaseQuantity > 0);
     if (creatingRequest || actionRows.length === 0) {
       setMessage("Talep listesi oluşturmak için satın alınacak miktarı olan kalem seçin.");
@@ -630,12 +636,37 @@ export default function ProcurementSummaryPage() {
       setMessage(`${conflicts.length} ürün kodunda birim çakışması var. Proje kalemlerinin birimleri düzeltilmeden teklif akışı başlatılmadı.`);
       return;
     }
+    setRequestModal({
+      open: true,
+      selectedOnly,
+      requester: "",
+      department: "",
+    });
+  }
+
+  function closeRequestModal() {
+    if (creatingRequest) return;
+    setRequestModal({
+      open: false,
+      selectedOnly: false,
+      requester: "",
+      department: "",
+    });
+  }
+
+  async function submitRequestForOffers(event) {
+    event.preventDefault();
+    const actionRows = rowsForAction(requestModal.selectedOnly).filter((row) => row.purchaseQuantity > 0);
+    const requester = requestModal.requester.trim();
+    const department = requestModal.department.trim();
+    if (!requester) {
+      setMessage("Talebi açan kişi bilgisini girin.");
+      return;
+    }
     setCreatingRequest(true);
     setLastCreatedRequestId("");
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { router.push("/login"); return; }
-    const requester = window.prompt("Talebi açan kişi kim?") || "";
-    const department = window.prompt("Talebi açan birim / departman nedir?") || "";
     const items = actionRows.map((row) => ({
       product_id: row.productId,
       product_code: row.productCode,
@@ -652,8 +683,8 @@ export default function ProcurementSummaryPage() {
       allocations: purchaseAllocations(row.allocations, row.purchaseQuantity),
       request_meta: {
         source: "project",
-        requester: requester.trim(),
-        department: department.trim(),
+        requester,
+        department,
         priority: "Normal",
         createdBy: user.email || user.id,
       },
@@ -673,6 +704,12 @@ export default function ProcurementSummaryPage() {
     }).select("id").single();
     setCreatingRequest(false);
     if (error) { setMessage(`Talep oluşturulamadı: ${error.message}`); return; }
+    setRequestModal({
+      open: false,
+      selectedOnly: false,
+      requester: "",
+      department: "",
+    });
     setLastCreatedRequestId(data.id);
     await loadSummaryData(`Talep listesi oluşturuldu. ${items.length} kalem Talepler modülüne aktarıldı.`);
   }
@@ -846,6 +883,51 @@ export default function ProcurementSummaryPage() {
           {!loading && rows.length === 0 && <div className="p-8 text-center text-slate-500">{modeConfig.emptyText}</div>}
           {loading && <div className="p-8 text-center text-slate-500">Malzeme listesi hazırlanıyor...</div>}
         </div>
+
+        {requestModal.open && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
+            <form onSubmit={submitRequestForOffers} className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl">
+              <div className="text-xs font-black uppercase tracking-wide text-blue-700">Talep bilgisi</div>
+              <h2 className="mt-1 text-xl font-black text-slate-950">Talebi açan kişi kim?</h2>
+              <label className="mt-5 block text-sm font-bold text-slate-700">
+                Talebi açan kişi
+                <input
+                  autoFocus
+                  value={requestModal.requester}
+                  onChange={(event) => setRequestModal((current) => ({ ...current, requester: event.target.value }))}
+                  className="mt-2 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  placeholder="Ad soyad"
+                />
+              </label>
+              <label className="mt-4 block text-sm font-bold text-slate-700">
+                Birim / departman
+                <input
+                  value={requestModal.department}
+                  onChange={(event) => setRequestModal((current) => ({ ...current, department: event.target.value }))}
+                  className="mt-2 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  placeholder="Satın alma, şantiye, depo..."
+                />
+              </label>
+              <div className="mt-6 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={closeRequestModal}
+                  disabled={creatingRequest}
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100"
+                >
+                  Vazgeç
+                </button>
+                <button
+                  type="submit"
+                  disabled={creatingRequest || !requestModal.requester.trim()}
+                  className="rounded-xl bg-blue-700 px-5 py-3 text-sm font-black text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+                >
+                  {creatingRequest ? "Oluşturuluyor..." : "Talep Listesi Oluştur"}
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
 
         {allocationDetailRow && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
