@@ -450,10 +450,12 @@ function exportRows(rows, mode) {
       "Marka": row.brand || "-",
       "Birim": row.unit,
       "Gerekli": row.totalNeed,
+      "Güncel Stok": row.currentStock,
+      "Ayrılmış Stok": row.reservedStock,
+      "Kullanılabilir Stok": row.availableStock,
     };
 
     if (mode !== "missing") {
-      base["Stokta"] = row.availableStock;
       base["Stoktan Ayrilacak"] = row.stockCoverable;
     }
 
@@ -613,6 +615,9 @@ export default function ProcurementSummaryPage() {
       "Ana Ürün": allocation.parentItemName || "-",
       "Toplam İhtiyaç": allocation.requestedQuantity,
       "Açık İhtiyaç": allocation.quantity,
+      "Güncel Stok": row.currentStock,
+      "Ayrılmış Stok": row.reservedStock,
+      "Kullanılabilir Stok": row.availableStock,
       "Stoktan Karşılanabilir": allocation.stockCoverableQuantity,
       "Satın Alınacak": allocation.purchaseQuantity,
       "Durum": allocation.statusLabel === "Talep oluşturuldu" && number(allocation.requestedPurchaseQuantity) > 0
@@ -633,8 +638,8 @@ export default function ProcurementSummaryPage() {
     doc.setFontSize(9); doc.setTextColor(90); doc.text(`${CORVIAN_PRODUCT_NAME} · ${modeConfig.title} · ${new Date().toLocaleString("tr-TR")}`, 40, 50);
     autoTable(doc, {
       startY: 66,
-      head: [["Kod", "Urun", "Birim", "Gerekli", "Stokta", "Stoktan", "Alinacak", "Durum", "Proje dagilimi"]],
-      body: rows.map((row) => [row.productCode || "-", row.productName, row.unit, row.totalNeed, row.availableStock, row.stockCoverable, row.purchaseQuantity, detailedStatusLabel(row), formatDistributionSummary(row)]),
+      head: [["Kod", "Urun", "Birim", "Gerekli", "Guncel stok", "Ayrilmis", "Kullanilabilir", "Alinacak", "Durum", "Proje dagilimi"]],
+      body: rows.map((row) => [row.productCode || "-", row.productName, row.unit, row.totalNeed, row.currentStock, row.reservedStock, row.availableStock, row.purchaseQuantity, detailedStatusLabel(row), formatDistributionSummary(row)]),
       styles: { fontSize: 7, cellPadding: 4 }, headStyles: { fillColor: [30, 64, 175] },
     });
     doc.save(`${safeFileName(`${modeConfig.filePrefix}-${new Date().toISOString().slice(0, 10)}`)}.pdf`);
