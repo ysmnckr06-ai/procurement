@@ -428,6 +428,19 @@ function formatDistributionSummary(row) {
   }).join(" | ");
 }
 
+function detailedStatusLabel(row) {
+  if (row.statusLabel !== "Talep oluşturuldu") return row.statusLabel;
+
+  const requestedQuantity = (row.allocations || []).reduce(
+    (sum, allocation) => sum + number(allocation.requestedPurchaseQuantity),
+    0,
+  );
+  const quantity = requestedQuantity || row.missingQuantity || row.purchaseQuantity || 0;
+  if (quantity <= 0) return row.statusLabel;
+
+  return `${quantity} ${row.unit || "adet"} eksik için talep oluşturuldu`;
+}
+
 function exportRows(rows, mode) {
   return rows.map((row, index) => {
     const base = {
@@ -448,7 +461,7 @@ function exportRows(rows, mode) {
       base["Satin Alinacak"] = row.purchaseQuantity;
     }
 
-    base["Durum"] = row.statusLabel;
+    base["Durum"] = detailedStatusLabel(row);
     base["Proje Dagilimi"] = formatDistributionSummary(row);
     return base;
   });
@@ -602,7 +615,9 @@ export default function ProcurementSummaryPage() {
       "Açık İhtiyaç": allocation.quantity,
       "Stoktan Karşılanabilir": allocation.stockCoverableQuantity,
       "Satın Alınacak": allocation.purchaseQuantity,
-      "Durum": allocation.statusLabel,
+      "Durum": allocation.statusLabel === "Talep oluşturuldu" && number(allocation.requestedPurchaseQuantity) > 0
+        ? `${allocation.requestedPurchaseQuantity} ${row.unit || "adet"} eksik için talep oluşturuldu`
+        : allocation.statusLabel,
       "Birim": row.unit,
     })));
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(distribution), "Proje Dağılımı");
@@ -619,7 +634,7 @@ export default function ProcurementSummaryPage() {
     autoTable(doc, {
       startY: 66,
       head: [["Kod", "Urun", "Birim", "Gerekli", "Stokta", "Stoktan", "Alinacak", "Durum", "Proje dagilimi"]],
-      body: rows.map((row) => [row.productCode || "-", row.productName, row.unit, row.totalNeed, row.availableStock, row.stockCoverable, row.purchaseQuantity, row.statusLabel, formatDistributionSummary(row)]),
+      body: rows.map((row) => [row.productCode || "-", row.productName, row.unit, row.totalNeed, row.availableStock, row.stockCoverable, row.purchaseQuantity, detailedStatusLabel(row), formatDistributionSummary(row)]),
       styles: { fontSize: 7, cellPadding: 4 }, headStyles: { fillColor: [30, 64, 175] },
     });
     doc.save(`${safeFileName(`${modeConfig.filePrefix}-${new Date().toISOString().slice(0, 10)}`)}.pdf`);
