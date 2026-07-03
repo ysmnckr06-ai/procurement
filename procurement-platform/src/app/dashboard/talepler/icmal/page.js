@@ -269,7 +269,7 @@ function buildSummary(projects, projectItems, products, orders, stockMovements =
       const normalizedProductCode = normalizeCode(
         matchedProduct?.normalized_product_code || matchedProduct?.product_code || itemStockCode,
       );
-      const normalizedUnit = normalizeText(item.unit || matchedProduct?.unit || "adet");
+      const normalizedUnit = normalizeText(matchedProduct?.unit || item.unit || "adet");
       const resolvedProductId = matchedProduct?.id || item.product_id || null;
       const identityKey = looseProductIdentityKey({ ...item, unit: normalizedUnit });
       const shouldGroupByIdentity = isAutoStockCode(itemStockCode) || isAutoStockCode(normalizedProductCode) || !itemStockCode;
@@ -316,7 +316,7 @@ function buildSummary(projects, projectItems, products, orders, stockMovements =
       if (!row.brand && (matchedProduct?.brand || item.brand)) {
         row.brand = matchedProduct?.brand || item.brand || "";
       }
-      row.sourceUnits.add(normalizeText(item.unit || matchedProduct?.unit || "adet"));
+      row.sourceUnits.add(normalizeText(matchedProduct?.unit || item.unit || "adet"));
       row.requestedQuantity += estimated;
       row.totalNeed += openQuantity;
       row.receivedQuantity += received;
