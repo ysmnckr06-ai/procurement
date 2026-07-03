@@ -132,21 +132,17 @@ function shortText(value, maxLength = 28) {
 function AllocationChip({ allocation, unit = "adet" }) {
   return (
     <div className="rounded-lg bg-slate-100 px-2.5 py-2 text-[11px] font-semibold leading-snug text-slate-700">
-      <div className="flex min-w-0 items-center gap-1">
-        <span className="shrink-0 font-black text-slate-950">{allocation.projectCode || "Proje"}</span>
-        <span className="text-slate-400">·</span>
-        <span className="truncate" title={allocation.projectName || ""}>
-          {shortText(allocation.projectName || "-", 22)}
-        </span>
-      </div>
-      <div className="mt-1 text-slate-600">
-        Gerekli {number(allocation.quantity)} · Stoktan {number(allocation.stockCoverableQuantity)} · Alinacak {number(allocation.purchaseQuantity)} {unit}
+      <div className="font-black text-slate-950">
+        {allocation.projectCode || "Proje"}
       </div>
       {allocation.parentItemName ? (
         <div className="mt-1 truncate text-slate-500" title={allocation.parentItemName}>
           Ana ürün: {shortText(allocation.parentItemName, 24)}
         </div>
       ) : null}
+      <div className="mt-1 font-black text-slate-700">
+        {number(allocation.quantity).toLocaleString("tr-TR")} {unit}
+      </div>
     </div>
   );
 }
@@ -437,6 +433,10 @@ function detailedStatusLabel(row) {
   );
   const quantity = requestedQuantity || row.missingQuantity || row.purchaseQuantity || 0;
   if (quantity <= 0) return row.statusLabel;
+
+  if (number(row.stockCoverable) > 0) {
+    return `${number(row.stockCoverable).toLocaleString("tr-TR")} ${row.unit || "adet"} stoktan karşılanacak, ${quantity.toLocaleString("tr-TR")} ${row.unit || "adet"} için satın alma talebi açıldı`;
+  }
 
   return `${quantity} ${row.unit || "adet"} eksik için talep oluşturuldu`;
 }
@@ -883,7 +883,7 @@ export default function ProcurementSummaryPage() {
                 />
               </td>
               <td className="p-3"><div className="font-black text-blue-800">{row.productCode || "Kodsuz"}</div><div>{row.productName}</div>{row.unitConflict && <div className="mt-1 font-bold text-red-700">Birim kontrolü: {row.sourceUnits.join(" / ")}</div>}</td>
-              <td className="p-3">{row.brand || "-"}</td><td className="p-3">{row.unit}</td><td className="p-3 font-bold">{row.totalNeed}</td><td className="p-3">{row.availableStock}</td>{mode !== "missing" && <td className="p-3 font-black text-emerald-700">{row.stockCoverable}</td>}{mode !== "stock" && <td className="p-3 font-black text-red-700">{row.purchaseQuantity}</td>}<td className="p-3"><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-black text-slate-700">{row.statusLabel}</span></td>
+              <td className="p-3">{row.brand || "-"}</td><td className="p-3">{row.unit}</td><td className="p-3 font-bold">{row.totalNeed}</td><td className="p-3">{row.availableStock}</td>{mode !== "missing" && <td className="p-3 font-black text-emerald-700">{row.stockCoverable}</td>}{mode !== "stock" && <td className="p-3 font-black text-red-700">{row.purchaseQuantity}</td>}<td className="p-3"><span className="inline-flex max-w-[220px] rounded-xl bg-slate-100 px-2.5 py-1 text-xs font-black leading-snug text-slate-700">{detailedStatusLabel(row)}</span></td>
               <td className="p-3">
                 <div className="max-w-[260px] space-y-1.5">
                   {row.allocations.slice(0, 2).map((allocation, allocationIndex) => (
