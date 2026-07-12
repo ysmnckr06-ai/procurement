@@ -48,7 +48,7 @@ function FeatureIcon({ type }) {
   const common = "h-5 w-5";
   if (type === "report") {
     return (
-      <svg className={common} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <svg aria-hidden="true" className={common} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
         <path d="M4 19V5" />
         <path d="M4 19h16" />
         <path d="M8 16v-5" />
@@ -59,14 +59,14 @@ function FeatureIcon({ type }) {
   }
   if (type === "secure") {
     return (
-      <svg className={common} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <svg aria-hidden="true" className={common} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
         <path d="M12 3l7 3v5c0 4.4-2.8 8.3-7 10-4.2-1.7-7-5.6-7-10V6l7-3Z" />
         <path d="M9 12l2 2 4-5" />
       </svg>
     );
   }
   return (
-    <svg className={common} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+    <svg aria-hidden="true" className={common} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
       <path d="M4 7h16" />
       <path d="M4 12h16" />
       <path d="M4 17h16" />
@@ -227,7 +227,7 @@ export function AuthButton({ loading, loadingText, children }) {
 export function FieldIcon({ type }) {
   if (type === "lock") {
     return (
-      <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <svg aria-hidden="true" className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
         <rect x="5" y="10" width="14" height="10" rx="2" />
         <path d="M8 10V8a4 4 0 0 1 8 0v2" />
       </svg>
@@ -235,7 +235,7 @@ export function FieldIcon({ type }) {
   }
   if (type === "user") {
     return (
-      <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <svg aria-hidden="true" className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
         <path d="M20 21a8 8 0 0 0-16 0" />
         <circle cx="12" cy="7" r="4" />
       </svg>
@@ -243,7 +243,7 @@ export function FieldIcon({ type }) {
   }
   if (type === "building") {
     return (
-      <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <svg aria-hidden="true" className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
         <path d="M4 21V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v15" />
         <path d="M16 9h2a2 2 0 0 1 2 2v10" />
         <path d="M8 8h4M8 12h4M8 16h4" />
@@ -252,7 +252,7 @@ export function FieldIcon({ type }) {
   }
   if (type === "eye") {
     return (
-      <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <svg aria-hidden="true" className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
         <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z" />
         <circle cx="12" cy="12" r="3" />
       </svg>
@@ -260,7 +260,7 @@ export function FieldIcon({ type }) {
   }
   if (type === "eye-off") {
     return (
-      <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <svg aria-hidden="true" className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
         <path d="M3 3l18 18" />
         <path d="M10.6 10.6A2 2 0 0 0 13.4 13.4" />
         <path d="M9.5 5.3A10.6 10.6 0 0 1 12 5c6.5 0 10 7 10 7a17.7 17.7 0 0 1-3.1 4.1" />
@@ -269,7 +269,7 @@ export function FieldIcon({ type }) {
     );
   }
   return (
-    <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+    <svg aria-hidden="true" className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
       <path d="M4 6h16v12H4z" />
       <path d="M4 7l8 6 8-6" />
     </svg>

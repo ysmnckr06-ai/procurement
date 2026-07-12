@@ -27,7 +27,7 @@ supabase = create_client(
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, UploadFile, File, Form, Header, HTTPException, Body
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.concurrency import run_in_threadpool
 
@@ -441,7 +441,7 @@ def save_report_to_supabase(report_data):
 
     if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
         logger.debug("SUPABASE ENV eksik")
-        return
+        return False
 
     url = f"{SUPABASE_URL}/rest/v1/reports"
 
@@ -460,6 +460,46 @@ def save_report_to_supabase(report_data):
 
     logger.debug("SUPABASE REPORT RESPONSE:", response.status_code)
     logger.debug(response.text)
+    if response.status_code in (200, 201, 204):
+        return True
+
+    if (
+        "report_storage_bucket" in response.text
+        or "report_storage_path" in response.text
+    ):
+        legacy_report_data = {
+            key: value
+            for key, value in report_data.items()
+            if key not in ("report_storage_bucket", "report_storage_path")
+        }
+        legacy_response = requests.post(
+            url,
+            headers=headers,
+            json=legacy_report_data,
+        )
+        logger.debug("SUPABASE LEGACY REPORT RESPONSE:", legacy_response.status_code)
+        logger.debug(legacy_response.text)
+        return legacy_response.status_code in (200, 201, 204)
+
+    return False
+
+
+def upload_private_report(file_path: str, storage_path: str) -> bool:
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        logger.debug("SUPABASE STORAGE ENV eksik")
+        return False
+
+    with open(file_path, "rb") as report_file:
+        supabase.storage.from_("request-reports").upload(
+            storage_path,
+            report_file,
+            {
+                "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "x-upsert": "true",
+            },
+        )
+
+    return True
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMP_DIR = os.path.join(BASE_DIR, "app", "temp")
@@ -1857,8 +1897,11 @@ async def analyze_offers(
     report_id = str(uuid.uuid4())
     report_name = f"mukayese_raporu_{report_id}.xlsx"
     report_path = os.path.join(TEMP_DIR, report_name)
+    report_storage_bucket = "request-reports"
+    report_storage_path = f"{user_id}/comparison/{report_name}"
 
     build_excel_report(analyzed, report_path, resolve_company_info(user))
+    upload_private_report(report_path, report_storage_path)
 
     order_items = []
     for group in analyzed:
@@ -1908,6 +1951,8 @@ async def analyze_offers(
         "durum": "Bekliyor",
         "onerilenfirma": find_best_supplier(analyzed),
         "reportpath": f"/download-report/{report_name}",
+        "report_storage_bucket": report_storage_bucket,
+        "report_storage_path": report_storage_path,
         "totalrows": len(filtered),
         "totalgroups": len(analyzed),
         "analysis": analyzed,
@@ -1948,7 +1993,8 @@ async def analyze_offers(
 
         supabase.table("offers").insert(offer_record).execute()
 
-    save_report_to_supabase(report_record)    
+    if not save_report_to_supabase(report_record):
+        raise HTTPException(status_code=500, detail="Mukayese raporu veritabanına kaydedilemedi.")
 
     return {
     "success": True,
@@ -1967,17 +2013,47 @@ def download_report(file_name: str, authorization: str = Header(None)):
     safe_file_name = os.path.basename(file_name)
     report_path_value = f"/download-report/{safe_file_name}"
 
-    response = (
-        supabase.table("reports")
-        .select("id")
-        .eq("user_id", user_id)
-        .eq("reportpath", report_path_value)
-        .limit(1)
-        .execute()
-    )
+    try:
+        response = (
+            supabase.table("reports")
+            .select("id,report_storage_bucket,report_storage_path")
+            .eq("user_id", user_id)
+            .eq("reportpath", report_path_value)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        if "report_storage_bucket" not in str(exc) and "report_storage_path" not in str(exc):
+            raise
+        logger.debug("REPORT STORAGE COLUMNS MISSING; USING LEGACY LOOKUP:", str(exc))
+        response = (
+            supabase.table("reports")
+            .select("id,reportpath")
+            .eq("user_id", user_id)
+            .eq("reportpath", report_path_value)
+            .limit(1)
+            .execute()
+        )
 
     if not response.data:
         raise HTTPException(status_code=403, detail="Bu raporu indirme yetkiniz yok.")
+
+    report_row = response.data[0]
+    storage_bucket = report_row.get("report_storage_bucket") or "request-reports"
+    storage_path = report_row.get("report_storage_path") or f"{user_id}/comparison/{safe_file_name}"
+
+    if storage_path:
+        try:
+            file_bytes = supabase.storage.from_(storage_bucket).download(storage_path)
+            return Response(
+                content=file_bytes,
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers={
+                    "Content-Disposition": f'attachment; filename="{safe_file_name}"',
+                },
+            )
+        except Exception as exc:
+            logger.debug("REPORT STORAGE DOWNLOAD ERROR:", str(exc))
 
     file_path = os.path.join(TEMP_DIR, safe_file_name)
 
@@ -2390,8 +2466,6 @@ def delete_supplier(supplier_id: str, authorization: str = Header(None)):
     return {
         "success": True
     }
-
-from fastapi.responses import Response
 
 @app.get("/favicon.ico")
 async def favicon():

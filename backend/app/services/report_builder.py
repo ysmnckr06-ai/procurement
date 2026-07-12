@@ -600,14 +600,14 @@ def build_excel_report(analyzed_groups, output_path, company_info=None):
     summary_ws.set_row(1, 28)
     summary_ws.merge_range("B1:D2", company_name.upper(), company_fmt)
     summary_ws.merge_range("E1:J2", "MUKAYESE RAPORU", dashboard_title_fmt)
-    summary_ws.merge_range("K1:M1", "RAPOR ?ZET?", summary_box_title)
-    summary_ws.merge_range("K2:M4", "Bu rapor, al?nan teklifler do?rultusunda en avantajl? se?ene?i belirlemek i?in haz?rlanm??t?r.", summary_box_text)
+    summary_ws.merge_range("K1:M1", "RAPOR \u00d6ZET\u0130", summary_box_title)
+    summary_ws.merge_range("K2:M4", "Bu rapor, al\u0131nan teklifler do\u011frultusunda en avantajl\u0131 se\u00e7ene\u011fi belirlemek i\u00e7in haz\u0131rlanm\u0131\u015ft\u0131r.", summary_box_text)
     summary_ws.merge_range("E3:J3", "", wb.add_format({"bottom": 2, "bottom_color": gold}))
 
     meta_items = [
         ("B5", "Rapor Tarihi", "C5", report_date),
         ("D5", "Para Birimi", "E5", "TRY"),
-        ("F5", "Teklif Say?s?", "G5", len(firms)),
+        ("F5", "Teklif Say\u0131s\u0131", "G5", len(firms)),
         ("H5", "Analiz Kalemi", "I5", summary["toplam_urun"]),
     ]
     for label_cell, label, value_cell, value in meta_items:
@@ -616,11 +616,11 @@ def build_excel_report(analyzed_groups, output_path, company_info=None):
 
     cards = [
         ("TOPLAM KALEM", summary["toplam_urun"], kpi_value_fmt),
-        ("TOPLAM M?KTAR", total_quantity, kpi_value_fmt),
-        ("ORTALAMA TESL?M", f"{round(average_delivery, 1):g} G?n", kpi_value_fmt),
-        ("EN D???K TOPLAM", min(firm_totals) if firm_totals else 0, kpi_green_fmt),
+        ("TOPLAM M\u0130KTAR", total_quantity, kpi_value_fmt),
+        ("ORTALAMA TESL\u0130M", f"{round(average_delivery, 1):g} G\u00fcn", kpi_value_fmt),
+        ("EN D\u00dc\u015e\u00dcK TOPLAM", min(firm_totals) if firm_totals else 0, kpi_green_fmt),
         ("ORTALAMA TOPLAM", sum(firm_totals) / len(firm_totals) if firm_totals else 0, kpi_value_fmt),
-        ("EN Y?KSEK TOPLAM", max(firm_totals) if firm_totals else 0, kpi_red_fmt),
+        ("EN Y\u00dcKSEK TOPLAM", max(firm_totals) if firm_totals else 0, kpi_red_fmt),
     ]
     card_col = 1
     for title, value, fmt in cards:
@@ -631,7 +631,7 @@ def build_excel_report(analyzed_groups, output_path, company_info=None):
             summary_ws.merge_range(8, card_col, 8, card_col + 1, value, fmt)
         card_col += 2
 
-    summary_ws.merge_range("B11:G11", "TEKL?F VEREN F?RMALARIN PERFORMANSI", section_dark)
+    summary_ws.merge_range("B11:G11", "TEKL\u0130F VEREN F\u0130RMALARIN PERFORMANSI", section_dark)
     perf_headers = ["Firma", "Toplam Tutar (TRY)", "Kapsama", "Ort. Vade", "Ort. Teslim", "Kazanan Kalem"]
     for col, header in enumerate(perf_headers, start=1):
         summary_ws.write(11, col, header, table_head)
@@ -668,36 +668,36 @@ def build_excel_report(analyzed_groups, output_path, company_info=None):
             "data_labels": {"value": True, "num_format": '#,##0.00'},
             "fill": {"color": navy},
         })
-        chart.set_title({"name": "TEKL?F DA?ILIMI (TOPLAM TUTAR)"})
+        chart.set_title({"name": "TEKL\u0130F DA\u011eILIMI (TOPLAM TUTAR)"})
         chart.set_x_axis({"visible": False})
         chart.set_y_axis({"major_gridlines": {"visible": False}})
         chart.set_legend({"none": True})
         chart.set_plotarea({"border": {"none": True}, "fill": {"color": "#FFFFFF"}})
         summary_ws.insert_chart("H11", chart, {"x_scale": 1.18, "y_scale": 1.35})
 
-    summary_ws.merge_range("B21:G21", "?NER?", section_dark)
+    summary_ws.merge_range("B21:G21", "\u00d6NER\u0130", section_dark)
     if best_firm:
         recommendation = (
-            f"{best_firm['firma']} firmas?; {best_firm['wins']} kalemde avantajl?, "
-            f"%{round(best_firm['coverage'] * 100)} kapsama oran?na sahip ve "
-            f"de?erlendirildi?inde toplam {best_firm['evaluated_total']:,.2f} TRY oldu?u i?in ?ne ??k?yor."
+            f"{best_firm['firma']} firmas\u0131; {best_firm['wins']} kalemde avantajl\u0131, "
+            f"%{round(best_firm['coverage'] * 100)} kapsama oran\u0131na sahip ve "
+            f"de\u011ferlendirildi\u011finde toplam {best_firm['evaluated_total']:,.2f} TRY oldu\u011fu i\u00e7in \u00f6ne \u00e7\u0131k\u0131yor."
         )
     else:
-        recommendation = "Uygun teklif bulunamad?. PDF/Excel okuma sonu?lar? ve kalem e?le?meleri kontrol edilmelidir."
+        recommendation = "Uygun teklif bulunamad\u0131. PDF/Excel okuma sonu\u00e7lar\u0131 ve kalem e\u015fle\u015fmeleri kontrol edilmelidir."
     summary_ws.merge_range("B22:G24", recommendation, recommendation_fmt)
 
-    summary_ws.merge_range("B26:G26", "KAPSANMAYAN / UYARI KALEMLER?", section_dark)
+    summary_ws.merge_range("B26:G26", "KAPSANMAYAN / UYARI KALEMLER\u0130", section_dark)
     uncovered = [g for g in analyzed_groups if not g.get("offers")]
-    for col, header in enumerate(["?r?n Kodu", "A??klama", "Miktar", "Sebep"], start=1):
+    for col, header in enumerate(["\u00dcr\u00fcn Kodu", "A\u00e7\u0131klama", "Miktar", "Sebep"], start=1):
         summary_ws.write(27, col, header, table_head)
     if uncovered:
         for idx, item in enumerate(uncovered[:6], start=28):
             summary_ws.write(idx, 1, _clean(item.get("urunKodu", "-")), table_text)
             summary_ws.write(idx, 2, _clean(item.get("urunAciklamasi", "-")), table_text)
             summary_ws.write_number(idx, 3, _safe_num(item.get("purchaseQuantity", item.get("talepEdilenAdet", 0))), table_num)
-            summary_ws.write(idx, 4, "Teklif e?le?medi", table_text)
+            summary_ws.write(idx, 4, "Teklif e\u015fle\u015fmedi", table_text)
     else:
-        summary_ws.merge_range("B29:G31", "Kapsanmayan kalem bulunmad?.", table_text)
+        summary_ws.merge_range("B29:G31", "Kapsanmayan kalem bulunmad\u0131.", table_text)
 
     summary_ws.merge_range("H26:M26", "NOTLAR", section_dark)
     for r in range(27, 35):
@@ -706,11 +706,11 @@ def build_excel_report(analyzed_groups, output_path, company_info=None):
     summary_ws.merge_range("B36:G36", "HESAPLAMA NOTLARI", section_dark)
     summary_ws.merge_range(
         "B37:G41",
-        "? Kurlu teklifler analiz kuru ile TRY kar??l???na ?evrilir.\n"
-        "? Vade avantaj? finansman oran? ?zerinden hesaplan?r.\n"
-        "? Teslim s?resi, risk ve eksik adet maliyeti de?erlendirilmi? maliyete yans?t?l?r.\n"
-        "? Kalem e?le?tirme ?r?n kodu, marka ve a??klama benzerli?ine g?re yap?l?r.\n"
-        "? Kazanan firma kalem baz?nda en avantajl? de?erlendirilmi? maliyete g?re belirlenir.",
+        "- Kurlu teklifler analiz kuru ile TRY kar\u015f\u0131l\u0131\u011f\u0131na \u00e7evrilir.\n"
+        "- Vade avantaj\u0131 finansman oran\u0131 \u00fczerinden hesaplan\u0131r.\n"
+        "- Teslim s\u00fcresi, risk ve eksik adet maliyeti de\u011ferlendirilmi\u015f maliyete yans\u0131t\u0131l\u0131r.\n"
+        "- Kalem e\u015fle\u015ftirme \u00fcr\u00fcn kodu, marka ve a\u00e7\u0131klama benzerli\u011fine g\u00f6re yap\u0131l\u0131r.\n"
+        "- Kazanan firma kalem baz\u0131nda en avantajl\u0131 de\u011ferlendirilmi\u015f maliyete g\u00f6re belirlenir.",
         summary_box_text,
     )
 

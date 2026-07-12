@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { normalizePartnerName, normalizePartnerRecord } from "@/lib/businessPartners";
+import { supabase } from "@/lib/supabase";
 
 function formatMoney(value, currency = "TRY") {
   return `${new Intl.NumberFormat("tr-TR", {
@@ -45,11 +45,7 @@ export default function BusinessPartnerDetailPage() {
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    loadPartner();
-  }, [id]);
-
-  async function loadPartner() {
+  const loadPartner = useCallback(async () => {
     setLoading(true);
     const {
       data: { user },
@@ -97,7 +93,11 @@ export default function BusinessPartnerDetailPage() {
       normalizePartnerName(movement.partner_name || movement.supplier_name) === nameKey
     ));
     setLoading(false);
-  }
+  }, [id, router]);
+
+  useEffect(() => {
+    loadPartner();
+  }, [loadPartner]);
 
   const totals = useMemo(() => {
     const orderTotal = orders.reduce((sum, order) => sum + Number(order.total_amount || 0), 0);

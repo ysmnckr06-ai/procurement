@@ -26,13 +26,17 @@ export async function fetchCompanyBranding(supabase, suppliedUser = null) {
   }
 
   if (!user?.id) {
-    return { companyName: DEFAULT_COMPANY_NAME, brandLine: companyBrandLine(DEFAULT_COMPANY_NAME) };
+    return {
+      companyName: DEFAULT_COMPANY_NAME,
+      brandLine: companyBrandLine(DEFAULT_COMPANY_NAME),
+      taxNo: "",
+    };
   }
 
   const [settingsResult, licenseResult] = await Promise.all([
     supabase
       .from("company_settings")
-      .select("company_name")
+      .select("company_name,tax_no")
       .eq("user_id", user.id)
       .limit(1)
       .maybeSingle(),
@@ -50,5 +54,9 @@ export async function fetchCompanyBranding(supabase, suppliedUser = null) {
     license: licenseResult.data,
   });
 
-  return { companyName, brandLine: companyBrandLine(companyName) };
+  return {
+    companyName,
+    brandLine: companyBrandLine(companyName),
+    taxNo: cleanCompanyName(settingsResult.data?.tax_no),
+  };
 }

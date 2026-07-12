@@ -11,7 +11,7 @@ export default async function DashboardLayout({ children }) {
 
   if (!user) redirect("/login");
 
-  const { data: license, error } = await supabase
+  const { data: license } = await supabase
     .from("user_licenses")
     .select("plan_type, license_status, trial_ends_at, expires_at")
     .eq("user_id", user.id)

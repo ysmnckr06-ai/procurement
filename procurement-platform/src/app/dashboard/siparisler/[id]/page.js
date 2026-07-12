@@ -46,6 +46,12 @@ function getNowStamp() {
   return new Date().toISOString();
 }
 
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    String(value || "").trim(),
+  );
+}
+
 function formatMoney(value, currency = "TRY") {
   return `${new Intl.NumberFormat("tr-TR", {
     minimumFractionDigits: 2,
@@ -1387,17 +1393,17 @@ export default function OrderDetailPage() {
       selectedProjectItem?.parent_item_id || input.parentItemId || null;
 
     if (!Number.isFinite(receivedQuantity) || !Number.isFinite(defectiveQuantity)) {
-      setMessage("Teslim miktar? ge?erli bir say? olmal?d?r.");
+      setMessage("Teslim miktarı geçerli bir sayı olmalıdır.");
       return;
     }
 
     if (receivedQuantity <= 0 || acceptedQuantity <= 0) {
-      setMessage("Teslim al?nan miktar 0'dan b?y?k olmal?d?r.");
+      setMessage("Teslim alınan miktar 0'dan büyük olmalıdır.");
       return;
     }
 
     if (receivedQuantity > remainingQuantity) {
-      setMessage(`Teslim miktar? kalan miktar? a?amaz. Kalan: ${remainingQuantity} ${item.unit || "adet"}.`);
+      setMessage(`Teslim miktarı kalan miktarı aşamaz. Kalan: ${remainingQuantity} ${item.unit || "adet"}.`);
       return;
     }
 
@@ -1772,7 +1778,7 @@ export default function OrderDetailPage() {
         p_document_item_id: candidate.documentItemId,
         p_order_no: order.order_no || "",
         p_supplier_name: order.supplier_name || "",
-        p_partner_id: order.partner_id || null,
+        p_partner_id: isUuid(order.partner_id) ? order.partner_id : null,
         p_partner_name: order.partner_name || order.supplier_name || "",
         p_partner_type: order.partner_type || "Tedarikçi",
         p_product_code: resolvedProduct.product_code || candidate.productCode || "",
@@ -2465,12 +2471,42 @@ export default function OrderDetailPage() {
     XLSX.writeFile(workbook, `${String(order.order_no || "siparis").replace(/[^a-zA-Z0-9_-]/g, "-")}.xlsx`);
   }
 
+  const pdfFontName = "DejaVuSans";
+
+  function bufferToBinaryString(buffer) {
+    const bytes = new Uint8Array(buffer);
+    const chunkSize = 0x8000;
+    let binary = "";
+
+    for (let index = 0; index < bytes.length; index += chunkSize) {
+      binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+    }
+
+    return binary;
+  }
+
+  async function useTurkishPdfFont(doc) {
+    const response = await fetch("/fonts/DejaVuSans.ttf");
+
+    if (!response.ok) {
+      return "helvetica";
+    }
+
+    const fontBinary = bufferToBinaryString(await response.arrayBuffer());
+    doc.addFileToVFS("DejaVuSans.ttf", fontBinary);
+    doc.addFont("DejaVuSans.ttf", pdfFontName, "normal");
+    doc.addFont("DejaVuSans.ttf", pdfFontName, "bold");
+    doc.setFont(pdfFontName, "normal");
+    return pdfFontName;
+  }
+
   async function exportOrderPdf() {
     if (!order) return;
     const { companyName } = await fetchCompanyBranding(supabase);
     const [{ jsPDF }, autoTableModule] = await Promise.all([import("jspdf"), import("jspdf-autotable")]);
     const autoTable = autoTableModule.default || autoTableModule.autoTable || autoTableModule;
     const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+    const pdfFont = await useTurkishPdfFont(doc);
     doc.setFontSize(16); doc.text(companyName, 40, 34);
     doc.setFontSize(9); doc.setTextColor(90); doc.text(`${CORVIAN_PRODUCT_NAME} · Sipariş Formu`, 40, 49);
     doc.setTextColor(20); doc.text(`Sipariş No: ${order.order_no || "-"}`, 40, 68);
@@ -2484,11 +2520,188 @@ export default function OrderDetailPage() {
         formatMoney(item.unitPrice, item.currency || order.currency), `%${item.discount || 0}`,
         formatMoney(item.netUnitPrice || item.unitPrice, item.currency || order.currency), formatMoney(item.total, item.currency || order.currency),
         (item.allocations || []).map((allocation) => `${allocation.projectCode || allocation.projectId || "Stok"}: ${allocation.quantity}`).join(" | ")]),
-      styles: { fontSize: 7, cellPadding: 4 }, headStyles: { fillColor: [15, 23, 42] },
+      styles: { font: pdfFont, fontSize: 7, cellPadding: 4 }, headStyles: { fillColor: [15, 23, 42], fontStyle: "bold" },
     });
     doc.setFontSize(11);
     doc.text(`Genel Toplam: ${formatMoney(order.total_amount, order.currency || "TRY")}`, 600, (doc.lastAutoTable?.finalY || 100) + 24);
     doc.save(`${String(order.order_no || "siparis").replace(/[^a-zA-Z0-9_-]/g, "-")}.pdf`);
+  }
+
+  function orderOutputFileName(suffix) {
+    return `${String(order?.order_no || "siparis").replace(/[^a-zA-Z0-9_-]/g, "-")}-${suffix}.pdf`;
+  }
+
+  async function createOrderDocumentPdf({ title, subtitle, fileSuffix, documentNo, columns, rows, totalLabel, totalValue }) {
+    if (!order) return;
+    const { companyName, taxNo } = await fetchCompanyBranding(supabase);
+    const [{ jsPDF }, autoTableModule] = await Promise.all([import("jspdf"), import("jspdf-autotable")]);
+    const autoTable = autoTableModule.default || autoTableModule.autoTable || autoTableModule;
+    const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+    const pdfFont = await useTurkishPdfFont(doc);
+    const supplierName = order.partner_name || order.supplier_name || "-";
+
+    doc.setFillColor(15, 23, 42);
+    doc.rect(0, 0, 842, 74, "F");
+    doc.setFillColor(37, 99, 235);
+    doc.rect(0, 0, 8, 595, "F");
+
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(18);
+    doc.setFont(pdfFont, "bold");
+    doc.text(CORVIAN_PRODUCT_NAME, 40, 30);
+    doc.setFontSize(9);
+    doc.setFont(pdfFont, "normal");
+    doc.text("Satın alma ve teslimat yönetimi", 40, 47);
+
+    doc.setFontSize(18);
+    doc.setFont(pdfFont, "bold");
+    doc.text(title, 802, 30, { align: "right" });
+    doc.setFontSize(9);
+    doc.setFont(pdfFont, "normal");
+    doc.text(subtitle, 802, 48, { align: "right" });
+
+    doc.setTextColor(15, 23, 42);
+    doc.setFontSize(12);
+    doc.setFont(pdfFont, "bold");
+    doc.text(companyName, 40, 96);
+    doc.setFont(pdfFont, "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(71, 85, 105);
+    doc.text(taxNo ? `Vergi No: ${taxNo}` : "Şirket bilgisi: Ayarlar sayfasından tamamlanabilir", 40, 111);
+
+    const infoRows = [
+      [`Belge No: ${documentNo || "-"}`, `Sipariş No: ${order.order_no || "-"}`],
+      [`İş Ortağı: ${supplierName}`, `Sipariş Tarihi: ${order.order_date || "-"}`],
+      [`Para Birimi: ${order.currency || "TRY"}`, `Oluşturma: ${new Date().toLocaleString("tr-TR")}`],
+    ];
+
+    autoTable(doc, {
+      startY: 86,
+      margin: { left: 360, right: 40 },
+      body: infoRows,
+      theme: "plain",
+      styles: { font: pdfFont, fontSize: 8, cellPadding: 3, textColor: [51, 65, 85] },
+      columnStyles: {
+        0: { fontStyle: "bold" },
+        1: { halign: "right" },
+      },
+    });
+
+    autoTable(doc, {
+      startY: 138,
+      head: [columns],
+      body: rows,
+      margin: { left: 40, right: 40 },
+      styles: {
+        font: pdfFont,
+        fontSize: 8,
+        cellPadding: 5,
+        lineColor: [226, 232, 240],
+        lineWidth: 0.4,
+        overflow: "linebreak",
+        valign: "middle",
+      },
+      headStyles: {
+        fillColor: [15, 23, 42],
+        textColor: [255, 255, 255],
+        fontStyle: "bold",
+      },
+      alternateRowStyles: { fillColor: [248, 250, 252] },
+      bodyStyles: { textColor: [30, 41, 59] },
+    });
+
+    doc.setFontSize(11);
+    doc.setTextColor(15, 23, 42);
+    doc.setFont(pdfFont, "bold");
+    doc.text(`${totalLabel}: ${totalValue}`, 802, (doc.lastAutoTable?.finalY || 138) + 24, { align: "right" });
+    doc.setDrawColor(226, 232, 240);
+    doc.line(40, 552, 802, 552);
+    doc.setFontSize(8);
+    doc.setFont(pdfFont, "normal");
+    doc.setTextColor(100);
+    doc.text(`${companyName} | ${CORVIAN_PRODUCT_NAME}`, 40, 570);
+    doc.text("Bu çıktı Corvian ERP tarafından oluşturulmuştur.", 802, 570, { align: "right" });
+    doc.save(orderOutputFileName(fileSuffix));
+  }
+
+  async function exportInvoicePdf() {
+    await createOrderDocumentPdf({
+      title: "Fatura PDF",
+      subtitle: "Sipariş kalemleri ve tutar özeti",
+      fileSuffix: "fatura",
+      documentNo: `FAT-${order.order_no || order.id || ""}`,
+      columns: ["Kod", "Ürün", "Birim", "Miktar", "Birim fiyat", "İskonto", "Net fiyat", "Toplam"],
+      rows: items.map((item) => [
+        item.productCode || "-",
+        item.productName || "-",
+        item.unit || "adet",
+        item.quantity || 0,
+        formatMoney(item.unitPrice, item.currency || order.currency),
+        `%${item.discount || 0}`,
+        formatMoney(item.netUnitPrice || item.unitPrice, item.currency || order.currency),
+        formatMoney(item.total, item.currency || order.currency),
+      ]),
+      totalLabel: "Genel Toplam",
+      totalValue: formatMoney(order.total_amount, order.currency || "TRY"),
+    });
+  }
+
+  async function exportDeliveryNotePdf() {
+    await createOrderDocumentPdf({
+      title: "İrsaliye PDF",
+      subtitle: "Teslim edilen ve kalan miktar özeti",
+      fileSuffix: "irsaliye",
+      documentNo: `IRS-${order.order_no || order.id || ""}`,
+      columns: ["Kod", "Ürün", "Birim", "Sipariş", "Teslim", "Kalan", "Durum"],
+      rows: items.map((item) => {
+        const ordered = Number(item.quantity || 0);
+        const delivered = Number(item.deliveredQuantity || 0);
+        return [
+          item.productCode || "-",
+          item.productName || "-",
+          item.unit || "adet",
+          ordered,
+          delivered,
+          Math.max(ordered - delivered, 0),
+          item.status || "-",
+        ];
+      }),
+      totalLabel: "Teslim Durumu",
+      totalValue: `${totals.deliveredQuantity} / ${totals.totalQuantity} (${totals.deliveryStatus})`,
+    });
+  }
+
+  async function exportReceiptSlipPdf() {
+    const receiptRows = receipts.length
+      ? receipts.map((receipt) => [
+          receipt.receipt_date || "-",
+          receipt.product_code || "-",
+          receipt.product_name || "-",
+          receipt.unit || "adet",
+          Number(receipt.accepted_quantity || receipt.received_quantity || 0),
+          receipt.receipt_status || "-",
+          receipt.received_by || "-",
+        ])
+      : items.map((item) => [
+          "-",
+          item.productCode || "-",
+          item.productName || "-",
+          item.unit || "adet",
+          Number(item.deliveredQuantity || 0),
+          Number(item.deliveredQuantity || 0) > 0 ? "Teslim kaydı özetinden" : "Teslim bekliyor",
+          "-",
+        ]);
+
+    await createOrderDocumentPdf({
+      title: "Teslim Fişi PDF",
+      subtitle: "Depo teslim alma kayıtları",
+      fileSuffix: "teslim-fisi",
+      documentNo: `TES-${order.order_no || order.id || ""}`,
+      columns: ["Tarih", "Kod", "Ürün", "Birim", "Teslim", "Durum", "Teslim Alan"],
+      rows: receiptRows,
+      totalLabel: "Toplam Teslim",
+      totalValue: `${totals.deliveredQuantity} ${items[0]?.unit || "adet"}`,
+    });
   }
 
   if (!order) {
@@ -2523,7 +2736,10 @@ export default function OrderDetailPage() {
           </div>
 
           <div className="flex flex-wrap justify-start gap-2 lg:justify-end">
-            <button type="button" onClick={exportOrderPdf} className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-bold text-red-700 hover:bg-red-100">PDF İndir</button>
+            <button type="button" onClick={exportInvoicePdf} className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-bold text-red-700 hover:bg-red-100">Fatura PDF</button>
+            <button type="button" onClick={exportDeliveryNotePdf} className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-bold text-blue-700 hover:bg-blue-100">İrsaliye PDF</button>
+            <button type="button" onClick={exportReceiptSlipPdf} className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-bold text-amber-700 hover:bg-amber-100">Teslim Fişi PDF</button>
+            <button type="button" onClick={exportOrderPdf} className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-100">Sipariş PDF</button>
             <button type="button" onClick={exportOrderExcel} className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-bold text-emerald-700 hover:bg-emerald-100">Excel İndir</button>
             {project && (
               <Link

@@ -1,8 +1,8 @@
 ﻿"use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
 
@@ -45,7 +45,7 @@ useEffect(() => {
   loadReports();
 }, [router]);
 
-function getReportName(rapor) {
+const getReportName = useCallback((rapor) => {
   const name =
     rapor.ad ||
     rapor.name ||
@@ -65,9 +65,9 @@ function getReportName(rapor) {
   }
 
   return name;
-}
+}, []);
 
-function getReportFirma(rapor) {
+const getReportFirma = useCallback((rapor) => {
   return (
     rapor.onerilenFirma ||
     rapor.onerilenfirma ||
@@ -77,7 +77,7 @@ function getReportFirma(rapor) {
     rapor.company ||
     "-"
   );
-}
+}, []);
 
 function getReportPath(rapor) {
   return rapor.reportpath || rapor.report_path || rapor.reportPath || "";
@@ -136,7 +136,7 @@ async function downloadReport(rapor) {
 
       return aramaUyum && durumUyum;
     });
-  }, [raporlar, arama, durumFiltre]);
+  }, [raporlar, arama, durumFiltre, getReportName, getReportFirma]);
 
   const durumRenkleri = {
     tamamlandi: { arkaPlan: "#DCFCE7", yazi: "#166534" },
@@ -178,7 +178,7 @@ async function deleteReport(reportId) {
 
   if (error) {
     console.error("Rapor silme hatası:", error);
-    alert("Rapor silinemedi: " + error.message);
+    alert(`Rapor silinemedi: ${error.message}`);
     return;
   }
 

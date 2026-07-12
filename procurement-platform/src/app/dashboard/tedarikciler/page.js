@@ -450,7 +450,7 @@ export default function BusinessPartnersPage() {
           partnersAfterBackfill || partnerRes.data || [],
         );
       } catch (cleanupError) {
-        console.error("Ä°ÅŸ ortaÄŸÄ± otomatik eÅŸleÅŸtirme atlandÄ±:", cleanupError);
+        console.error("İş ortağı otomatik eşleştirme atlandı:", cleanupError);
       }
       const shouldReloadPartners =
         backfillSummary.createdCustomers > 0 ||
@@ -487,7 +487,7 @@ export default function BusinessPartnersPage() {
     setOffers(offerRes.data || []);
     } catch (error) {
       console.error(error);
-      setMessage(error?.message || "Ä°ÅŸ ortaklarÄ± yÃ¼klenemedi.");
+      setMessage(error?.message || "İş ortakları yüklenemedi.");
       setPartners([]);
     }
     setLoading(false);
