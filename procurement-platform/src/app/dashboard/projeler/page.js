@@ -259,21 +259,36 @@ export default function ProjectsPage() {
 
   async function loadProjects() {
     setLoading(true);
+    setMessage("");
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
 
-    if (!user) {
-      router.push("/login");
-      return;
-    }
+      if (!user) {
+        router.push("/login");
+        return;
+      }
 
-    const { data, error } = await supabase
-      .from("projects")
-      .select("*")
-      .eq("user_id", user.id)
-      .order("created_at", { ascending: false });
+      const { data, error } = await supabase
+        .from("projects")
+        .select("*")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        console.error("Projeler listelenemedi:", error);
+        setMessage(`Projeler listelenemedi: ${error.message || "Bilinmeyen sorgu hatası"}`);
+        setProjects([]);
+        return;
+      }
+
+      setProjects(data || []);
+      setForm((prev) => ({
+        ...prev,
+        project_code: prev.project_code || nextProjectCode(data || []),
+      }));
 
     const { data: partnerData } = await supabase
       .from("suppliers")
@@ -312,19 +327,17 @@ export default function ProjectsPage() {
       revisions: revisionRes.data || [],
     });
 
-    if (error) {
-      setMessage("Projeler tablosu hazır değil. Supabase şemasındaki proje bölümünü çalıştırın.");
-      setProjects([]);
-    } else {
-      setMessage("");
-      setProjects(data || []);
-      setForm((prev) => ({
-        ...prev,
-        project_code: prev.project_code || nextProjectCode(data || []),
-      }));
+    if ([itemRes, requestRes, reportRes, offerRes, orderRes, movementRes, paymentRes, revisionRes].some((result) => result.error)) {
+      console.error("Proje yardımcı verileri eksik yüklendi:", [itemRes, requestRes, reportRes, offerRes, orderRes, movementRes, paymentRes, revisionRes].map((result) => result.error).filter(Boolean));
+      setMessage("Projeler yüklendi; bazı bağlantılı bilgiler okunamadı.");
     }
-
-    setLoading(false);
+    } catch (error) {
+      console.error("Projeler yüklenemedi:", error);
+      setMessage(`Projeler yüklenemedi: ${error?.message || "Beklenmeyen hata"}`);
+      setProjects([]);
+    } finally {
+      setLoading(false);
+    }
   }
 
   function openCreateForm() {

@@ -16,15 +16,25 @@ export default function RaporDetayPage() {
     const loadReport = async () => {
       if (!id) return;
 
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        setMessage("Raporu görmek için giriş yapmanız gerekiyor.");
+        return;
+      }
+
       const { data, error } = await supabase
         .from("reports")
         .select("*")
         .eq("id", id)
-        .single();
+        .eq("user_id", user.id)
+        .maybeSingle();
 
       if (error || !data) {
         console.error(error);
-        setMessage("Rapor bulunamadı.");
+        setMessage(error?.message ? `Rapor yüklenemedi: ${error.message}` : "Rapor bulunamadı veya bu kayda erişim yetkiniz yok.");
         return;
       }
 
@@ -57,6 +67,11 @@ export default function RaporDetayPage() {
     return rapor.created_at
       ? new Date(rapor.created_at).toLocaleString("tr-TR")
       : rapor.tarih || rapor.date || "-";
+  }, [rapor]);
+
+  const raporNumarasi = useMemo(() => {
+    if (!rapor?.id) return "-";
+    return `RPR-${String(rapor.id).replaceAll("-", "").slice(0, 8).toUpperCase()}`;
   }, [rapor]);
 
   const analiz = useMemo(() => {
@@ -103,10 +118,10 @@ const sonAlimRows = useMemo(() => {
 
     if (rawRows.length === 0) {
       return [
-        "Rapor arsivde kayitli. Detay dosyasi indirildiginde mukayese satirlari ve secim hesabi incelenebilir.",
+        "Rapor arşivde kayıtlı. Detay dosyası indirildiğinde mukayese satırları ve seçim hesabı incelenebilir.",
         firma !== "-"
-          ? `${firma} onerilen firma olarak kaydedilmis.`
-          : "Onerilen firma bilgisi bu rapor kaydinda bulunmuyor.",
+          ? `${firma} önerilen firma olarak kaydedilmiş.`
+          : "Önerilen firma bilgisi bu rapor kaydında bulunmuyor.",
       ];
     }
 
@@ -123,7 +138,7 @@ const sonAlimRows = useMemo(() => {
         row.gerekce ||
         row.explanation ||
         row.aciklama ||
-        "fiyat, vade, termin ve risk kriterlerine gore avantajli gorunuyor";
+        "fiyat, vade, termin ve risk kriterlerine göre avantajlı görünüyor";
       const amount =
         row.total ||
         row.netToplamTRY ||
@@ -161,7 +176,7 @@ const sonAlimRows = useMemo(() => {
             <Info label="Tarih" value={raporTarihi} />
             <Info label="Durum" value={rapor.durum || rapor.status || "Hazır"} />
             <Info label="Önerilen Firma" value={firma} />
-            <Info label="Rapor ID" value={rapor.id} small />
+            <Info label="Rapor No" value={raporNumarasi} />
           </div>
         </div>
 
@@ -184,9 +199,9 @@ const sonAlimRows = useMemo(() => {
         </div>
 
         <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="text-xl font-bold text-slate-900">Karar Ozeti</h2>
+          <h2 className="text-xl font-bold text-slate-900">Karar Özeti</h2>
           <p className="mt-2 text-sm text-slate-500">
-            Raporun hangi gerekceyle bu sonuca yoneldigini hizli okumak icin tutulur.
+            Raporun hangi gerekçeyle bu sonuca yöneldiğini hızlı okumak için tutulur.
           </p>
           <div className="mt-4 space-y-3">
             {kararOzeti.map((item) => (

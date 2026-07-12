@@ -700,12 +700,17 @@ export default function TaleplerPage() {
 
     const [offerResult, reportResult] = await Promise.all([
       supabase.from("offers").select("id,request_id,dosya_adi,firma_adi,durum,created_at").eq("user_id", userId).in("request_id", requestIds),
-      supabase.from("reports").select("id,request_id,ad,name,request_name,durum,created_at,reportpath,report_path").eq("user_id", userId).in("request_id", requestIds),
+      supabase.from("reports").select("id,ad,durum,created_at,reportpath,report_storage_bucket,report_storage_path").eq("user_id", userId).limit(500),
     ]);
 
-    if (offerResult.error || reportResult.error) {
-      console.error("Talep bağlantıları okunamadı:", offerResult.error || reportResult.error);
+    if (offerResult.error) {
+      console.error("Talep teklif bağlantıları okunamadı:", offerResult.error);
+      setMessage(`Talep teklif bağlantıları okunamadı: ${offerResult.error.message || "Bilinmeyen sorgu hatası"}`);
       return;
+    }
+
+    if (reportResult.error) {
+      console.error("Talep rapor bağlantıları okunamadı:", reportResult.error);
     }
 
     const nextRelations = {};
@@ -714,7 +719,7 @@ export default function TaleplerPage() {
       if (!nextRelations[offer.request_id]) nextRelations[offer.request_id] = { offers: [], reports: [] };
       nextRelations[offer.request_id].offers.push(offer);
     });
-    (reportResult.data || []).forEach((report) => {
+    (reportResult.data || []).filter((report) => report.request_id).forEach((report) => {
       if (!nextRelations[report.request_id]) nextRelations[report.request_id] = { offers: [], reports: [] };
       nextRelations[report.request_id].reports.push(report);
     });

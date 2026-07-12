@@ -47,52 +47,75 @@ export default function BusinessPartnerDetailPage() {
 
   const loadPartner = useCallback(async () => {
     setLoading(true);
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    setMessage("");
 
-    if (!user) {
-      router.push("/login");
-      return;
-    }
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
 
-    const { data, error } = await supabase
-      .from("suppliers")
-      .select("*")
-      .eq("id", id)
-      .eq("user_id", user.id)
-      .single();
+      if (!user) {
+        router.push("/login");
+        return;
+      }
 
-    if (error) {
-      console.error(error);
-      setMessage("İş ortağı bulunamadı.");
+      const { data, error } = await supabase
+        .from("suppliers")
+        .select("*")
+        .eq("id", id)
+        .eq("user_id", user.id)
+        .maybeSingle();
+
+      if (error) {
+        console.error("İş ortağı sorgusu başarısız:", error);
+        setMessage(`İş ortağı yüklenemedi: ${error.message || "Bilinmeyen sorgu hatası"}`);
+        setPartner(null);
+        return;
+      }
+
+      if (!data) {
+        setMessage("İş ortağı bulunamadı veya bu kayda erişim yetkiniz yok.");
+        setPartner(null);
+        return;
+      }
+
+      const normalized = normalizePartnerRecord(data);
+      const nameKey = normalizePartnerName(normalized.name);
+      setPartner(normalized);
+
+      const relatedResults = await Promise.allSettled([
+        supabase.from("projects").select("*").eq("user_id", user.id),
+        supabase.from("orders").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
+        supabase.from("stock_movements").select("*").eq("user_id", user.id).order("created_at", { ascending: false }).limit(500),
+      ]);
+      const [projectRes, orderRes, movementRes] = relatedResults.map((result) =>
+        result.status === "fulfilled" ? result.value : { data: [], error: result.reason },
+      );
+      const relatedErrors = [projectRes, orderRes, movementRes].map((result) => result?.error).filter(Boolean);
+      if (relatedErrors.length > 0) {
+        console.error("İş ortağı detay yardımcı verileri eksik yüklendi:", relatedErrors);
+        setMessage("İş ortağı yüklendi; bazı bağlantılı bilgiler okunamadı.");
+      }
+
+      setProjects((projectRes.data || []).filter((project) =>
+        project.customer_partner_id === normalized.id ||
+        normalizePartnerName(project.customer_partner_name || project.customer_name) === nameKey
+      ));
+      setOrders((orderRes.data || []).filter((order) =>
+        order.partner_id === normalized.id ||
+        normalizePartnerName(order.partner_name || order.supplier_name) === nameKey
+      ));
+      setMovements((movementRes.data || []).filter((movement) =>
+        movement.partner_id === normalized.id ||
+        normalizePartnerName(movement.partner_name || movement.supplier_name) === nameKey
+      ));
+    } catch (error) {
+      console.error("İş ortağı detayı yüklenemedi:", error);
+      setMessage(`İş ortağı yüklenemedi: ${error?.message || "Beklenmeyen hata"}`);
+      setPartner(null);
+    } finally {
       setLoading(false);
-      return;
     }
-
-    const normalized = normalizePartnerRecord(data);
-    const nameKey = normalizePartnerName(normalized.name);
-
-    const [projectRes, orderRes, movementRes] = await Promise.all([
-      supabase.from("projects").select("*").eq("user_id", user.id),
-      supabase.from("orders").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
-      supabase.from("stock_movements").select("*").eq("user_id", user.id).order("created_at", { ascending: false }).limit(500),
-    ]);
-
-    setPartner(normalized);
-    setProjects((projectRes.data || []).filter((project) =>
-      project.customer_partner_id === normalized.id ||
-      normalizePartnerName(project.customer_partner_name || project.customer_name) === nameKey
-    ));
-    setOrders((orderRes.data || []).filter((order) =>
-      order.partner_id === normalized.id ||
-      normalizePartnerName(order.partner_name || order.supplier_name) === nameKey
-    ));
-    setMovements((movementRes.data || []).filter((movement) =>
-      movement.partner_id === normalized.id ||
-      normalizePartnerName(movement.partner_name || movement.supplier_name) === nameKey
-    ));
-    setLoading(false);
   }, [id, router]);
 
   useEffect(() => {
@@ -105,10 +128,18 @@ export default function BusinessPartnerDetailPage() {
     return { orderTotal, openOrders };
   }, [orders]);
 
-  if (loading || !partner) {
+  if (loading) {
     return (
       <div className="mx-auto max-w-[1100px] rounded-2xl bg-white p-8 text-center text-slate-600">
-        {message || "İş ortağı yükleniyor..."}
+        İş ortağı yükleniyor...
+      </div>
+    );
+  }
+
+  if (!partner) {
+    return (
+      <div className="mx-auto max-w-[1100px] rounded-2xl border border-amber-200 bg-amber-50 p-8 text-center font-bold text-amber-900">
+        {message || "İş ortağı bulunamadı."}
       </div>
     );
   }

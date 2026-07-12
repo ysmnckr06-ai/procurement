@@ -835,58 +835,81 @@ export default function StockPage() {
 
   async function loadStock() {
     setLoading(true);
+    setMessage("");
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
 
-    if (!user) {
-      router.push("/login");
-      return;
+      if (!user) {
+        router.push("/login");
+        return;
+      }
+
+
+      let productQuery = supabase
+        .from("products")
+        .select("*", { count: "exact" })
+        .eq("user_id", user.id);
+      productQuery = showArchivedProducts
+        ? productQuery.not("archived_at", "is", null)
+        : productQuery.is("archived_at", null);
+      let { data: productData, error: productError } = await productQuery
+        .order("updated_at", { ascending: false });
+
+      if (productError && !showArchivedProducts) {
+        console.error("Aktif ürün sorgusu başarısız, filtresiz tenant sorgusu deneniyor:", productError);
+        const fallbackProductResult = await supabase
+          .from("products")
+          .select("*", { count: "exact" })
+          .eq("user_id", user.id)
+          .order("updated_at", { ascending: false });
+        productData = fallbackProductResult.data || [];
+        productError = fallbackProductResult.error;
+      }
+
+      const { data: movementData, error: movementError } = await supabase
+        .from("stock_movements")
+        .select("*", { count: "exact" })
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false })
+        .limit(2000);
+
+      const { data: projectItemData, error: projectItemError } = await supabase
+        .from("project_items")
+        .select("*")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: true })
+        .limit(5000);
+
+      const { data: projectData, error: projectError } = await supabase
+        .from("projects")
+        .select("*")
+        .eq("user_id", user.id)
+        .limit(1000);
+
+
+
+      if (productError || movementError || projectItemError || projectError) {
+        console.error("Stok yardımcı verileri eksik yüklendi:", [productError, movementError, projectItemError, projectError].filter(Boolean));
+        setMessage("Stok kayıtları kısmen yüklendi; bazı bağlantılı bilgiler okunamadı.");
+      }
+
+      setProducts(productData || []);
+      setMovements(movementData || []);
+      setProjectItems(projectItemData || []);
+      setProjects(projectData || []);
+    } catch (error) {
+      console.error("Stok verileri yüklenemedi:", error);
+      setMessage(`Stok verileri yüklenemedi: ${error?.message || "Beklenmeyen hata"}`);
+      setProducts([]);
+      setMovements([]);
+      setProjectItems([]);
+      setProjects([]);
+    } finally {
+      setLoading(false);
     }
-
-
-    let productQuery = supabase
-      .from("products")
-      .select("*", { count: "exact" })
-      .eq("user_id", user.id);
-    productQuery = showArchivedProducts
-      ? productQuery.not("archived_at", "is", null)
-      : productQuery.is("archived_at", null);
-    const { data: productData, error: productError } = await productQuery
-      .order("updated_at", { ascending: false });
-
-    const { data: movementData, error: movementError } = await supabase
-      .from("stock_movements")
-      .select("*", { count: "exact" })
-      .eq("user_id", user.id)
-      .order("created_at", { ascending: false })
-      .limit(2000);
-
-    const { data: projectItemData, error: projectItemError } = await supabase
-      .from("project_items")
-      .select("*")
-      .eq("user_id", user.id)
-      .order("created_at", { ascending: true })
-      .limit(5000);
-
-    const { data: projectData, error: projectError } = await supabase
-      .from("projects")
-      .select("*")
-      .eq("user_id", user.id)
-      .limit(1000);
-
-
-
-    if (productError || movementError || projectItemError || projectError) {
-      setMessage("Stok tabloları hazır değil. Supabase şemasındaki products ve stock_movements bölümlerini çalıştırın.");
-    }
-
-    setProducts(productData || []);
-    setMovements(movementData || []);
-    setProjectItems(projectItemData || []);
-    setProjects(projectData || []);
-    setLoading(false);
   }
 
   async function restoreArchivedProduct(product) {

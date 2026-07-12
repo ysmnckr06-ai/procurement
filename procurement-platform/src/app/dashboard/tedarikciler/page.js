@@ -372,6 +372,7 @@ export default function BusinessPartnersPage() {
 
   async function loadData() {
     setLoading(true);
+    setMessage("");
     const {
       data: { user },
     } = await supabase.auth.getUser();
@@ -382,12 +383,25 @@ export default function BusinessPartnersPage() {
     }
 
     try {
-    const [partnerRes, projectRes, orderRes, projectPaymentRes, orderPaymentRes, movementRes, reportRes, offerRes] = await Promise.all([
-      supabase
+    const partnerRes = await supabase
         .from("suppliers")
         .select("*")
         .eq("user_id", user.id)
-        .order("name", { ascending: true }),
+        .order("name", { ascending: true });
+
+    if (partnerRes.error) {
+      console.error("İş ortakları listelenemedi:", partnerRes.error);
+      setMessage(`İş ortakları listelenemedi: ${partnerRes.error.message || "Bilinmeyen sorgu hatası"}`);
+      setPartners([]);
+      return;
+    }
+
+    const basePartners = (partnerRes.data || [])
+      .map(normalizePartnerRecord)
+      .filter((partner) => partner.status !== "Silindi");
+    setPartners(basePartners);
+
+    const relatedResults = await Promise.allSettled([
       supabase
         .from("projects")
         .select("*")
@@ -420,14 +434,10 @@ export default function BusinessPartnersPage() {
         .eq("user_id", user.id)
         .limit(500),
     ]);
+    const [projectRes, orderRes, projectPaymentRes, orderPaymentRes, movementRes, reportRes, offerRes] = relatedResults.map((result) =>
+      result.status === "fulfilled" ? result.value : { data: [], error: result.reason },
+    );
 
-    if (partnerRes.error) {
-      console.error(partnerRes.error);
-      setMessage(
-        "İş ortakları yüklenemedi. SQL migration çalıştı mı kontrol edin.",
-      );
-      setPartners([]);
-    } else {
       let backfillSummary = { createdCustomers: 0, linkedProjects: 0, existingCustomers: 0 };
       let dedupeSummary = { duplicateCount: 0 };
       let partnersAfterBackfill = partnerRes.data || [];
@@ -475,10 +485,16 @@ export default function BusinessPartnersPage() {
         .filter((partner) => partner.status !== "Silindi");
       setPartners(rows);
       setProjects(refreshedProjectData || []);
-      setMessage("");
+
+    const relatedErrors = [projectRes, orderRes, projectPaymentRes, orderPaymentRes, movementRes, reportRes, offerRes]
+      .map((result) => result?.error)
+      .filter(Boolean);
+    if (relatedErrors.length > 0) {
+      console.error("İş ortakları yardımcı verileri eksik yüklendi:", relatedErrors);
+      setMessage("İş ortakları yüklendi; bazı bağlantılı bilgiler okunamadı.");
     }
 
-    if (partnerRes.error) setProjects(projectRes.data || []);
+    if (!projectRes.error) setProjects(projectRes.data || []);
     setOrders(orderRes.data || []);
     setProjectPayments(projectPaymentRes.data || []);
     setOrderPayments(orderPaymentRes.data || []);
@@ -489,8 +505,9 @@ export default function BusinessPartnersPage() {
       console.error(error);
       setMessage(error?.message || "İş ortakları yüklenemedi.");
       setPartners([]);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }
 
   const partnerStats = useMemo(() => {

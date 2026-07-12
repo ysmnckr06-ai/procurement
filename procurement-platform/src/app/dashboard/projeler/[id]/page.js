@@ -1174,8 +1174,11 @@ export default function ProjectDetailPage() {
     setLoading(true);
     setDocumentPreview(null);
     setDocumentAccessError("");
+    setMessage("");
     const user = await getUserOrRedirect();
     if (!user) return;
+
+    try {
 
     const [projectRes, itemRes, paymentRes, expenseRes, revisionRes, productRes, requestRes, reportRes, offerRes, orderRes, allOrderRes, movementRes, settingsRes] = await Promise.all([
       supabase
@@ -1183,7 +1186,7 @@ export default function ProjectDetailPage() {
         .select("*")
         .eq("id", projectId)
         .eq("user_id", user.id)
-        .single(),
+        .maybeSingle(),
       supabase
         .from("project_items")
         .select("*")
@@ -1255,8 +1258,15 @@ export default function ProjectDetailPage() {
     ]);
 
     if (projectRes.error) {
-      setMessage("Proje bulunamadı veya proje tabloları hazır değil.");
-      setLoading(false);
+      console.error("Proje sorgusu başarısız:", projectRes.error);
+      setProject(null);
+      setMessage(`Proje yüklenemedi: ${projectRes.error.message || "Bilinmeyen sorgu hatası"}`);
+      return;
+    }
+
+    if (!projectRes.data) {
+      setProject(null);
+      setMessage("Proje bulunamadı veya bu kayda erişim yetkiniz yok.");
       return;
     }
 
@@ -1564,7 +1574,12 @@ export default function ProjectDetailPage() {
     setAllOrders(allOrderRows);
     setStockMovements(movementRes.data || []);
     if (settingsRes.data?.[0]) setCompanySettings(settingsRes.data[0]);
-    setLoading(false);
+    } catch (error) {
+      console.error("Proje detayı yüklenemedi:", error);
+      setMessage(`Proje detayı yüklenemedi: ${error?.message || "Beklenmeyen hata"}`);
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function loadProjectItems() {
