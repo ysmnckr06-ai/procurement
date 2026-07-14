@@ -594,6 +594,7 @@ export default function TaleplerPage() {
   const [message, setMessage] = useState("");
   const [reportPath, setReportPath] = useState("");
   const [rows, setRows] = useState([]);
+  const [createdUploadRequestId, setCreatedUploadRequestId] = useState("");
   const [savedRequests, setSavedRequests] = useState([]);
   const [stockProducts, setStockProducts] = useState([]);
   const [showAllRequests, setShowAllRequests] = useState(false);
@@ -961,6 +962,8 @@ export default function TaleplerPage() {
 
   const handleFileChange = (e) => {
     setFiles(Array.from(e.target.files || []));
+    setCreatedUploadRequestId("");
+    setRows([]);
   };
 
   const handleAnalyze = async () => {
@@ -1007,13 +1010,21 @@ export default function TaleplerPage() {
 
       setRows(data.rows || []);
       setReportPath(data.reportPath);
-      setMessage("Talep listesi oluşturuldu ✅");
+      setCreatedUploadRequestId(data.requestId || "");
+      if (data.requestId) {
+        setExpandedRequestId(data.requestId);
+        await loadRequests();
+        setMessage(`${data.totalRows || data.rows?.length || 0} kalemli talep oluşturuldu ve talep havuzuna eklendi ✅`);
+      } else {
+        setMessage("Dosya analiz edildi ancak talep havuzuna kaydedilemedi.");
+      }
     } catch (err) {
       console.error(err);
       setMessage("Backend bağlantı hatası ❌");
+    } finally {
+      setIsLoading(false);
+      isAnalyzingRef.current = false;
     }
-
-    setIsLoading(false);
   };
 
   const handleDownload = async () => {
@@ -1795,9 +1806,23 @@ export default function TaleplerPage() {
                   </p>
                 </div>
 
-                <span className="rounded-full bg-green-100 px-4 py-2 text-sm font-bold text-green-700">
-                  {rows.length} kalem
-                </span>
+                <div className="flex items-center gap-2">
+                  {createdUploadRequestId && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setExpandedRequestId(createdUploadRequestId);
+                        setActiveRequestTab("pool");
+                      }}
+                      className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700"
+                    >
+                      Talep Havuzunda Gör
+                    </button>
+                  )}
+                  <span className="rounded-full bg-green-100 px-4 py-2 text-sm font-bold text-green-700">
+                    {createdUploadRequestId ? "Havuza kaydedildi · " : ""}{rows.length} kalem
+                  </span>
+                </div>
               </div>
 
               <div className="overflow-x-auto">

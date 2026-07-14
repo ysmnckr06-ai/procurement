@@ -9,6 +9,21 @@ import pytesseract
 
 logger = logging.getLogger("corvian.parsers.request")
 
+configured_tesseract_cmd = os.getenv("TESSERACT_CMD")
+windows_tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+
+if configured_tesseract_cmd:
+    pytesseract.pytesseract.tesseract_cmd = configured_tesseract_cmd
+elif os.path.exists(windows_tesseract_cmd):
+    pytesseract.pytesseract.tesseract_cmd = windows_tesseract_cmd
+
+try:
+    _ocr_languages = set(pytesseract.get_languages(config=""))
+except Exception:
+    _ocr_languages = {"eng"}
+
+OCR_LANGUAGE = "tur+eng" if "tur" in _ocr_languages else "eng"
+
 from app.utils import normalize_text, safe_float, safe_str
 
 
@@ -156,6 +171,12 @@ def make_row(code, description, quantity, unit, file_name, source_type):
     }
 
 
+def is_stock_replenishment_header(value):
+    """Identify the user-edited quantity column in the stock-risk export."""
+    text = normalize_text(value)
+    return "yenileme" in text and "ihtiyac" in text and "stok" in text
+
+
 def find_header_row(df):
     max_scan = min(len(df), 25)
 
@@ -164,9 +185,10 @@ def find_header_row(df):
 
         has_product = any(x in row_text for x in ["urun", "malzeme", "aciklama"])
         has_qty = any(x in row_text for x in ["miktar", "adet"])
+        has_replenishment = is_stock_replenishment_header(row_text)
         has_unit = "birim" in row_text
 
-        if has_product and has_qty:
+        if has_product and (has_qty or has_replenishment):
             return i
 
         if has_product and has_unit:
@@ -216,7 +238,11 @@ def parse_request_excel(file_path, file_name):
         "açıklama", "aciklama", "ürün açıklaması", "urun aciklamasi"
     ])
 
-    qty_col = find_col(df.columns, [
+    replenishment_col = next(
+        (col for col in df.columns if is_stock_replenishment_header(col)),
+        None,
+    )
+    qty_col = replenishment_col or find_col(df.columns, [
         "miktar", "adet", "talep edilen adet", "talep miktar", "ihtiyaç", "ihtiyac"
     ])
 
@@ -249,7 +275,10 @@ def parse_request_excel(file_path, file_name):
             continue
         row = make_row(code, description, quantity, unit, file_name, "excel")
         if row:
-             rows.append(row)
+            if replenishment_col is not None:
+                row["talepTuru"] = "stok_yenileme"
+                row["miktarKaynagi"] = "Stok yenileme ihtiyacı"
+            rows.append(row)
     return dedupe_rows(rows)
 
 
@@ -397,7 +426,7 @@ def ocr_cell(cell_img, psm=6):
 
     text = pytesseract.image_to_string(
         gray,
-        lang="tur+eng",
+        lang=OCR_LANGUAGE,
         config=f"--oem 3 --psm {psm}"
     )
 
@@ -569,10 +598,11 @@ def parse_table_image_by_cells(img, file_name):
             cells_text.append(text)
 
         header_text = normalize_text(" ".join(cells_text))
+        has_replenishment = is_stock_replenishment_header(header_text)
 
         if (
             ("urun" in header_text or "ürün" in header_text or "malzeme" in header_text)
-            and ("miktar" in header_text or "adet" in header_text)
+            and ("miktar" in header_text or "adet" in header_text or has_replenishment)
             and "birim" in header_text
         ):
             header_index = row_index
@@ -588,17 +618,20 @@ def parse_table_image_by_cells(img, file_name):
     qty_col = None
     unit_col = None
     code_col = None
+    is_replenishment_table = any(is_stock_replenishment_header(text) for text in header_cells)
 
     for i, text in enumerate(header_cells):
         n = normalize_text(text)
 
-        if "kod" in n:
+        if is_stock_replenishment_header(n):
+            qty_col = i
+        elif "kod" in n:
             code_col = i
-        elif "urun" in n or "ürün" in n or "malzeme" in n:
-            product_col = i
         elif "aciklama" in n or "açıklama" in n:
             desc_col = i
-        elif "miktar" in n or "adet" in n:
+        elif "urun" in n or "ürün" in n or "malzeme" in n:
+            product_col = i
+        elif ("miktar" in n or "adet" in n) and qty_col is None:
             qty_col = i
         elif "birim" in n:
             unit_col = i
@@ -673,6 +706,9 @@ def parse_table_image_by_cells(img, file_name):
         )
 
         if row:
+            if is_replenishment_table:
+                row["talepTuru"] = "stok_yenileme"
+                row["miktarKaynagi"] = "Stok yenileme ihtiyacı"
             parsed_rows.append(row)
 
     return dedupe_rows(parsed_rows)
@@ -680,7 +716,7 @@ def parse_table_image_by_cells(img, file_name):
 def ocr_words(img):
     data = pytesseract.image_to_data(
         img,
-        lang="tur+eng",
+        lang=OCR_LANGUAGE,
         config="--oem 3 --psm 6",
         output_type=pytesseract.Output.DICT
     )
@@ -747,9 +783,10 @@ def detect_columns_from_header(word_rows):
 
         has_product = any(x in n for x in ["urun", "malzeme", "aciklama"])
         has_qty = any(x in n for x in ["miktar", "adet"])
+        has_replenishment = is_stock_replenishment_header(n)
         has_unit = "birim" in n
 
-        if has_product and has_qty:
+        if has_product and (has_qty or has_replenishment):
             header_row = row
             break
 
@@ -773,6 +810,9 @@ def detect_columns_from_header(word_rows):
             columns["product"] = word["cx"]
         elif "aciklama" in n:
             columns["description"] = word["cx"]
+        elif "yenileme" in n:
+            columns["quantity"] = word["cx"]
+            columns["request_type"] = "stock_replenishment"
         elif "miktar" in n or "adet" in n:
             columns["quantity"] = word["cx"]
         elif "birim" in n:
@@ -797,7 +837,11 @@ def row_from_word_columns(word_row, columns, file_name):
         "unit": [],
     }
 
-    sorted_columns = sorted(columns.items(), key=lambda x: x[1])
+    request_type = columns.get("request_type")
+    sorted_columns = sorted(
+        ((key, value) for key, value in columns.items() if key in parts),
+        key=lambda x: x[1],
+    )
 
     for word in word_row:
         nearest_col = min(
@@ -829,7 +873,7 @@ def row_from_word_columns(word_row, columns, file_name):
     if quantity <= 0:
         return None
 
-    return make_row(
+    row = make_row(
         code_text,
         final_description,
         quantity,
@@ -837,6 +881,166 @@ def row_from_word_columns(word_row, columns, file_name):
         file_name,
         "image"
     )
+    if row and request_type == "stock_replenishment":
+        row["talepTuru"] = "stok_yenileme"
+        row["miktarKaynagi"] = "Stok yenileme ihtiyacı"
+    return row
+
+
+def parse_stock_replenishment_image(img, file_name):
+    """Parse the stock-risk Excel screenshot without guessing from other numbers.
+
+    The export contains several quantity columns.  We anchor the decision value to
+    the narrow column immediately before ``Depo aksiyonu`` and OCR that cell with
+    a digits-only configuration.  Returning an empty list for a recognized stock
+    screenshot is intentional: it prevents the generic parser from turning open
+    project need or stock counts into a purchase request.
+    """
+    processed = preprocess_image(img)
+    word_rows = group_words_by_rows(ocr_words(processed))
+    header_row = None
+
+    for candidate in word_rows:
+        header_text = normalize_text(" ".join(word["text"] for word in candidate))
+        if "stok" in header_text and "risk" in header_text and "depo" in header_text and "aksiyon" in header_text:
+            header_row = candidate
+            break
+
+    if not header_row:
+        return None
+
+    def first_word(*needles):
+        for word in header_row:
+            text = normalize_text(word["text"])
+            if any(needle in text for needle in needles):
+                return word
+        return None
+
+    code_header = first_word("kod")
+    brand_header = first_word("marka")
+    depot_header = first_word("depo")
+    risk_words = [
+        word for word in header_row
+        if "stok" in normalize_text(word["text"]) or "risk" in normalize_text(word["text"])
+    ]
+
+    if not code_header or not brand_header or not depot_header or not risk_words:
+        return []
+
+    header_y = sum(word["cy"] for word in header_row) / len(header_row)
+    code_start = max(0, code_header["x"] - 60)
+    brand_start = brand_header["x"]
+    depot_start = depot_header["x"]
+    risk_end = max(word["x"] + word["w"] for word in risk_words if word["x"] < depot_start)
+
+    description_candidates = [
+        word for word in header_row
+        if word["x"] > brand_start + 80 and word["x"] < risk_end
+    ]
+    if not description_candidates:
+        return []
+    description_start = min(word["x"] for word in description_candidates)
+
+    parsed_rows = []
+    original_height, original_width = img.shape[:2]
+    quantity_right = min(original_width, int(depot_start / 2) - 1)
+    quantity_left = max(0, quantity_right - 25)
+
+    for word_row in word_rows:
+        row_y = sum(word["cy"] for word in word_row) / len(word_row)
+        if row_y <= header_y + 35:
+            continue
+
+        code_parts = [
+            word["text"] for word in word_row
+            if code_start <= word["x"] < brand_start
+        ]
+        code_text = clean_line(" ".join(code_parts))
+
+        unit_word = next(
+            (
+                word for word in word_row
+                if description_start < word["x"] < risk_end
+                and (
+                    normalize_text(word["text"]) in SUPPORTED_UNITS
+                    or normalize_text(word["text"]) in UNIT_MAP
+                    or "adet" in normalize_text(word["text"])
+                    or "metre" in normalize_text(word["text"])
+                )
+            ),
+            None,
+        )
+        if not unit_word:
+            continue
+
+        description_text = clean_line(" ".join(
+            word["text"] for word in word_row
+            if description_start <= word["x"] < unit_word["x"]
+        ))
+        brand_text = clean_line(" ".join(
+            word["text"] for word in word_row
+            if brand_start <= word["x"] < description_start
+        ))
+
+        original_y = int(row_y / 2)
+        y1 = max(0, original_y - 10)
+        y2 = min(original_height, original_y + 10)
+        quantity_crop = img[y1:y2, quantity_left:quantity_right]
+        if quantity_crop.size == 0:
+            continue
+
+        gray = cv2.cvtColor(quantity_crop, cv2.COLOR_BGR2GRAY)
+        gray = cv2.resize(gray, None, fx=4, fy=4, interpolation=cv2.INTER_CUBIC)
+        _, threshold = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        quantity_text = pytesseract.image_to_string(
+            threshold,
+            lang=OCR_LANGUAGE,
+            config="--oem 3 --psm 7 -c tessedit_char_whitelist=0123456789.,",
+        )
+        quantity = clean_quantity(quantity_text)
+        if quantity <= 0:
+            continue
+
+        if not code_text or not any(char.isalnum() for char in code_text):
+            code_left = max(0, int(code_start / 2))
+            code_right = min(original_width, int(brand_start / 2))
+            code_crop = img[y1:y2, code_left:code_right]
+            if code_crop.size:
+                code_gray = cv2.cvtColor(code_crop, cv2.COLOR_BGR2GRAY)
+                code_gray = cv2.resize(code_gray, None, fx=4, fy=4, interpolation=cv2.INTER_CUBIC)
+                _, code_threshold = cv2.threshold(
+                    code_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+                )
+                code_text = clean_line(pytesseract.image_to_string(
+                    code_threshold,
+                    lang=OCR_LANGUAGE,
+                    config="--oem 3 --psm 7",
+                ))
+
+        if not code_text or not any(char.isalnum() for char in code_text):
+            continue
+
+        final_description = description_text
+        if not is_valid_product_text(final_description):
+            final_description = clean_line(f"{brand_text} {description_text}")
+        if not is_valid_product_text(final_description):
+            final_description = code_text
+
+        row = make_row(
+            code_text,
+            final_description,
+            quantity,
+            unit_word["text"],
+            file_name,
+            "image",
+        )
+        if row:
+            row["marka"] = brand_text
+            row["talepTuru"] = "stok_yenileme"
+            row["miktarKaynagi"] = "Stok yenileme ihtiyacı"
+            parsed_rows.append(row)
+
+    return dedupe_rows(parsed_rows)
 
 
 def parse_image_by_words(img, file_name):
@@ -863,7 +1067,7 @@ def parse_image_by_words(img, file_name):
 
     text = pytesseract.image_to_string(
         processed,
-        lang="tur+eng",
+        lang=OCR_LANGUAGE,
         config="--oem 3 --psm 6"
     )
 
@@ -880,6 +1084,10 @@ def parse_request_image(file_path, file_name):
 
     if img is None:
         return []
+
+    stock_replenishment_rows = parse_stock_replenishment_image(img, file_name)
+    if stock_replenishment_rows is not None:
+        return dedupe_rows(stock_replenishment_rows)
 
     table_rows = parse_table_image_by_cells(img, file_name)
 

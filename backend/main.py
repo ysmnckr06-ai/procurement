@@ -2167,8 +2167,11 @@ async def analyze_requests(
                 "urunAciklamasi": aciklama,
                 "talepEdilenAdet": adet,
                 "birim": birim,
+                "marka": row.get("marka", ""),
                 "kaynakDosya": row.get("kaynakDosya", ""),
                 "kaynakTipi": row.get("kaynakTipi", ""),
+                "talepTuru": row.get("talepTuru", ""),
+                "miktarKaynagi": row.get("miktarKaynagi", ""),
                 "_kodKey": kod_key,
                 "_aciklamaKey": aciklama_key,
                 "_birimKey": birim_key,
@@ -2220,14 +2223,57 @@ async def analyze_requests(
                 "x-upsert": "true"
         }
     )
+    is_stock_replenishment = any(
+        item.get("talepTuru") == "stok_yenileme" for item in result_rows
+    )
+    request_items = []
+    for item in result_rows:
+        quantity = item.get("talepEdilenAdet", 0)
+        unit = item.get("birim", "adet") or "adet"
+        request_items.append({
+            **item,
+            "product_code": item.get("urunKodu", ""),
+            "product_name": item.get("urunAciklamasi", ""),
+            "brand": item.get("marka", ""),
+            "quantity": quantity,
+            "purchase_quantity": quantity,
+            "unit": unit,
+            "note": (
+                "Stok yenileme görselinden oluşturuldu"
+                if item.get("talepTuru") == "stok_yenileme"
+                else "Yüklenen dosyadan oluşturuldu"
+            ),
+            "request_meta": {
+                "source": (
+                    "stock_replenishment_image"
+                    if item.get("talepTuru") == "stok_yenileme"
+                    else "file_upload"
+                ),
+                "sourceFile": item.get("kaynakDosya", ""),
+                "sourceType": item.get("kaynakTipi", ""),
+                "quantitySource": item.get("miktarKaynagi", ""),
+            },
+        })
+
     request_record = {
         "user_id": user_id,
-        "ad": "Talep Listesi",
-        "durum": "Oluşturuldu",
+        "project_id": None,
+        "ad": (
+            f"Stok Yenileme Talebi - {datetime.now().strftime('%d.%m.%Y')}"
+            if is_stock_replenishment
+            else f"Dosyadan Talep Listesi - {datetime.now().strftime('%d.%m.%Y')}"
+        ),
+        "durum": "Yeni Talep",
         "filepath": report_name,
-        "totalitems": len(result_rows)
+        "totalitems": len(request_items),
+        "items": request_items,
     }
-    supabase.table("requests").insert(request_record).execute()
+    insert_response = supabase.table("requests").insert(request_record).execute()
+    inserted_request = (insert_response.data or [{}])[0]
+    request_id = inserted_request.get("id")
+
+    if not request_id:
+        raise HTTPException(status_code=500, detail="Talep havuzuna kaydedilemedi.")
 
     signed = supabase.storage.from_("request-reports").create_signed_url(report_name, 3600)
     public_url = signed.get("signedURL") or signed.get("signedUrl") or signed.get("signed_url")
@@ -2238,7 +2284,9 @@ async def analyze_requests(
         "warnings": warnings,
         "rows": result_rows,
         "reportPath": public_url,
-        "totalRows": len(result_rows)
+        "totalRows": len(result_rows),
+        "requestCreated": True,
+        "requestId": request_id,
     }
 
 @app.get("/download-request-report/{file_name}")
