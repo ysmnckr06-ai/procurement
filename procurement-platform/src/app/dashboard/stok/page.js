@@ -27,6 +27,17 @@ const STOCK_VIEW_FILTERS = {
   PRODUCTION: "production",
   LOW: "low",
 };
+const EMPTY_STOCK_CARD_FORM = {
+  product_code: "",
+  product_name: "",
+  brand: "",
+  unit: "adet",
+  quantity: "0",
+  unit_price: "0",
+  currency: "TRY",
+  min_stock: "0",
+  critical_stock: "0",
+};
 
 function productTypeOf(product) {
   const categoryHint = normalizeStockText(product?.category);
@@ -818,6 +829,9 @@ export default function StockPage() {
   const [bulkDeletingMovements, setBulkDeletingMovements] = useState(false);
   const [movementDeleteModalOpen, setMovementDeleteModalOpen] = useState(false);
   const [productDeleteModalOpen, setProductDeleteModalOpen] = useState(false);
+  const [stockCardModalOpen, setStockCardModalOpen] = useState(false);
+  const [creatingStockCard, setCreatingStockCard] = useState(false);
+  const [stockCardForm, setStockCardForm] = useState(EMPTY_STOCK_CARD_FORM);
   const [productDeleteAnalysis, setProductDeleteAnalysis] = useState(null);
   const [productDeleteResult, setProductDeleteResult] = useState(null);
   const [analyzingProductDeletion, setAnalyzingProductDeletion] = useState(false);
@@ -1278,6 +1292,108 @@ export default function StockPage() {
     await loadStock();
   }
 
+  function openStockCardModal() {
+    setStockCardForm({ ...EMPTY_STOCK_CARD_FORM });
+    setMessage("");
+    setStockCardModalOpen(true);
+  }
+
+  function updateStockCardForm(field, value) {
+    setStockCardForm((current) => ({ ...current, [field]: value }));
+  }
+
+  async function createStockCard(event) {
+    event.preventDefault();
+    if (creatingStockCard) return;
+
+    const productCode = String(stockCardForm.product_code || "").trim();
+    const productName = String(stockCardForm.product_name || "").trim();
+    const normalizedCode = normalizeStockCode(productCode);
+    const quantity = Number(stockCardForm.quantity || 0);
+    const unitPrice = Number(stockCardForm.unit_price || 0);
+
+    if (!productCode || !productName) {
+      setMessage("Ürün kodu ve ürün adı zorunludur.");
+      return;
+    }
+    if (!Number.isFinite(quantity) || quantity < 0 || !Number.isFinite(unitPrice) || unitPrice < 0) {
+      setMessage("Başlangıç stoku ve birim fiyat sıfırdan küçük olamaz.");
+      return;
+    }
+
+    setCreatingStockCard(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return router.push("/login");
+
+      const existing = productGroups.find((product) =>
+        !product.archived_at && normalizeStockCode(product.product_code) === normalizedCode
+      );
+      if (existing) {
+        setStockCardModalOpen(false);
+        openProductDetail(existing);
+        setMessage("Bu ürün kodu zaten kayıtlı; mevcut stok kartı açıldı.");
+        return;
+      }
+
+      const now = new Date().toISOString();
+      const payload = {
+        user_id: user.id,
+        product_code: productCode,
+        normalized_product_code: normalizedCode || null,
+        product_name: productName,
+        brand: String(stockCardForm.brand || "").trim(),
+        unit: stockCardForm.unit || "adet",
+        category: "Alt Ürün / Malzeme",
+        product_type: PRODUCT_TYPES.COMPONENT,
+        current_stock: quantity,
+        reserved_stock: 0,
+        min_stock: Number(stockCardForm.min_stock || 0),
+        critical_stock: Number(stockCardForm.critical_stock || 0),
+        last_unit_price: unitPrice,
+        manual_unit_price: unitPrice,
+        last_currency: stockCardForm.currency || "TRY",
+        last_movement_at: quantity > 0 ? now : null,
+        source: "Manuel stok kartı",
+        notes: "Stok ekranından tekli ürün kartı olarak oluşturuldu.",
+        created_at: now,
+        updated_at: now,
+      };
+      const createResult = await insertProductWithSchemaFallback(payload, "id");
+      if (createResult.error) throw createResult.error;
+
+      if (quantity > 0) {
+        const { error: movementError } = await supabase.from("stock_movements").insert({
+          user_id: user.id,
+          product_id: createResult.data.id,
+          product_code: productCode,
+          product_name: productName,
+          movement_type: "in",
+          quantity,
+          unit: stockCardForm.unit || "adet",
+          unit_price: unitPrice,
+          currency: stockCardForm.currency || "TRY",
+          movement_date: new Date().toISOString().slice(0, 10),
+          source: "Manuel stok kartı",
+          notes: "Stok kartı açılış bakiyesi",
+        });
+        if (movementError) {
+          await supabase.from("products").delete().eq("id", createResult.data.id).eq("user_id", user.id);
+          throw movementError;
+        }
+      }
+
+      setStockCardModalOpen(false);
+      await loadStock();
+      setMessage(`${productName} stok kartı oluşturuldu${quantity > 0 ? `; başlangıç stoku ${quantity} ${stockCardForm.unit || "adet"}.` : "."}`);
+    } catch (error) {
+      console.error("Stok kartı oluşturulamadı:", error);
+      setMessage(error?.message || "Stok kartı oluşturulamadı.");
+    } finally {
+      setCreatingStockCard(false);
+    }
+  }
+
   function updateProductForm(field, value) {
     setProductForm((prev) => ({ ...prev, [field]: value }));
   }
@@ -1497,9 +1613,12 @@ export default function StockPage() {
 
   async function importStockCardsFromFiles(event) {
     const files = Array.from(event.target.files || []);
+    const requestedImportType = event.currentTarget.dataset.importType;
+    event.currentTarget.closest("details")?.removeAttribute("open");
     event.target.value = "";
     if (!files.length) return;
-    const importType = stockImportType;
+    const importType = requestedImportType || stockImportType;
+    setStockImportType(importType);
     const requiresQuantity = importType !== PRODUCT_TYPES.MAIN;
     setBulkImporting(true);
     setStockImportResult(null);
@@ -1990,58 +2109,54 @@ export default function StockPage() {
               </p>
             </div>
             <div className="flex flex-wrap gap-3">
-              <div className="inline-flex rounded-xl border border-slate-200 bg-white p-1 text-sm font-black">
-                <button
-                  type="button"
-                  onClick={() => setStockImportType(PRODUCT_TYPES.COMPONENT)}
-                  className={`rounded-lg px-3 py-2 ${stockImportType === PRODUCT_TYPES.COMPONENT ? "bg-emerald-100 text-emerald-700" : "text-slate-600"}`}
-                >
-                  Alt Ürün Excel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setStockImportType(PRODUCT_TYPES.MAIN)}
-                  className={`rounded-lg px-3 py-2 ${stockImportType === PRODUCT_TYPES.MAIN ? "bg-blue-100 text-blue-700" : "text-slate-600"}`}
-                >
-                  Ana Ürün Excel
-                </button>
-              </div>
               <button
                 type="button"
-                onClick={exportProductsExcel}
-                className="rounded-xl border border-emerald-200 bg-white px-5 py-3 text-sm font-bold text-emerald-700 hover:bg-emerald-50"
+                onClick={openStockCardModal}
+                className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-black text-white shadow-sm hover:bg-blue-700"
               >
-                Stok Excel
+                + Stok Kartı Aç
               </button>
-              <a
-                href="/templates/CORVIAN_Stok_Giris_Sablonu.xlsx"
-                download
-                className="rounded-xl border border-blue-200 bg-white px-5 py-3 text-sm font-bold text-blue-700 hover:bg-blue-50"
-              >
-                Şablonu İndir
-              </a>
-              <button
-                type="button"
-                onClick={exportProductsPdf}
-                className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
-              >
-                Stok PDF
-              </button>
-              <label className={`cursor-pointer rounded-xl px-5 py-3 text-sm font-bold text-white ${bulkImporting ? "bg-slate-300" : "bg-emerald-600 hover:bg-emerald-700"}`}>
-                {bulkImporting ? "Dosya okunuyor..." : "Toplu Ürün Yükle"}
-                <input
-                  type="file"
-                  multiple
-                  accept={STOCK_IMPORT_ACCEPT}
-                  disabled={bulkImporting}
-                  onChange={importStockCardsFromFiles}
-                  className="hidden"
-                />
-              </label>
+              <details className="group relative">
+                <summary className="flex cursor-pointer list-none items-center gap-2 rounded-xl border border-slate-300 bg-white px-5 py-3 text-sm font-black text-slate-700 shadow-sm hover:bg-slate-50 [&::-webkit-details-marker]:hidden">
+                  İndir <span className="text-xs text-slate-400 transition group-open:rotate-180">▼</span>
+                </summary>
+                <div className="absolute right-0 z-40 mt-2 w-64 overflow-hidden rounded-xl border border-slate-200 bg-white p-2 shadow-xl">
+                  <button type="button" onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); exportProductsExcel(); }} className="block w-full rounded-lg px-3 py-2.5 text-left text-sm font-bold text-slate-700 hover:bg-slate-100">
+                    Stokları Excel olarak indir
+                  </button>
+                  <button type="button" onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); exportProductsPdf(); }} className="block w-full rounded-lg px-3 py-2.5 text-left text-sm font-bold text-slate-700 hover:bg-slate-100">
+                    Stokları PDF olarak indir
+                  </button>
+                  <a href="/templates/CORVIAN_Stok_Giris_Sablonu.xlsx" download onClick={(event) => event.currentTarget.closest("details")?.removeAttribute("open")} className="block rounded-lg px-3 py-2.5 text-sm font-bold text-blue-700 hover:bg-blue-50">
+                    Boş stok giriş şablonunu indir
+                  </a>
+                </div>
+              </details>
+              <details className="group relative">
+                <summary className={`flex cursor-pointer list-none items-center gap-2 rounded-xl px-5 py-3 text-sm font-black text-white shadow-sm [&::-webkit-details-marker]:hidden ${bulkImporting ? "pointer-events-none bg-slate-300" : "bg-emerald-600 hover:bg-emerald-700"}`}>
+                  {bulkImporting ? "Dosya okunuyor..." : "Toplu Ürün Yükle"} <span className="text-xs text-emerald-100 transition group-open:rotate-180">▼</span>
+                </summary>
+                <div className="absolute right-0 z-40 mt-2 w-72 overflow-hidden rounded-xl border border-slate-200 bg-white p-2 shadow-xl">
+                  <label className="block cursor-pointer rounded-lg px-3 py-2.5 hover:bg-emerald-50">
+                    <span className="block text-sm font-black text-emerald-800">Alt ürün / stok girişi yükle</span>
+                    <span className="mt-0.5 block text-xs text-slate-500">Şablondaki miktarlar depo stokuna eklenir.</span>
+                    <input type="file" multiple accept={STOCK_IMPORT_ACCEPT} data-import-type={PRODUCT_TYPES.COMPONENT} disabled={bulkImporting} onChange={importStockCardsFromFiles} className="hidden" />
+                  </label>
+                  <label className="block cursor-pointer rounded-lg px-3 py-2.5 hover:bg-blue-50">
+                    <span className="block text-sm font-black text-blue-800">Ana ürün kartları yükle</span>
+                    <span className="mt-0.5 block text-xs text-slate-500">Stok artırmadan ana ürün kartları oluşturulur.</span>
+                    <input type="file" multiple accept={STOCK_IMPORT_ACCEPT} data-import-type={PRODUCT_TYPES.MAIN} disabled={bulkImporting} onChange={importStockCardsFromFiles} className="hidden" />
+                  </label>
+                  <div className="my-1 border-t border-slate-100" />
+                  <a href="/templates/CORVIAN_Stok_Giris_Sablonu.xlsx" download onClick={(event) => event.currentTarget.closest("details")?.removeAttribute("open")} className="block rounded-lg px-3 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-100">
+                    Önce stok giriş şablonunu indir
+                  </a>
+                </div>
+              </details>
               <button
                 type="button"
                 onClick={loadStock}
-                className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-bold text-white hover:bg-slate-800"
+                className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-600 hover:bg-slate-50"
               >
                 Yenile
               </button>
@@ -2970,6 +3085,75 @@ export default function StockPage() {
           </div>
         </div>
       </main>
+
+      {stockCardModalOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/60 p-4">
+          <button type="button" aria-label="Stok kartı penceresini kapat" onClick={() => !creatingStockCard && setStockCardModalOpen(false)} className="absolute inset-0 cursor-default" />
+          <form onSubmit={createStockCard} className="relative max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-2xl font-black text-slate-900">Yeni Stok Kartı Aç</h2>
+                <p className="mt-1 text-sm text-slate-500">Tek bir ürünü başlangıç stoku ve fiyat bilgisiyle kaydedin.</p>
+              </div>
+              <button type="button" disabled={creatingStockCard} onClick={() => setStockCardModalOpen(false)} className="rounded-lg bg-slate-100 px-3 py-2 text-sm font-black text-slate-600 disabled:opacity-40">Kapat</button>
+            </div>
+
+            {message && <div className="mt-4 rounded-xl bg-amber-50 p-3 text-sm font-bold text-amber-900">{message}</div>}
+
+            <div className="mt-6 grid gap-4 md:grid-cols-2">
+              <label className="text-sm font-bold text-slate-700">
+                Ürün kodu *
+                <input autoFocus required value={stockCardForm.product_code} onChange={(event) => updateStockCardForm("product_code", event.target.value)} className="mt-2 w-full rounded-xl border border-slate-300 p-3 text-sm" placeholder="Örn. SINYAL" />
+              </label>
+              <label className="text-sm font-bold text-slate-700">
+                Ürün adı / açıklaması *
+                <input required value={stockCardForm.product_name} onChange={(event) => updateStockCardForm("product_name", event.target.value)} className="mt-2 w-full rounded-xl border border-slate-300 p-3 text-sm" placeholder="Ürünün açık adı" />
+              </label>
+              <label className="text-sm font-bold text-slate-700">
+                Marka
+                <input value={stockCardForm.brand} onChange={(event) => updateStockCardForm("brand", event.target.value)} className="mt-2 w-full rounded-xl border border-slate-300 p-3 text-sm" />
+              </label>
+              <label className="text-sm font-bold text-slate-700">
+                Birim
+                <select value={stockCardForm.unit} onChange={(event) => updateStockCardForm("unit", event.target.value)} className="mt-2 w-full rounded-xl border border-slate-300 bg-white p-3 text-sm">
+                  <option value="adet">adet</option><option value="metre">metre</option><option value="kg">kg</option><option value="gr">gr</option><option value="litre">litre</option><option value="paket">paket</option><option value="koli">koli</option><option value="set">set</option><option value="takım">takım</option>
+                </select>
+              </label>
+              <label className="text-sm font-bold text-slate-700">
+                Başlangıç stoku
+                <input type="number" min="0" step="0.01" value={stockCardForm.quantity} onChange={(event) => updateStockCardForm("quantity", event.target.value)} className="mt-2 w-full rounded-xl border border-slate-300 p-3 text-sm" />
+              </label>
+              <div className="grid grid-cols-[minmax(0,1fr)_110px] gap-2">
+                <label className="text-sm font-bold text-slate-700">
+                  Birim fiyat
+                  <input type="number" min="0" step="0.01" value={stockCardForm.unit_price} onChange={(event) => updateStockCardForm("unit_price", event.target.value)} className="mt-2 w-full rounded-xl border border-slate-300 p-3 text-sm" />
+                </label>
+                <label className="text-sm font-bold text-slate-700">
+                  Para birimi
+                  <select value={stockCardForm.currency} onChange={(event) => updateStockCardForm("currency", event.target.value)} className="mt-2 w-full rounded-xl border border-slate-300 bg-white p-3 text-sm">
+                    <option value="TRY">TRY</option><option value="EUR">EUR</option><option value="USD">USD</option><option value="GBP">GBP</option>
+                  </select>
+                </label>
+              </div>
+              <label className="text-sm font-bold text-slate-700">
+                Minimum stok
+                <input type="number" min="0" step="0.01" value={stockCardForm.min_stock} onChange={(event) => updateStockCardForm("min_stock", event.target.value)} className="mt-2 w-full rounded-xl border border-slate-300 p-3 text-sm" />
+              </label>
+              <label className="text-sm font-bold text-slate-700">
+                Kritik stok
+                <input type="number" min="0" step="0.01" value={stockCardForm.critical_stock} onChange={(event) => updateStockCardForm("critical_stock", event.target.value)} className="mt-2 w-full rounded-xl border border-slate-300 p-3 text-sm" />
+              </label>
+            </div>
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button type="button" disabled={creatingStockCard} onClick={() => setStockCardModalOpen(false)} className="rounded-xl border border-slate-300 px-5 py-3 text-sm font-black text-slate-700 disabled:opacity-40">Vazgeç</button>
+              <button type="submit" disabled={creatingStockCard} className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-black text-white hover:bg-blue-700 disabled:bg-slate-300">
+                {creatingStockCard ? "Kaydediliyor..." : "Stok Kartını Kaydet"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {stockImportPreview && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
