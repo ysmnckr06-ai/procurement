@@ -500,25 +500,73 @@ function movementPartnerName(movement) {
   return movement.partner_name || movement.supplier_name || movement.vendor_name || movement.customer_name || movement.company_name || "-";
 }
 
-function movementReference(movement) {
+function movementExternalDocument(movement) {
   return movement.order_code
     || movement.order_number
     || movement.purchase_order_code
     || movement.delivery_number
     || movement.request_code
     || movement.invoice_number
-    || movement.source_file
     || movement.reference
     || movement.document_no
     || "-";
 }
 
-function movementFlowInfo(movement, project = null) {
+function movementSystemReference(movement) {
+  const direction = movement.movement_type === "out" ? "CKS" : "GRS";
+  const rawDate = String(movement.movement_date || movement.created_at || "").slice(0, 10).replace(/\D/g, "");
+  const datePart = rawDate || "TARIHSIZ";
+  const idPart = String(movement.id || "").replace(/[^a-z0-9]/gi, "").slice(-8).toUpperCase();
+  const productPart = String(movement.product_code || "KAYIT").replace(/[^a-z0-9]/gi, "").slice(0, 8).toUpperCase();
+  return `STK-${direction}-${datePart}-${idPart || productPart || "KAYIT"}`;
+}
+
+function projectCompanyName(project) {
+  return project?.customer_partner_name
+    || project?.customer_name
+    || project?.customer
+    || project?.client_name
+    || project?.client
+    || project?.firma
+    || project?.firmaAdi
+    || project?.musteri_adi
+    || project?.musteriAdi
+    || "-";
+}
+
+function projectExportName(project) {
+  if (!project) return "-";
+  const code = project.project_code || project.proje_kodu || project.projeKodu || "";
+  const name = project.project_name || project.name || project.title || project.proje_adi || project.projeAdi || "";
+  return [code, name].filter(Boolean).join(" · ") || "-";
+}
+
+function movementMainProductName(movement, projectItems = []) {
+  const directName = movement.main_product_name || movement.parent_name || movement.section_name;
+  if (directName) return directName;
+
+  const linkedItem = projectItems.find((item) => item.id === movement.project_item_id);
+  const parentId = movement.parent_item_id || linkedItem?.parent_item_id;
+  const parentItem = parentId ? projectItems.find((item) => item.id === parentId) : null;
+  return parentItem?.product_name
+    || parentItem?.description
+    || parentItem?.name
+    || linkedItem?.parent_name
+    || linkedItem?.section_name
+    || "-";
+}
+
+function movementFlowInfo(movement, project = null, projectItems = []) {
   const source = movement.source || movement.notes || "";
   const normalizedSource = normalizeStockText(source);
   const isOut = movement.movement_type === "out";
-  const partner = movementPartnerName(movement);
+  const projectCompany = projectCompanyName(project);
+  const partner = isOut && projectCompany !== "-" ? projectCompany : movementPartnerName(movement);
   const projectName = project ? projectDisplayName(project) : "";
+  const exportProjectName = projectExportName(project);
+  const mainProductName = movementMainProductName(movement, projectItems);
+  const systemReference = movementSystemReference(movement);
+  const externalDocument = movementExternalDocument(movement);
 
   if (isOut) {
     let target = projectName ? `Proje çıkışı: ${projectName}` : "Stoktan çıkış";
@@ -531,7 +579,11 @@ function movementFlowInfo(movement, project = null) {
       source: "Depo / mevcut stok",
       target,
       partner,
-      reference: movementReference(movement),
+      company: projectCompany,
+      project: exportProjectName,
+      mainProduct: mainProductName,
+      reference: systemReference,
+      externalDocument,
       detail: source || target,
     };
   }
@@ -550,7 +602,11 @@ function movementFlowInfo(movement, project = null) {
     source: partner !== "-" ? `${entrySource}: ${partner}` : entrySource,
     target: "Depo stoğu",
     partner,
-    reference: movementReference(movement),
+    company: partner,
+    project: exportProjectName,
+    mainProduct: mainProductName,
+    reference: systemReference,
+    externalDocument,
     detail: source || entrySource,
   };
 }
@@ -839,31 +895,32 @@ function buildProductExportRows(productList, movements, projectItems, projects, 
   });
 }
 
-function buildMovementExportRows(movementList, projects, fallbackProduct = null) {
+function buildMovementExportRows(movementList, projects, projectItems = [], fallbackProduct = null) {
   return movementList.map((movement) => {
     const project = projects.find((item) => item.id === movement.project_id);
-    const flow = movementFlowInfo(movement, project);
+    const flow = movementFlowInfo(movement, project, projectItems);
     const quantity = Number(movement.quantity || 0);
     const unitPrice = Number(movement.unit_price || movement.purchase_unit_price || movement.price || movement.unit_cost || 0);
     const total = Number(movement.total_amount || movement.total || quantity * unitPrice || 0);
     return {
       "Hareket tarihi": formatDate(movement.movement_date || movement.created_at),
-      "Kayit tarihi": formatDate(movement.created_at),
-      "Urun kodu": movement.product_code || fallbackProduct?.product_code || "-",
-      "Urun aciklamasi": movement.product_name || fallbackProduct?.product_name || "-",
-      Yon: flow.direction,
+      "Kayıt tarihi": formatDate(movement.created_at),
+      "Hareket referansı": flow.reference,
+      "Ürün kodu": movement.product_code || fallbackProduct?.product_code || "-",
+      "Ürün açıklaması": movement.product_name || fallbackProduct?.product_name || "-",
+      Yön: flow.direction,
       "Hareket tipi": movementStatus(movement),
-      "Giris kaynagi": flow.source,
-      "Cikis hedefi": flow.target,
-      Firma: flow.partner,
-      "Belge / referans": flow.reference,
+      "Kaynak / hedef": movement.movement_type === "out" && project ? "Depo → Proje" : movement.movement_type === "out" ? flow.target : flow.source,
+      Firma: flow.company,
+      Proje: flow.project,
+      "Ana ürün": flow.mainProduct,
+      "Harici belge no": flow.externalDocument,
       Miktar: quantity,
       Birim: movement.unit || fallbackProduct?.unit || "adet",
       "Birim fiyat": unitPrice,
       "Toplam tutar": total,
       "Para birimi": movement.currency || fallbackProduct?.last_currency || "TRY",
-      Proje: project ? projectDisplayName(project) : "-",
-      Aciklama: flow.detail,
+      Açıklama: flow.detail,
     };
   });
 }
@@ -2387,7 +2444,7 @@ export default function StockPage() {
       "Proje sayısı": row["Proje sayısı"],
       "Kaynak / not": row["Kaynak / not"],
     }));
-    const movementRows = buildMovementExportRows(movements, projects);
+    const movementRows = buildMovementExportRows(movements, projects, projectItems);
     await downloadExcelWorkbook(`stok-kartlari-${exportDateStamp()}`, [
       {
         name: "Stok ve Satinalma",
@@ -2422,7 +2479,7 @@ export default function StockPage() {
 
   async function exportMovementsExcel() {
     const { companyName } = await fetchCompanyBranding(supabase);
-    const movementRows = buildMovementExportRows(visibleMovementRows, projects, selectedProduct);
+    const movementRows = buildMovementExportRows(visibleMovementRows, projects, projectItems, selectedProduct);
     await downloadExcelWorkbook(`stok-hareketleri-${exportDateStamp()}`, [
       { name: "Hareketler", rows: movementRows },
     ], companyName);
@@ -2430,7 +2487,7 @@ export default function StockPage() {
 
   async function exportMovementsPdf() {
     const { companyName } = await fetchCompanyBranding(supabase);
-    const movementRows = buildMovementExportRows(visibleMovementRows, projects, selectedProduct);
+    const movementRows = buildMovementExportRows(visibleMovementRows, projects, projectItems, selectedProduct);
     const title = selectedProduct ? `${selectedProduct.product_name} - Stok Hareketleri` : "Stok Hareketleri";
     await downloadPdfTable(`stok-hareketleri-${exportDateStamp()}`, title, movementRows, companyName);
   }
@@ -2439,7 +2496,7 @@ export default function StockPage() {
     if (!selectedProduct) return;
     const { companyName } = await fetchCompanyBranding(supabase);
     const usageRows = buildProductUsageExportRows(selectedProduct, selectedProjectAllocation);
-    const movementRows = buildMovementExportRows(selectedMovements, projects, selectedProduct);
+    const movementRows = buildMovementExportRows(selectedMovements, projects, projectItems, selectedProduct);
     await downloadExcelWorkbook(`${selectedProduct.product_code || selectedProduct.product_name}-kullanim-${exportDateStamp()}`, [
       { name: "Proje Kullanim", rows: usageRows },
       { name: "Hareketler", rows: movementRows },
@@ -3542,7 +3599,7 @@ export default function StockPage() {
                     {selectedMovements.map((movement) => {
                       const status = movementStatus(movement);
                       const movementProject = projects.find((project) => project.id === movement.project_id);
-                      const movementFlow = movementFlowInfo(movement, movementProject);
+                      const movementFlow = movementFlowInfo(movement, movementProject, projectItems);
                       const movementQuantity = Number(movement.quantity || 0);
                       const movementUnitPrice = Number(movement.unit_price || movement.purchase_unit_price || movement.price || movement.unit_cost || 0);
                       const movementTotal = Number(movement.total_amount || movement.total || movementQuantity * movementUnitPrice || 0);
@@ -3560,29 +3617,35 @@ export default function StockPage() {
                               />
                               <div className="min-w-0">
                                 <div className="whitespace-normal break-words font-bold text-slate-900" title={movement.product_name || status}>{movement.product_name || status}</div>
-                                <div className="mt-1 whitespace-normal break-words text-xs text-slate-500" title={`${movement.partner_name || movement.supplier_name || "-"} · ${formatDate(movement.movement_date)} · ${movement.source || "-"}`}>
-                                {movement.partner_name || movement.supplier_name || "-"} · {formatDate(movement.movement_date)} · {movement.source || "-"}
+                                <div className="mt-1 whitespace-normal break-words text-xs text-slate-500" title={`${movementFlow.company} · ${formatDate(movement.movement_date)} · ${movement.source || "-"}`}>
+                                {movementFlow.company} · {formatDate(movement.movement_date)} · {movement.source || "-"}
                                 </div>
                                 <div className="mt-2 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
                                   <div className="rounded-lg bg-slate-50 p-2">
                                     <div className="font-bold text-slate-500">Proje</div>
-                                    <div className="truncate font-black text-slate-900" title={projectDisplayName(movementProject)}>{movementProject ? projectDisplayName(movementProject) : "-"}</div>
+                                    <div className="truncate font-black text-slate-900" title={movementFlow.project}>{movementFlow.project}</div>
                                   </div>
                                   <div className="rounded-lg bg-emerald-50 p-2">
-                                    <div className="font-bold text-emerald-700">Giriş kaynağı</div>
-                                    <div className="whitespace-normal break-words font-black text-emerald-900" title={movementFlow.source}>{movementFlow.source}</div>
+                                    <div className="font-bold text-emerald-700">Kaynak / hedef</div>
+                                    <div className="whitespace-normal break-words font-black text-emerald-900" title={movement.movement_type === "out" && movementProject ? "Depo → Proje" : movementFlow.source}>
+                                      {movement.movement_type === "out" && movementProject ? "Depo → Proje" : movementFlow.source}
+                                    </div>
                                   </div>
                                   <div className="rounded-lg bg-blue-50 p-2">
-                                    <div className="font-bold text-blue-700">Çıkış hedefi</div>
-                                    <div className="whitespace-normal break-words font-black text-blue-900" title={movementFlow.target}>{movementFlow.target}</div>
+                                    <div className="font-bold text-blue-700">Ana ürün</div>
+                                    <div className="whitespace-normal break-words font-black text-blue-900" title={movementFlow.mainProduct}>{movementFlow.mainProduct}</div>
                                   </div>
                                   <div className="rounded-lg bg-slate-50 p-2">
-                                    <div className="font-bold text-slate-500">Firma / kaynak</div>
-                                    <div className="whitespace-normal break-words font-black text-slate-900" title={movementFlow.partner}>{movementFlow.partner}</div>
+                                    <div className="font-bold text-slate-500">Firma</div>
+                                    <div className="whitespace-normal break-words font-black text-slate-900" title={movementFlow.company}>{movementFlow.company}</div>
                                   </div>
                                   <div className="rounded-lg bg-slate-50 p-2">
-                                    <div className="font-bold text-slate-500">Belge / referans</div>
+                                    <div className="font-bold text-slate-500">Hareket referansı</div>
                                     <div className="whitespace-normal break-words font-black text-slate-900" title={movementFlow.reference}>{movementFlow.reference}</div>
+                                  </div>
+                                  <div className="rounded-lg bg-slate-50 p-2">
+                                    <div className="font-bold text-slate-500">Harici belge no</div>
+                                    <div className="whitespace-normal break-words font-black text-slate-900" title={movementFlow.externalDocument}>{movementFlow.externalDocument}</div>
                                   </div>
                                   <div className="rounded-lg bg-slate-50 p-2">
                                     <div className="font-bold text-slate-500">Birim fiyat</div>
