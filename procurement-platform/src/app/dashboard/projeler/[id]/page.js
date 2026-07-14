@@ -607,6 +607,22 @@ export default function ProjectDetailPage() {
     );
   }
 
+  function pricingFromQuoteTotal(totalValue, quantityValue, fallbackUnitPrice = 0) {
+    const total = Number(totalValue || 0) || 0;
+    const quantity = Number(quantityValue || 0) || 0;
+    const fallbackUnit = Number(fallbackUnitPrice || 0) || 0;
+    const unitPrice = total > 0 && quantity > 0
+      ? total / quantity
+      : fallbackUnit > 0
+        ? fallbackUnit
+        : total;
+
+    return {
+      unitPrice,
+      total: total > 0 ? total : quantity > 0 ? quantity * unitPrice : 0,
+    };
+  }
+
   function ratesFromCompanySettings() {
     return {
       date: "Kayıtlı kur",
@@ -1435,7 +1451,35 @@ export default function ProjectDetailPage() {
     setExpenses(expenseRes.data || []);
     setRevisions(revisionRes.data || []);
     setProducts(productRes.data || []);
-    const loadedItems = itemRes.data || [];
+    const storedItems = itemRes.data || [];
+    const storedParentIdsWithChildren = new Set(storedItems.map((item) => item.parent_item_id).filter(Boolean));
+    const quotePricingRepairs = [];
+    const loadedItems = storedItems.map((item) => {
+      const isMainItem = item.item_type === "main" || storedParentIdsWithChildren.has(item.id);
+      const quantity = Number(item.estimated_quantity || 0) || 0;
+      const quoteTotal = Number(item.quote_total || item.estimated_total || 0) || 0;
+      if (!isMainItem || quantity <= 0 || quoteTotal <= 0) return item;
+
+      const quotePricing = pricingFromQuoteTotal(
+        quoteTotal,
+        quantity,
+        Number(item.quote_unit_price || item.estimated_unit_price || 0),
+      );
+      const storedUnitPrice = Number(item.quote_unit_price || item.estimated_unit_price || 0) || 0;
+      const needsRepair = Math.abs(storedUnitPrice - quotePricing.unitPrice) > 0.000001
+        || Math.abs(Number(item.estimated_total || 0) - quotePricing.total) > 0.000001;
+      if (!needsRepair) return item;
+
+      const repairedItem = {
+        ...item,
+        estimated_unit_price: quotePricing.unitPrice,
+        quote_unit_price: quotePricing.unitPrice,
+        estimated_total: quotePricing.total,
+        quote_total: quotePricing.total,
+      };
+      quotePricingRepairs.push(repairedItem);
+      return repairedItem;
+    });
     const linkedItems = loadedItems;
     const linkedSourceFileNames = Array.from(new Set(
       linkedItems
@@ -1593,6 +1637,32 @@ export default function ProjectDetailPage() {
     setAllOrders(allOrderRows);
     setStockMovements(movementRes.data || []);
     if (settingsRes.data?.[0]) setCompanySettings(settingsRes.data[0]);
+
+    if (quotePricingRepairs.length > 0) {
+      void Promise.all(
+        quotePricingRepairs.map((item) =>
+          supabase
+            .from("project_items")
+            .update({
+              estimated_unit_price: item.estimated_unit_price,
+              quote_unit_price: item.quote_unit_price,
+              estimated_total: item.estimated_total,
+              quote_total: item.quote_total,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", item.id)
+            .eq("project_id", projectId)
+            .eq("user_id", user.id),
+        ),
+      ).then((results) => {
+        const failedCount = results.filter((result) => result.error).length;
+        if (failedCount > 0) {
+          console.warn(`${failedCount} ana ürünün teklif birim fiyatı kalıcı olarak düzeltilemedi.`);
+        }
+      }).catch((error) => {
+        console.warn("Ana ürün teklif birim fiyatları kalıcı olarak düzeltilemedi:", error);
+      });
+    }
 
     void withTimeout(
       ensureProductCardsForProjectItems(loadedItems, user.id, productRes.data || []),
@@ -2929,8 +2999,8 @@ export default function ProjectDetailPage() {
     const quoteUnitPrice = Number(item.quote_unit_price || item.estimated_unit_price || 0);
     const quoteTotal = sectionQuoteTotalFor(item.product_name, Number(item.quote_total || item.estimated_total || 0) || 0);
     if (quoteUnitPrice > 0 || quoteTotal > 0) {
-      const unitPrice = quoteUnitPrice || (quantity > 0 ? quoteTotal / quantity : quoteTotal);
-      return { unitPrice, total: quantity > 0 ? quantity * unitPrice : quoteTotal, source: "Tekliften", orderId: null, sourceDate: item.updated_at || item.created_at };
+      const pricing = pricingFromQuoteTotal(quoteTotal, quantity, quoteUnitPrice);
+      return { unitPrice: pricing.unitPrice, total: pricing.total, source: "Tekliften", orderId: null, sourceDate: item.updated_at || item.created_at };
     }
 
     const projectOrderMatch = bestPurchaseLineForItem(item, projectOrderLines);
@@ -3209,6 +3279,7 @@ export default function ProjectDetailPage() {
       raw.section_name || title,
       Number(group.main_product?.estimated_total || raw.section_total || raw.total || 0) || 0,
     );
+    const quotePricing = pricingFromQuoteTotal(quoteTotal, parentQuantity);
 
     return {
       user_id: userId,
@@ -3219,8 +3290,8 @@ export default function ProjectDetailPage() {
       product_name: title,
       unit: raw.unit || "adet",
       estimated_quantity: parentQuantity,
-      estimated_unit_price: quoteTotal,
-      quote_unit_price: quoteTotal,
+      estimated_unit_price: quotePricing.unitPrice,
+      quote_unit_price: quotePricing.unitPrice,
       currency: raw.currency || "TRY",
       estimated_total: quoteTotal,
       quote_total: quoteTotal,
@@ -4055,16 +4126,23 @@ export default function ProjectDetailPage() {
   }
 
   function rawToProjectRow(row, fallbackStatus = "Bekliyor") {
+    const quantity = Number(row.estimated_quantity || 0) || 0;
+    const quoteTotal = rowQuoteTotal(row);
+    const quotePricing = pricingFromQuoteTotal(
+      quoteTotal,
+      quantity,
+      Number(row.quote_unit_price || row.estimated_unit_price || 0),
+    );
     return {
       product_code: String(row.product_code || "").trim().toUpperCase(),
       brand: row.brand || "",
       product_name: String(row.product_name || "").trim(),
       unit: row.unit || "adet",
-      estimated_quantity: Number(row.estimated_quantity || 0) || 0,
-      estimated_unit_price: Number(row.estimated_unit_price || 0),
-      quote_unit_price: Number(row.quote_unit_price || row.estimated_unit_price || 0),
-      estimated_total: Number(row.estimated_total || 0),
-      quote_total: rowQuoteTotal(row),
+      estimated_quantity: quantity,
+      estimated_unit_price: quotePricing.unitPrice,
+      quote_unit_price: quotePricing.unitPrice,
+      estimated_total: quotePricing.total,
+      quote_total: quotePricing.total,
       status: row.status || fallbackStatus,
       note: row.note || row.source_file || row.candidate_reason || "",
       source_file: row.source_file || "",
@@ -4222,6 +4300,8 @@ export default function ProjectDetailPage() {
 
     const parentPayload = hierarchyGroups.map((group) => {
       const quoteTotal = sectionQuoteTotalFor(group.section_name || group.main.product_name, Number(group.main.quote_total || group.main.estimated_total || 0));
+      const parentQuantity = Number(group.main.estimated_quantity || 0) || 0;
+      const quotePricing = pricingFromQuoteTotal(quoteTotal, parentQuantity);
       return {
       user_id: user.id,
       project_id: projectId,
@@ -4229,9 +4309,9 @@ export default function ProjectDetailPage() {
       product_code: group.main.product_code,
       product_name: group.main.product_name,
       unit: group.main.unit || "adet",
-      estimated_quantity: Number(group.main.estimated_quantity || 0) || 0,
-      estimated_unit_price: quoteTotal,
-      quote_unit_price: quoteTotal,
+      estimated_quantity: parentQuantity,
+      estimated_unit_price: quotePricing.unitPrice,
+      quote_unit_price: quotePricing.unitPrice,
       estimated_total: quoteTotal,
       quote_total: quoteTotal,
       status: group.main.status || "Bekliyor",
@@ -4795,13 +4875,13 @@ export default function ProjectDetailPage() {
       const payload = rowsToImport.map((row) => {
         const quantity = Number(row.estimated_quantity || 0);
         const total = Number(row.estimated_total || 0);
-        const unitPrice = Number(row.estimated_unit_price || 0) || (quantity > 0 && total > 0 ? total / quantity : 0);
+        const quotePricing = pricingFromQuoteTotal(total, quantity, Number(row.estimated_unit_price || 0));
         return {
           ...previewRowPayload(row, user.id, null, null, { forceStandalone: true, itemType: "main" }),
-          estimated_unit_price: unitPrice,
-          quote_unit_price: unitPrice,
-          estimated_total: total || quantity * unitPrice,
-          quote_total: total || quantity * unitPrice,
+          estimated_unit_price: quotePricing.unitPrice,
+          quote_unit_price: quotePricing.unitPrice,
+          estimated_total: quotePricing.total,
+          quote_total: quotePricing.total,
           status: "Bekliyor",
           note: row.note || "Düz ana ürün listesinden bağımsız ana kalem olarak aktarıldı",
         };
@@ -4905,6 +4985,7 @@ export default function ProjectDetailPage() {
       }
 
       const quoteTotal = Number(parentSourceRow.estimated_total || 0) || childRows.reduce((sum, row) => sum + Number(row.estimated_total || 0), 0);
+      const quotePricing = pricingFromQuoteTotal(quoteTotal, parentQuantity);
       const parentPayload = [{
         user_id: user.id,
         project_id: projectId,
@@ -4914,8 +4995,8 @@ export default function ProjectDetailPage() {
         product_name: parentName,
         unit: parentSourceRow.unit || "adet",
         estimated_quantity: parentQuantity,
-        estimated_unit_price: quoteTotal,
-        quote_unit_price: quoteTotal,
+        estimated_unit_price: quotePricing.unitPrice,
+        quote_unit_price: quotePricing.unitPrice,
         estimated_total: quoteTotal,
         quote_total: quoteTotal,
         status: "Bekliyor",
@@ -5065,6 +5146,7 @@ export default function ProjectDetailPage() {
       const parentPayload = validHierarchyEntries.map(([category, rows]) => {
         const quoteTotal = sectionQuoteTotalFor(category, rows.reduce((sum, row) => sum + Number(row.estimated_total || 0), 0));
         const parentQuantity = Number(rows.find((row) => Number(row.section_quantity || 0) > 0)?.section_quantity || 0) || 1;
+        const quotePricing = pricingFromQuoteTotal(quoteTotal, parentQuantity);
         return {
           user_id: user.id,
           project_id: projectId,
@@ -5073,8 +5155,8 @@ export default function ProjectDetailPage() {
           product_name: category,
           unit: "adet",
           estimated_quantity: parentQuantity,
-          estimated_unit_price: quoteTotal,
-          quote_unit_price: quoteTotal,
+          estimated_unit_price: quotePricing.unitPrice,
+          quote_unit_price: quotePricing.unitPrice,
           estimated_total: quoteTotal,
           quote_total: quoteTotal,
           status: "Bekliyor",
@@ -6186,11 +6268,15 @@ export default function ProjectDetailPage() {
     const nextQuantity = Math.max(oldQuantity + Number(delta || 0), 0);
     if (nextQuantity === oldQuantity) return;
 
-    const unitPrice = Number(item.estimated_unit_price || item.quote_unit_price || 0);
+    const unitPrice = Number(resolveProjectItemPrice(item).unitPrice || 0);
+    const nextTotal = nextQuantity * unitPrice;
     const nextItem = {
       ...item,
       estimated_quantity: nextQuantity,
-      estimated_total: nextQuantity * unitPrice,
+      estimated_unit_price: unitPrice,
+      quote_unit_price: unitPrice,
+      estimated_total: nextTotal,
+      quote_total: nextTotal,
       updated_at: new Date().toISOString(),
     };
 
@@ -6198,7 +6284,10 @@ export default function ProjectDetailPage() {
       .from("project_items")
       .update({
         estimated_quantity: nextItem.estimated_quantity,
+        estimated_unit_price: nextItem.estimated_unit_price,
+        quote_unit_price: nextItem.quote_unit_price,
         estimated_total: nextItem.estimated_total,
+        quote_total: nextItem.quote_total,
         updated_at: nextItem.updated_at,
       })
       .eq("id", item.id)
@@ -6229,7 +6318,7 @@ export default function ProjectDetailPage() {
 
     const draft = itemPriceDrafts[item.id];
     const nextUnitPrice = Number(draft ?? item.estimated_unit_price ?? 0);
-    const oldUnitPrice = Number(item.estimated_unit_price || item.quote_unit_price || 0);
+    const oldUnitPrice = Number(resolveProjectItemPrice(item).unitPrice || 0);
     const nextCurrency = itemCurrencyDrafts[item.id] || item.currency || projectCurrencyForDisplay();
     const oldCurrency = item.currency || projectCurrencyForDisplay();
     if (nextUnitPrice === oldUnitPrice && nextCurrency === oldCurrency) return;
@@ -6238,7 +6327,9 @@ export default function ProjectDetailPage() {
     const nextItem = {
       ...item,
       estimated_unit_price: nextUnitPrice,
+      quote_unit_price: nextUnitPrice,
       estimated_total: quantity * nextUnitPrice,
+      quote_total: quantity * nextUnitPrice,
       currency: nextCurrency,
       updated_at: new Date().toISOString(),
     };
@@ -6247,7 +6338,9 @@ export default function ProjectDetailPage() {
       .from("project_items")
       .update({
         estimated_unit_price: nextItem.estimated_unit_price,
+        quote_unit_price: nextItem.quote_unit_price,
         estimated_total: nextItem.estimated_total,
+        quote_total: nextItem.quote_total,
         currency: nextItem.currency,
         updated_at: nextItem.updated_at,
       })
@@ -9179,6 +9272,11 @@ export default function ProjectDetailPage() {
                   const stock = stockWarning(item);
                   const stockInfo = stockInfoForItem(item);
                   const quoteTotal = sectionQuoteTotalFor(item.product_name, Number(item.quote_total || item.estimated_total || 0) || 0);
+                  const quotePricing = pricingFromQuoteTotal(
+                    quoteTotal,
+                    parentProcess.parentQuantity,
+                    Number(item.quote_unit_price || item.estimated_unit_price || 0),
+                  );
                   const stageDistribution = mainStageDrafts[item.id] || parseStageDistribution(item);
 
                   return (
@@ -9214,7 +9312,12 @@ export default function ProjectDetailPage() {
                               {productCardLabel(item) && (
                                 <span className={`rounded-full px-2 py-1 ${productCardLabelClass(item)}`}>{productCardLabel(item)}</span>
                               )}
-                              <span className="text-emerald-700">Teklif bedeli: {formatMoney(quoteTotal, projectCurrencyForDisplay())}</span>
+                              <span className="text-emerald-700">
+                                Teklif bedeli: {formatMoney(quoteTotal, projectCurrencyForDisplay())}
+                                {parentProcess.parentQuantity > 0 && (
+                                  <> · Birim: {formatMoney(quotePricing.unitPrice, projectCurrencyForDisplay())}/{item.unit || "adet"}</>
+                                )}
+                              </span>
                             </div>
                             {stockInfo.isMainItem ? (
                               <div className="mt-3 flex flex-wrap items-end gap-2 rounded-xl bg-slate-50 p-3 text-xs font-bold">

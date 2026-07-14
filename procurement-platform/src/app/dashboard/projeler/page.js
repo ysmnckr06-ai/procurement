@@ -113,9 +113,10 @@ function parsedRowTotal(row) {
 
 function parsedRowUnitPrice(row) {
   const quantity = parsedRowQuantity(row);
+  const total = parsedRowTotal(row);
   const directPrice = Number(row.estimated_unit_price ?? row.unit_price ?? 0) || 0;
-  if (directPrice > 0) return directPrice;
-  return quantity > 0 ? parsedRowTotal(row) / quantity : 0;
+  if (total > 0 && quantity > 0) return total / quantity;
+  return directPrice;
 }
 
 function sectionQuoteTotalForRows(name, rows, sections) {
@@ -922,6 +923,7 @@ export default function ProjectsPage() {
       }
 
       const quoteTotal = sectionQuoteTotalForRows(category, groupRows, sections);
+      const quoteUnitPrice = parentQuantity > 0 ? quoteTotal / parentQuantity : quoteTotal;
       parentPayload.push({
         user_id: userId,
         project_id: projectId,
@@ -930,8 +932,8 @@ export default function ProjectsPage() {
         product_name: category,
         unit: "adet",
         estimated_quantity: parentQuantity,
-        estimated_unit_price: quoteTotal,
-        quote_unit_price: quoteTotal,
+        estimated_unit_price: quoteUnitPrice,
+        quote_unit_price: quoteUnitPrice,
         estimated_total: quoteTotal,
         quote_total: quoteTotal,
         currency: groupRows[0]?.currency || projectPayload.estimated_budget_currency || projectPayload.contract_currency || getBaseCurrency(settings),
