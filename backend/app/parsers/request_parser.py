@@ -900,10 +900,30 @@ def parse_stock_replenishment_image(img, file_name):
     word_rows = group_words_by_rows(ocr_words(processed))
     header_row = None
 
-    for candidate in word_rows:
-        header_text = normalize_text(" ".join(word["text"] for word in candidate))
-        if "stok" in header_text and "risk" in header_text and "depo" in header_text and "aksiyon" in header_text:
-            header_row = candidate
+    # Excel wraps long headers into two visual OCR rows.  Evaluate nearby rows
+    # together so the stock-renewal and depot-action anchors stay detectable.
+    for index, candidate in enumerate(word_rows):
+        candidate_y = sum(word["cy"] for word in candidate) / len(candidate)
+        combined = list(candidate)
+        for neighbor in word_rows[index + 1:index + 3]:
+            neighbor_y = sum(word["cy"] for word in neighbor) / len(neighbor)
+            if abs(neighbor_y - candidate_y) <= 36:
+                combined.extend(neighbor)
+        header_text = normalize_text(" ".join(word["text"] for word in combined))
+        has_new_export_anchors = (
+            "yenileme" in header_text
+            and "ihtiyac" in header_text
+            and "depo" in header_text
+            and "aksiyon" in header_text
+        )
+        has_compact_export_anchors = (
+            "stok" in header_text
+            and "risk" in header_text
+            and "depo" in header_text
+            and "aksiyon" in header_text
+        )
+        if has_new_export_anchors or has_compact_export_anchors:
+            header_row = combined
             break
 
     if not header_row:
@@ -919,27 +939,21 @@ def parse_stock_replenishment_image(img, file_name):
     code_header = first_word("kod")
     brand_header = first_word("marka")
     depot_header = first_word("depo")
-    risk_words = [
-        word for word in header_row
-        if "stok" in normalize_text(word["text"]) or "risk" in normalize_text(word["text"])
-    ]
+    description_header = first_word("urun", "uriin", "orin", "aciklama")
 
-    if not code_header or not brand_header or not depot_header or not risk_words:
+    if not depot_header or not description_header:
         return []
 
-    header_y = sum(word["cy"] for word in header_row) / len(header_row)
-    code_start = max(0, code_header["x"] - 60)
-    brand_start = brand_header["x"]
+    header_y = max(word["cy"] for word in header_row)
+    description_start = description_header["x"]
+    brand_start = (
+        brand_header["x"]
+        if brand_header
+        else max(0, int(description_start * 0.58))
+    )
+    code_start = max(0, code_header["x"] - 60) if code_header else 0
     depot_start = depot_header["x"]
-    risk_end = max(word["x"] + word["w"] for word in risk_words if word["x"] < depot_start)
-
-    description_candidates = [
-        word for word in header_row
-        if word["x"] > brand_start + 80 and word["x"] < risk_end
-    ]
-    if not description_candidates:
-        return []
-    description_start = min(word["x"] for word in description_candidates)
+    content_end = depot_start
 
     parsed_rows = []
     original_height, original_width = img.shape[:2]
@@ -954,13 +968,20 @@ def parse_stock_replenishment_image(img, file_name):
         code_parts = [
             word["text"] for word in word_row
             if code_start <= word["x"] < brand_start
+            and not (
+                str(word["text"]).strip().isdigit()
+                and word["x"] < max(30, brand_start * 0.25)
+            )
         ]
         code_text = clean_line(" ".join(code_parts))
+        code_tokens = code_text.split()
+        if len(code_tokens) > 1 and code_tokens[0].isdigit():
+            code_text = clean_line(" ".join(code_tokens[1:]))
 
         unit_word = next(
             (
                 word for word in word_row
-                if description_start < word["x"] < risk_end
+                if description_start < word["x"] < content_end
                 and (
                     normalize_text(word["text"]) in SUPPORTED_UNITS
                     or normalize_text(word["text"]) in UNIT_MAP
@@ -1016,6 +1037,10 @@ def parse_stock_replenishment_image(img, file_name):
                     lang=OCR_LANGUAGE,
                     config="--oem 3 --psm 7",
                 ))
+
+        code_tokens = code_text.split()
+        if len(code_tokens) > 1 and code_tokens[0].isdigit():
+            code_text = clean_line(" ".join(code_tokens[1:]))
 
         if not code_text or not any(char.isalnum() for char in code_text):
             continue

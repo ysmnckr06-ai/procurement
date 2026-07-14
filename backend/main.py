@@ -2108,7 +2108,13 @@ async def analyze_requests(
 
         except Exception as e:
             logger.debug("TALEP DOSYASI HATASI:", upload.filename, str(e))
-            warnings.append(f"Hata ({upload.filename}): {str(e)}")
+            error_text = str(e)
+            if "tesseract is not installed" in error_text.lower() or "tesseractnotfound" in error_text.lower():
+                warnings.append(
+                    f"Görsel okuma servisi şu anda kullanılamıyor ({upload.filename}). Lütfen kısa süre sonra tekrar deneyin."
+                )
+            else:
+                warnings.append(f"Hata ({upload.filename}): {error_text}")
 
     if not all_rows:
         return {
