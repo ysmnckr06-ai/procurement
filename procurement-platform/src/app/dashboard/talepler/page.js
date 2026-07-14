@@ -595,6 +595,13 @@ export default function TaleplerPage() {
   const [reportPath, setReportPath] = useState("");
   const [rows, setRows] = useState([]);
   const [createdUploadRequestId, setCreatedUploadRequestId] = useState("");
+  const [uploadRequestModal, setUploadRequestModal] = useState({
+    open: false,
+    requester: "",
+    department: "",
+    priority: "Normal",
+  });
+  const [uploadRequestError, setUploadRequestError] = useState("");
   const [uploadMatchDecisions, setUploadMatchDecisions] = useState({});
   const [resolvingUploadMatchIndex, setResolvingUploadMatchIndex] = useState(null);
   const [savedRequests, setSavedRequests] = useState([]);
@@ -981,6 +988,25 @@ export default function TaleplerPage() {
     setRows([]);
   };
 
+  const openUploadRequestModal = () => {
+    if (files.length === 0) {
+      setMessage("Lütfen dosya yükleyin.");
+      return;
+    }
+    setUploadRequestError("");
+    setUploadRequestModal((current) => ({ ...current, open: true }));
+  };
+
+  const closeUploadRequestModal = () => {
+    if (isLoading) return;
+    setUploadRequestError("");
+    setUploadRequestModal((current) => ({ ...current, open: false }));
+  };
+
+  const updateUploadRequestModal = (field, value) => {
+    setUploadRequestModal((current) => ({ ...current, [field]: value }));
+  };
+
   const handleAnalyze = async () => {
     if (isAnalyzingRef.current) return;
     isAnalyzingRef.current = true;
@@ -991,8 +1017,15 @@ export default function TaleplerPage() {
       return;
     }
 
+    if (!uploadRequestModal.requester.trim()) {
+      setUploadRequestError("Talebi açan kişi bilgisini girin.");
+      isAnalyzingRef.current = false;
+      return;
+    }
+
     setIsLoading(true);
     setMessage("");
+    setUploadRequestError("");
 
     const {
     data: { session },
@@ -1002,6 +1035,9 @@ export default function TaleplerPage() {
 
     const formData = new FormData();
     files.forEach((file) => formData.append("files", file));
+    formData.append("requester", uploadRequestModal.requester.trim());
+    formData.append("department", uploadRequestModal.department.trim());
+    formData.append("priority", uploadRequestModal.priority || "Normal");
 
 
 
@@ -1040,6 +1076,7 @@ export default function TaleplerPage() {
       if (data.requestId) {
         setExpandedRequestId(data.requestId);
         await loadRequests();
+        setUploadRequestModal({ open: false, requester: "", department: "", priority: "Normal" });
         setMessage(similarMatchCount > 0
           ? `${data.totalRows || uploadedRows.length || 0} kalem okundu. ${similarMatchCount} benzer ürün için onayınız gerekiyor.`
           : `${data.totalRows || uploadedRows.length || 0} kalemli talep oluşturuldu ve talep havuzuna eklendi ✅`);
@@ -1497,7 +1534,7 @@ export default function TaleplerPage() {
 
             <div className="mt-5 flex flex-wrap gap-3">
               <button type="button"
-                onClick={handleAnalyze}
+                onClick={openUploadRequestModal}
                 disabled={isLoading}
                 className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300"
               >
@@ -2000,6 +2037,82 @@ export default function TaleplerPage() {
 
         </div>
       </main>
+      {uploadRequestModal.open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              handleAnalyze();
+            }}
+            className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl"
+          >
+            <div className="text-xs font-black uppercase tracking-wide text-blue-700">Talep bilgisi</div>
+            <h2 className="mt-1 text-xl font-black text-slate-950">Talebi açan kişi kim?</h2>
+            <p className="mt-2 text-sm font-semibold text-slate-500">
+              Bu bilgiler talep havuzunda ve satın alma sürecinde gösterilir.
+            </p>
+
+            {uploadRequestError && (
+              <div role="alert" className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-800">
+                {uploadRequestError}
+              </div>
+            )}
+
+            <label className="mt-5 block text-sm font-bold text-slate-700">
+              Talebi açan kişi
+              <input
+                autoFocus
+                value={uploadRequestModal.requester}
+                onChange={(event) => updateUploadRequestModal("requester", event.target.value)}
+                className="mt-2 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                placeholder="Ad soyad"
+              />
+            </label>
+
+            <label className="mt-4 block text-sm font-bold text-slate-700">
+              Birim / departman
+              <input
+                value={uploadRequestModal.department}
+                onChange={(event) => updateUploadRequestModal("department", event.target.value)}
+                className="mt-2 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                placeholder="Satın alma, şantiye, depo..."
+              />
+            </label>
+
+            <label className="mt-4 block text-sm font-bold text-slate-700">
+              Aciliyet
+              <select
+                value={uploadRequestModal.priority}
+                onChange={(event) => updateUploadRequestModal("priority", event.target.value)}
+                className="mt-2 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              >
+                <option>Normal</option>
+                <option>Acil</option>
+                <option>Kritik</option>
+                <option>Düşük</option>
+              </select>
+            </label>
+
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={closeUploadRequestModal}
+                disabled={isLoading}
+                className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100"
+              >
+                Vazgeç
+              </button>
+              <button
+                type="submit"
+                disabled={isLoading || !uploadRequestModal.requester.trim()}
+                className="rounded-xl bg-blue-700 px-5 py-3 text-sm font-black text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+              >
+                {isLoading ? "Oluşturuluyor..." : "Talep Listesi Oluştur"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
       {processModal.request && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4">
           <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">

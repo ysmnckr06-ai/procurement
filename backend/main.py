@@ -2060,10 +2060,19 @@ def download_report(file_name: str, authorization: str = Header(None)):
 @app.post("/analyze-requests")
 async def analyze_requests(
     files: list[UploadFile] = File(...),
+    requester: str = Form(""),
+    department: str = Form(""),
+    priority: str = Form("Normal"),
     authorization: str = Header(None),
     ):
     user = verify_user_token(authorization)
     user_id = user["id"]
+    requester = str(requester or "").strip()[:160]
+    department = str(department or "").strip()[:160]
+    priority = str(priority or "Normal").strip()[:40] or "Normal"
+
+    if not requester:
+        raise HTTPException(status_code=400, detail="Talebi açan kişi bilgisi zorunludur.")
 
     all_rows = []
     warnings = []
@@ -2246,6 +2255,9 @@ async def analyze_requests(
                     if item.get("talepTuru") == "stok_yenileme"
                     else "file_upload"
                 ),
+                "requester": requester,
+                "department": department,
+                "priority": priority,
                 "sourceFile": item.get("kaynakDosya", ""),
                 "sourceType": item.get("kaynakTipi", ""),
                 "quantitySource": item.get("miktarKaynagi", ""),
