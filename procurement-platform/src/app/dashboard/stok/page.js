@@ -1190,6 +1190,8 @@ export default function StockPage() {
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [expandedProjectKeys, setExpandedProjectKeys] = useState([]);
   const [productForm, setProductForm] = useState({
+    product_code: "",
+    product_name: "",
     brand: "",
     min_stock: "",
     critical_stock: "",
@@ -1232,11 +1234,13 @@ export default function StockPage() {
 
   useEffect(() => {
     if (!selectedProduct) {
-      setProductForm({ brand: "", min_stock: "", critical_stock: "", manual_unit_price: "", last_currency: "TRY", notes: "" });
+      setProductForm({ product_code: "", product_name: "", brand: "", min_stock: "", critical_stock: "", manual_unit_price: "", last_currency: "TRY", notes: "" });
       return;
     }
 
     setProductForm({
+      product_code: selectedProduct.product_code || "",
+      product_name: selectedProduct.product_name || "",
       brand: selectedProduct.brand || "",
       min_stock: String(selectedProduct.min_stock ?? selectedProduct.minimum_stock ?? ""),
       critical_stock: String(selectedProduct.critical_stock ?? ""),
@@ -1812,7 +1816,17 @@ export default function StockPage() {
     }
 
     const productIds = selectedProduct.duplicateIds || [selectedProduct.id];
+    const productCode = String(productForm.product_code || "").trim();
+    const productName = String(productForm.product_name || "").trim();
+    if (!productCode || !productName) {
+      setMessage("Ürün kodu ve ürün açıklaması zorunludur.");
+      setSaving(false);
+      return;
+    }
     const updatePayload = {
+      product_code: productCode,
+      normalized_product_code: normalizeStockCode(productCode) || null,
+      product_name: productName,
       brand: productForm.brand || "",
       min_stock: Number(productForm.min_stock || 0),
       critical_stock: Number(productForm.critical_stock || 0),
@@ -1835,11 +1849,37 @@ export default function StockPage() {
       return;
     }
 
+    const linkedIdentity = {
+      product_code: productCode,
+      product_name: productName,
+    };
+    const [{ error: movementIdentityError }, { error: projectIdentityError }] = await Promise.all([
+      supabase
+        .from("stock_movements")
+        .update(linkedIdentity)
+        .eq("user_id", user.id)
+        .in("product_id", productIds),
+      supabase
+        .from("project_items")
+        .update({ ...linkedIdentity, brand: productForm.brand || "" })
+        .eq("user_id", user.id)
+        .in("product_id", productIds),
+    ]);
+
+    if (movementIdentityError || projectIdentityError) {
+      console.error("Bağlı stok/proje kimliği güncellenemedi:", movementIdentityError || projectIdentityError);
+      setMessage("Ürün kartı güncellendi; ancak bağlı hareket veya proje satırlarından bazıları güncellenemedi.");
+      setSaving(false);
+      await loadStock();
+      return;
+    }
+
     const nextProducts = products.map((product) =>
       productIds.includes(product.id) ? { ...product, ...updatePayload } : product,
     );
     const nextGroups = mergeProductGroups(nextProducts);
-    const nextSelected = nextGroups.find((product) => product.groupKey === selectedProduct.groupKey) || {
+    const nextSelected = nextGroups.find((product) =>
+      (product.duplicateIds || [product.id]).some((id) => productIds.includes(id))) || {
       ...selectedProduct,
       ...updatePayload,
     };
@@ -3509,6 +3549,22 @@ export default function StockPage() {
 
                         <div className="mt-5 space-y-4 rounded-2xl border border-slate-100 bg-white p-4">
                           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                            <label className="text-sm font-bold text-slate-700">
+                              Ürün kodu
+                              <input
+                                value={productForm.product_code}
+                                onChange={(event) => updateProductForm("product_code", event.target.value)}
+                                className="mt-2 w-full rounded-xl border border-slate-300 p-3 text-sm"
+                              />
+                            </label>
+                            <label className="text-sm font-bold text-slate-700">
+                              Ürün açıklaması
+                              <input
+                                value={productForm.product_name}
+                                onChange={(event) => updateProductForm("product_name", event.target.value)}
+                                className="mt-2 w-full rounded-xl border border-slate-300 p-3 text-sm"
+                              />
+                            </label>
                             <label className="text-sm font-bold text-slate-700">
                               Marka
                               <input
