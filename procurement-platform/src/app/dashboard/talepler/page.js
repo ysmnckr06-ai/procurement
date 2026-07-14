@@ -595,6 +595,8 @@ export default function TaleplerPage() {
   const [reportPath, setReportPath] = useState("");
   const [rows, setRows] = useState([]);
   const [createdUploadRequestId, setCreatedUploadRequestId] = useState("");
+  const [uploadMatchDecisions, setUploadMatchDecisions] = useState({});
+  const [resolvingUploadMatchIndex, setResolvingUploadMatchIndex] = useState(null);
   const [savedRequests, setSavedRequests] = useState([]);
   const [stockProducts, setStockProducts] = useState([]);
   const [showAllRequests, setShowAllRequests] = useState(false);
@@ -627,6 +629,18 @@ export default function TaleplerPage() {
   const totalQty = useMemo(() => {
     return rows.reduce((sum, r) => sum + Number(r.talepEdilenAdet || 0), 0);
   }, [rows]);
+
+  const uploadProductMatches = useMemo(() => rows.map((row) => matchProduct(stockProducts, {
+    product_code: row.urunKodu,
+    product_name: row.urunAciklamasi,
+    brand: row.marka,
+    unit: row.birim,
+  })), [rows, stockProducts]);
+
+  const pendingUploadMatchCount = useMemo(() => uploadProductMatches.reduce((count, result, index) => {
+    const needsDecision = result.type === "probable" || result.type === "conflict";
+    return count + (needsDecision && !uploadMatchDecisions[index] ? 1 : 0);
+  }, 0), [uploadProductMatches, uploadMatchDecisions]);
 
   const visibleSavedRequests = useMemo(() => {
     return showAllRequests ? savedRequests : savedRequests.slice(0, 5);
@@ -963,6 +977,7 @@ export default function TaleplerPage() {
   const handleFileChange = (e) => {
     setFiles(Array.from(e.target.files || []));
     setCreatedUploadRequestId("");
+    setUploadMatchDecisions({});
     setRows([]);
   };
 
@@ -1008,13 +1023,26 @@ export default function TaleplerPage() {
         return;
       }
 
-      setRows(data.rows || []);
+      const uploadedRows = data.rows || [];
+      const similarMatchCount = uploadedRows.reduce((count, row) => {
+        const result = matchProduct(stockProducts, {
+          product_code: row.urunKodu,
+          product_name: row.urunAciklamasi,
+          brand: row.marka,
+          unit: row.birim,
+        });
+        return count + (result.type === "probable" || result.type === "conflict" ? 1 : 0);
+      }, 0);
+      setRows(uploadedRows);
+      setUploadMatchDecisions({});
       setReportPath(data.reportPath);
       setCreatedUploadRequestId(data.requestId || "");
       if (data.requestId) {
         setExpandedRequestId(data.requestId);
         await loadRequests();
-        setMessage(`${data.totalRows || data.rows?.length || 0} kalemli talep oluşturuldu ve talep havuzuna eklendi ✅`);
+        setMessage(similarMatchCount > 0
+          ? `${data.totalRows || uploadedRows.length || 0} kalem okundu. ${similarMatchCount} benzer ürün için onayınız gerekiyor.`
+          : `${data.totalRows || uploadedRows.length || 0} kalemli talep oluşturuldu ve talep havuzuna eklendi ✅`);
       } else {
         setMessage("Dosya analiz edildi ancak talep havuzuna kaydedilemedi.");
       }
@@ -1024,6 +1052,64 @@ export default function TaleplerPage() {
     } finally {
       setIsLoading(false);
       isAnalyzingRef.current = false;
+    }
+  };
+
+  const resolveUploadProductMatch = async (rowIndex, productMatch, decision) => {
+    const product = productMatch?.match?.product;
+    if (!createdUploadRequestId || !product?.id) {
+      setMessage("Eşleştirme için kayıtlı talep ve stok kartı bulunamadı.");
+      return;
+    }
+
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token;
+    if (!token) {
+      setMessage("Oturum bulunamadı. Lütfen tekrar giriş yapın.");
+      return;
+    }
+
+    setResolvingUploadMatchIndex(rowIndex);
+    try {
+      const response = await fetch(`${API_URL}/requests/${createdUploadRequestId}/product-match`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          itemIndex: rowIndex,
+          productId: product.id,
+          decision,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        setMessage(data.detail || "Ürün eşleştirme kararı kaydedilemedi.");
+        return;
+      }
+
+      setUploadMatchDecisions((current) => ({ ...current, [rowIndex]: decision }));
+      if (decision === "confirm" && data.item) {
+        setRows((current) => current.map((row, index) => (
+          index === rowIndex ? { ...row, ...data.item } : row
+        )));
+      }
+      if (Array.isArray(data.items)) {
+        setSavedRequests((current) => current.map((request) => (
+          request.id === createdUploadRequestId ? { ...request, items: data.items } : request
+        )));
+      }
+
+      const decisionMessage = decision === "confirm"
+        ? `Kalem mevcut stok kartına bağlandı: ${product.product_code || "Kodsuz"} · ${product.product_name}`
+        : "Kalem farklı ürün olarak bırakıldı.";
+      setMessage(data.warning ? `${decisionMessage} ${data.warning}` : decisionMessage);
+    } catch (error) {
+      console.error(error);
+      setMessage("Ürün eşleştirme sırasında bağlantı hatası oluştu.");
+    } finally {
+      setResolvingUploadMatchIndex(null);
     }
   };
 
@@ -1810,20 +1896,33 @@ export default function TaleplerPage() {
                   {createdUploadRequestId && (
                     <button
                       type="button"
+                      disabled={pendingUploadMatchCount > 0}
                       onClick={() => {
                         setExpandedRequestId(createdUploadRequestId);
                         setActiveRequestTab("pool");
                       }}
-                      className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700"
+                      title={pendingUploadMatchCount > 0 ? "Önce benzer ürün eşleştirmelerini yanıtlayın." : "Talebi havuzda görüntüle"}
+                      className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300"
                     >
                       Talep Havuzunda Gör
                     </button>
                   )}
                   <span className="rounded-full bg-green-100 px-4 py-2 text-sm font-bold text-green-700">
-                    {createdUploadRequestId ? "Havuza kaydedildi · " : ""}{rows.length} kalem
+                    {createdUploadRequestId ? pendingUploadMatchCount > 0 ? "Eşleştirme bekliyor · " : "Havuza kaydedildi · " : ""}{rows.length} kalem
                   </span>
                 </div>
               </div>
+
+              {pendingUploadMatchCount > 0 && (
+                <div className="mx-5 mt-5 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+                  <div className="font-black">
+                    {pendingUploadMatchCount} benzer kalem için onay gerekiyor
+                  </div>
+                  <p className="mt-1 font-semibold">
+                    Sistem benzer stok kartları buldu. Her satırda aynı ürün olup olmadığını seçin; onaylanan kalem mevcut stok kartı üzerinden ilerler ve yeni kart açılmaz.
+                  </p>
+                </div>
+              )}
 
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm">
@@ -1839,12 +1938,10 @@ export default function TaleplerPage() {
 
                   <tbody>
                     {rows.map((r, i) => {
-                      const productMatch = matchProduct(stockProducts, {
-                        product_code: r.urunKodu,
-                        product_name: r.urunAciklamasi,
-                        brand: r.marka,
-                        unit: r.birim,
-                      });
+                      const productMatch = uploadProductMatches[i] || { type: "new", match: null };
+                      const matchDecision = uploadMatchDecisions[i];
+                      const needsDecision = productMatch.type === "probable" || productMatch.type === "conflict";
+                      const matchedProduct = productMatch.match?.product;
                       return (
                       <tr key={i} className="border-t border-slate-100">
                         <td className="p-4 font-medium text-slate-600">{i + 1}</td>
@@ -1852,8 +1949,41 @@ export default function TaleplerPage() {
                         <td className="p-4 text-slate-700">
                           {r.urunAciklamasi || "-"}
                           {productMatch.type !== "new" && productMatch.match?.product && (
-                            <div className={`mt-2 rounded-lg border px-2 py-1 text-[10px] font-bold ${productMatch.type === "exact" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : productMatch.type === "conflict" ? "border-red-200 bg-red-50 text-red-800" : "border-blue-200 bg-blue-50 text-blue-800"}`}>
-                              {productMatch.type === "exact" ? "Eşleşen kart" : productMatch.type === "conflict" ? "Kod çakışması" : "Benzer kart"}: %{Math.round((productMatch.match.score || 0) * 100)} · {productMatch.match.product.product_code || "Kodsuz"} · {productMatch.match.product.product_name}
+                            <div className={`mt-2 rounded-lg border px-3 py-2 text-xs font-bold ${productMatch.type === "exact" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : productMatch.type === "conflict" ? "border-red-200 bg-red-50 text-red-800" : "border-blue-200 bg-blue-50 text-blue-800"}`}>
+                              <div>
+                                {productMatch.type === "exact" ? "Eşleşen kart" : productMatch.type === "conflict" ? "Kod çakışması" : "Benzer kart"}: %{Math.round((productMatch.match.score || 0) * 100)} · {matchedProduct.product_code || "Kodsuz"} · {matchedProduct.product_name}
+                              </div>
+                              {needsDecision && !matchDecision && (
+                                <div className="mt-2 rounded-lg bg-white/80 p-2">
+                                  <div className="text-slate-800">
+                                    Bu kalem stoktaki bu ürünle aynı ürün mü?
+                                  </div>
+                                  <div className="mt-2 flex flex-wrap gap-2">
+                                    <button
+                                      type="button"
+                                      disabled={resolvingUploadMatchIndex !== null}
+                                      onClick={() => resolveUploadProductMatch(i, productMatch, "confirm")}
+                                      className="rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-black text-white hover:bg-emerald-700 disabled:opacity-50"
+                                    >
+                                      Evet, bu stok kartı
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={resolvingUploadMatchIndex !== null}
+                                      onClick={() => resolveUploadProductMatch(i, productMatch, "reject")}
+                                      className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[11px] font-black text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                                    >
+                                      Hayır, farklı ürün
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                              {matchDecision === "reject" && (
+                                <div className="mt-2 text-slate-600">Farklı ürün olarak bırakıldı.</div>
+                              )}
+                              {matchDecision === "confirm" && (
+                                <div className="mt-2 text-emerald-700">Mevcut stok kartına bağlandı.</div>
+                              )}
                             </div>
                           )}
                         </td>

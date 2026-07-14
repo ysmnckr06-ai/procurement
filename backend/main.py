@@ -2286,6 +2286,151 @@ async def analyze_requests(
         "requestId": request_id,
     }
 
+@app.post("/requests/{request_id}/product-match")
+def resolve_request_product_match(
+    request_id: str,
+    payload: dict = Body(...),
+    authorization: str = Header(None),
+):
+    user = verify_user_token(authorization)
+    user_id = user["id"]
+    decision = str(payload.get("decision") or "").strip().lower()
+    product_id = str(payload.get("productId") or "").strip()
+
+    try:
+        item_index = int(payload.get("itemIndex"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Geçersiz talep kalemi.")
+
+    if decision not in {"confirm", "reject"}:
+        raise HTTPException(status_code=400, detail="Geçersiz eşleştirme kararı.")
+    if not product_id:
+        raise HTTPException(status_code=400, detail="Stok kartı seçilmedi.")
+
+    request_response = (
+        supabase.table("requests")
+        .select("*")
+        .eq("id", request_id)
+        .eq("user_id", user_id)
+        .limit(1)
+        .execute()
+    )
+    if not request_response.data:
+        raise HTTPException(status_code=404, detail="Talep bulunamadı.")
+
+    product_response = (
+        supabase.table("products")
+        .select("id,product_code,product_name,brand,unit")
+        .eq("id", product_id)
+        .eq("user_id", user_id)
+        .is_("archived_at", "null")
+        .limit(1)
+        .execute()
+    )
+    if not product_response.data:
+        raise HTTPException(status_code=404, detail="Stok kartı bulunamadı.")
+
+    request_record = request_response.data[0]
+    raw_items = request_record.get("items") or []
+    if isinstance(raw_items, str):
+        try:
+            raw_items = json.loads(raw_items)
+        except Exception:
+            raw_items = []
+    if not isinstance(raw_items, list) or item_index < 0 or item_index >= len(raw_items):
+        raise HTTPException(status_code=400, detail="Talep kalemi bulunamadı.")
+
+    items = [dict(item or {}) for item in raw_items]
+    item = items[item_index]
+    product = product_response.data[0]
+    current_meta = dict(item.get("request_meta") or {})
+    original_identity = current_meta.get("originalProductIdentity") or {
+        "productCode": item.get("product_code") or item.get("urunKodu") or "",
+        "productName": item.get("product_name") or item.get("urunAciklamasi") or "",
+        "brand": item.get("brand") or item.get("marka") or "",
+        "unit": item.get("unit") or item.get("birim") or "adet",
+    }
+
+    current_meta.update({
+        "productMatchDecision": decision,
+        "productMatchCandidateId": product_id,
+        "productMatchDecidedAt": datetime.now(timezone.utc).isoformat(),
+        "originalProductIdentity": original_identity,
+    })
+
+    if decision == "confirm":
+        product_code = product.get("product_code") or ""
+        product_name = product.get("product_name") or ""
+        brand = product.get("brand") or ""
+        unit = product.get("unit") or item.get("unit") or item.get("birim") or "adet"
+        item.update({
+            "product_id": product_id,
+            "productId": product_id,
+            "product_code": product_code,
+            "urunKodu": product_code,
+            "product_name": product_name,
+            "urunAciklamasi": product_name,
+            "brand": brand,
+            "marka": brand,
+            "unit": unit,
+            "birim": unit,
+        })
+
+    item["request_meta"] = current_meta
+    items[item_index] = item
+
+    update_response = (
+        supabase.table("requests")
+        .update({"items": items})
+        .eq("id", request_id)
+        .eq("user_id", user_id)
+        .execute()
+    )
+    if not update_response.data:
+        raise HTTPException(status_code=500, detail="Eşleştirme kararı kaydedilemedi.")
+
+    report_warning = None
+    report_name = os.path.basename(str(request_record.get("filepath") or ""))
+    if report_name:
+        try:
+            report_rows = []
+            for request_item in items:
+                report_rows.append({
+                    "urunKodu": request_item.get("urunKodu") or request_item.get("product_code") or "",
+                    "urunAciklamasi": request_item.get("urunAciklamasi") or request_item.get("product_name") or "",
+                    "talepEdilenAdet": request_item.get("talepEdilenAdet") or request_item.get("quantity") or 0,
+                    "birim": request_item.get("birim") or request_item.get("unit") or "adet",
+                    "marka": request_item.get("marka") or request_item.get("brand") or "",
+                })
+            report_path = os.path.join(TEMP_DIR, report_name)
+            report_products = load_user_products_for_report(user_id)
+            build_request_excel_report(
+                report_rows,
+                report_path,
+                resolve_company_info(user),
+                report_products,
+            )
+            with open(report_path, "rb") as report_file:
+                supabase.storage.from_("request-reports").upload(
+                    report_name,
+                    report_file,
+                    {
+                        "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        "x-upsert": "true",
+                    },
+                )
+        except Exception as exc:
+            logger.debug("REQUEST PRODUCT MATCH REPORT UPDATE ERROR:", str(exc))
+            report_warning = "Talep güncellendi ancak Excel raporu yenilenemedi."
+
+    return {
+        "success": True,
+        "decision": decision,
+        "item": item,
+        "items": items,
+        "warning": report_warning,
+    }
+
 @app.get("/download-request-report/{file_name}")
 def download_request_report(file_name: str, authorization: str = Header(None)):
     user = verify_user_token(authorization)
