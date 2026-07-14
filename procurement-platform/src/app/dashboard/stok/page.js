@@ -7,6 +7,7 @@ import { CORVIAN_PRODUCT_NAME, fetchCompanyBranding } from "@/lib/companyBrandin
 import { matchProduct, productMatchLabel } from "@/lib/productMatching";
 import {
   analyzeStockMatrix,
+  isStandardStockTemplateAnalysis,
   STOCK_IMPORT_ACCEPT,
   STOCK_IMPORT_FIELDS,
   stockImportExpectedColumns,
@@ -1506,6 +1507,15 @@ export default function StockPage() {
       const analyses = [];
       for (const file of files) analyses.push(await analyzeStockFileWithOcrFallback(file, { requiresQuantity }));
       const preview = createStockImportPreview(analyses, importType, "", crypto.randomUUID());
+      const canApplyDirectly = importType === PRODUCT_TYPES.COMPONENT
+        && preview.canApply
+        && analyses.every(isStandardStockTemplateAnalysis);
+      if (canApplyDirectly) {
+        setStockImportPreview(null);
+        setMessage(`${preview.rows.length} satır standart şablonla eşleşti; stok girişi uygulanıyor...`);
+        await applyStockImportAnalysis(preview);
+        return;
+      }
       setStockImportPreview(preview);
       setMessage(preview.rows.length ? `${preview.rows.length} ürün satırı analiz edildi.` : "Dosyada okunabilir ürün satırı bulunamadı.");
     } catch (error) {
@@ -1594,8 +1604,9 @@ export default function StockPage() {
     if (error) throw error;
   }
 
-  async function applyStockImportAnalysis() {
-    const analysis = stockImportPreview;
+  async function applyStockImportAnalysis(analysisOverride = null) {
+    const directTemplateApply = Boolean(analysisOverride?.rows);
+    const analysis = directTemplateApply ? analysisOverride : stockImportPreview;
     if (!analysis?.canApply || !analysis.rows.length || stockImportApplying) return;
     setStockImportApplying(true);
     const result = {
@@ -1714,12 +1725,15 @@ export default function StockPage() {
           || Math.abs(result.appliedIncrease - result.warehouseDifference) > 0.0001;
       }
       setStockImportResult(result);
-      setMessage(
+      const resultMessage = (
         result.hasHighRiskDifference
           ? `HIGH RISK: ${result.expectedIncrease} adet beklenirken ${result.appliedIncrease} adet eklendi. ${result.errors + result.skippedRows} satır uygulanmadı.`
-          : `${result.processedRows} satır işlendi; depo stokuna toplam ${result.appliedIncrease} adet eklendi.`,
+          : directTemplateApply
+            ? `${result.processedRows} satır standart şablondan otomatik işlendi; depo stokuna toplam ${result.appliedIncrease} adet eklendi.`
+            : `${result.processedRows} satır işlendi; depo stokuna toplam ${result.appliedIncrease} adet eklendi.`
       );
       await loadStock();
+      setMessage(resultMessage);
     } catch (error) {
       console.error("Toplu ürün yükleme hatası:", error);
       result.errors += 1;

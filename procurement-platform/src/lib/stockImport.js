@@ -1,5 +1,17 @@
 export const STOCK_IMPORT_ACCEPT = ".xlsx,.xls,.csv,.pdf";
 
+export const STOCK_IMPORT_TEMPLATE_HEADERS = [
+  "Sıra No",
+  "Malzeme Kodu",
+  "Malzeme Markası",
+  "Malzeme Açıklaması",
+  "Stok",
+  "Birim",
+  "Birim Fiyat",
+  "Para Birimi",
+  "Kritik Stok",
+];
+
 export const STOCK_IMPORT_FIELDS = [
   { key: "productCode", label: "Ürün kodu", required: false },
   { key: "productName", label: "Ürün adı / açıklaması", required: true },
@@ -117,6 +129,15 @@ export function normalizeImportHeader(value) {
     .replace(/[^a-z0-9 ]/g, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+export function isStandardStockTemplateAnalysis(analysis) {
+  if (!analysis || analysis.headerRowIndex < 0) return false;
+  const headerRow = analysis.rows?.[analysis.headerRowIndex] || [];
+  if (headerRow.length < STOCK_IMPORT_TEMPLATE_HEADERS.length) return false;
+  return STOCK_IMPORT_TEMPLATE_HEADERS.every(
+    (header, index) => normalizeImportHeader(headerRow[index]) === normalizeImportHeader(header),
+  );
 }
 
 function aliasScore(value, alias) {
