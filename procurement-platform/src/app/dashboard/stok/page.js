@@ -100,13 +100,17 @@ async function downloadExcelWorkbook(fileName, sheets, companyName) {
 
   sheets.forEach((sheet) => {
     const rows = sheet.rows.length > 0 ? sheet.rows : [{ Bilgi: "Kayit bulunamadi" }];
-    const worksheet = XLSX.utils.aoa_to_sheet([
+    const hasInstruction = Boolean(sheet.instruction);
+    const headerRow = hasInstruction ? 6 : 5;
+    const topRows = [
       [companyName],
       [CORVIAN_PRODUCT_NAME],
       [`Rapor: ${sheet.name}`, `Oluşturma tarihi: ${new Date().toLocaleString("tr-TR")}`],
       [sheet.note || ""],
-    ]);
-    XLSX.utils.sheet_add_json(worksheet, rows, { origin: "A5" });
+    ];
+    if (hasInstruction) topRows.push([sheet.instruction]);
+    const worksheet = XLSX.utils.aoa_to_sheet(topRows);
+    XLSX.utils.sheet_add_json(worksheet, rows, { origin: `A${headerRow}` });
     const headers = Object.keys(rows[0] || {});
     const lastColumn = XLSX.utils.encode_col(Math.max(headers.length - 1, 0));
     const thinBorder = {
@@ -130,8 +134,11 @@ async function downloadExcelWorkbook(fileName, sheets, companyName) {
     applyStyle("A3", { font: { bold: true, color: { rgb: "1E3A8A" } } });
     applyStyle("B3", { font: { color: { rgb: "475569" } } });
     applyStyle("A4", { fill: { patternType: "solid", fgColor: { rgb: "DBEAFE" } }, font: { bold: true, color: { rgb: "1E3A8A" } }, alignment: { wrapText: true, vertical: "center" } });
+    if (hasInstruction) {
+      applyStyle("A5", { fill: { patternType: "solid", fgColor: { rgb: "FEF3C7" } }, font: { bold: true, color: { rgb: "92400E" } }, alignment: { wrapText: true, vertical: "center" } });
+    }
     headers.forEach((_, columnIndex) => {
-      applyStyle(`${XLSX.utils.encode_col(columnIndex)}5`, {
+      applyStyle(`${XLSX.utils.encode_col(columnIndex)}${headerRow}`, {
         fill: { patternType: "solid", fgColor: { rgb: "0F172A" } },
         font: { bold: true, color: { rgb: "FFFFFF" } },
         border: thinBorder,
@@ -140,7 +147,7 @@ async function downloadExcelWorkbook(fileName, sheets, companyName) {
     });
 
     rows.forEach((row, rowIndex) => {
-      const excelRow = rowIndex + 6;
+      const excelRow = rowIndex + headerRow + 1;
       const stockRisk = normalizeStockText(row["Stok riski"]);
       const purchaseStatus = normalizeStockText(row["Satınalma durumu"]);
       const criticalStock = stockRisk.includes("kullanilabilir stok yok") || stockRisk.includes("stok tukendi");
@@ -193,14 +200,19 @@ async function downloadExcelWorkbook(fileName, sheets, companyName) {
       ),
     }));
     if (headers.length > 0) {
-      worksheet["!autofilter"] = { ref: `A5:${lastColumn}${rows.length + 5}` };
+      worksheet["!autofilter"] = { ref: `A${headerRow}:${lastColumn}${rows.length + headerRow}` };
       worksheet["!merges"] = [
         { s: { r: 0, c: 0 }, e: { r: 0, c: headers.length - 1 } },
         { s: { r: 1, c: 0 }, e: { r: 1, c: headers.length - 1 } },
         { s: { r: 3, c: 0 }, e: { r: 3, c: headers.length - 1 } },
       ];
+      if (hasInstruction) {
+        worksheet["!merges"].push({ s: { r: 4, c: 0 }, e: { r: 4, c: headers.length - 1 } });
+      }
     }
-    worksheet["!rows"] = [{ hpt: 24 }, { hpt: 18 }, { hpt: 18 }, { hpt: 32 }, { hpt: 34 }];
+    worksheet["!rows"] = hasInstruction
+      ? [{ hpt: 24 }, { hpt: 18 }, { hpt: 18 }, { hpt: 32 }, { hpt: 34 }, { hpt: 34 }]
+      : [{ hpt: 24 }, { hpt: 18 }, { hpt: 18 }, { hpt: 32 }, { hpt: 34 }];
     XLSX.utils.book_append_sheet(workbook, worksheet, sheet.name.slice(0, 31));
   });
 
@@ -2450,6 +2462,7 @@ export default function StockPage() {
         name: "Stok ve Satinalma",
         rows: decisionRows,
         note: "RENKLER: Kırmızı = boşta stok yok/tükendi, turuncu = kritik stok, sarı = talep/teklif süreci, mavi = sipariş/teslimat süreci. Stok riski ile satınalma durumunu birlikte değerlendirin.",
+        instruction: "TALEP AKIŞI: Stok riski olan ürünleri filtreleyin → 'Stok yenileme ihtiyacı' miktarlarını düzenleyin → ilgili satırların ekran görüntüsünü alın → Talepler > Dosya Yükle alanına yükleyin. Sistem, miktarı 0'dan büyük ürünleri Talep Havuzu'na aktarır.",
       },
       { name: "Urun Karti Detaylari", rows: productDetailRows },
       { name: "Stok Hareketleri", rows: movementRows },
