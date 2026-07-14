@@ -103,9 +103,23 @@ async function downloadExcelWorkbook(fileName, sheets, companyName) {
       [companyName],
       [CORVIAN_PRODUCT_NAME],
       [`Rapor: ${sheet.name}`, `Oluşturma tarihi: ${new Date().toLocaleString("tr-TR")}`],
-      [],
+      [sheet.note || ""],
     ]);
     XLSX.utils.sheet_add_json(worksheet, rows, { origin: "A5" });
+    const headers = Object.keys(rows[0] || {});
+    worksheet["!cols"] = headers.map((header) => ({
+      wch: Math.min(
+        42,
+        Math.max(
+          10,
+          String(header).length + 2,
+          ...rows.slice(0, 250).map((row) => String(row[header] ?? "").length + 2),
+        ),
+      ),
+    }));
+    if (headers.length > 0) {
+      worksheet["!autofilter"] = { ref: `A5:${XLSX.utils.encode_col(headers.length - 1)}${rows.length + 5}` };
+    }
     XLSX.utils.book_append_sheet(workbook, worksheet, sheet.name.slice(0, 31));
   });
 
@@ -701,29 +715,39 @@ function StatCard({ title, value, text, active = false, onClick }) {
   );
 }
 
-function buildProductExportRows(productList, movements, projectItems, projects) {
+function buildProductExportRows(productList, movements, projectItems, projects, requests, offers, orders, receipts) {
   return productList.map((product) => {
     const breakdown = stockBreakdown(product, movements);
     const allocation = productProjectAllocations(product, projectItems, projects, movements);
+    const lifecycle = procurementLifecycle(product, allocation.missingTotal, requests, offers, orders, receipts);
     const lastPrice = Number(product.last_unit_price || product.manual_unit_price || 0);
     return {
-      "Urun kodu": product.product_code || "-",
+      "Ürün kodu": product.product_code || "-",
       Marka: product.brand || "-",
-      "Urun aciklamasi": product.product_name || "-",
+      "Ürün açıklaması": product.product_name || "-",
       Birim: product.unit || "adet",
       "Mevcut stok": breakdown.total,
-      "Projeye ayrilan": allocation.allocatedTotal,
-      "Bosta kullanilabilir": allocation.freeStock,
-      "Alinmasi gereken": allocation.missingTotal,
-      "Rezerve": breakdown.reserved,
-      "Islenen / uygulamadaki": breakdown.production + breakdown.montage,
+      "Projeye ayrılmış / rezerve": breakdown.reserved,
+      "Üretimde / uygulamada": breakdown.production + breakdown.montage,
+      "Boşta kullanılabilir": breakdown.available,
+      "Açık proje ihtiyacı": allocation.missingTotal,
+      "Talep edilen": lifecycle.requestedQuantity,
+      "Talep sayısı": lifecycle.requestCount,
+      "Teklif sayısı": lifecycle.offerCount,
+      "Sipariş edilen": lifecycle.orderedQuantity,
+      "Teslim alınan": lifecycle.receivedQuantity,
+      "Siparişte kalan": lifecycle.remainingOrderQuantity,
+      "Yeni talep ihtiyacı": lifecycle.newRequestQuantity,
+      "Satınalma durumu": lifecycle.status,
+      "Önerilen aksiyon": lifecycle.action,
+      "Süreç detayı": lifecycle.detail,
       "Sevk edilen": breakdown.shipped,
       "Minimum stok": product.min_stock ?? product.minimum_stock ?? 0,
       "Kritik stok": product.critical_stock ?? 0,
-      "Son alis fiyati": lastPrice,
+      "Son alış fiyatı": lastPrice,
       "Para birimi": product.last_currency || "TRY",
-      "Son is ortagi": product.last_supplier || "-",
-      "Proje sayisi": allocation.projectRows.length,
+      "Son iş ortağı": product.last_supplier || "-",
+      "Proje sayısı": allocation.projectRows.length,
       "Kaynak / not": product.notes || product.source || "-",
     };
   });
@@ -794,12 +818,149 @@ function buildProductUsageExportRows(product, allocation) {
   });
 }
 
+function parseLifecycleItems(value) {
+  if (Array.isArray(value)) return value;
+  if (!value || typeof value !== "string") return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function lifecycleItems(record) {
+  return [record?.items, record?.rows, record?.analysis]
+    .map(parseLifecycleItems)
+    .find((items) => items.length > 0) || [];
+}
+
+function lifecycleItemQuantity(item, keys) {
+  for (const key of keys) {
+    if (item?.[key] !== undefined && item?.[key] !== null && item?.[key] !== "") {
+      return Number(item[key] || 0);
+    }
+  }
+  return 0;
+}
+
+function lifecycleItemMatchesProduct(item, product) {
+  if (!item || !product) return false;
+  const itemCode = normalizeStockCode(item.product_code || item.productCode || item.urunKodu || item.code);
+  const productCode = normalizeStockCode(product.product_code);
+  if (itemCode && productCode) return itemCode === productCode;
+  const itemName = item.product_name || item.productName || item.urunAciklamasi || item.urunAdi || item.description || item.name;
+  return productNamesMatch(itemName, product.product_name);
+}
+
+function procurementLifecycle(product, missingQuantity, requests, offers, orders, receipts) {
+  const activeRequests = (requests || []).filter((request) => !normalizeStockText(request.durum).includes("iptal"));
+  const requestMatches = activeRequests.flatMap((request) =>
+    lifecycleItems(request)
+      .filter((item) => lifecycleItemMatchesProduct(item, product))
+      .map((item) => ({ request, item })),
+  );
+  const requestIds = new Set(requestMatches.map(({ request }) => request.id).filter(Boolean));
+  const requestedQuantity = requestMatches.reduce(
+    (sum, { item }) => sum + lifecycleItemQuantity(item, ["purchase_quantity", "talepEdilenAdet", "quantity", "qty", "estimated_quantity"]),
+    0,
+  );
+  const requestStatuses = [...new Set(requestMatches.map(({ request }) => request.durum || "Talep oluşturuldu"))];
+  const relatedOffers = (offers || []).filter((offer) => requestIds.has(offer.request_id));
+  const offerCount = new Set(relatedOffers.map((offer) => offer.id).filter(Boolean)).size;
+
+  let orderedQuantity = 0;
+  let draftOrderQuantity = 0;
+  let receivedQuantity = 0;
+  const orderNumbers = [];
+  (orders || []).forEach((order) => {
+    const status = normalizeStockText(order.status || order.durum || "");
+    if (status.includes("iptal")) return;
+    const matchingItems = lifecycleItems(order).filter((item) => lifecycleItemMatchesProduct(item, product));
+    if (matchingItems.length === 0) return;
+    const orderQuantity = matchingItems.reduce(
+      (sum, item) => sum + lifecycleItemQuantity(item, ["quantity", "miktar", "ordered_quantity", "orderedQuantity"]),
+      0,
+    );
+    const itemDelivered = matchingItems.reduce(
+      (sum, item) => sum + lifecycleItemQuantity(item, ["deliveredQuantity", "delivered_quantity", "delivered", "received_quantity"]),
+      0,
+    );
+    const receiptQuantity = (receipts || [])
+      .filter((receipt) => receipt.order_id === order.id && lifecycleItemMatchesProduct(receipt, product))
+      .reduce((sum, receipt) => sum + lifecycleItemQuantity(receipt, ["accepted_quantity", "received_quantity", "quantity"]), 0);
+    const placed = !status.includes("taslak") && !status.includes("onay bekliyor");
+    if (placed) {
+      orderedQuantity += orderQuantity;
+      receivedQuantity += Math.max(itemDelivered, receiptQuantity);
+      orderNumbers.push(order.order_no || order.order_number || "Sipariş");
+    } else {
+      draftOrderQuantity += orderQuantity;
+    }
+  });
+
+  const remainingOrderQuantity = Math.max(orderedQuantity - receivedQuantity, 0);
+  const openPipelineQuantity = Math.max(Math.max(requestedQuantity, orderedQuantity) - receivedQuantity, 0);
+  const newRequestQuantity = Math.max(Number(missingQuantity || 0) - openPipelineQuantity, 0);
+  let status = "Takip gerekmiyor";
+  let action = "İşlem yok";
+
+  if (Number(missingQuantity || 0) <= 0) {
+    status = remainingOrderQuantity > 0 ? "Stok yeterli · sipariş yolda" : "Stok yeterli";
+    action = remainingOrderQuantity > 0 ? "Fazla sipariş riskini kontrol et" : "İşlem yok";
+  } else if (remainingOrderQuantity > 0 && receivedQuantity > 0) {
+    status = "Kısmi teslim";
+    action = "Kalan teslimatı takip et";
+  } else if (remainingOrderQuantity > 0) {
+    status = "Sipariş verildi";
+    action = "Teslimatı takip et";
+  } else if (orderedQuantity > 0 && receivedQuantity >= orderedQuantity) {
+    status = newRequestQuantity > 0 ? "Sipariş tamamlandı · açık ihtiyaç var" : "Tam teslim";
+    action = newRequestQuantity > 0 ? "Kalan ihtiyaç için yeni talep oluştur" : "İşlem yok";
+  } else if (draftOrderQuantity > 0) {
+    status = "Sipariş taslağı hazır";
+    action = "Siparişi onayla / gönder";
+  } else if (offerCount > 0) {
+    status = "Teklifler toplanıyor";
+    action = "Teklifleri değerlendir";
+  } else if (requestedQuantity > 0) {
+    status = "Talep oluşturuldu";
+    action = "Talep sürecini takip et";
+  } else if (newRequestQuantity > 0) {
+    status = "Talep oluşturulmalı";
+    action = "Satınalma talebi oluştur";
+  }
+
+  return {
+    requestedQuantity,
+    requestCount: requestIds.size,
+    requestStatuses,
+    offerCount,
+    orderedQuantity,
+    draftOrderQuantity,
+    receivedQuantity,
+    remainingOrderQuantity,
+    newRequestQuantity,
+    status,
+    action,
+    detail: [
+      requestStatuses.length ? `Talep: ${requestStatuses.join(" / ")}` : "",
+      offerCount ? `${offerCount} teklif kaydı` : "",
+      orderNumbers.length ? `Sipariş: ${[...new Set(orderNumbers)].join(" / ")}` : "",
+    ].filter(Boolean).join(" · ") || "-",
+  };
+}
+
 export default function StockPage() {
   const router = useRouter();
   const [products, setProducts] = useState([]);
   const [movements, setMovements] = useState([]);
   const [projectItems, setProjectItems] = useState([]);
   const [projects, setProjects] = useState([]);
+  const [requests, setRequests] = useState([]);
+  const [offers, setOffers] = useState([]);
+  const [orders, setOrders] = useState([]);
+  const [orderReceipts, setOrderReceipts] = useState([]);
   const [search, setSearch] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(true);
@@ -918,10 +1079,16 @@ export default function StockPage() {
         .eq("user_id", user.id)
         .limit(1000);
 
+      const [requestResult, offerResult, orderResult, receiptResult] = await Promise.all([
+        supabase.from("requests").select("*").eq("user_id", user.id).order("created_at", { ascending: false }).limit(2000),
+        supabase.from("offers").select("id,request_id,durum,created_at").eq("user_id", user.id).limit(5000),
+        supabase.from("orders").select("*").eq("user_id", user.id).order("created_at", { ascending: false }).limit(2000),
+        supabase.from("order_receipts").select("*").eq("user_id", user.id).order("created_at", { ascending: false }).limit(5000),
+      ]);
 
-
-      if (productError || movementError || projectItemError || projectError) {
-        console.error("Stok yardımcı verileri eksik yüklendi:", [productError, movementError, projectItemError, projectError].filter(Boolean));
+      const lifecycleErrors = [requestResult.error, offerResult.error, orderResult.error, receiptResult.error].filter(Boolean);
+      if (productError || movementError || projectItemError || projectError || lifecycleErrors.length > 0) {
+        console.error("Stok yardımcı verileri eksik yüklendi:", [productError, movementError, projectItemError, projectError, ...lifecycleErrors].filter(Boolean));
         setMessage("Stok kayıtları kısmen yüklendi; bazı bağlantılı bilgiler okunamadı.");
       }
 
@@ -929,6 +1096,10 @@ export default function StockPage() {
       setMovements(movementData || []);
       setProjectItems(projectItemData || []);
       setProjects(projectData || []);
+      setRequests(requestResult.data || []);
+      setOffers(offerResult.data || []);
+      setOrders(orderResult.data || []);
+      setOrderReceipts(receiptResult.data || []);
     } catch (error) {
       console.error("Stok verileri yüklenemedi:", error);
       setMessage(`Stok verileri yüklenemedi: ${error?.message || "Beklenmeyen hata"}`);
@@ -936,6 +1107,10 @@ export default function StockPage() {
       setMovements([]);
       setProjectItems([]);
       setProjects([]);
+      setRequests([]);
+      setOffers([]);
+      setOrders([]);
+      setOrderReceipts([]);
     } finally {
       setLoading(false);
     }
@@ -2020,18 +2195,78 @@ export default function StockPage() {
 
   async function exportProductsExcel() {
     const { companyName } = await fetchCompanyBranding(supabase);
-    const productRows = buildProductExportRows(filteredProducts, movements, projectItems, projects);
+    const productRows = buildProductExportRows(
+      filteredProducts,
+      movements,
+      projectItems,
+      projects,
+      requests,
+      offers,
+      orders,
+      orderReceipts,
+    );
+    const decisionRows = productRows.map((row) => ({
+      "Ürün kodu": row["Ürün kodu"],
+      Marka: row.Marka,
+      "Ürün açıklaması": row["Ürün açıklaması"],
+      Birim: row.Birim,
+      "Mevcut stok": row["Mevcut stok"],
+      "Projeye ayrılmış / rezerve": row["Projeye ayrılmış / rezerve"],
+      "Üretimde / uygulamada": row["Üretimde / uygulamada"],
+      "Boşta kullanılabilir": row["Boşta kullanılabilir"],
+      "Açık proje ihtiyacı": row["Açık proje ihtiyacı"],
+      "Talep edilen": row["Talep edilen"],
+      "Teklif sayısı": row["Teklif sayısı"],
+      "Sipariş edilen": row["Sipariş edilen"],
+      "Teslim alınan": row["Teslim alınan"],
+      "Siparişte kalan": row["Siparişte kalan"],
+      "Yeni talep ihtiyacı": row["Yeni talep ihtiyacı"],
+      "Satınalma durumu": row["Satınalma durumu"],
+      "Önerilen aksiyon": row["Önerilen aksiyon"],
+      "Süreç detayı": row["Süreç detayı"],
+    }));
+    const productDetailRows = productRows.map((row) => ({
+      "Ürün kodu": row["Ürün kodu"],
+      Marka: row.Marka,
+      "Ürün açıklaması": row["Ürün açıklaması"],
+      Birim: row.Birim,
+      "Minimum stok": row["Minimum stok"],
+      "Kritik stok": row["Kritik stok"],
+      "Son alış fiyatı": row["Son alış fiyatı"],
+      "Para birimi": row["Para birimi"],
+      "Son iş ortağı": row["Son iş ortağı"],
+      "Proje sayısı": row["Proje sayısı"],
+      "Kaynak / not": row["Kaynak / not"],
+    }));
     const movementRows = buildMovementExportRows(movements, projects);
     await downloadExcelWorkbook(`stok-kartlari-${exportDateStamp()}`, [
-      { name: "Stok Kartlari", rows: productRows },
+      {
+        name: "Stok ve Satinalma",
+        rows: decisionRows,
+        note: "Karar için Yeni talep ihtiyacı, Satınalma durumu ve Önerilen aksiyon kolonlarını filtreleyin. Talep edilen miktar siparişe dönüştüğünde ayrıca yeni talep açmayın.",
+      },
+      { name: "Urun Karti Detaylari", rows: productDetailRows },
       { name: "Stok Hareketleri", rows: movementRows },
     ], companyName);
   }
 
   async function exportProductsPdf() {
     const { companyName } = await fetchCompanyBranding(supabase);
-    const productRows = buildProductExportRows(filteredProducts, movements, projectItems, projects);
-    await downloadPdfTable(`stok-kartlari-${exportDateStamp()}`, "Stok Kartlari ve Depo Sayim Listesi", productRows, companyName);
+    const productRows = buildProductExportRows(filteredProducts, movements, projectItems, projects, requests, offers, orders, orderReceipts);
+    const summaryRows = productRows.map((row) => ({
+      Kod: row["Ürün kodu"],
+      Ürün: row["Ürün açıklaması"],
+      Stok: row["Mevcut stok"],
+      Rezerve: row["Projeye ayrılmış / rezerve"],
+      Kullanılabilir: row["Boşta kullanılabilir"],
+      "Açık ihtiyaç": row["Açık proje ihtiyacı"],
+      Talep: row["Talep edilen"],
+      Sipariş: row["Sipariş edilen"],
+      Gelen: row["Teslim alınan"],
+      "Yeni talep": row["Yeni talep ihtiyacı"],
+      Durum: row["Satınalma durumu"],
+    }));
+    await downloadPdfTable(`stok-kartlari-${exportDateStamp()}`, "Stok ve Satınalma Durum Özeti", summaryRows, companyName);
   }
 
   async function exportMovementsExcel() {
@@ -2338,6 +2573,9 @@ export default function StockPage() {
                   const allocation = productProjectAllocations(product, projectItems, projects, movements);
                   const mainStats = mainProductProjectStats(product, projectItems, movements);
                   const mainProduct = isMainProduct(product);
+                  const lifecycle = mainProduct
+                    ? null
+                    : procurementLifecycle(product, allocation.missingTotal, requests, offers, orders, orderReceipts);
                   return (
                     <div
                       key={product.groupKey}
@@ -2427,18 +2665,42 @@ export default function StockPage() {
                             <div className="mt-1 truncate text-sm font-black text-slate-900">{mainProduct ? mainStats.projectCount : breakdown.total}</div>
                           </div>
                           <div className="min-w-0 rounded-xl bg-blue-50 px-3 py-2">
-                            <div className="truncate font-bold text-blue-700">{mainProduct ? "İşlenen" : "Ayrılan"}</div>
-                            <div className="mt-1 truncate text-sm font-black text-blue-900">{mainProduct ? mainStats.inProcess : allocation.allocatedTotal}</div>
+                            <div className="truncate font-bold text-blue-700">{mainProduct ? "İşlenen" : "Rezerve"}</div>
+                            <div className="mt-1 truncate text-sm font-black text-blue-900">{mainProduct ? mainStats.inProcess : breakdown.reserved}</div>
                           </div>
                           <div className="min-w-0 rounded-xl bg-emerald-50 px-3 py-2">
                             <div className="truncate font-bold text-emerald-700">{mainProduct ? "Sevk" : "Boşta"}</div>
-                            <div className="mt-1 truncate text-sm font-black text-emerald-900">{mainProduct ? mainStats.shipped : allocation.freeStock}</div>
+                            <div className="mt-1 truncate text-sm font-black text-emerald-900">{mainProduct ? mainStats.shipped : breakdown.available}</div>
                           </div>
                           <div className="min-w-0 rounded-xl bg-red-50 px-3 py-2">
                             <div className="truncate font-bold text-red-700">{mainProduct ? "Kalan sevk" : "Eksik"}</div>
                             <div className="mt-1 truncate text-sm font-black text-red-900">{mainProduct ? mainStats.remainingShipment : allocation.missingTotal}</div>
                           </div>
                         </div>
+                        {!mainProduct && lifecycle && (
+                          <div className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs sm:flex-row sm:items-center sm:justify-between">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className={`rounded-full px-2.5 py-1 font-black ${
+                                lifecycle.newRequestQuantity > 0
+                                  ? "bg-red-100 text-red-800"
+                                  : lifecycle.remainingOrderQuantity > 0
+                                    ? "bg-blue-100 text-blue-800"
+                                    : lifecycle.requestedQuantity > 0
+                                      ? "bg-amber-100 text-amber-800"
+                                      : "bg-emerald-100 text-emerald-800"
+                              }`}>
+                                {lifecycle.status}
+                              </span>
+                              <span className="font-semibold text-slate-600">{lifecycle.action}</span>
+                            </div>
+                            <div className="flex flex-wrap gap-x-3 gap-y-1 font-bold text-slate-600">
+                              <span>Talep: {lifecycle.requestedQuantity}</span>
+                              <span>Sipariş: {lifecycle.orderedQuantity}</span>
+                              <span>Gelen: {lifecycle.receivedQuantity}</span>
+                              <span className={lifecycle.newRequestQuantity > 0 ? "text-red-700" : "text-emerald-700"}>Yeni ihtiyaç: {lifecycle.newRequestQuantity}</span>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   );
@@ -2621,6 +2883,9 @@ export default function StockPage() {
                     const allocation = selectedProjectAllocation;
                     const selectedMainProduct = isMainProduct(selectedProduct);
                     const selectedMainStats = mainProductProjectStats(selectedProduct, projectItems, movements);
+                    const selectedLifecycle = selectedMainProduct
+                      ? null
+                      : procurementLifecycle(selectedProduct, allocation.missingTotal, requests, offers, orders, orderReceipts);
                     return (
                       <>
                         <div className="flex items-start justify-between gap-4">
@@ -2763,16 +3028,17 @@ export default function StockPage() {
                             </div>
                           </div>
                           <div className="rounded-xl bg-blue-50 p-4">
-                            <div className="text-xs font-bold text-blue-700">{selectedMainProduct ? "Üretimde / İşlenen" : "Projeye Ayrılan"}</div>
-                            <div className="mt-1 text-xl font-black text-blue-900">{selectedMainProduct ? selectedMainStats.inProcess : allocation.allocatedTotal}</div>
+                            <div className="text-xs font-bold text-blue-700">{selectedMainProduct ? "Üretimde / İşlenen" : "Projeye Ayrılmış / Rezerve"}</div>
+                            <div className="mt-1 text-xl font-black text-blue-900">{selectedMainProduct ? selectedMainStats.inProcess : breakdown.reserved}</div>
                           </div>
                           <div className="rounded-xl bg-emerald-50 p-4">
                             <div className="text-xs font-bold text-emerald-700">{selectedMainProduct ? "Sevk Edilen" : "Boşta Kullanılabilir"}</div>
-                            <div className="mt-1 text-xl font-black text-emerald-900">{selectedMainProduct ? selectedMainStats.shipped : allocation.freeStock}</div>
+                            <div className="mt-1 text-xl font-black text-emerald-900">{selectedMainProduct ? selectedMainStats.shipped : breakdown.available}</div>
                           </div>
                           <div className="rounded-xl bg-red-50 p-4">
-                            <div className="text-xs font-bold text-red-700">{selectedMainProduct ? "Kalan Sevk" : "Alınması Gereken"}</div>
-                            <div className="mt-1 text-xl font-black text-red-900">{selectedMainProduct ? selectedMainStats.remainingShipment : allocation.missingTotal}</div>
+                            <div className="text-xs font-bold text-red-700">{selectedMainProduct ? "Kalan Sevk" : "Yeni Talep İhtiyacı"}</div>
+                            <div className="mt-1 text-xl font-black text-red-900">{selectedMainProduct ? selectedMainStats.remainingShipment : selectedLifecycle?.newRequestQuantity || 0}</div>
+                            {!selectedMainProduct && <div className="mt-1 text-xs font-semibold text-red-700">Açık proje ihtiyacı: {allocation.missingTotal}</div>}
                           </div>
                           <div className="rounded-xl bg-slate-50 p-4">
                             <div className="text-xs font-bold text-slate-500">Kayıtlı Son Birim Fiyat</div>
@@ -2785,6 +3051,33 @@ export default function StockPage() {
                             <div className="mt-1 text-lg font-black text-slate-900">{selectedProduct.last_supplier || "-"}</div>
                           </div>
                         </div>
+
+                        {!selectedMainProduct && selectedLifecycle && (
+                          <div className="mt-4 rounded-2xl border border-blue-100 bg-blue-50 p-4">
+                            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                              <div>
+                                <div className="text-xs font-black uppercase tracking-wide text-blue-700">Satınalma süreci</div>
+                                <div className="mt-1 text-lg font-black text-slate-950">{selectedLifecycle.status}</div>
+                                <div className="mt-1 text-sm font-semibold text-slate-600">{selectedLifecycle.action}</div>
+                              </div>
+                              <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-5">
+                                {[
+                                  ["Talep", selectedLifecycle.requestedQuantity],
+                                  ["Teklif", selectedLifecycle.offerCount],
+                                  ["Sipariş", selectedLifecycle.orderedQuantity],
+                                  ["Gelen", selectedLifecycle.receivedQuantity],
+                                  ["Siparişte", selectedLifecycle.remainingOrderQuantity],
+                                ].map(([label, value]) => (
+                                  <div key={label} className="rounded-xl bg-white px-3 py-2 text-center shadow-sm">
+                                    <div className="font-bold text-slate-500">{label}</div>
+                                    <div className="mt-1 text-base font-black text-slate-900">{value}</div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                            <div className="mt-3 text-xs font-semibold text-blue-800">{selectedLifecycle.detail}</div>
+                          </div>
+                        )}
 
                         <div className="mt-5 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                           <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
