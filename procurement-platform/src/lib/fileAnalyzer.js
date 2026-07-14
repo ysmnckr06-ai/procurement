@@ -1,11 +1,23 @@
 import { analyzeStockMatrix } from "@/lib/stockImport";
 
+const NON_IMPORT_SHEET_NAMES = new Set(["kullanim kilavuzu", "doldurulmus ornek"]);
+
+function normalizedSheetName(value) {
+  return String(value || "")
+    .trim()
+    .toLocaleLowerCase("tr-TR")
+    .replaceAll("ı", "i")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
 function extensionOf(fileName) {
   return String(fileName || "").split(".").pop()?.toLowerCase() || "";
 }
 
 export function analyzeStockSheets(sheets, options = {}) {
-  const candidates = sheets.map(({ sheetName, matrix }) => {
+  const importSheets = sheets.filter(({ sheetName }) => !NON_IMPORT_SHEET_NAMES.has(normalizedSheetName(sheetName)));
+  const candidates = (importSheets.length ? importSheets : sheets).map(({ sheetName, matrix }) => {
     const analysis = analyzeStockMatrix(matrix, {
       requiresQuantity: options.requiresQuantity,
       fileName: options.fileName,

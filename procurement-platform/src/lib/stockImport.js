@@ -362,11 +362,19 @@ export function validateStockImportColumns(mapping, requiresQuantity) {
   const missing = [];
   if (mapping.productName === null || mapping.productName === undefined)
     missing.push("Ürün adı / açıklaması");
-  if (
-    requiresQuantity &&
-    (mapping.quantity === null || mapping.quantity === undefined)
-  )
-    missing.push("Miktar / stok");
+  if (requiresQuantity) {
+    const requiredStockFields = [
+      ["productCode", "Ürün kodu"],
+      ["quantity", "Miktar / stok"],
+      ["unit", "Birim"],
+      ["unitPrice", "Birim fiyat"],
+      ["currency", "Para birimi"],
+      ["criticalStock", "Kritik stok"],
+    ];
+    requiredStockFields.forEach(([field, label]) => {
+      if (mapping[field] === null || mapping[field] === undefined) missing.push(label);
+    });
+  }
   return missing;
 }
 
@@ -411,7 +419,7 @@ export function buildStockImportRows(
               : null,
           currency:
             mapping.currency !== null
-              ? normalizeImportCurrency(source[mapping.currency]) || "TRY"
+              ? normalizeImportCurrency(source[mapping.currency])
               : "",
           criticalStock:
             mapping.criticalStock !== null
@@ -507,6 +515,6 @@ export function parseStockImportRows(
 
 export function stockImportExpectedColumns(requiresQuantity) {
   return requiresQuantity
-    ? "Zorunlu alanlar: ürün adı/açıklaması ve miktar/stok. Önizlemede ilgili kolonları manuel seçebilirsiniz."
+    ? "Standart stok şablonunda ürün kodu, ürün adı/açıklaması, miktar/stok, birim, birim fiyat, para birimi ve kritik stok kolonları zorunludur. Üstteki Şablonu İndir düğmesini kullanabilirsiniz."
     : "Zorunlu alan: ürün adı/açıklaması. Önizlemede ilgili kolonu manuel seçebilirsiniz.";
 }

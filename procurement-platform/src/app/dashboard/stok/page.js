@@ -52,6 +52,18 @@ function MoneyValue({ value, currency = "TRY", tone = "text-slate-900" }) {
   );
 }
 
+function productPriceSourceLabel(product) {
+  const sourceText = normalizeStockText(`${product?.source || ""} ${product?.notes || ""}`);
+  if (sourceText.includes("dosya") || sourceText.includes("excel") || sourceText.includes("toplu")) {
+    return "Stok Excel girişinden";
+  }
+  if (sourceText.includes("siparis") || sourceText.includes("teslimat")) {
+    return "Sipariş teslimatından";
+  }
+  if (Number(product?.manual_unit_price || 0) > 0) return "Ürün kartına manuel girildi";
+  return "Kayıtlı ürün fiyatı";
+}
+
 function formatDate(value) {
   if (!value) return "-";
   return new Date(value).toLocaleDateString("tr-TR");
@@ -786,6 +798,7 @@ export default function StockPage() {
     min_stock: "",
     critical_stock: "",
     manual_unit_price: "",
+    last_currency: "TRY",
     notes: "",
   });
   const [deleting, setDeleting] = useState(false);
@@ -820,7 +833,7 @@ export default function StockPage() {
 
   useEffect(() => {
     if (!selectedProduct) {
-      setProductForm({ brand: "", min_stock: "", critical_stock: "", manual_unit_price: "", notes: "" });
+      setProductForm({ brand: "", min_stock: "", critical_stock: "", manual_unit_price: "", last_currency: "TRY", notes: "" });
       return;
     }
 
@@ -829,6 +842,7 @@ export default function StockPage() {
       min_stock: String(selectedProduct.min_stock ?? selectedProduct.minimum_stock ?? ""),
       critical_stock: String(selectedProduct.critical_stock ?? ""),
       manual_unit_price: String(selectedProduct.manual_unit_price ?? ""),
+      last_currency: selectedProduct.last_currency || "TRY",
       notes: selectedProduct.notes || "",
     });
   }, [selectedProduct]);
@@ -1288,6 +1302,7 @@ export default function StockPage() {
       min_stock: Number(productForm.min_stock || 0),
       critical_stock: Number(productForm.critical_stock || 0),
       manual_unit_price: Number(productForm.manual_unit_price || 0),
+      last_currency: productForm.last_currency || "TRY",
       notes: productForm.notes || "",
       updated_at: new Date().toISOString(),
     };
@@ -1355,6 +1370,21 @@ export default function StockPage() {
 
   function createStockImportPreview(analyses, importType, error = "", batchId = crypto.randomUUID()) {
     const parsedRows = analyses.flatMap((analysis) => analysis.parsedRows || []);
+    const invalidStandardRows = importType === PRODUCT_TYPES.COMPONENT
+      ? parsedRows.filter((row) => (
+        !String(row.productCode || "").trim()
+        || !String(row.unit || "").trim()
+        || row.unitPrice === null
+        || row.unitPrice === undefined
+        || !row.currency
+        || row.criticalStock === null
+        || row.criticalStock === undefined
+      ))
+      : [];
+    const validationError = invalidStandardRows.length
+      ? `${invalidStandardRows.length} satırda ürün kodu, birim, birim fiyat, para birimi veya kritik stok değeri boş/geçersiz. Standart şablonu kullanıp bu alanları doldurun.`
+      : "";
+    const previewError = error || validationError;
     const importIdentityCounts = parsedRows.reduce((counts, row) => {
       const code = normalizeStockCode(row.productCode);
       const key = code ? `code:${code}` : `name:${normalizeStockText(row.productName)}`;
@@ -1401,7 +1431,7 @@ export default function StockPage() {
       expectedIncrease: importType === PRODUCT_TYPES.MAIN
         ? 0
         : rows.reduce((sum, row) => sum + Math.max(Number(row.quantity || 0), 0), 0),
-      canApply: rows.length > 0 && missingFields.length === 0 && counts.conflict === 0 && !error,
+      canApply: rows.length > 0 && missingFields.length === 0 && counts.conflict === 0 && !previewError,
       totalFileRows: analyses.reduce((sum, analysis) => sum + Math.max(0, analysis.rows.length - analysis.dataStartIndex), 0),
       fileDetails: analyses.map((analysis) => ({
         fileName: analysis.fileName,
@@ -1410,7 +1440,7 @@ export default function StockPage() {
         parsedCount: analysis.parsedRows.length,
         confidence: analysis.overallConfidence,
       })),
-      error,
+      error: previewError,
     };
   }
 
@@ -1969,6 +1999,13 @@ export default function StockPage() {
               >
                 Stok Excel
               </button>
+              <a
+                href="/templates/CORVIAN_Stok_Giris_Sablonu.xlsx"
+                download
+                className="rounded-xl border border-blue-200 bg-white px-5 py-3 text-sm font-bold text-blue-700 hover:bg-blue-50"
+              >
+                Şablonu İndir
+              </a>
               <button
                 type="button"
                 onClick={exportProductsPdf}
@@ -2609,9 +2646,10 @@ export default function StockPage() {
                             <div className="mt-1 text-xl font-black text-red-900">{selectedMainProduct ? selectedMainStats.remainingShipment : allocation.missingTotal}</div>
                           </div>
                           <div className="rounded-xl bg-slate-50 p-4">
-                            <div className="text-xs font-bold text-slate-500">Siparişlerden Gelen Son Fiyat</div>
-                            <div className="mt-1"><MoneyValue value={selectedProduct.last_unit_price} currency={selectedProduct.last_currency || "TRY"} /></div>
-                            <div className="mt-1 text-xs text-slate-500">{formatDate(selectedProduct.last_purchase_date || selectedProduct.last_movement_at)}</div>
+                            <div className="text-xs font-bold text-slate-500">Kayıtlı Son Birim Fiyat</div>
+                            <div className="mt-1"><MoneyValue value={selectedProduct.manual_unit_price || selectedProduct.last_unit_price} currency={selectedProduct.last_currency || "TRY"} /></div>
+                            <div className="mt-1 text-xs font-semibold text-slate-500">{productPriceSourceLabel(selectedProduct)}</div>
+                            <div className="mt-1 text-xs text-slate-400">{formatDate(selectedProduct.last_purchase_date || selectedProduct.last_movement_at)}</div>
                           </div>
                           <div className="rounded-xl bg-slate-50 p-4">
                             <div className="text-xs font-bold text-slate-500">Son İş Ortağı</div>
@@ -2718,16 +2756,32 @@ export default function StockPage() {
                                 className="mt-2 w-full rounded-xl border border-slate-300 p-3 text-sm"
                               />
                             </label>
-                            <label className="text-sm font-bold text-slate-700">
-                              Manuel fiyat
-                              <input
-                                type="number"
-                                step="0.01"
-                                value={productForm.manual_unit_price}
-                                onChange={(event) => updateProductForm("manual_unit_price", event.target.value)}
-                                className="mt-2 w-full rounded-xl border border-slate-300 p-3 text-sm"
-                              />
-                            </label>
+                            <div className="grid grid-cols-[minmax(0,1fr)_110px] gap-2">
+                              <label className="text-sm font-bold text-slate-700">
+                                Birim fiyat
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  value={productForm.manual_unit_price}
+                                  onChange={(event) => updateProductForm("manual_unit_price", event.target.value)}
+                                  className="mt-2 w-full rounded-xl border border-slate-300 p-3 text-sm"
+                                />
+                              </label>
+                              <label className="text-sm font-bold text-slate-700">
+                                Para birimi
+                                <select
+                                  value={productForm.last_currency}
+                                  onChange={(event) => updateProductForm("last_currency", event.target.value)}
+                                  className="mt-2 w-full rounded-xl border border-slate-300 bg-white p-3 text-sm"
+                                >
+                                  <option value="TRY">TRY</option>
+                                  <option value="EUR">EUR</option>
+                                  <option value="USD">USD</option>
+                                  <option value="GBP">GBP</option>
+                                </select>
+                              </label>
+                            </div>
                             <label className="text-sm font-bold text-slate-700">
                               Minimum stok
                               <input
@@ -3019,7 +3073,7 @@ export default function StockPage() {
                     <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                       {STOCK_IMPORT_FIELDS.map((field) => (
                         <label key={field.key} className="text-xs font-bold text-slate-600">
-                          {field.label}{(field.key === "productName" || (field.key === "quantity" && stockImportPreview.importType !== PRODUCT_TYPES.MAIN)) ? " *" : ""}
+                          {field.label}{(field.key === "productName" || (stockImportPreview.importType !== PRODUCT_TYPES.MAIN && ["productCode", "quantity", "unit", "unitPrice", "currency", "criticalStock"].includes(field.key))) ? " *" : ""}
                           <select
                             value={analysis.mapping[field.key] ?? ""}
                             onChange={(event) => updateStockImportMapping(analysisIndex, field.key, event.target.value)}
