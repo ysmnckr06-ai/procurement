@@ -16,6 +16,14 @@ if configured_tesseract_cmd:
     pytesseract.pytesseract.tesseract_cmd = configured_tesseract_cmd
 elif os.path.exists(windows_tesseract_cmd):
     pytesseract.pytesseract.tesseract_cmd = windows_tesseract_cmd
+else:
+    try:
+        from tesseract_bin import TESSDATA_PREFIX, TESSERACT_PATH
+
+        pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
+        os.environ.setdefault("TESSDATA_PREFIX", TESSDATA_PREFIX)
+    except ImportError:
+        pass
 
 try:
     _ocr_languages = set(pytesseract.get_languages(config=""))
