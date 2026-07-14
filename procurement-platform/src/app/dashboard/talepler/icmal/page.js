@@ -505,6 +505,7 @@ export default function ProcurementSummaryPage() {
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [creatingRequest, setCreatingRequest] = useState(false);
+  const [requestError, setRequestError] = useState("");
   const [reservingStock, setReservingStock] = useState(false);
   const [selectedRowKeys, setSelectedRowKeys] = useState([]);
   const [lastCreatedRequestId, setLastCreatedRequestId] = useState("");
@@ -727,10 +728,12 @@ export default function ProcurementSummaryPage() {
       department: "",
       priority: "Normal",
     });
+    setRequestError("");
   }
 
   function closeRequestModal() {
     if (creatingRequest) return;
+    setRequestError("");
     setRequestModal({
       open: false,
       selectedOnly: false,
@@ -747,13 +750,18 @@ export default function ProcurementSummaryPage() {
     const department = requestModal.department.trim();
     const priority = requestModal.priority || "Normal";
     if (!requester) {
-      setMessage("Talebi açan kişi bilgisini girin.");
+      setRequestError("Talebi açan kişi bilgisini girin.");
       return;
     }
+    setRequestError("");
     setCreatingRequest(true);
     setLastCreatedRequestId("");
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) { router.push("/login"); return; }
+    if (!user) {
+      setCreatingRequest(false);
+      router.push("/login");
+      return;
+    }
     const items = actionRows.map((row) => ({
       product_id: row.productId,
       product_code: row.productCode,
@@ -786,12 +794,16 @@ export default function ProcurementSummaryPage() {
       project_id: projects.length === 1 ? projects[0].id : null,
       ad: `${modeConfig.title} · ${new Date().toLocaleDateString("tr-TR")}`,
       durum: "Teklif Bekliyor",
-      priority,
       totalitems: items.length,
       items,
     }).select("id").single();
     setCreatingRequest(false);
-    if (error) { setMessage(`Talep oluşturulamadı: ${error.message}`); return; }
+    if (error) {
+      const errorMessage = `Talep oluşturulamadı: ${error.message}`;
+      setRequestError(errorMessage);
+      setMessage(errorMessage);
+      return;
+    }
     setRequestModal({
       open: false,
       selectedOnly: false,
@@ -800,6 +812,7 @@ export default function ProcurementSummaryPage() {
       priority: "Normal",
     });
     setLastCreatedRequestId(data.id);
+    setRequestError("");
     await loadSummaryData(`Talep listesi oluşturuldu. ${items.length} kalem Talepler modülüne aktarıldı.`);
   }
 
@@ -1044,6 +1057,11 @@ export default function ProcurementSummaryPage() {
             <form onSubmit={submitRequestForOffers} className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl">
               <div className="text-xs font-black uppercase tracking-wide text-blue-700">Talep bilgisi</div>
               <h2 className="mt-1 text-xl font-black text-slate-950">Talebi açan kişi kim?</h2>
+              {requestError && (
+                <div role="alert" className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-800">
+                  {requestError}
+                </div>
+              )}
               <label className="mt-5 block text-sm font-bold text-slate-700">
                 Talebi açan kişi
                 <input
