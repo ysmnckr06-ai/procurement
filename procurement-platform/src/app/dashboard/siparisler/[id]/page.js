@@ -2485,7 +2485,7 @@ export default function OrderDetailPage() {
     return binary;
   }
 
-  async function useTurkishPdfFont(doc) {
+  async function loadTurkishPdfFont(doc) {
     const response = await fetch("/fonts/DejaVuSans.ttf");
 
     if (!response.ok) {
@@ -2506,7 +2506,7 @@ export default function OrderDetailPage() {
     const [{ jsPDF }, autoTableModule] = await Promise.all([import("jspdf"), import("jspdf-autotable")]);
     const autoTable = autoTableModule.default || autoTableModule.autoTable || autoTableModule;
     const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
-    const pdfFont = await useTurkishPdfFont(doc);
+    const pdfFont = await loadTurkishPdfFont(doc);
     doc.setFontSize(16); doc.text(companyName, 40, 34);
     doc.setFontSize(9); doc.setTextColor(90); doc.text(`${CORVIAN_PRODUCT_NAME} · Sipariş Formu`, 40, 49);
     doc.setTextColor(20); doc.text(`Sipariş No: ${order.order_no || "-"}`, 40, 68);
@@ -2537,7 +2537,7 @@ export default function OrderDetailPage() {
     const [{ jsPDF }, autoTableModule] = await Promise.all([import("jspdf"), import("jspdf-autotable")]);
     const autoTable = autoTableModule.default || autoTableModule.autoTable || autoTableModule;
     const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
-    const pdfFont = await useTurkishPdfFont(doc);
+    const pdfFont = await loadTurkishPdfFont(doc);
     const supplierName = order.partner_name || order.supplier_name || "-";
 
     doc.setFillColor(15, 23, 42);

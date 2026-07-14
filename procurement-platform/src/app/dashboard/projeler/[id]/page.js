@@ -492,6 +492,7 @@ export default function ProjectDetailPage() {
   const [creatingMissingProducts, setCreatingMissingProducts] = useState(false);
   const [missingProductActionLabel, setMissingProductActionLabel] = useState("");
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const visiblePreviewSections = useMemo(() => {
     const seen = new Set();
 
@@ -1172,15 +1173,29 @@ export default function ProjectDetailPage() {
 
   async function loadProject() {
     setLoading(true);
+    setProject(null);
+    setLoadError("");
     setDocumentPreview(null);
     setDocumentAccessError("");
     setMessage("");
-    const user = await getUserOrRedirect();
-    if (!user) return;
 
     try {
+      await withTimeout(loadProjectData(), "Proje detayları", 25000);
+    } catch (error) {
+      console.error("Proje detayı yüklenemedi:", error);
+      const errorMessage = error?.message || "Beklenmeyen hata";
+      setLoadError(errorMessage);
+      setMessage(`Proje detayı yüklenemedi: ${errorMessage}`);
+    } finally {
+      setLoading(false);
+    }
+  }
 
-    const [projectRes, itemRes, paymentRes, expenseRes, revisionRes, productRes, requestRes, reportRes, offerRes, orderRes, allOrderRes, movementRes, settingsRes] = await Promise.all([
+  async function loadProjectData() {
+    const user = await withTimeout(getUserOrRedirect(), "Oturum doğrulama", 10000);
+    if (!user) return;
+
+    const [projectRes, itemRes, paymentRes, expenseRes, revisionRes, productRes, requestRes, reportRes, offerRes, orderRes, allOrderRes, movementRes, settingsRes] = await withTimeout(Promise.all([
       supabase
         .from("projects")
         .select("*")
@@ -1255,17 +1270,19 @@ export default function ProjectDetailPage() {
         .select("*")
         .eq("user_id", user.id)
         .limit(1),
-    ]);
+    ]), "Proje temel verileri", 15000);
 
     if (projectRes.error) {
       console.error("Proje sorgusu başarısız:", projectRes.error);
       setProject(null);
+      setLoadError(projectRes.error.message || "Bilinmeyen sorgu hatası");
       setMessage(`Proje yüklenemedi: ${projectRes.error.message || "Bilinmeyen sorgu hatası"}`);
       return;
     }
 
     if (!projectRes.data) {
       setProject(null);
+      setLoadError("Proje bulunamadı veya bu kayda erişim yetkiniz yok.");
       setMessage("Proje bulunamadı veya bu kayda erişim yetkiniz yok.");
       return;
     }
@@ -1419,7 +1436,7 @@ export default function ProjectDetailPage() {
     setRevisions(revisionRes.data || []);
     setProducts(productRes.data || []);
     const loadedItems = itemRes.data || [];
-    const linkedItems = await ensureProductCardsForProjectItems(loadedItems, user.id, productRes.data || []);
+    const linkedItems = loadedItems;
     const linkedSourceFileNames = Array.from(new Set(
       linkedItems
         .map((item) => String(item.source_file || "").trim())
@@ -1498,7 +1515,9 @@ export default function ProjectDetailPage() {
               ? "Ürün adı/açıklama boş olduğu için eşleştirilemedi"
               : "Eşleşme/oluşturma sonrası product_id boş kaldı",
       }));
-    console.table(unlinkedItems);
+    if (unlinkedItems.length > 0) {
+      console.debug(`${unlinkedItems.length} proje kalemi ürün kartı kontrolü bekliyor.`);
+    }
     const linkedItemIds = new Set(linkedItems.map((item) => String(item.id)));
     const requestBelongsToCurrentProject = (request) => {
       if (String(request.project_id || "") === String(projectId)) return true;
@@ -1574,12 +1593,30 @@ export default function ProjectDetailPage() {
     setAllOrders(allOrderRows);
     setStockMovements(movementRes.data || []);
     if (settingsRes.data?.[0]) setCompanySettings(settingsRes.data[0]);
-    } catch (error) {
-      console.error("Proje detayı yüklenemedi:", error);
-      setMessage(`Proje detayı yüklenemedi: ${error?.message || "Beklenmeyen hata"}`);
-    } finally {
-      setLoading(false);
-    }
+
+    void withTimeout(
+      ensureProductCardsForProjectItems(loadedItems, user.id, productRes.data || []),
+      "Ürün kartı eşleştirme",
+      15000,
+    )
+      .then((updatedItems) => {
+        const linkedById = new Map(
+          updatedItems.filter((item) => item.product_id).map((item) => [String(item.id), item]),
+        );
+        setItems((currentItems) => currentItems.map((item) => {
+          const linkedItem = linkedById.get(String(item.id));
+          if (!linkedItem) return item;
+          return {
+            ...item,
+            product_id: linkedItem.product_id,
+            product_code: linkedItem.product_code || item.product_code,
+            normalized_product_code:
+              linkedItem.normalized_product_code || item.normalized_product_code,
+            productCardStatus: linkedItem.productCardStatus || item.productCardStatus,
+          };
+        }));
+      })
+      .catch((error) => console.warn("Ürün kartı eşleştirme arka planda tamamlanamadı:", error));
   }
 
   async function loadProjectItems() {
@@ -2448,12 +2485,16 @@ export default function ProjectDetailPage() {
   }
 
   function withTimeout(promise, label, timeoutMs = 15000) {
+    let timeoutId;
     return Promise.race([
       promise,
       new Promise((_, reject) => {
-        setTimeout(() => reject(new Error(`${label} zaman aşımına uğradı. Lütfen bağlantıyı kontrol edip tekrar deneyin.`)), timeoutMs);
+        timeoutId = setTimeout(
+          () => reject(new Error(`${label} zaman aşımına uğradı. Lütfen bağlantıyı kontrol edip tekrar deneyin.`)),
+          timeoutMs,
+        );
       }),
-    ]);
+    ]).finally(() => clearTimeout(timeoutId));
   }
 
   async function insertStockMovementsWithFallback(payload) {
@@ -2675,23 +2716,6 @@ export default function ProjectDetailPage() {
       const sharedMatch = matchProduct(searchableProducts, item);
       let product = sharedMatch.type === "exact" ? sharedMatch.match?.product : null;
       let productCardStatus = "Ürün kartına bağlı";
-
-      if (!product) {
-        const { data: existingByCode, error: existingByCodeError } = await supabase
-          .from("products")
-          .select("*")
-          .eq("user_id", userId)
-          .is("archived_at", null)
-          .eq("normalized_product_code", normalizeProductCode(safeProductCode))
-          .maybeSingle();
-
-        if (existingByCodeError) {
-          logProductCardError(existingByCodeError, item, { product_code: safeProductCode }, "existing-lookup");
-        }
-
-        const databaseMatch = existingByCode ? matchProduct([existingByCode], item) : null;
-        product = databaseMatch?.type === "exact" ? existingByCode : null;
-      }
 
       if (!product) {
         failedItems.push(item);
@@ -7445,13 +7469,37 @@ export default function ProjectDetailPage() {
   const showLiveRatePanel = activeTab === tabs[0] || activeTab === tabs[6];
 
   if (loading) {
-    return <div className="p-6 text-sm text-slate-500">Proje yükleniyor...</div>;
+    return (
+      <div className="flex min-h-64 items-center justify-center rounded-2xl border border-slate-200 bg-white p-8">
+        <div className="text-center">
+          <div className="mx-auto h-9 w-9 animate-spin rounded-full border-4 border-blue-100 border-t-blue-600" />
+          <div className="mt-4 text-sm font-bold text-slate-700">Proje yükleniyor...</div>
+          <div className="mt-1 text-xs text-slate-500">Bu işlem normalde birkaç saniye sürer.</div>
+        </div>
+      </div>
+    );
   }
 
   if (!project) {
     return (
-      <div className="rounded-xl border border-yellow-200 bg-yellow-50 p-4 text-sm font-bold text-yellow-900">
-        {message || "Proje bulunamadı."}
+      <div className="rounded-xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-950">
+        <div className="font-black">Proje yüklenemedi</div>
+        <div className="mt-2 font-semibold">{message || loadError || "Proje bulunamadı."}</div>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={loadProject}
+            className="rounded-lg bg-amber-900 px-4 py-2 text-xs font-black text-white hover:bg-amber-800"
+          >
+            Tekrar dene
+          </button>
+          <Link
+            href="/dashboard/projeler"
+            className="rounded-lg border border-amber-300 bg-white px-4 py-2 text-xs font-black text-amber-900 hover:bg-amber-100"
+          >
+            Projelere dön
+          </Link>
+        </div>
       </div>
     );
   }
