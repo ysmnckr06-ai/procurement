@@ -1010,16 +1010,7 @@ def clean_key(value: str) -> str:
 
     text = re.sub(r"\s+", " ", text)
     text = re.sub(r"[^a-z0-9\s]", "", text)
-
-    words = text.split()
-    normalized_words = []
-
-    for w in words:
-        if len(w) > 4:
-            w = w[:5]
-        normalized_words.append(w)
-
-    return " ".join(normalized_words).strip()
+    return text.strip()
 
 def find_merge_key(merged: dict, kod_key: str, aciklama_key: str, birim_key: str):
     for key, item in merged.items():
