@@ -94,7 +94,8 @@ function exportDateStamp() {
 }
 
 async function downloadExcelWorkbook(fileName, sheets, companyName) {
-  const XLSX = await import("xlsx");
+  const XLSXModule = await import("xlsx-js-style");
+  const XLSX = XLSXModule.default || XLSXModule;
   const workbook = XLSX.utils.book_new();
 
   sheets.forEach((sheet) => {
@@ -107,6 +108,80 @@ async function downloadExcelWorkbook(fileName, sheets, companyName) {
     ]);
     XLSX.utils.sheet_add_json(worksheet, rows, { origin: "A5" });
     const headers = Object.keys(rows[0] || {});
+    const lastColumn = XLSX.utils.encode_col(Math.max(headers.length - 1, 0));
+    const thinBorder = {
+      top: { style: "thin", color: { rgb: "E2E8F0" } },
+      bottom: { style: "thin", color: { rgb: "E2E8F0" } },
+      left: { style: "thin", color: { rgb: "E2E8F0" } },
+      right: { style: "thin", color: { rgb: "E2E8F0" } },
+    };
+    const rowStyle = (fill, fontColor = "0F172A") => ({
+      fill: { patternType: "solid", fgColor: { rgb: fill } },
+      font: { color: { rgb: fontColor } },
+      border: thinBorder,
+      alignment: { vertical: "center" },
+    });
+    const applyStyle = (address, style) => {
+      if (worksheet[address]) worksheet[address].s = style;
+    };
+
+    applyStyle("A1", { fill: { patternType: "solid", fgColor: { rgb: "0F172A" } }, font: { bold: true, color: { rgb: "FFFFFF" }, sz: 15 } });
+    applyStyle("A2", { fill: { patternType: "solid", fgColor: { rgb: "0F172A" } }, font: { bold: true, color: { rgb: "93C5FD" } } });
+    applyStyle("A3", { font: { bold: true, color: { rgb: "1E3A8A" } } });
+    applyStyle("B3", { font: { color: { rgb: "475569" } } });
+    applyStyle("A4", { fill: { patternType: "solid", fgColor: { rgb: "DBEAFE" } }, font: { bold: true, color: { rgb: "1E3A8A" } }, alignment: { wrapText: true, vertical: "center" } });
+    headers.forEach((_, columnIndex) => {
+      applyStyle(`${XLSX.utils.encode_col(columnIndex)}5`, {
+        fill: { patternType: "solid", fgColor: { rgb: "0F172A" } },
+        font: { bold: true, color: { rgb: "FFFFFF" } },
+        border: thinBorder,
+        alignment: { wrapText: true, vertical: "center" },
+      });
+    });
+
+    rows.forEach((row, rowIndex) => {
+      const excelRow = rowIndex + 6;
+      const stockRisk = normalizeStockText(row["Stok riski"]);
+      const purchaseStatus = normalizeStockText(row["Satınalma durumu"]);
+      const criticalStock = stockRisk.includes("kullanilabilir stok yok") || stockRisk.includes("stok tukendi");
+      const lowStock = stockRisk.includes("kritik stok") || stockRisk.includes("dusuk stok");
+      const requestStage = purchaseStatus.includes("talep") || purchaseStatus.includes("teklif");
+      const orderStage = purchaseStatus.includes("siparis") || purchaseStatus.includes("teslim");
+      const baseStyle = criticalStock
+        ? rowStyle("FEE2E2", "991B1B")
+        : lowStock
+          ? rowStyle("FFEDD5", "9A3412")
+          : requestStage
+            ? rowStyle("FEF3C7", "92400E")
+            : orderStage
+              ? rowStyle("DBEAFE", "1E3A8A")
+              : rowStyle(rowIndex % 2 === 0 ? "F8FAFC" : "FFFFFF");
+      headers.forEach((_, columnIndex) => {
+        applyStyle(`${XLSX.utils.encode_col(columnIndex)}${excelRow}`, baseStyle);
+      });
+
+      const riskColumn = headers.indexOf("Stok riski");
+      if (riskColumn >= 0) {
+        const riskStyle = criticalStock
+          ? rowStyle("DC2626", "FFFFFF")
+          : lowStock
+            ? rowStyle("F97316", "FFFFFF")
+            : rowStyle("DCFCE7", "166534");
+        riskStyle.font.bold = true;
+        applyStyle(`${XLSX.utils.encode_col(riskColumn)}${excelRow}`, riskStyle);
+      }
+      const statusColumn = headers.indexOf("Satınalma durumu");
+      if (statusColumn >= 0) {
+        const statusStyle = orderStage
+          ? rowStyle("2563EB", "FFFFFF")
+          : requestStage
+            ? rowStyle("F59E0B", "FFFFFF")
+            : rowStyle("DCFCE7", "166534");
+        statusStyle.font.bold = true;
+        applyStyle(`${XLSX.utils.encode_col(statusColumn)}${excelRow}`, statusStyle);
+      }
+    });
+
     worksheet["!cols"] = headers.map((header) => ({
       wch: Math.min(
         42,
@@ -118,12 +193,18 @@ async function downloadExcelWorkbook(fileName, sheets, companyName) {
       ),
     }));
     if (headers.length > 0) {
-      worksheet["!autofilter"] = { ref: `A5:${XLSX.utils.encode_col(headers.length - 1)}${rows.length + 5}` };
+      worksheet["!autofilter"] = { ref: `A5:${lastColumn}${rows.length + 5}` };
+      worksheet["!merges"] = [
+        { s: { r: 0, c: 0 }, e: { r: 0, c: headers.length - 1 } },
+        { s: { r: 1, c: 0 }, e: { r: 1, c: headers.length - 1 } },
+        { s: { r: 3, c: 0 }, e: { r: 3, c: headers.length - 1 } },
+      ];
     }
+    worksheet["!rows"] = [{ hpt: 24 }, { hpt: 18 }, { hpt: 18 }, { hpt: 32 }, { hpt: 34 }];
     XLSX.utils.book_append_sheet(workbook, worksheet, sheet.name.slice(0, 31));
   });
 
-  XLSX.writeFile(workbook, `${safeFileName(fileName)}.xlsx`);
+  XLSX.writeFile(workbook, `${safeFileName(fileName)}.xlsx`, { cellStyles: true });
 }
 
 async function downloadPdfTable(fileName, title, rows, companyName) {
@@ -720,6 +801,7 @@ function buildProductExportRows(productList, movements, projectItems, projects, 
     const breakdown = stockBreakdown(product, movements);
     const allocation = productProjectAllocations(product, projectItems, projects, movements);
     const lifecycle = procurementLifecycle(product, allocation.missingTotal, requests, offers, orders, receipts);
+    const stockRisk = stockRiskStatus(product, breakdown, lifecycle);
     const lastPrice = Number(product.last_unit_price || product.manual_unit_price || 0);
     return {
       "Ürün kodu": product.product_code || "-",
@@ -730,6 +812,10 @@ function buildProductExportRows(productList, movements, projectItems, projects, 
       "Projeye ayrılmış / rezerve": breakdown.reserved,
       "Üretimde / uygulamada": breakdown.production + breakdown.montage,
       "Boşta kullanılabilir": breakdown.available,
+      "Stok riski": stockRisk.status,
+      "Stok yenileme ihtiyacı": stockRisk.replenishmentQuantity,
+      "Depo aksiyonu": stockRisk.action,
+      "Stok uyarısı": stockRisk.warning,
       "Açık proje ihtiyacı": allocation.missingTotal,
       "Talep edilen": lifecycle.requestedQuantity,
       "Talep sayısı": lifecycle.requestCount,
@@ -906,7 +992,7 @@ function procurementLifecycle(product, missingQuantity, requests, offers, orders
   let action = "İşlem yok";
 
   if (Number(missingQuantity || 0) <= 0) {
-    status = remainingOrderQuantity > 0 ? "Stok yeterli · sipariş yolda" : "Stok yeterli";
+    status = remainingOrderQuantity > 0 ? "Proje ihtiyacı karşılandı · sipariş yolda" : "Proje ihtiyacı karşılandı";
     action = remainingOrderQuantity > 0 ? "Fazla sipariş riskini kontrol et" : "İşlem yok";
   } else if (remainingOrderQuantity > 0 && receivedQuantity > 0) {
     status = "Kısmi teslim";
@@ -948,6 +1034,65 @@ function procurementLifecycle(product, missingQuantity, requests, offers, orders
       offerCount ? `${offerCount} teklif kaydı` : "",
       orderNumbers.length ? `Sipariş: ${[...new Set(orderNumbers)].join(" / ")}` : "",
     ].filter(Boolean).join(" · ") || "-",
+  };
+}
+
+function stockRiskStatus(product, breakdown, lifecycle) {
+  const available = Math.max(Number(breakdown?.available || 0), 0);
+  const total = Math.max(Number(breakdown?.total || 0), 0);
+  const reserved = Math.max(Number(breakdown?.reserved || 0), 0);
+  const minimumStock = Math.max(Number(product?.min_stock ?? product?.minimum_stock ?? 0), 0);
+  const criticalStock = Math.max(Number(product?.critical_stock || 0), 0);
+  const replenishmentTarget = Math.max(minimumStock, criticalStock);
+  const replenishmentQuantity = replenishmentTarget > 0 ? Math.max(replenishmentTarget - available, 0) : 0;
+  const procurementActive = Number(lifecycle?.requestedQuantity || 0) > 0
+    || Number(lifecycle?.draftOrderQuantity || 0) > 0
+    || Number(lifecycle?.remainingOrderQuantity || 0) > 0;
+
+  if (available <= 0) {
+    return {
+      level: "critical",
+      status: total <= 0 ? "Stok tükendi" : "Kullanılabilir stok yok",
+      warning: reserved > 0
+        ? `Mevcut ${total} ${product?.unit || "adet"} ürünün tamamı projelere ayrılmış; depoda boşta stok kalmadı.`
+        : "Depoda kullanılabilecek stok kalmadı.",
+      action: procurementActive
+        ? "Satınalma sürecini takip et; depo stoğunu yenile"
+        : "Depo stoğu için satınalma değerlendir",
+      replenishmentQuantity,
+      replenishmentTarget,
+    };
+  }
+
+  if (criticalStock > 0 && available <= criticalStock) {
+    return {
+      level: "warning",
+      status: "Kritik stok",
+      warning: `Boşta stok ${available}; kritik seviye ${criticalStock} ${product?.unit || "adet"}.`,
+      action: procurementActive ? "Satınalma sürecini ve kritik stoğu takip et" : "Stok yenileme planla",
+      replenishmentQuantity,
+      replenishmentTarget,
+    };
+  }
+
+  if (minimumStock > 0 && available <= minimumStock) {
+    return {
+      level: "warning",
+      status: "Düşük stok",
+      warning: `Boşta stok ${available}; minimum seviye ${minimumStock} ${product?.unit || "adet"}.`,
+      action: procurementActive ? "Satınalma sürecini takip et" : "Stok yenileme planla",
+      replenishmentQuantity,
+      replenishmentTarget,
+    };
+  }
+
+  return {
+    level: "safe",
+    status: "Stok yeterli",
+    warning: "Boşta kullanılabilir stok mevcut.",
+    action: "İşlem yok",
+    replenishmentQuantity: 0,
+    replenishmentTarget,
   };
 }
 
@@ -2214,6 +2359,10 @@ export default function StockPage() {
       "Projeye ayrılmış / rezerve": row["Projeye ayrılmış / rezerve"],
       "Üretimde / uygulamada": row["Üretimde / uygulamada"],
       "Boşta kullanılabilir": row["Boşta kullanılabilir"],
+      "Stok riski": row["Stok riski"],
+      "Stok yenileme ihtiyacı": row["Stok yenileme ihtiyacı"],
+      "Depo aksiyonu": row["Depo aksiyonu"],
+      "Stok uyarısı": row["Stok uyarısı"],
       "Açık proje ihtiyacı": row["Açık proje ihtiyacı"],
       "Talep edilen": row["Talep edilen"],
       "Teklif sayısı": row["Teklif sayısı"],
@@ -2243,7 +2392,7 @@ export default function StockPage() {
       {
         name: "Stok ve Satinalma",
         rows: decisionRows,
-        note: "Karar için Yeni talep ihtiyacı, Satınalma durumu ve Önerilen aksiyon kolonlarını filtreleyin. Talep edilen miktar siparişe dönüştüğünde ayrıca yeni talep açmayın.",
+        note: "RENKLER: Kırmızı = boşta stok yok/tükendi, turuncu = kritik stok, sarı = talep/teklif süreci, mavi = sipariş/teslimat süreci. Stok riski ile satınalma durumunu birlikte değerlendirin.",
       },
       { name: "Urun Karti Detaylari", rows: productDetailRows },
       { name: "Stok Hareketleri", rows: movementRows },
@@ -2259,6 +2408,8 @@ export default function StockPage() {
       Stok: row["Mevcut stok"],
       Rezerve: row["Projeye ayrılmış / rezerve"],
       Kullanılabilir: row["Boşta kullanılabilir"],
+      "Stok riski": row["Stok riski"],
+      "Yenileme ihtiyacı": row["Stok yenileme ihtiyacı"],
       "Açık ihtiyaç": row["Açık proje ihtiyacı"],
       Talep: row["Talep edilen"],
       Sipariş: row["Sipariş edilen"],
@@ -2576,13 +2727,19 @@ export default function StockPage() {
                   const lifecycle = mainProduct
                     ? null
                     : procurementLifecycle(product, allocation.missingTotal, requests, offers, orders, orderReceipts);
+                  const stockRisk = mainProduct ? null : stockRiskStatus(product, breakdown, lifecycle);
+                  const cardRiskClass = stockRisk?.level === "critical"
+                    ? "border-red-300 bg-red-50/60 hover:border-red-400 hover:bg-red-50"
+                    : stockRisk?.level === "warning"
+                      ? "border-orange-300 bg-orange-50/60 hover:border-orange-400 hover:bg-orange-50"
+                      : "border-slate-200 bg-white hover:border-blue-200 hover:bg-blue-50";
                   return (
                     <div
                       key={product.groupKey}
-                      className={`w-full rounded-2xl border p-4 text-left transition hover:border-blue-200 hover:bg-blue-50 ${
+                      className={`w-full rounded-2xl border p-4 text-left transition ${cardRiskClass} ${
                         selectedProduct?.groupKey === product.groupKey
-                          ? "border-blue-300 bg-blue-50"
-                          : "border-slate-200 bg-white"
+                          ? "ring-2 ring-blue-200"
+                          : ""
                       }`}
                     >
                       <div className="space-y-3">
@@ -2668,15 +2825,54 @@ export default function StockPage() {
                             <div className="truncate font-bold text-blue-700">{mainProduct ? "İşlenen" : "Rezerve"}</div>
                             <div className="mt-1 truncate text-sm font-black text-blue-900">{mainProduct ? mainStats.inProcess : breakdown.reserved}</div>
                           </div>
-                          <div className="min-w-0 rounded-xl bg-emerald-50 px-3 py-2">
-                            <div className="truncate font-bold text-emerald-700">{mainProduct ? "Sevk" : "Boşta"}</div>
-                            <div className="mt-1 truncate text-sm font-black text-emerald-900">{mainProduct ? mainStats.shipped : breakdown.available}</div>
+                          <div className={`min-w-0 rounded-xl px-3 py-2 ${
+                            !mainProduct && stockRisk?.level === "critical"
+                              ? "bg-red-100"
+                              : !mainProduct && stockRisk?.level === "warning"
+                                ? "bg-orange-100"
+                                : "bg-emerald-50"
+                          }`}>
+                            <div className={`truncate font-bold ${
+                              !mainProduct && stockRisk?.level === "critical"
+                                ? "text-red-700"
+                                : !mainProduct && stockRisk?.level === "warning"
+                                  ? "text-orange-700"
+                                  : "text-emerald-700"
+                            }`}>{mainProduct ? "Sevk" : "Boşta"}</div>
+                            <div className={`mt-1 truncate text-sm font-black ${
+                              !mainProduct && stockRisk?.level === "critical"
+                                ? "text-red-900"
+                                : !mainProduct && stockRisk?.level === "warning"
+                                  ? "text-orange-900"
+                                  : "text-emerald-900"
+                            }`}>{mainProduct ? mainStats.shipped : breakdown.available}</div>
                           </div>
                           <div className="min-w-0 rounded-xl bg-red-50 px-3 py-2">
                             <div className="truncate font-bold text-red-700">{mainProduct ? "Kalan sevk" : "Eksik"}</div>
                             <div className="mt-1 truncate text-sm font-black text-red-900">{mainProduct ? mainStats.remainingShipment : allocation.missingTotal}</div>
                           </div>
                         </div>
+                        {!mainProduct && stockRisk && stockRisk.level !== "safe" && (
+                          <div className={`flex flex-col gap-2 rounded-xl border px-3 py-2 text-xs sm:flex-row sm:items-center sm:justify-between ${
+                            stockRisk.level === "critical"
+                              ? "border-red-200 bg-red-100 text-red-900"
+                              : "border-orange-200 bg-orange-100 text-orange-900"
+                          }`}>
+                            <div className="flex min-w-0 flex-wrap items-center gap-2">
+                              <span className={`rounded-full px-2.5 py-1 font-black text-white ${
+                                stockRisk.level === "critical" ? "bg-red-600" : "bg-orange-500"
+                              }`}>
+                                {stockRisk.status}
+                              </span>
+                              <span className="font-semibold">{stockRisk.warning}</span>
+                            </div>
+                            <div className="shrink-0 font-black">
+                              {stockRisk.replenishmentTarget > 0
+                                ? `Stok yenileme: ${stockRisk.replenishmentQuantity}`
+                                : "Stok hedefini belirle"}
+                            </div>
+                          </div>
+                        )}
                         {!mainProduct && lifecycle && (
                           <div className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs sm:flex-row sm:items-center sm:justify-between">
                             <div className="flex flex-wrap items-center gap-2">
@@ -2886,6 +3082,7 @@ export default function StockPage() {
                     const selectedLifecycle = selectedMainProduct
                       ? null
                       : procurementLifecycle(selectedProduct, allocation.missingTotal, requests, offers, orders, orderReceipts);
+                    const selectedStockRisk = selectedMainProduct ? null : stockRiskStatus(selectedProduct, breakdown, selectedLifecycle);
                     return (
                       <>
                         <div className="flex items-start justify-between gap-4">
@@ -3031,9 +3228,27 @@ export default function StockPage() {
                             <div className="text-xs font-bold text-blue-700">{selectedMainProduct ? "Üretimde / İşlenen" : "Projeye Ayrılmış / Rezerve"}</div>
                             <div className="mt-1 text-xl font-black text-blue-900">{selectedMainProduct ? selectedMainStats.inProcess : breakdown.reserved}</div>
                           </div>
-                          <div className="rounded-xl bg-emerald-50 p-4">
-                            <div className="text-xs font-bold text-emerald-700">{selectedMainProduct ? "Sevk Edilen" : "Boşta Kullanılabilir"}</div>
-                            <div className="mt-1 text-xl font-black text-emerald-900">{selectedMainProduct ? selectedMainStats.shipped : breakdown.available}</div>
+                          <div className={`rounded-xl p-4 ${
+                            !selectedMainProduct && selectedStockRisk?.level === "critical"
+                              ? "bg-red-100"
+                              : !selectedMainProduct && selectedStockRisk?.level === "warning"
+                                ? "bg-orange-100"
+                                : "bg-emerald-50"
+                          }`}>
+                            <div className={`text-xs font-bold ${
+                              !selectedMainProduct && selectedStockRisk?.level === "critical"
+                                ? "text-red-700"
+                                : !selectedMainProduct && selectedStockRisk?.level === "warning"
+                                  ? "text-orange-700"
+                                  : "text-emerald-700"
+                            }`}>{selectedMainProduct ? "Sevk Edilen" : "Boşta Kullanılabilir"}</div>
+                            <div className={`mt-1 text-xl font-black ${
+                              !selectedMainProduct && selectedStockRisk?.level === "critical"
+                                ? "text-red-900"
+                                : !selectedMainProduct && selectedStockRisk?.level === "warning"
+                                  ? "text-orange-900"
+                                  : "text-emerald-900"
+                            }`}>{selectedMainProduct ? selectedMainStats.shipped : breakdown.available}</div>
                           </div>
                           <div className="rounded-xl bg-red-50 p-4">
                             <div className="text-xs font-bold text-red-700">{selectedMainProduct ? "Kalan Sevk" : "Yeni Talep İhtiyacı"}</div>
@@ -3051,6 +3266,34 @@ export default function StockPage() {
                             <div className="mt-1 text-lg font-black text-slate-900">{selectedProduct.last_supplier || "-"}</div>
                           </div>
                         </div>
+
+                        {!selectedMainProduct && selectedStockRisk && selectedStockRisk.level !== "safe" && (
+                          <div className={`mt-4 rounded-2xl border p-4 ${
+                            selectedStockRisk.level === "critical"
+                              ? "border-red-200 bg-red-50"
+                              : "border-orange-200 bg-orange-50"
+                          }`}>
+                            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                              <div>
+                                <div className={`text-xs font-black uppercase tracking-wide ${
+                                  selectedStockRisk.level === "critical" ? "text-red-700" : "text-orange-700"
+                                }`}>Depo stok riski</div>
+                                <div className="mt-1 text-lg font-black text-slate-950">{selectedStockRisk.status}</div>
+                                <div className="mt-1 text-sm font-semibold text-slate-700">{selectedStockRisk.warning}</div>
+                                <div className="mt-1 text-sm font-bold text-slate-900">{selectedStockRisk.action}</div>
+                              </div>
+                              <div className="rounded-xl bg-white px-4 py-3 text-center shadow-sm">
+                                <div className="text-xs font-bold text-slate-500">Stok yenileme ihtiyacı</div>
+                                <div className={`mt-1 text-2xl font-black ${
+                                  selectedStockRisk.level === "critical" ? "text-red-700" : "text-orange-700"
+                                }`}>{selectedStockRisk.replenishmentQuantity}</div>
+                                <div className="text-xs font-semibold text-slate-500">
+                                  Hedef: {selectedStockRisk.replenishmentTarget || "belirlenmedi"}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
 
                         {!selectedMainProduct && selectedLifecycle && (
                           <div className="mt-4 rounded-2xl border border-blue-100 bg-blue-50 p-4">
