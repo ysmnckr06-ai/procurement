@@ -2044,6 +2044,7 @@ export default function ProjectDetailPage() {
 
     return !info.isMainItem
       && Number(info.requiredQuantity || 0) > 0
+      && Number(info.stockQuantity || 0) <= 0
       && hasActionableSource;
   }
 
@@ -5487,7 +5488,7 @@ export default function ProjectDetailPage() {
     setMessage(`${movementPayload.length} kalem stoğa aktarıldı.${skippedCount > 0 ? ` ${skippedCount} kalem daha önce aktarıldığı için atlandı.` : ""}${updateWarnings.length > 0 ? " Bazı kart güncellemeleri kontrol edilmeli." : ""}`);
   }
 
-  async function reserveItemFromStock(user, item) {
+  async function reserveItemFromStock(item) {
     const info = stockInfoForItem(item);
     const product = info.matchedProducts?.find((candidate) => {
       const total = Number(candidate.current_stock || 0);
@@ -5500,70 +5501,31 @@ export default function ProjectDetailPage() {
       return { ok: false, item, message: "Stoktan karşılanabilecek uygun ürün bulunamadı." };
     }
 
-    const now = new Date().toISOString();
-    const today = now.slice(0, 10);
-    const reservedStock = Number(product.reserved_stock || 0) + coverQuantity;
-    const itemReserved = Number(item.reserved_quantity || 0) + coverQuantity;
-    const remainingAfterReserve = Math.max(Number(item.estimated_quantity || 0) - itemReserved, 0);
-    const nextStatus = remainingAfterReserve <= 0 ? "Projeye rezerve edildi" : "Satınalma gerekli";
-
-    const { error: productError } = await supabase
-      .from("products")
-      .update({
-        reserved_stock: reservedStock,
-        updated_at: now,
-      })
-      .eq("id", product.id)
-      .eq("user_id", user.id);
-
-    if (productError) {
-      return { ok: false, item, message: productError.message || "Stok kartı rezerve edilemedi." };
-    }
-
-    const { error: itemError } = await supabase
-      .from("project_items")
-      .update({
-        product_id: product.id,
-        reserved_quantity: itemReserved,
-        status: nextStatus,
-        updated_at: now,
-      })
-      .eq("id", item.id)
-      .eq("project_id", projectId)
-      .eq("user_id", user.id);
-
-    if (itemError) {
-      return { ok: false, item, message: itemError.message || "Proje kalemi stoktan karşılandı olarak güncellenemedi." };
-    }
-
-    const { error: movementError } = await supabase
-      .from("stock_movements")
-      .insert({
-        user_id: user.id,
+    const { data, error } = await supabase.rpc("reserve_project_items_from_stock", {
+      p_allocations: [{
         product_id: product.id,
         project_id: projectId,
         project_item_id: item.id,
         parent_item_id: item.parent_item_id || null,
+        quantity: coverQuantity,
         product_code: product.product_code || item.product_code || "",
         product_name: product.product_name || item.product_name,
-        movement_type: "out",
-        quantity: coverQuantity,
-        reserved_quantity: coverQuantity,
         unit: item.unit || product.unit || "adet",
-        related_project_id: projectId,
-        related_project_name: project?.project_name || "",
-        unit_price: Number(product.last_unit_price || item.estimated_unit_price || 0),
-        currency: product.last_currency || projectCurrencyForDisplay(item.currency),
-        movement_date: today,
-        source: "Projeye stoktan karşılandı",
-        notes: (project?.project_code || project?.project_name || "Proje") + " için stok rezervasyonu",
-      });
+        notes: `${project?.project_code || project?.project_name || "Proje"} için proje detayından ayrıldı`,
+      }],
+    });
 
-    if (movementError) {
-      console.warn("Stok rezervasyonu hareketi kaydedilemedi:", movementError);
+    if (error) {
+      return { ok: false, item, message: error.message || "Stok rezervasyonu tamamlanamadı." };
     }
 
-    return { ok: true, item, quantity: coverQuantity };
+    const failed = Array.isArray(data?.failed) ? data.failed : [];
+    const reservedQuantity = Number(data?.reserved_quantity || 0);
+    if (reservedQuantity <= 0) {
+      return { ok: false, item, message: failed[0]?.reason || "Boşta stok veya açık ihtiyaç kalmadı." };
+    }
+
+    return { ok: true, item, quantity: reservedQuantity };
   }
 
   async function coverItemFromStock(item) {
@@ -5583,7 +5545,7 @@ export default function ProjectDetailPage() {
     const approved = window.confirm(`${item.product_name} için ${coverQuantity} ${item.unit || "adet"} stoktan projeye ayrılsın mı?`);
     if (!approved) return;
 
-    const result = await reserveItemFromStock(user, item);
+    const result = await reserveItemFromStock(item);
     if (!result.ok) {
       setMessage(result.message || "Stoktan karşılama yapılamadı.");
       return;
@@ -5629,8 +5591,6 @@ export default function ProjectDetailPage() {
         },
       ])
     );
-    const productUpdates = new Map();
-    const itemUpdates = [];
     const movementPayload = [];
 
     for (const item of coverableItems) {
@@ -5646,8 +5606,6 @@ export default function ProjectDetailPage() {
       const openQuantity = Math.max(Number(item.estimated_quantity || 0) - Number(relation.consumedChildQuantity || 0), 0);
       const currentReserved = Number(item.reserved_child_quantity ?? item.reserved_quantity ?? 0) || 0;
       let quantityToCover = Math.max(openQuantity - currentReserved, 0);
-      let coveredQuantity = 0;
-      let firstProductId = item.product_id || null;
 
       for (const product of matchedProducts) {
         if (quantityToCover <= 0) break;
@@ -5656,13 +5614,6 @@ export default function ProjectDetailPage() {
 
         const allocation = Math.min(quantityToCover, available);
         product.reserved_stock = Number(product.reserved_stock || 0) + allocation;
-        productUpdates.set(product.id, {
-          id: product.id,
-          reserved_stock: product.reserved_stock,
-          updated_at: now,
-        });
-        if (!firstProductId) firstProductId = product.id;
-        coveredQuantity += allocation;
         quantityToCover -= allocation;
 
         movementPayload.push({
@@ -5686,91 +5637,45 @@ export default function ProjectDetailPage() {
           notes: `${project?.project_code || project?.project_name || "Proje"} için stok rezervasyonu${relation.parentName ? ` - ${relation.parentName}` : ""}`,
         });
       }
-
-      if (coveredQuantity <= 0) continue;
-
-      const nextReserved = currentReserved + coveredQuantity;
-      const remainingAfterReserve = Math.max(openQuantity - nextReserved, 0);
-      itemUpdates.push({
-        id: item.id,
-        product_id: firstProductId,
-        reserved_quantity: nextReserved,
-        status: remainingAfterReserve <= 0 ? "Projeye rezerve edildi" : "Satınalma gerekli",
-        updated_at: now,
-      });
     }
 
-    if (itemUpdates.length === 0) {
+    if (movementPayload.length === 0) {
       setMessage("Seçili kalemler için stoktan karşılanabilecek uygun ürün bulunamadı.");
       setIsCoveringStock(false);
       return;
     }
 
-    const runInBatches = async (records, batchSize, callback) => {
-      for (let index = 0; index < records.length; index += batchSize) {
-        const batch = records.slice(index, index + batchSize);
-        await Promise.all(batch.map(callback));
-      }
-    };
-
     try {
-      const updateWarnings = [];
-      await runInBatches(Array.from(productUpdates.values()), 25, async (update) => {
-        const { data, error } = await withTimeout(
-          supabase
-            .from("products")
-            .update({
-              reserved_stock: update.reserved_stock,
-              updated_at: update.updated_at,
-            })
-            .eq("id", update.id)
-            .eq("user_id", user.id)
-            .select("id"),
-          "Stok kartı güncelleme",
-        );
-        if (error) updateWarnings.push(`Stok kartı güncellenemedi: ${error.message}`);
-        else if (!data?.length) updateWarnings.push(`Stok kartı bulunamadı veya yetki yok: ${update.id}`);
-      });
+      const { data, error } = await withTimeout(
+        supabase.rpc("reserve_project_items_from_stock", {
+          p_allocations: movementPayload.map((allocation) => ({
+            product_id: allocation.product_id,
+            project_id: allocation.project_id,
+            project_item_id: allocation.project_item_id,
+            parent_item_id: allocation.parent_item_id,
+            quantity: allocation.quantity,
+            product_code: allocation.product_code,
+            product_name: allocation.product_name,
+            unit: allocation.unit,
+            notes: allocation.notes,
+          })),
+        }),
+        "Stok rezervasyonu",
+        20000,
+      );
+      if (error) throw error;
 
-      const confirmedItemUpdates = [];
-      await runInBatches(itemUpdates, 25, async (update) => {
-        const { data, error } = await withTimeout(
-          supabase
-            .from("project_items")
-            .update({
-              product_id: update.product_id,
-              reserved_quantity: update.reserved_quantity,
-              status: update.status,
-              updated_at: update.updated_at,
-            })
-            .eq("id", update.id)
-            .eq("project_id", projectId)
-            .eq("user_id", user.id)
-            .select("id"),
-          "Proje kalemi güncelleme",
-        );
-        if (error) updateWarnings.push(`Proje kalemi güncellenemedi: ${error.message}`);
-        else if (!data?.length) updateWarnings.push(`Proje kalemi bulunamadı veya yetki yok: ${update.id}`);
-        else confirmedItemUpdates.push(update);
-      });
-
-      for (let index = 0; index < movementPayload.length; index += 100) {
-        const result = await insertStockMovementsWithFallback(movementPayload.slice(index, index + 100));
-        if (result.error) {
-          updateWarnings.push(`Stok hareketi kaydedilemedi: ${result.error.message}`);
-        } else if (result.usedFallback) {
-          updateWarnings.push("Stok hareketi temel alanlarla kaydedildi; detay kolonları production şemasında yok.");
-        }
-      }
-
-      const processedIds = new Set(confirmedItemUpdates.map((update) => update.id));
-      setSelectedStockCoverItemIds((prev) => prev.filter((id) => !processedIds.has(id)));
+      const result = data || {};
+      const failed = Array.isArray(result.failed) ? result.failed : [];
+      const processedCount = Number(result.processed || 0);
+      const reservedQuantity = Number(result.reserved_quantity || 0);
+      setSelectedStockCoverItemIds([]);
       await withTimeout(loadProject(), "Proje bilgilerini yenileme", 20000);
-
-      const warningText = updateWarnings.length > 0
-        ? ` Kontrol: ${updateWarnings.slice(0, 3).join(" | ")}${updateWarnings.length > 3 ? ` +${updateWarnings.length - 3} uyarı` : ""}`
-        : "";
-      setMessage(`${confirmedItemUpdates.length} kalem stoktan projeye ayrıldı.${coverableItems.length - confirmedItemUpdates.length > 0 ? ` ${coverableItems.length - confirmedItemUpdates.length} kalem işlenemedi.` : ""}${warningText}`);
+      setMessage(
+        failed.length > 0
+          ? `${processedCount} kalem stoktan ayrıldı, toplam ${reservedQuantity}. ${failed.length} kalem işlenemedi: ${failed.slice(0, 3).map((row) => row.reason).join(" | ")}`
+          : `${processedCount} kalem stoktan ayrıldı. Toplam ayrılan miktar: ${reservedQuantity}.`,
+      );
     } catch (error) {
       console.error("Toplu stoktan karşılama hatası:", error);
       setMessage(`Stoktan karşılama tamamlanamadı: ${error.message || "Bilinmeyen hata"}`);
@@ -6717,7 +6622,9 @@ export default function ProjectDetailPage() {
   const stockCoverableItems = useMemo(() => {
     return stockAnalysisItems.filter((item) => {
       const info = stockInfoForItem(item);
-      return canCoverFromStock(item) && Number(info.requiredQuantity || 0) <= 0;
+      return canCoverFromStock(item)
+        && Number(info.stockQuantity || 0) > 0
+        && Number(info.pendingQuantity || 0) > 0;
     });
   }, [stockAnalysisItems]);
 
@@ -8242,7 +8149,11 @@ export default function ProjectDetailPage() {
                           <input type="checkbox" checked={selectedPurchaseItemIds.includes(item.id)} onChange={() => togglePurchaseItem(item.id)} className="mt-1 h-4 w-4" />
                         ) : (
                           <span className="mt-1 rounded-full bg-blue-50 px-2 py-1 text-[11px] font-black text-blue-700">
-                            {requestLocked || item.status === "Talep oluşturuldu" ? "Talep oluşturuldu" : item.status || "İşlemde"}
+                            {requestLocked || item.status === "Talep oluşturuldu"
+                              ? "Talep oluşturuldu"
+                              : Number(info.stockQuantity || 0) > 0
+                                ? "Önce boşta stoku ayır"
+                                : item.status || "İşlemde"}
                           </span>
                         )}
                         <div className="min-w-0">
@@ -8271,7 +8182,10 @@ export default function ProjectDetailPage() {
                         </div>
                         <div className="text-right text-xs font-bold text-slate-600">
                           <div>İhtiyaç: {formatQuantity(info.openQuantity)}</div>
-                          <div>Stok: {formatQuantity(info.stockQuantity)}</div>
+                          <div>Boşta Stok: {formatQuantity(info.stockQuantity)}</div>
+                          {Number(info.reservedQuantity || 0) > 0 && (
+                            <div className="text-blue-700">Bu Projeye Ayrılan: {formatQuantity(info.reservedQuantity)}</div>
+                          )}
                           <div className="text-red-700">Eksik: {formatQuantity(info.requiredQuantity)}</div>
                           {info.isCritical && <div className="text-amber-700">Kritik stok</div>}
                         </div>
@@ -8286,7 +8200,7 @@ export default function ProjectDetailPage() {
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                   <div>
                     <h2 className="text-xl font-black text-slate-900">Stoktan Karşılanabilir</h2>
-                    <p className="mt-1 text-sm text-slate-500">Bu alt ürünler depoda var. Seçilenleri projeye rezerve edebilirsiniz.</p>
+                    <p className="mt-1 text-sm text-slate-500">Tam veya kısmi boşta stok bulunan ürünler. Seçilen miktar atomik olarak bu projeye rezerve edilir.</p>
                   </div>
                                     <div className="flex flex-wrap items-center gap-2">
                     <label className="flex items-center gap-2 rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-700">
@@ -8320,7 +8234,7 @@ export default function ProjectDetailPage() {
                     const visibleUsageParents = usage
                       ? (usageExpanded ? usage.parentDistribution : usage.parentDistribution.slice(0, 4))
                       : [];
-                    const stockCoverableQuantity = Math.min(Number(info.openQuantity || 0), Number(info.stockQuantity || 0));
+                    const stockCoverableQuantity = Math.min(Number(info.pendingQuantity || 0), Number(info.stockQuantity || 0));
                     const remainingStockAfterReserve = Math.max(Number(info.stockQuantity || 0) - stockCoverableQuantity, 0);
                     return (
                       <div key={item.id} className="grid grid-cols-[auto_minmax(0,1fr)_auto] gap-3 p-4 text-sm">
@@ -8357,7 +8271,7 @@ export default function ProjectDetailPage() {
                         </div>
                         <div className="text-right text-xs font-bold text-emerald-700">
                           <div>İhtiyaç: {formatQuantity(info.openQuantity)}</div>
-                          <div>Stok: {formatQuantity(info.stockQuantity)}</div>
+                          <div>Boşta Stok: {formatQuantity(info.stockQuantity)}</div>
                           <div>Karşılanabilir: {formatQuantity(stockCoverableQuantity)}</div>
                           <div>Kalan Stok: {formatQuantity(remainingStockAfterReserve)}</div>
                         </div>

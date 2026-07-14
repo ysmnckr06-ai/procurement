@@ -221,6 +221,11 @@ function requestAllocationQuantities(requests) {
 
 function buildSummary(projects, projectItems, products, orders, stockMovements = [], requests = []) {
   const projectsById = new Map(projects.map((project) => [project.id, project]));
+  const projectPriority = new Map(
+    [...projects]
+      .sort((left, right) => String(left.project_code || "").localeCompare(String(right.project_code || ""), "tr"))
+      .map((project, index) => [project.id, index]),
+  );
   const itemsById = new Map(projectItems.map((item) => [item.id, item]));
   const orderedByProjectItem = orderAllocationQuantities(orders);
   const reservedByProjectItem = stockMovementReservedQuantities(stockMovements);
@@ -243,7 +248,12 @@ function buildSummary(projects, projectItems, products, orders, stockMovements =
   );
   const grouped = new Map();
 
-  projectItems
+  [...projectItems]
+    .sort((left, right) =>
+      number(projectPriority.get(left.project_id)) - number(projectPriority.get(right.project_id))
+      || String(left.created_at || "").localeCompare(String(right.created_at || ""))
+      || String(left.id || "").localeCompare(String(right.id || ""))
+    )
     .filter((item) => item.item_type !== "main")
     .forEach((item) => {
       const estimated = number(item.estimated_quantity);
@@ -296,7 +306,10 @@ function buildSummary(projects, projectItems, products, orders, stockMovements =
           orderedQuantity: 0,
           allocations: [],
           currentStock: number(matchedProduct?.current_stock),
-          reservedStock: number(matchedProduct?.reserved_stock) + productReservedFromMovements(matchedProduct, stockMovements),
+          reservedStock: Math.max(
+            number(matchedProduct?.reserved_stock),
+            productReservedFromMovements(matchedProduct, stockMovements),
+          ),
         });
       }
 
@@ -527,8 +540,8 @@ export default function ProcurementSummaryPage() {
     }
 
     const [projectResult, itemResult, productResult, orderResult, movementResult, requestResult] = await Promise.all([
-      supabase.from("projects").select("id,project_code,project_name,status").eq("user_id", user.id).in("id", selectedIds),
-      supabase.from("project_items").select("*").eq("user_id", user.id).in("project_id", selectedIds),
+      supabase.from("projects").select("id,project_code,project_name,status").eq("user_id", user.id).in("id", selectedIds).order("project_code", { ascending: true }),
+      supabase.from("project_items").select("*").eq("user_id", user.id).in("project_id", selectedIds).order("created_at", { ascending: true }),
       supabase.from("products").select("id,product_code,normalized_product_code,product_name,brand,unit,current_stock,reserved_stock").eq("user_id", user.id).is("archived_at", null),
       supabase.from("orders").select("id,status,items").eq("user_id", user.id),
       supabase.from("stock_movements").select("id,project_item_id,product_id,product_code,product_name,unit,reserved_quantity").eq("user_id", user.id),
