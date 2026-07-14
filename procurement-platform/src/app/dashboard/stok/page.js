@@ -317,6 +317,15 @@ function productGroupKey(product) {
   return `name__${name}`;
 }
 
+function productSemanticIdentityKey(product) {
+  const normalized = normalizeProductIdentity(product);
+  return [
+    normalizeStockText(normalized.product_name),
+    normalizeStockText(normalized.brand),
+    normalizeStockText(normalized.unit || "adet"),
+  ].join("__");
+}
+
 function productMatchesWithoutCode(product, candidate) {
   if (normalizeStockCode(product?.product_code) || normalizeStockCode(candidate?.product_code)) return false;
 
@@ -1897,18 +1906,34 @@ export default function StockPage() {
       counts.set(key, (counts.get(key) || 0) + 1);
       return counts;
     }, new Map());
+    const importSemanticIdentityCounts = parsedRows.reduce((counts, row) => {
+      const key = productSemanticIdentityKey({
+        product_name: row.productName,
+        brand: row.brand,
+        unit: row.unit,
+      });
+      counts.set(key, (counts.get(key) || 0) + 1);
+      return counts;
+    }, new Map());
     const activeProducts = productGroups.filter((product) => !product.archived_at);
     const rows = parsedRows.map((row) => {
       const code = normalizeStockCode(row.productCode);
       const name = normalizeStockText(row.productName);
       const identityKey = code ? `code:${code}` : `name:${name}`;
+      const semanticIdentityKey = productSemanticIdentityKey({
+        product_name: row.productName,
+        brand: row.brand,
+        unit: row.unit,
+      });
       const codeMatches = code ? activeProducts.filter((product) =>
         normalizeStockCode(product.normalized_product_code || product.product_code) === code) : [];
-      const nameMatches = !code
-        ? activeProducts.filter((product) => normalizeStockText(product.product_name) === name)
-        : [];
-      const matches = code ? codeMatches : nameMatches;
-      const decision = importIdentityCounts.get(identityKey) > 1 || matches.length > 1
+      const semanticMatches = activeProducts.filter((product) =>
+        productSemanticIdentityKey(product) === semanticIdentityKey);
+      const matches = codeMatches.length ? codeMatches : semanticMatches;
+      const decision = importIdentityCounts.get(identityKey) > 1
+        || importSemanticIdentityCounts.get(semanticIdentityKey) > 1
+        || codeMatches.length > 1
+        || semanticMatches.length > 1
         ? "conflict"
         : matches.length === 1 ? (codeMatches.length ? "exact" : "probable") : "new";
       return {
@@ -2017,6 +2042,7 @@ export default function StockPage() {
       const preview = createStockImportPreview(analyses, importType, "", crypto.randomUUID());
       const canApplyDirectly = importType === PRODUCT_TYPES.COMPONENT
         && preview.canApply
+        && preview.counts.probable === 0
         && analyses.every(isStandardStockTemplateAnalysis);
       if (canApplyDirectly) {
         setStockImportPreview(null);
