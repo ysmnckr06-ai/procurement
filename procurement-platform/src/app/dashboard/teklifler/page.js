@@ -32,6 +32,30 @@ const OFFER_FILE_MIME_TYPES = new Set([
   "image/jpeg",
   "image/webp",
 ]);
+const OFFER_POOL_STATUSES = [
+  "İşleme alındı",
+  "İşlemde",
+  "Teklif Toplanıyor",
+  "Teklifler Geldi",
+  "Rapor Oluşturuldu",
+];
+
+function getOfferRequestItems(request) {
+  if (Array.isArray(request?.items)) return request.items;
+  if (typeof request?.items === "string" && request.items.trim()) {
+    try {
+      const parsed = JSON.parse(request.items);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function getOfferRequestMeta(request) {
+  return getOfferRequestItems(request).find((item) => item?.request_meta)?.request_meta || {};
+}
 
 function offerFileExtension(fileName = "") {
   const normalized = String(fileName || "").toLowerCase();
@@ -198,6 +222,7 @@ const loadRequests = async () => {
       .from("requests")
       .select("*")
       .eq("user_id", user.id)
+      .in("durum", OFFER_POOL_STATUSES)
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -205,12 +230,17 @@ const loadRequests = async () => {
       return;
     }
 
-    setRequestLists(data || []);
+    const offerPoolRequests = (data || []).filter(
+      (request) => !getOfferRequestMeta(request).mergedIntoRequestId,
+    );
+    setRequestLists(offerPoolRequests);
 
-    if (requestIdFromUrl) {
+    if (requestIdFromUrl && offerPoolRequests.some((request) => String(request.id) === String(requestIdFromUrl))) {
       setSelectedRequestId(String(requestIdFromUrl));
-    } else if (data?.length > 0) {
-      setSelectedRequestId(String(data[0].id));
+    } else if (offerPoolRequests.length > 0) {
+      setSelectedRequestId(String(offerPoolRequests[0].id));
+    } else {
+      setSelectedRequestId("");
     }
   } catch (err) {
     console.error(err);
@@ -719,22 +749,58 @@ const loadCompanySettings = async () => {
 
               {analysisMode === "withRequest" ? (
                 <>
-                  <select
-                    value={selectedRequestId}
-                    onChange={(e) => setSelectedRequestId(e.target.value)}
-                    className="mt-5 w-full rounded-xl border border-slate-300 bg-white p-3 text-sm"
-                  >
-                    <option value="">Talep seçin</option>
-                    {requestLists.map((item, index) => (
-                      <option key={item.id} value={item.id}>
-                        {`${item.ad || `Talep #${index + 1}`} - ${
-                          item.created_at
-                            ? new Date(item.created_at).toLocaleString("tr-TR")
-                            : "Tarih yok"
-                        }`}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                    <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-3">
+                      <div>
+                        <div className="text-sm font-black text-slate-900">Teklif Talep Havuzu</div>
+                        <div className="text-xs font-semibold text-slate-500">Yalnızca işleme alınmış talepler gösterilir.</div>
+                      </div>
+                      <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-black text-blue-700">
+                        {requestLists.length} talep
+                      </span>
+                    </div>
+                    {requestLists.length === 0 ? (
+                      <div className="p-5 text-sm font-semibold text-slate-500">
+                        Teklif bekleyen işleme alınmış talep yok. Önce Talepler modülünden talebi işleme alın.
+                      </div>
+                    ) : (
+                      <div className="max-h-72 divide-y divide-slate-100 overflow-y-auto">
+                        {requestLists.map((item, index) => {
+                          const isSelected = String(item.id) === String(selectedRequestId);
+                          const itemCount = Number(item.totalitems || getOfferRequestItems(item).length || 0);
+                          return (
+                            <label
+                              key={item.id}
+                              className={`flex cursor-pointer items-center gap-3 px-4 py-3 transition-colors ${
+                                isSelected ? "bg-blue-50" : "hover:bg-slate-50"
+                              }`}
+                            >
+                              <input
+                                type="radio"
+                                name="offer-request-pool"
+                                value={item.id}
+                                checked={isSelected}
+                                onChange={(event) => setSelectedRequestId(event.target.value)}
+                                className="h-4 w-4 border-slate-300 text-blue-600 focus:ring-blue-500"
+                              />
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-sm font-black text-slate-900">
+                                  {item.ad || `Talep #${index + 1}`}
+                                </span>
+                                <span className="mt-1 flex flex-wrap gap-2 text-xs font-semibold text-slate-500">
+                                  <span>{itemCount} kalem</span>
+                                  <span>{item.created_at ? new Date(item.created_at).toLocaleString("tr-TR") : "Tarih yok"}</span>
+                                </span>
+                              </span>
+                              <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-black text-emerald-700">
+                                {item.durum || "İşlemde"}
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
 
                   {selectedRequestId && (
                     <div className="mt-4 rounded-xl border border-green-200 bg-green-50 p-4 text-sm text-green-800">

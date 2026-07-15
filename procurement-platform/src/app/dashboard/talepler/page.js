@@ -694,7 +694,19 @@ function buildMergedPurchasePreview(requests) {
       group.totalQuantity += quantity;
       group.requestIds.add(request.id);
 
-      if (request.project_id) {
+      const allocations = Array.isArray(item.allocations) ? item.allocations : [];
+      const projectAllocations = allocations.filter((allocation) => (
+        (allocation.projectId || allocation.project_id) && Number(allocation.quantity || 0) > 0
+      ));
+      if (projectAllocations.length > 0) {
+        projectAllocations.forEach((allocation) => {
+          const projectId = allocation.projectId || allocation.project_id;
+          group.projectQuantities.set(
+            projectId,
+            Number(group.projectQuantities.get(projectId) || 0) + Number(allocation.quantity || 0),
+          );
+        });
+      } else if (request.project_id) {
         group.projectQuantities.set(
           request.project_id,
           Number(group.projectQuantities.get(request.project_id) || 0) + quantity,
@@ -758,64 +770,12 @@ function addStockSimulation(rows, products) {
   });
 }
 
-function buildPendingOrderItems(rows) {
-  return (rows || [])
-    .filter((row) => Number(row.purchaseQuantity || 0) > 0)
-    .map((row) => {
-      const purchaseQuantity = Number(row.purchaseQuantity || 0);
-      const projectDistribution = (row.projectDistribution || []).filter(
-        (project) => project.projectId && Number(project.quantity || 0) > 0,
-      );
-      const projectTotal = projectDistribution.reduce(
-        (sum, project) => sum + Number(project.quantity || 0),
-        0,
-      );
-      const sourceRequestIds = Array.from(row.requestIds || []);
-      let allocatedQuantity = 0;
-      const allocations = projectTotal > 0
-        ? projectDistribution.map((project, index) => {
-            const isLast = index === projectDistribution.length - 1;
-            const remainingQuantity = Math.max(purchaseQuantity - allocatedQuantity, 0);
-            const proportionalQuantity = isLast
-              ? remainingQuantity
-              : Math.min(
-                  Number((purchaseQuantity * (Number(project.quantity || 0) / projectTotal)).toFixed(6)),
-                  remainingQuantity,
-                );
-            allocatedQuantity += proportionalQuantity;
-
-            return {
-              type: "project",
-              projectId: project.projectId,
-              quantity: proportionalQuantity,
-              sourceRequestIds,
-            };
-          })
-        : [];
-
-      return {
-        rowId: `merged-request-${row.groupKey}`,
-        productCode: row.productCode || "",
-        productName: row.productName || "",
-        unit: row.unit || "adet",
-        quantity: purchaseQuantity,
-        deliveredQuantity: 0,
-        unitPrice: 0,
-        discount: 0,
-        netUnitPrice: 0,
-        total: 0,
-        currency: "TRY",
-        allocations,
-      };
-    });
-}
-
-function MergedPurchasePreview({ rows, onCreateOrder }) {
+function MergedPurchasePreview({ rows, onTakeIntoProcess }) {
   return (
     <div className="rounded-2xl border border-blue-200 bg-white p-5 shadow-sm">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-lg font-bold text-slate-900">Birleşik Satınalma Önizlemesi</h2>
+          <h2 className="text-lg font-bold text-slate-900">Birleşik Talep Önizlemesi</h2>
           <p className="text-sm text-slate-500">Seçili talep listelerindeki aynı ürünler bir araya getirilmiştir.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -824,10 +784,10 @@ function MergedPurchasePreview({ rows, onCreateOrder }) {
           </span>
           <button
             type="button"
-            onClick={onCreateOrder}
+            onClick={onTakeIntoProcess}
             className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700"
           >
-            Satınalma Siparişi Oluştur
+            Seçilenleri İşleme Al
           </button>
         </div>
       </div>
@@ -843,7 +803,6 @@ function MergedPurchasePreview({ rows, onCreateOrder }) {
               <th className="px-3 py-3 text-right">Mevcut stok</th>
               <th className="px-3 py-3 text-right">Ayrılmış stok</th>
               <th className="px-3 py-3 text-right">Boşta stok</th>
-              <th className="px-3 py-3 text-right">Satın alınacak</th>
               <th className="px-3 py-3">Stok durumu</th>
               <th className="px-3 py-3 text-right">Talep listesi</th>
               <th className="px-3 py-3">Proje dağılımı</th>
@@ -866,7 +825,6 @@ function MergedPurchasePreview({ rows, onCreateOrder }) {
                 <td className="px-3 py-3 text-right font-semibold text-slate-700">{row.currentStock}</td>
                 <td className="px-3 py-3 text-right font-semibold text-slate-700">{row.reservedStock}</td>
                 <td className="px-3 py-3 text-right font-bold text-emerald-700">{row.freeStock}</td>
-                <td className="px-3 py-3 text-right font-black text-red-700">{row.purchaseQuantity}</td>
                 <td className="px-3 py-3">
                   {row.stockStatus === "available" && (
                     <span className="inline-flex rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-700">
@@ -935,6 +893,7 @@ export default function TaleplerPage() {
   const [activeRequestTab, setActiveRequestTab] = useState("pool");
   const [processModal, setProcessModal] = useState({
     request: null,
+    requests: [],
     processor: "",
     department: "",
     priority: "Normal",
@@ -978,7 +937,7 @@ export default function TaleplerPage() {
   }, [savedRequests, selectedRequestIds]);
 
   const requestStats = useMemo(() => {
-    const openStatuses = new Set(["Yeni Talep", "Teklif Bekliyor", "Teklif Toplanıyor", "Oluşturuldu", "Bekliyor"]);
+    const openStatuses = new Set(["Yeni Talep", "İşleme alındı", "İşlemde", "Teklif Bekliyor", "Teklif Toplanıyor", "Oluşturuldu", "Bekliyor"]);
     return {
       total: savedRequests.length,
       manual: savedRequests.filter((request) => getRequestMeta(request).source === "manual").length,
@@ -1025,7 +984,9 @@ export default function TaleplerPage() {
         return;
       }
 
-      const requests = data || [];
+      const requests = (data || []).filter(
+        (request) => getRequestMeta(request).source !== "merged-process",
+      );
       setSavedRequests(requests);
       await loadRequestRelations(user.id, requests);
     } catch (err) {
@@ -1097,33 +1058,21 @@ export default function TaleplerPage() {
     }
   };
 
-  function createOrderFromMergedRequests() {
-    const items = buildPendingOrderItems(mergedPurchasePreview);
-
-    if (items.length === 0) {
-      setMessage("Satın alınacak miktarı bulunan birleşik talep kalemi yok.");
+  function openBulkProcessModal() {
+    if (selectedRequests.length === 0) {
+      setMessage("İşleme alınacak en az bir talep seçin.");
       return;
     }
 
-    const projectIds = Array.from(
-      new Set(selectedRequests.map((request) => request.project_id).filter(Boolean)),
-    );
-    const today = new Date();
-    const orderDate = [
-      today.getFullYear(),
-      String(today.getMonth() + 1).padStart(2, "0"),
-      String(today.getDate()).padStart(2, "0"),
-    ].join("-");
-    const pendingOrder = {
-      source: "merged-requests",
-      reportName: "Birleşik Satınalma Talebi",
-      orderDate,
-      projectId: projectIds.length === 1 ? projectIds[0] : "",
-      items,
-    };
-
-    localStorage.setItem("pendingOrder", JSON.stringify(pendingOrder));
-    router.push("/dashboard/siparisler");
+    setProcessModal({
+      request: selectedRequests[0],
+      requests: selectedRequests,
+      processor: "",
+      department: "",
+      priority: selectedRequests.reduce((priority, request) => (
+        requestPriority(request) === "Kritik" ? "Kritik" : priority
+      ), requestPriority(selectedRequests[0])),
+    });
   }
 
   const formatDateTime = (value) => {
@@ -1236,6 +1185,7 @@ export default function TaleplerPage() {
   function openProcessModal(request) {
     setProcessModal({
       request,
+      requests: [request],
       processor: "",
       department: "",
       priority: requestPriority(request),
@@ -1245,6 +1195,7 @@ export default function TaleplerPage() {
   function closeProcessModal() {
     setProcessModal({
       request: null,
+      requests: [],
       processor: "",
       department: "",
       priority: "Normal",
@@ -1256,9 +1207,13 @@ export default function TaleplerPage() {
   }
 
   async function takeRequestIntoProcess() {
-    const request = processModal.request;
+    const requests = processModal.requests.length > 0
+      ? processModal.requests
+      : processModal.request
+        ? [processModal.request]
+        : [];
     const processor = processModal.processor.trim();
-    if (!request || !processor) {
+    if (requests.length === 0 || !processor) {
       setMessage("Talebi işleme alan kişi zorunlu.");
       return;
     }
@@ -1267,33 +1222,125 @@ export default function TaleplerPage() {
     if (!user) return;
 
     const processedAt = new Date().toISOString();
-    const items = getRequestItems(request).map((item) => ({
-      ...item,
-      request_meta: {
-        ...(item.request_meta || {}),
-        processedBy: processor,
-        processedDepartment: processModal.department.trim(),
-        priority: processModal.priority,
-        processedAt,
-      },
-    }));
+    const processMeta = {
+      processedBy: processor,
+      processedDepartment: processModal.department.trim(),
+      priority: processModal.priority,
+      processedAt,
+    };
 
-    const { error } = await supabase
-      .from("requests")
-      .update({ durum: "İşleme alındı", items })
-      .eq("id", request.id)
-      .eq("user_id", user.id);
+    if (requests.length === 1) {
+      const request = requests[0];
+      const items = getRequestItems(request).map((item) => ({
+        ...item,
+        request_meta: {
+          ...(item.request_meta || {}),
+          ...processMeta,
+        },
+      }));
+      const { error } = await supabase
+        .from("requests")
+        .update({ durum: "İşlemde", items })
+        .eq("id", request.id)
+        .eq("user_id", user.id);
 
-    if (error) {
-      setMessage(`Talep işleme alınamadı: ${error.message}`);
+      if (error) {
+        setMessage(`Talep işleme alınamadı: ${error.message}`);
+        return;
+      }
+
+      setSavedRequests((current) => current.map((item) => (
+        item.id === request.id ? { ...item, durum: "İşlemde", items } : item
+      )));
+      closeProcessModal();
+      setMessage("Talep işleme alındı ve Teklif Havuzu'na aktarıldı.");
       return;
     }
 
-    setSavedRequests((current) => current.map((item) => (
-      item.id === request.id ? { ...item, durum: "İşleme alındı", items } : item
-    )));
+    const sourceRequestIds = requests.map((request) => request.id);
+    const sourceProjectIds = Array.from(new Set(
+      mergedPurchasePreview.flatMap((row) => (
+        row.projectDistribution || []
+      ).map((project) => project.projectId).filter(Boolean)),
+    ));
+    const mergedItems = mergedPurchasePreview.map((row) => ({
+      urunKodu: row.productCode || "",
+      product_code: row.productCode || "",
+      urunAciklamasi: row.productName || "",
+      product_name: row.productName || "",
+      talepEdilenAdet: Number(row.totalQuantity || 0),
+      quantity: Number(row.totalQuantity || 0),
+      birim: row.unit || "adet",
+      unit: row.unit || "adet",
+      allocations: (row.projectDistribution || []).map((project) => ({
+        type: "project",
+        projectId: project.projectId,
+        quantity: Number(project.quantity || 0),
+      })),
+      request_meta: {
+        ...processMeta,
+        source: "merged-process",
+        sourceRequestIds: Array.from(row.requestIds || sourceRequestIds),
+        sourceProjectIds,
+      },
+    }));
+
+    if (mergedItems.length === 0) {
+      setMessage("Seçilen taleplerde birleştirilecek ürün kalemi bulunamadı.");
+      return;
+    }
+
+    const { data: mergedRequest, error: insertError } = await supabase
+      .from("requests")
+      .insert({
+        user_id: user.id,
+        project_id: sourceProjectIds.length === 1 ? sourceProjectIds[0] : null,
+        ad: `Birleştirilmiş Talep - ${requests.length} talep`,
+        durum: "İşlemde",
+        totalitems: mergedItems.length,
+        items: mergedItems,
+      })
+      .select("id")
+      .single();
+
+    if (insertError) {
+      setMessage(`Birleşik talep oluşturulamadı: ${insertError.message}`);
+      return;
+    }
+
+    const updateResults = await Promise.all(requests.map(async (request) => {
+      const items = getRequestItems(request).map((item) => ({
+        ...item,
+        request_meta: {
+          ...(item.request_meta || {}),
+          ...processMeta,
+          mergedIntoRequestId: mergedRequest.id,
+        },
+      }));
+      const { error } = await supabase
+        .from("requests")
+        .update({ durum: "İşlemde", items })
+        .eq("id", request.id)
+        .eq("user_id", user.id);
+      return error;
+    }));
+    const updateError = updateResults.find(Boolean);
+
+    if (updateError) {
+      await Promise.all(requests.map((request) => supabase
+        .from("requests")
+        .update({ durum: request.durum, items: getRequestItems(request) })
+        .eq("id", request.id)
+        .eq("user_id", user.id)));
+      await supabase.from("requests").delete().eq("id", mergedRequest.id).eq("user_id", user.id);
+      setMessage(`Talepler toplu olarak işleme alınamadı: ${updateError.message}`);
+      return;
+    }
+
     closeProcessModal();
-    setMessage("Talep işleme alındı.");
+    setSelectedRequestIds([]);
+    setMessage(`${requests.length} talep birleştirildi, İşlemde durumuna alındı ve Teklif Havuzu'na aktarıldı.`);
+    await loadRequests();
   }
 
   async function startOfferCollection(request) {
@@ -1868,7 +1915,7 @@ export default function TaleplerPage() {
                   const projectLabel = requestProjectSummary(req);
                   const priorityLabel = requestPriority(req);
                   const processInfo = requestProcessInfo(req);
-                  const isInProcess = req.durum === "İşleme alındı" || Boolean(processInfo);
+                  const isInProcess = ["İşleme alındı", "İşlemde"].includes(req.durum) || Boolean(processInfo);
 
                   return (
                     <div
@@ -1976,6 +2023,7 @@ export default function TaleplerPage() {
                               Talep durumu
                               <select value={req.durum || "Yeni Talep"} onChange={(event) => updateRequestStatus(req, event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-bold text-slate-800">
                                 <option>Yeni Talep</option>
+                                <option>İşlemde</option>
                                 <option>Teklif Bekliyor</option>
                                 <option>Teklif Toplanıyor</option>
                                 <option>Teklifler Geldi</option>
@@ -2096,7 +2144,7 @@ export default function TaleplerPage() {
           {activeRequestTab === "pool" && selectedRequests.length > 0 && (
             <MergedPurchasePreview
               rows={mergedPurchasePreview}
-              onCreateOrder={createOrderFromMergedRequests}
+              onTakeIntoProcess={openBulkProcessModal}
             />
           )}
 
@@ -2301,9 +2349,15 @@ export default function TaleplerPage() {
           <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <h2 className="text-xl font-black text-slate-900">Talebi İşleme Al</h2>
+                <h2 className="text-xl font-black text-slate-900">
+                  {processModal.requests.length > 1
+                    ? `${processModal.requests.length} Talebi Birleştir ve İşleme Al`
+                    : "Talebi İşleme Al"}
+                </h2>
                 <p className="mt-1 text-sm font-semibold text-slate-500">
-                  Talebi kimin işleme aldığını, ilgili birimi ve aciliyet seviyesini kaydedin.
+                  {processModal.requests.length > 1
+                    ? "Seçilen talepler tek listede birleştirilerek Teklif Havuzu'na aktarılacaktır."
+                    : "Talebi kimin işleme aldığını, ilgili birimi ve aciliyet seviyesini kaydedin."}
                 </p>
               </div>
               <button
@@ -2367,7 +2421,7 @@ export default function TaleplerPage() {
                 onClick={takeRequestIntoProcess}
                 className="rounded-xl bg-blue-600 px-4 py-3 text-sm font-black text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300"
               >
-                İşleme Al
+                {processModal.requests.length > 1 ? "Birleştir ve İşleme Al" : "İşleme Al"}
               </button>
             </div>
           </div>
