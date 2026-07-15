@@ -392,7 +392,7 @@ function buildCorvianRequestWorksheet(XLSX, request, rows, companyBranding, shee
   const totalRow = tableStartRow + reportRows.length + 1;
   const infoRow = totalRow + 2;
   const footerRow = infoRow + 6;
-  const matrix = Array.from({ length: footerRow + 1 }, () => Array(12).fill(""));
+  const matrix = Array.from({ length: footerRow + 1 }, () => Array(11).fill(""));
   const reportDate = new Date().toLocaleString("tr-TR");
   const reportNo = `TLR-${new Date().toISOString().replace(/\D/g, "").slice(0, 12)}-${sheetIndex + 1}`;
 
@@ -428,7 +428,6 @@ function buildCorvianRequestWorksheet(XLSX, request, rows, companyBranding, shee
     "AYRILMIŞ STOK",
     "BOŞTA STOK",
     "TALEP EDİLEN ADET",
-    "EKSİK MİKTAR",
     "STOK DURUMU",
     "EŞLEŞEN ÜRÜN KODU / KARTI",
     "BİRİM",
@@ -445,7 +444,6 @@ function buildCorvianRequestWorksheet(XLSX, request, rows, companyBranding, shee
       Number(row["Ayrılmış Stok"] || 0),
       Number(row["Boşta Stok"] || 0),
       Number(row["Talep Edilen Miktar"] || 0),
-      Number(row["Eksik Miktar"] || 0),
       row["Stok Durumu"] || "-",
       row["Eşleşen Ürün Kodu / Kartı"] || "-",
       row["Birim"] || "-",
@@ -485,7 +483,7 @@ function buildCorvianRequestWorksheet(XLSX, request, rows, companyBranding, shee
     }
   };
 
-  setRangeStyle(`A1:L${footerRow + 1}`, {
+  setRangeStyle(`A1:K${footerRow + 1}`, {
     fill: solidFill("FFFFFF"),
     font: baseFont,
   });
@@ -509,7 +507,7 @@ function buildCorvianRequestWorksheet(XLSX, request, rows, companyBranding, shee
     font: { ...baseFont, bold: true, sz: 9, color: { rgb: navy } },
     alignment: { horizontal: "left", vertical: "center" },
   });
-  setRangeStyle("A4:L4", { fill: solidFill(navy) });
+  setRangeStyle("A4:K4", { fill: solidFill(navy) });
   setRangeStyle("A5:B5", {
     font: { ...baseFont, bold: true, sz: 9, color: { rgb: navy } },
     alignment: { horizontal: "left" },
@@ -531,7 +529,7 @@ function buildCorvianRequestWorksheet(XLSX, request, rows, companyBranding, shee
       alignment: { horizontal: "left", vertical: "center" },
     };
   });
-  setRangeStyle(`A${tableStartRow + 1}:L${tableStartRow + 1}`, {
+  setRangeStyle(`A${tableStartRow + 1}:K${tableStartRow + 1}`, {
     font: { ...baseFont, bold: true, color: { rgb: "FFFFFF" } },
     fill: solidFill(navy),
     alignment: { horizontal: "center", vertical: "center", wrapText: true },
@@ -541,28 +539,28 @@ function buildCorvianRequestWorksheet(XLSX, request, rows, companyBranding, shee
   reportRows.forEach((row, index) => {
     const excelRow = tableStartRow + index + 2;
     const fillColor = index % 2 === 1 ? zebra : "FFFFFF";
-    setRangeStyle(`A${excelRow}:L${excelRow}`, {
+    setRangeStyle(`A${excelRow}:K${excelRow}`, {
       font: baseFont,
       fill: solidFill(fillColor),
       alignment: { vertical: "center", wrapText: true },
       border: thinBorder,
     });
-    [0, 1, 3, 4, 5, 6, 7, 8, 10].forEach((column) => {
+    [0, 1, 3, 4, 5, 6, 7, 9].forEach((column) => {
       const address = XLSX.utils.encode_cell({ r: excelRow - 1, c: column });
       worksheet[address].s = {
         ...worksheet[address].s,
-        font: column >= 3 && column <= 7
+        font: column >= 3 && column <= 6
           ? { ...baseFont, bold: true, color: { rgb: navy } }
           : baseFont,
         alignment: { horizontal: "center", vertical: "center", wrapText: true },
       };
     });
-    [3, 4, 5, 6, 7].forEach((column) => {
+    [3, 4, 5, 6].forEach((column) => {
       const address = XLSX.utils.encode_cell({ r: excelRow - 1, c: column });
       worksheet[address].z = "#,##0.##";
     });
 
-    const statusAddress = `I${excelRow}`;
+    const statusAddress = `H${excelRow}`;
     const status = String(row["Stok Durumu"] || "");
     const statusFill = /stokta yok|ürün kartı bulunamadı/i.test(status)
       ? "FEE2E2"
@@ -578,7 +576,7 @@ function buildCorvianRequestWorksheet(XLSX, request, rows, companyBranding, shee
     };
   });
 
-  setRangeStyle(`A${totalRow + 1}:L${totalRow + 1}`, {
+  setRangeStyle(`A${totalRow + 1}:K${totalRow + 1}`, {
     font: { ...baseFont, bold: true, color: { rgb: "FFFFFF" } },
     fill: solidFill(navy),
     alignment: { horizontal: "center", vertical: "center" },
@@ -606,7 +604,7 @@ function buildCorvianRequestWorksheet(XLSX, request, rows, companyBranding, shee
     fill: solidFill("FFFFFF"),
     border: thinBorder,
   });
-  setRangeStyle(`A${footerRow + 1}:L${footerRow + 1}`, {
+  setRangeStyle(`A${footerRow + 1}:K${footerRow + 1}`, {
     font: { ...baseFont, bold: true, sz: 9, color: { rgb: "FFFFFF" } },
     fill: solidFill(navy),
     alignment: { horizontal: "center", vertical: "center" },
@@ -617,7 +615,7 @@ function buildCorvianRequestWorksheet(XLSX, request, rows, companyBranding, shee
     XLSX.utils.decode_range("A3:B3"),
     XLSX.utils.decode_range("C1:E1"),
     XLSX.utils.decode_range("C2:E2"),
-    XLSX.utils.decode_range("A4:L4"),
+    XLSX.utils.decode_range("A4:K4"),
     XLSX.utils.decode_range("A5:B5"),
     XLSX.utils.decode_range("A6:B6"),
     XLSX.utils.decode_range("A7:B7"),
@@ -631,15 +629,15 @@ function buildCorvianRequestWorksheet(XLSX, request, rows, companyBranding, shee
     XLSX.utils.decode_range(`E${infoRow + 2}:F${infoRow + 3}`),
     XLSX.utils.decode_range(`E${infoRow + 4}:F${infoRow + 4}`),
     XLSX.utils.decode_range(`E${infoRow + 5}:F${infoRow + 5}`),
-    XLSX.utils.decode_range(`A${footerRow + 1}:L${footerRow + 1}`),
+    XLSX.utils.decode_range(`A${footerRow + 1}:K${footerRow + 1}`),
   ];
   worksheet["!autofilter"] = {
-    ref: `A${tableStartRow + 1}:L${tableStartRow + reportRows.length + 1}`,
+    ref: `A${tableStartRow + 1}:K${tableStartRow + reportRows.length + 1}`,
   };
   worksheet["!cols"] = [
     { wch: 7 }, { wch: 18 }, { wch: 38 }, { wch: 15 },
-    { wch: 15 }, { wch: 15 }, { wch: 17 }, { wch: 15 },
-    { wch: 24 }, { wch: 38 }, { wch: 12 }, { wch: 28 },
+    { wch: 15 }, { wch: 15 }, { wch: 17 }, { wch: 24 },
+    { wch: 38 }, { wch: 12 }, { wch: 28 },
   ];
   worksheet["!rows"] = Array.from({ length: footerRow + 1 }, (_, rowIndex) => {
     if (rowIndex === 0) return { hpt: 34 };
