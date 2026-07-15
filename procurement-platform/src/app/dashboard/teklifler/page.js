@@ -57,6 +57,15 @@ function getOfferRequestMeta(request) {
   return getOfferRequestItems(request).find((item) => item?.request_meta)?.request_meta || {};
 }
 
+function requestSequenceLabel(index, total) {
+  return `TLB-${String(Math.max(total - index, 1)).padStart(5, "0")}`;
+}
+
+function offerPoolStatusLabel(status) {
+  if (["İşleme alındı", "İşlemde"].includes(status)) return "İşlemde";
+  return status || "İşlemde";
+}
+
 function offerFileExtension(fileName = "") {
   const normalized = String(fileName || "").toLowerCase();
   const dotIndex = normalized.lastIndexOf(".");
@@ -222,7 +231,6 @@ const loadRequests = async () => {
       .from("requests")
       .select("*")
       .eq("user_id", user.id)
-      .in("durum", OFFER_POOL_STATUSES)
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -230,9 +238,32 @@ const loadRequests = async () => {
       return;
     }
 
-    const offerPoolRequests = (data || []).filter(
-      (request) => !getOfferRequestMeta(request).mergedIntoRequestId,
+    const allRequests = data || [];
+    // Talepler ekranı birleşik işlem kayıtlarını sıra numarasına dahil etmez.
+    // Aynı listeyi baz alarak iki ekranda da TLB numarasını sabit tutuyoruz.
+    const numberedRequests = allRequests.filter(
+      (request) => getOfferRequestMeta(request).source !== "merged-process",
     );
+    const requestNumberById = new Map(
+      numberedRequests.map((request, index) => [
+        String(request.id),
+        requestSequenceLabel(index, numberedRequests.length),
+      ]),
+    );
+
+    const offerPoolRequests = allRequests
+      .filter((request) => OFFER_POOL_STATUSES.includes(request.durum))
+      .filter((request) => !getOfferRequestMeta(request).mergedIntoRequestId)
+      .map((request) => {
+        const meta = getOfferRequestMeta(request);
+        const sourceNumbers = (Array.isArray(meta.sourceRequestIds) ? meta.sourceRequestIds : [])
+          .map((id) => requestNumberById.get(String(id)))
+          .filter(Boolean);
+        return {
+          ...request,
+          requestNumberLabel: requestNumberById.get(String(request.id)) || sourceNumbers.join(" + ") || "Birleşik Talep",
+        };
+      });
     setRequestLists(offerPoolRequests);
 
     if (requestIdFromUrl && offerPoolRequests.some((request) => String(request.id) === String(requestIdFromUrl))) {
@@ -784,8 +815,11 @@ const loadCompanySettings = async () => {
                                 className="h-4 w-4 border-slate-300 text-blue-600 focus:ring-blue-500"
                               />
                               <span className="min-w-0 flex-1">
-                                <span className="block truncate text-sm font-black text-slate-900">
-                                  {item.ad || `Talep #${index + 1}`}
+                                <span className="flex min-w-0 items-center gap-2 text-sm font-black text-slate-900">
+                                  <span className="shrink-0 rounded-md bg-blue-100 px-2 py-0.5 text-xs text-blue-700">
+                                    {item.requestNumberLabel}
+                                  </span>
+                                  <span className="truncate">{item.ad || `Talep #${index + 1}`}</span>
                                 </span>
                                 <span className="mt-1 flex flex-wrap gap-2 text-xs font-semibold text-slate-500">
                                   <span>{itemCount} kalem</span>
@@ -793,7 +827,7 @@ const loadCompanySettings = async () => {
                                 </span>
                               </span>
                               <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-black text-emerald-700">
-                                {item.durum || "İşlemde"}
+                                {offerPoolStatusLabel(item.durum)}
                               </span>
                             </label>
                           );
