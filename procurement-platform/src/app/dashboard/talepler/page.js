@@ -557,7 +557,7 @@ function buildCorvianRequestWorksheet(XLSX, request, rows, companyBranding, shee
     });
     [3, 4, 5, 6].forEach((column) => {
       const address = XLSX.utils.encode_cell({ r: excelRow - 1, c: column });
-      worksheet[address].z = "#,##0.##";
+      worksheet[address].z = "0";
     });
 
     const statusAddress = `H${excelRow}`;
@@ -586,7 +586,7 @@ function buildCorvianRequestWorksheet(XLSX, request, rows, companyBranding, shee
     t: "n",
     f: `SUM(G${tableStartRow + 2}:G${tableStartRow + reportRows.length + 1})`,
     v: totalQuantity,
-    z: "#,##0.##",
+    z: "0",
     s: worksheet[`G${totalRow + 1}`].s,
   };
   setRangeStyle(`A${infoRow + 1}:F${infoRow + 5}`, {
