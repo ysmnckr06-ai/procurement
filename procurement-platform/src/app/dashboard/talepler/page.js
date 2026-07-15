@@ -100,11 +100,6 @@ function requestPriority(request) {
   return getRequestMeta(request).priority || "Normal";
 }
 
-function requestQuantityLocked(request) {
-  const status = String(request?.durum || "").trim();
-  return Boolean(status && status !== "Yeni Talep");
-}
-
 function requestProcessInfo(request) {
   const meta = getRequestMeta(request);
   if (!meta.processedBy && !meta.processedAt) return "";
@@ -123,16 +118,6 @@ function readItemField(item, keys, fallback = "") {
     if (value !== undefined && value !== null && String(value).trim() !== "") return value;
   }
   return fallback;
-}
-
-function formatRequestMoney(value, currency) {
-  const amount = Number(value || 0);
-  if (!amount) return "-";
-
-  return `${amount.toLocaleString("tr-TR", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })} ${currency || "TRY"}`;
 }
 
 function safeFileName(value) {
@@ -240,6 +225,47 @@ function normalizeRequestProductCode(value) {
 
 function normalizeRequestProductName(value) {
   return String(value || "").trim().toLocaleLowerCase("tr-TR").replace(/\s+/g, " ");
+}
+
+function getRequestItemStockSummary(item, products) {
+  const productCode = readItemField(item, ["urunKodu", "product_code", "code"], "");
+  const productName = readItemField(item, ["urunAciklamasi", "product_name", "description", "name"], "");
+  const normalizedCode = normalizeRequestProductCode(productCode);
+  const normalizedName = normalizeRequestProductName(productName);
+  const matchingProducts = (products || []).filter((product) => {
+    if (normalizedCode) {
+      return normalizeRequestProductCode(product.product_code) === normalizedCode;
+    }
+    return normalizedName && normalizeRequestProductName(product.product_name) === normalizedName;
+  });
+  const currentStock = matchingProducts.reduce(
+    (sum, product) => sum + Number(product.current_stock || 0),
+    0,
+  );
+  const reservedStock = matchingProducts.reduce(
+    (sum, product) => sum + Number(product.reserved_stock || 0),
+    0,
+  );
+  const availableStock = Math.max(currentStock - reservedStock, 0);
+  const requestedQuantity = Number(
+    readItemField(item, ["talepEdilenAdet", "quantity", "qty", "estimated_quantity"], 0),
+  ) || 0;
+  const status = matchingProducts.length === 0
+    ? "Stok kartı bulunamadı"
+    : availableStock <= 0
+      ? "Kullanılabilir stok yok"
+      : availableStock < requestedQuantity
+        ? "Kısmi stok"
+        : "Stok yeterli";
+
+  return {
+    currentStock,
+    reservedStock,
+    availableStock,
+    requestedQuantity,
+    status,
+    hasStockCard: matchingProducts.length > 0,
+  };
 }
 
 async function fetchTenantStockProducts(userId) {
@@ -906,7 +932,6 @@ export default function TaleplerPage() {
   const [showAllRequests, setShowAllRequests] = useState(false);
   const [expandedRequestId, setExpandedRequestId] = useState("");
   const [selectedRequestIds, setSelectedRequestIds] = useState([]);
-  const [quantityDrafts, setQuantityDrafts] = useState({});
   const [requestRelations, setRequestRelations] = useState({});
   const [creatingManualRequest, setCreatingManualRequest] = useState(false);
   const [activeRequestTab, setActiveRequestTab] = useState("pool");
@@ -1580,70 +1605,6 @@ export default function TaleplerPage() {
     }, 700);
   };
 
-  function quantityDraftKey(requestId, itemIndex) {
-    return `${requestId}:${itemIndex}`;
-  }
-
-  function requestItemQuantity(requestId, itemIndex, item) {
-    const draftKey = quantityDraftKey(requestId, itemIndex);
-    if (quantityDrafts[draftKey] !== undefined) return quantityDrafts[draftKey];
-    return readItemField(item, ["purchase_quantity", "talepEdilenAdet", "quantity", "qty", "estimated_quantity"], 0);
-  }
-
-  async function saveRequestItemQuantity(request, itemIndex, nextQuantity) {
-    if (requestQuantityLocked(request)) {
-      setMessage("Talep oluşturulduktan sonra miktar değiştirilemez.");
-      return;
-    }
-
-    const quantity = Number(nextQuantity || 0);
-    if (quantity < 0) {
-      setMessage("Talep miktarı negatif olamaz.");
-      return;
-    }
-
-    const items = getRequestItems(request).map((item, index) => {
-      if (index !== itemIndex) return item;
-      const unitPrice = Number(readItemField(item, ["birimFiyat", "unit_price", "estimated_unit_price"], 0) || 0);
-      return {
-        ...item,
-        quantity,
-        talepEdilenAdet: quantity,
-        purchase_quantity: quantity,
-        total: unitPrice > 0 ? Number((unitPrice * quantity).toFixed(2)) : item.total,
-      };
-    });
-
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    if (!user) {
-      setMessage("Oturum bulunamadı. Talep miktarını güncellemek için lütfen tekrar giriş yapın.");
-      return;
-    }
-
-    const { error } = await supabase
-      .from("requests")
-      .update({ items, totalitems: items.length })
-      .eq("id", request.id)
-      .eq("user_id", user.id);
-
-    if (error) {
-      setMessage(`Talep miktarı güncellenemedi: ${error.message}`);
-      return;
-    }
-
-    setSavedRequests((current) =>
-      current.map((savedRequest) =>
-        savedRequest.id === request.id
-          ? { ...savedRequest, items, totalitems: items.length }
-          : savedRequest,
-      ),
-    );
-    setMessage("Talep kalemi güncellendi.");
-  }
-
   async function deleteRequest(requestId) {
     const onay = window.confirm("Bu talep listesini silmek istediğine emin misin?");
     if (!onay) return;
@@ -1909,7 +1870,6 @@ export default function TaleplerPage() {
                   const projectLabel = requestProjectSummary(req);
                   const priorityLabel = requestPriority(req);
                   const processInfo = requestProcessInfo(req);
-                  const quantityLocked = requestQuantityLocked(req);
                   const isInProcess = req.durum === "İşleme alındı" || Boolean(processInfo);
 
                   return (
@@ -2005,9 +1965,7 @@ export default function TaleplerPage() {
                             <div>
                               <div className="text-sm font-bold text-slate-900">Talep Detayı</div>
                               <div className="text-xs font-medium text-slate-500">
-                                {quantityLocked
-                                  ? "Talep oluşturulduğu için miktarlar kilitlidir; ekleme veya çıkarma yapılamaz."
-                                  : "Ürün, stok bilgisi, satın alınacak miktar ve proje dağılımı burada görünür. Gerekirse satın alınacak miktarı revize edebilirsiniz."}
+                                Oluşturulmuş talepler salt okunurdur; miktarlar değiştirilemez. Stok değerleri güncel ürün kartlarından gösterilir.
                               </div>
                             </div>
                             <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-bold text-blue-700">
@@ -2055,23 +2013,24 @@ export default function TaleplerPage() {
                                     <th className="px-3 py-3">#</th>
                                     <th className="px-3 py-3">Ürün kodu</th>
                                     <th className="px-3 py-3">Açıklama</th>
-                                    <th className="px-3 py-3 text-right">Satın alınacak</th>
-                                    <th className="px-3 py-3 text-right">Stoktan</th>
+                                    <th className="px-3 py-3 text-right">Talep edilen</th>
                                     <th className="px-3 py-3 text-right">Mevcut stok</th>
+                                    <th className="px-3 py-3 text-right">Projeye ayrılan / Rezerve</th>
+                                    <th className="px-3 py-3 text-right">Kullanılabilir</th>
+                                    <th className="px-3 py-3">Stok durumu</th>
                                     <th className="px-3 py-3">Birim</th>
-                                    <th className="px-3 py-3 text-right">Birim fiyat</th>
-                                    <th className="px-3 py-3 text-right">Toplam</th>
                                     <th className="px-3 py-3">Proje</th>
-                                    <th className="px-3 py-3">İşlem</th>
                                   </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
                                   {requestItems.map((item, itemIndex) => {
-                                    const currency = readItemField(item, ["paraBirimi", "currency"], "TRY");
-                                    const draftQuantity = requestItemQuantity(req.id, itemIndex, item);
-                                    const stockCoverable = readItemField(item, ["stock_coverable_quantity", "stockCoverableQuantity"], 0);
-                                    const currentStock = readItemField(item, ["current_stock", "currentStock"], 0);
+                                    const stockSummary = getRequestItemStockSummary(item, stockProducts);
                                     const allocations = Array.isArray(item.allocations) ? item.allocations : [];
+                                    const statusClass = stockSummary.status === "Stok yeterli"
+                                      ? "bg-emerald-100 text-emerald-700"
+                                      : stockSummary.status === "Kısmi stok"
+                                        ? "bg-amber-100 text-amber-700"
+                                        : "bg-red-100 text-red-700";
                                     return (
                                       <tr key={`${readItemField(item, ["urunKodu", "product_code", "code"], "kod-yok")}-${itemIndex}`} className="align-top">
                                         <td className="px-3 py-3 font-semibold text-slate-500">{itemIndex + 1}</td>
@@ -2082,38 +2041,26 @@ export default function TaleplerPage() {
                                           {readItemField(item, ["urunAciklamasi", "product_name", "description", "name"], "Ürün açıklaması yok")}
                                         </td>
                                         <td className="px-3 py-3 text-right font-bold text-blue-700">
-                                          {quantityLocked ? (
-                                            <span className="inline-flex rounded-lg bg-slate-100 px-3 py-1 text-sm font-black text-slate-700">
-                                              {Number(draftQuantity || 0).toLocaleString("tr-TR")}
-                                            </span>
-                                          ) : (
-                                            <input
-                                              type="number"
-                                              min="0"
-                                              value={draftQuantity}
-                                              onChange={(event) => setQuantityDrafts((current) => ({
-                                                ...current,
-                                                [quantityDraftKey(req.id, itemIndex)]: event.target.value,
-                                              }))}
-                                              className="w-24 rounded-lg border border-slate-300 px-2 py-1 text-right font-bold text-blue-700"
-                                              aria-label="Satın alınacak miktar"
-                                            />
-                                          )}
-                                        </td>
-                                        <td className="px-3 py-3 text-right font-semibold text-emerald-700">
-                                          {Number(stockCoverable || 0).toLocaleString("tr-TR")}
+                                          <span className="inline-flex rounded-lg bg-blue-50 px-3 py-1 text-sm font-black text-blue-700">
+                                            {stockSummary.requestedQuantity.toLocaleString("tr-TR")}
+                                          </span>
                                         </td>
                                         <td className="px-3 py-3 text-right font-semibold text-slate-700">
-                                          {Number(currentStock || 0).toLocaleString("tr-TR")}
+                                          {stockSummary.hasStockCard ? stockSummary.currentStock.toLocaleString("tr-TR") : "-"}
+                                        </td>
+                                        <td className="px-3 py-3 text-right font-semibold text-blue-700">
+                                          {stockSummary.hasStockCard ? stockSummary.reservedStock.toLocaleString("tr-TR") : "-"}
+                                        </td>
+                                        <td className="px-3 py-3 text-right font-semibold text-emerald-700">
+                                          {stockSummary.hasStockCard ? stockSummary.availableStock.toLocaleString("tr-TR") : "-"}
+                                        </td>
+                                        <td className="px-3 py-3">
+                                          <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-black ${statusClass}`}>
+                                            {stockSummary.status}
+                                          </span>
                                         </td>
                                         <td className="px-3 py-3 font-semibold text-slate-600">
                                           {readItemField(item, ["birim", "unit"], "adet")}
-                                        </td>
-                                        <td className="px-3 py-3 text-right font-semibold text-slate-700">
-                                          {formatRequestMoney(readItemField(item, ["birimFiyat", "unit_price", "estimated_unit_price"], 0), currency)}
-                                        </td>
-                                        <td className="px-3 py-3 text-right font-bold text-slate-900">
-                                          {formatRequestMoney(readItemField(item, ["toplam", "total", "estimated_total"], 0), currency)}
                                         </td>
                                         <td className="max-w-[220px] px-3 py-3 text-xs font-medium text-slate-500">
                                           {allocations.length > 0 ? (
@@ -2122,21 +2069,6 @@ export default function TaleplerPage() {
                                               unit={readItemField(item, ["birim", "unit"], "adet")}
                                             />
                                           ) : cleanRequestNote(readItemField(item, ["not", "note"], "")) || "-"}
-                                        </td>
-                                        <td className="px-3 py-3">
-                                          {quantityLocked ? (
-                                            <span className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-black text-slate-500">
-                                              Talep kilitli
-                                            </span>
-                                          ) : (
-                                            <button
-                                              type="button"
-                                              onClick={() => saveRequestItemQuantity(req, itemIndex, draftQuantity)}
-                                              className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white hover:bg-blue-700"
-                                            >
-                                              Miktarı Kaydet
-                                            </button>
-                                          )}
                                         </td>
                                       </tr>
                                     );
