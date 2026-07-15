@@ -335,6 +335,303 @@ function buildStockAwareRequestExportRows(requests, products) {
   return rowsByRequest;
 }
 
+function buildCorvianRequestWorksheet(XLSX, request, rows, companyBranding, sheetIndex) {
+  const { companyName, taxNo } = companyBranding;
+  const navy = "062B5F";
+  const border = "D7DFEA";
+  const text = "0F172A";
+  const muted = "64748B";
+  const zebra = "F3F7FB";
+  const tableStartRow = 10;
+  const reportRows = rows.length > 0
+    ? rows
+    : [{
+        "Sıra": 1,
+        "Ürün Kodu": "-",
+        "Açıklama": "Kalem detayı bulunamadı.",
+        "Mevcut Stok": 0,
+        "Ayrılmış Stok": 0,
+        "Boşta Stok": 0,
+        "Talep Edilen Miktar": 0,
+        "Eksik Miktar": 0,
+        "Stok Durumu": "-",
+        "Eşleşen Ürün Kodu / Kartı": "-",
+        "Birim": "-",
+        "Not": "",
+      }];
+  const totalQuantity = reportRows.reduce(
+    (sum, row) => sum + Number(row["Talep Edilen Miktar"] || 0),
+    0,
+  );
+  const totalRow = tableStartRow + reportRows.length + 1;
+  const infoRow = totalRow + 2;
+  const footerRow = infoRow + 6;
+  const matrix = Array.from({ length: footerRow + 1 }, () => Array(12).fill(""));
+  const reportDate = new Date().toLocaleString("tr-TR");
+  const reportNo = `TLR-${new Date().toISOString().replace(/\D/g, "").slice(0, 12)}-${sheetIndex + 1}`;
+
+  matrix[0][0] = companyName;
+  matrix[2][0] = CORVIAN_PRODUCT_NAME;
+  matrix[0][2] = "SATINALMA TALEP LİSTESİ";
+  matrix[1][2] = "Akıllı Satınalma & Teklif Analiz Sistemi";
+  matrix[0][5] = "Rapor Tarihi";
+  matrix[1][5] = reportDate;
+  matrix[2][5] = `Rapor No: ${reportNo}`;
+  matrix[4][0] = "KULLANICI FİRMASI";
+  matrix[5][0] = companyName;
+  matrix[6][0] = `Vergi No: ${taxNo || "-"}`;
+  matrix[7][0] = "Adres: -";
+  matrix[4][2] = "TOPLAM KALEM";
+  matrix[5][2] = reportRows.length;
+  matrix[6][2] = "Ürün kalemi";
+  matrix[4][3] = "TOPLAM ADET";
+  matrix[5][3] = totalQuantity;
+  matrix[6][3] = "Talep edilen adet";
+  matrix[4][4] = "RAPOR TÜRÜ";
+  matrix[5][4] = "Talep İcmal";
+  matrix[6][4] = "Güncel sistem verileri";
+  matrix[4][5] = "KAYNAK";
+  matrix[5][5] = requestSourceLabel(request);
+  matrix[6][5] = requestProjectSummary(request);
+
+  const headers = [
+    "SIRA",
+    "ÜRÜN KODU",
+    "ÜRÜN AÇIKLAMASI",
+    "MEVCUT STOK",
+    "AYRILMIŞ STOK",
+    "BOŞTA STOK",
+    "TALEP EDİLEN ADET",
+    "EKSİK MİKTAR",
+    "STOK DURUMU",
+    "EŞLEŞEN ÜRÜN KODU / KARTI",
+    "BİRİM",
+    "AÇIKLAMA",
+  ];
+  matrix[tableStartRow] = headers;
+
+  reportRows.forEach((row, index) => {
+    matrix[tableStartRow + index + 1] = [
+      index + 1,
+      row["Ürün Kodu"] || "-",
+      row["Açıklama"] || "-",
+      Number(row["Mevcut Stok"] || 0),
+      Number(row["Ayrılmış Stok"] || 0),
+      Number(row["Boşta Stok"] || 0),
+      Number(row["Talep Edilen Miktar"] || 0),
+      Number(row["Eksik Miktar"] || 0),
+      row["Stok Durumu"] || "-",
+      row["Eşleşen Ürün Kodu / Kartı"] || "-",
+      row["Birim"] || "-",
+      row["Not"] || "-",
+    ];
+  });
+
+  matrix[totalRow][0] = "GENEL TOPLAM";
+  matrix[totalRow][6] = totalQuantity;
+  matrix[infoRow][0] = "RAPOR AÇIKLAMASI";
+  matrix[infoRow + 1][0] = "Bu rapor, Corvian ERP'deki güncel talep ve stok bilgileri kullanılarak oluşturulmuştur.\nÜrün kodu, açıklama, adet ve birim bilgileri standart Corvian formatında sunulmuştur.";
+  matrix[infoRow][2] = "SİSTEM BİLGİSİ";
+  matrix[infoRow + 1][2] = "✓ Güncel stok verileri ile oluşturulmuştur.\n✓ Ürün kartı eşleştirmeleri rapora işlenmiştir.\n✓ Manuel kontrol sonrası kullanılmalıdır.\n✓ Seçilen her talep ayrı sekmede gösterilir.";
+  matrix[infoRow][4] = "ONAY / İMZA";
+  matrix[infoRow + 3][4] = "........................................";
+  matrix[infoRow + 4][4] = "Ad Soyad / Unvan";
+  matrix[footerRow][0] = "GİZLİ SATINALMA RAPORU     |     Bu belge Corvian ERP tarafından otomatik oluşturulmuştur.";
+
+  const worksheet = XLSX.utils.aoa_to_sheet(matrix);
+  const thinBorder = {
+    top: { style: "thin", color: { rgb: border } },
+    bottom: { style: "thin", color: { rgb: border } },
+    left: { style: "thin", color: { rgb: border } },
+    right: { style: "thin", color: { rgb: border } },
+  };
+  const baseFont = { name: "Aptos", color: { rgb: text }, sz: 10 };
+  const solidFill = (rgb) => ({ patternType: "solid", fgColor: { rgb } });
+
+  const setRangeStyle = (range, style) => {
+    const decoded = XLSX.utils.decode_range(range);
+    for (let row = decoded.s.r; row <= decoded.e.r; row += 1) {
+      for (let column = decoded.s.c; column <= decoded.e.c; column += 1) {
+        const address = XLSX.utils.encode_cell({ r: row, c: column });
+        if (!worksheet[address]) worksheet[address] = { t: "s", v: "" };
+        worksheet[address].s = { ...(worksheet[address].s || {}), ...style };
+      }
+    }
+  };
+
+  setRangeStyle(`A1:L${footerRow + 1}`, {
+    fill: solidFill("FFFFFF"),
+    font: baseFont,
+  });
+  setRangeStyle("A1:B2", {
+    font: { ...baseFont, bold: true, sz: 20, color: { rgb: navy } },
+    alignment: { vertical: "center", horizontal: "left" },
+  });
+  setRangeStyle("A3:B3", {
+    font: { ...baseFont, sz: 10, color: { rgb: navy } },
+    alignment: { horizontal: "left" },
+  });
+  setRangeStyle("C1:E1", {
+    font: { ...baseFont, bold: true, sz: 20, color: { rgb: navy } },
+    alignment: { vertical: "center", horizontal: "center" },
+  });
+  setRangeStyle("C2:E2", {
+    font: { ...baseFont, sz: 11, color: { rgb: muted } },
+    alignment: { horizontal: "center" },
+  });
+  setRangeStyle("F1:F3", {
+    font: { ...baseFont, bold: true, sz: 9, color: { rgb: navy } },
+    alignment: { horizontal: "left", vertical: "center" },
+  });
+  setRangeStyle("A4:L4", { fill: solidFill(navy) });
+  setRangeStyle("A5:B5", {
+    font: { ...baseFont, bold: true, sz: 9, color: { rgb: navy } },
+    alignment: { horizontal: "left" },
+  });
+  setRangeStyle("A6:B8", {
+    font: baseFont,
+    fill: solidFill("FFFFFF"),
+    alignment: { vertical: "center", wrapText: true },
+    border: thinBorder,
+  });
+  setRangeStyle("C5:F7", {
+    font: { ...baseFont, color: { rgb: navy } },
+    alignment: { horizontal: "left", vertical: "center", wrapText: true },
+  });
+  ["C6", "D6", "E6", "F6"].forEach((address) => {
+    worksheet[address].s = {
+      ...worksheet[address].s,
+      font: { ...baseFont, bold: true, sz: 14, color: { rgb: text } },
+      alignment: { horizontal: "left", vertical: "center" },
+    };
+  });
+  setRangeStyle(`A${tableStartRow + 1}:L${tableStartRow + 1}`, {
+    font: { ...baseFont, bold: true, color: { rgb: "FFFFFF" } },
+    fill: solidFill(navy),
+    alignment: { horizontal: "center", vertical: "center", wrapText: true },
+    border: thinBorder,
+  });
+
+  reportRows.forEach((row, index) => {
+    const excelRow = tableStartRow + index + 2;
+    const fillColor = index % 2 === 1 ? zebra : "FFFFFF";
+    setRangeStyle(`A${excelRow}:L${excelRow}`, {
+      font: baseFont,
+      fill: solidFill(fillColor),
+      alignment: { vertical: "center", wrapText: true },
+      border: thinBorder,
+    });
+    [0, 1, 3, 4, 5, 6, 7, 8, 10].forEach((column) => {
+      const address = XLSX.utils.encode_cell({ r: excelRow - 1, c: column });
+      worksheet[address].s = {
+        ...worksheet[address].s,
+        font: column >= 3 && column <= 7
+          ? { ...baseFont, bold: true, color: { rgb: navy } }
+          : baseFont,
+        alignment: { horizontal: "center", vertical: "center", wrapText: true },
+      };
+    });
+    [3, 4, 5, 6, 7].forEach((column) => {
+      const address = XLSX.utils.encode_cell({ r: excelRow - 1, c: column });
+      worksheet[address].z = "#,##0.##";
+    });
+
+    const statusAddress = `I${excelRow}`;
+    const status = String(row["Stok Durumu"] || "");
+    const statusFill = /stokta yok|ürün kartı bulunamadı/i.test(status)
+      ? "FEE2E2"
+      : /kısmi stok/i.test(status)
+        ? "FFEDD5"
+        : /stoktan karşılanabilir/i.test(status)
+          ? "DCFCE7"
+          : fillColor;
+    worksheet[statusAddress].s = {
+      ...worksheet[statusAddress].s,
+      fill: solidFill(statusFill),
+      font: { ...baseFont, bold: true, color: { rgb: navy } },
+    };
+  });
+
+  setRangeStyle(`A${totalRow + 1}:L${totalRow + 1}`, {
+    font: { ...baseFont, bold: true, color: { rgb: "FFFFFF" } },
+    fill: solidFill(navy),
+    alignment: { horizontal: "center", vertical: "center" },
+    border: thinBorder,
+  });
+  worksheet[`G${totalRow + 1}`] = {
+    t: "n",
+    f: `SUM(G${tableStartRow + 2}:G${tableStartRow + reportRows.length + 1})`,
+    v: totalQuantity,
+    z: "#,##0.##",
+    s: worksheet[`G${totalRow + 1}`].s,
+  };
+  setRangeStyle(`A${infoRow + 1}:F${infoRow + 5}`, {
+    font: { ...baseFont, color: { rgb: text }, sz: 9 },
+    alignment: { vertical: "top", wrapText: true },
+  });
+  ["A", "C", "E"].forEach((column) => {
+    worksheet[`${column}${infoRow + 1}`].s = {
+      ...worksheet[`${column}${infoRow + 1}`].s,
+      font: { ...baseFont, bold: true, sz: 11, color: { rgb: navy } },
+      alignment: { horizontal: "left" },
+    };
+  });
+  setRangeStyle(`E${infoRow + 2}:F${infoRow + 3}`, {
+    fill: solidFill("FFFFFF"),
+    border: thinBorder,
+  });
+  setRangeStyle(`A${footerRow + 1}:L${footerRow + 1}`, {
+    font: { ...baseFont, bold: true, sz: 9, color: { rgb: "FFFFFF" } },
+    fill: solidFill(navy),
+    alignment: { horizontal: "center", vertical: "center" },
+  });
+
+  worksheet["!merges"] = [
+    XLSX.utils.decode_range("A1:B2"),
+    XLSX.utils.decode_range("A3:B3"),
+    XLSX.utils.decode_range("C1:E1"),
+    XLSX.utils.decode_range("C2:E2"),
+    XLSX.utils.decode_range("A4:L4"),
+    XLSX.utils.decode_range("A5:B5"),
+    XLSX.utils.decode_range("A6:B6"),
+    XLSX.utils.decode_range("A7:B7"),
+    XLSX.utils.decode_range("A8:B8"),
+    XLSX.utils.decode_range(`A${totalRow + 1}:F${totalRow + 1}`),
+    XLSX.utils.decode_range(`A${infoRow + 1}:B${infoRow + 1}`),
+    XLSX.utils.decode_range(`A${infoRow + 2}:B${infoRow + 5}`),
+    XLSX.utils.decode_range(`C${infoRow + 1}:D${infoRow + 1}`),
+    XLSX.utils.decode_range(`C${infoRow + 2}:D${infoRow + 5}`),
+    XLSX.utils.decode_range(`E${infoRow + 1}:F${infoRow + 1}`),
+    XLSX.utils.decode_range(`E${infoRow + 2}:F${infoRow + 3}`),
+    XLSX.utils.decode_range(`E${infoRow + 4}:F${infoRow + 4}`),
+    XLSX.utils.decode_range(`E${infoRow + 5}:F${infoRow + 5}`),
+    XLSX.utils.decode_range(`A${footerRow + 1}:L${footerRow + 1}`),
+  ];
+  worksheet["!autofilter"] = {
+    ref: `A${tableStartRow + 1}:L${tableStartRow + reportRows.length + 1}`,
+  };
+  worksheet["!cols"] = [
+    { wch: 7 }, { wch: 18 }, { wch: 38 }, { wch: 15 },
+    { wch: 15 }, { wch: 15 }, { wch: 17 }, { wch: 15 },
+    { wch: 24 }, { wch: 38 }, { wch: 12 }, { wch: 28 },
+  ];
+  worksheet["!rows"] = Array.from({ length: footerRow + 1 }, (_, rowIndex) => {
+    if (rowIndex === 0) return { hpt: 34 };
+    if (rowIndex === 1) return { hpt: 28 };
+    if (rowIndex === 2) return { hpt: 24 };
+    if (rowIndex === 3) return { hpt: 8 };
+    if (rowIndex === tableStartRow) return { hpt: 30 };
+    if (rowIndex > tableStartRow && rowIndex < totalRow) return { hpt: 28 };
+    if (rowIndex >= infoRow + 1 && rowIndex <= infoRow + 4) return { hpt: 22 };
+    return { hpt: 20 };
+  });
+  worksheet["!margins"] = { left: 0.25, right: 0.25, top: 0.35, bottom: 0.35, header: 0.2, footer: 0.2 };
+  worksheet["!pageSetup"] = { orientation: "landscape", fitToWidth: 1, fitToHeight: 0 };
+  worksheet["!sheetViews"] = [{ showGridLines: false, zoomScale: 90 }];
+
+  return worksheet;
+}
+
 function buildMergedPurchasePreview(requests) {
   const grouped = new Map();
 
@@ -1167,7 +1464,7 @@ export default function TaleplerPage() {
       return;
     }
 
-    const { companyName } = await fetchCompanyBranding(supabase);
+    const companyBranding = await fetchCompanyBranding(supabase);
     const exportProducts = await getStockProductsForExport();
     const XLSXModule = await import("xlsx-js-style");
     const XLSX = XLSXModule.default || XLSXModule;
@@ -1176,93 +1473,13 @@ export default function TaleplerPage() {
 
     requestsToDownload.forEach((request, index) => {
       const rowsForSheet = exportRowsByRequest.get(request) || [];
-      const rowsToWrite = rowsForSheet.length > 0 ? rowsForSheet : [{ Bilgi: "Kalem detayı bulunamadı." }];
-      const headers = Object.keys(rowsToWrite[0]);
-      const lastColumn = Math.max(headers.length - 1, 0);
-      const lastColumnName = XLSX.utils.encode_col(lastColumn);
-      const worksheet = XLSX.utils.aoa_to_sheet([
-        [companyName],
-        [CORVIAN_PRODUCT_NAME],
-        [`Rapor: ${request.ad || "Talep Listesi"} · Oluşturma tarihi: ${formatDateTime(request.created_at || request.tarih)}`],
-        ["Bu dosya Corvian ERP'deki güncel talep ve stok bilgileri kullanılarak oluşturulmuştur."],
-        [],
-      ]);
-      XLSX.utils.sheet_add_json(worksheet, rowsToWrite, { origin: "A6" });
-
-      const titleStyle = {
-        fill: { fgColor: { rgb: "0F172A" } },
-        font: { bold: true, color: { rgb: "FFFFFF" }, sz: 14 },
-        alignment: { vertical: "center" },
-      };
-      const noteStyle = {
-        fill: { fgColor: { rgb: "DBEAFE" } },
-        font: { bold: true, color: { rgb: "1E3A8A" } },
-        alignment: { vertical: "center", wrapText: true },
-      };
-      const headerStyle = {
-        fill: { fgColor: { rgb: "0F172A" } },
-        font: { bold: true, color: { rgb: "FFFFFF" } },
-        alignment: { vertical: "center", wrapText: true },
-        border: {
-          top: { style: "thin", color: { rgb: "CBD5E1" } },
-          bottom: { style: "thin", color: { rgb: "CBD5E1" } },
-          left: { style: "thin", color: { rgb: "CBD5E1" } },
-          right: { style: "thin", color: { rgb: "CBD5E1" } },
-        },
-      };
-      const bodyBorder = {
-        top: { style: "thin", color: { rgb: "E2E8F0" } },
-        bottom: { style: "thin", color: { rgb: "E2E8F0" } },
-        left: { style: "thin", color: { rgb: "E2E8F0" } },
-        right: { style: "thin", color: { rgb: "E2E8F0" } },
-      };
-
-      ["A1", "A2", "A3"].forEach((address) => {
-        if (worksheet[address]) worksheet[address].s = titleStyle;
-      });
-      if (worksheet.A4) worksheet.A4.s = noteStyle;
-
-      for (let column = 0; column <= lastColumn; column += 1) {
-        const headerCell = worksheet[XLSX.utils.encode_cell({ r: 5, c: column })];
-        if (headerCell) headerCell.s = headerStyle;
-      }
-
-      rowsToWrite.forEach((row, rowIndex) => {
-        headers.forEach((header, columnIndex) => {
-          const address = XLSX.utils.encode_cell({ r: rowIndex + 6, c: columnIndex });
-          const cell = worksheet[address];
-          if (!cell) return;
-
-          let fillColor = rowIndex % 2 === 0 ? "F8FAFC" : "FFFFFF";
-          const status = String(row[header] || "");
-          if (header.toLocaleLowerCase("tr-TR").includes("stok") && /stokta yok|ürün kartı bulunamadı/i.test(status)) {
-            fillColor = "FEE2E2";
-          } else if (header.toLocaleLowerCase("tr-TR").includes("stok") && /kısmi stok/i.test(status)) {
-            fillColor = "FFEDD5";
-          } else if (header.toLocaleLowerCase("tr-TR").includes("stok") && /stok yeterli/i.test(status)) {
-            fillColor = "DCFCE7";
-          }
-
-          cell.s = {
-            fill: { fgColor: { rgb: fillColor } },
-            alignment: { vertical: "top", wrapText: true },
-            border: bodyBorder,
-          };
-        });
-      });
-
-      worksheet["!merges"] = [
-        { s: { r: 0, c: 0 }, e: { r: 0, c: lastColumn } },
-        { s: { r: 1, c: 0 }, e: { r: 1, c: lastColumn } },
-        { s: { r: 2, c: 0 }, e: { r: 2, c: lastColumn } },
-        { s: { r: 3, c: 0 }, e: { r: 3, c: lastColumn } },
-      ];
-      worksheet["!autofilter"] = { ref: `A6:${lastColumnName}${rowsToWrite.length + 6}` };
-      worksheet["!rows"] = [{ hpt: 24 }, { hpt: 20 }, { hpt: 20 }, { hpt: 30 }, { hpt: 8 }, { hpt: 30 }];
-      worksheet["!cols"] = headers.map((header) => {
-        const contentLengths = rowsToWrite.map((row) => String(row[header] ?? "").length);
-        return { wch: Math.min(42, Math.max(12, header.length + 2, ...contentLengths) + 2) };
-      });
+      const worksheet = buildCorvianRequestWorksheet(
+        XLSX,
+        request,
+        rowsForSheet,
+        companyBranding,
+        index,
+      );
 
       XLSX.utils.book_append_sheet(
         workbook,
