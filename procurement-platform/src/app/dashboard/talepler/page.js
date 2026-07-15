@@ -1161,42 +1161,6 @@ export default function TaleplerPage() {
   }
 };
 
-  const handleSavedRequestDownload = async (fileName) => {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-
-    const token = session?.access_token;
-
-    if (!token) {
-      setMessage("Oturum bulunamadı. Lütfen tekrar giriş yapın.");
-      return;
-    }
-
-    try {
-      const response = await fetch(
-        `${API_URL}/download-request-report/${fileName}`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
-
-      const data = await response.json();
-
-      if (!response.ok || !data.reportPath) {
-        setMessage(data.detail || "Excel indirilemedi.");
-        return;
-      }
-
-      window.open(data.reportPath, "_blank");
-    } catch (err) {
-      console.error(err);
-      setMessage("Excel indirilemedi.");
-    }
-  };
-
   const downloadRequestsAsExcel = async (requestsToDownload) => {
     if (requestsToDownload.length === 0) {
       setMessage("İndirmek için en az bir talep seçin.");
@@ -1205,20 +1169,101 @@ export default function TaleplerPage() {
 
     const { companyName } = await fetchCompanyBranding(supabase);
     const exportProducts = await getStockProductsForExport();
-    const XLSX = await import("xlsx");
+    const XLSXModule = await import("xlsx-js-style");
+    const XLSX = XLSXModule.default || XLSXModule;
     const workbook = XLSX.utils.book_new();
     const exportRowsByRequest = buildStockAwareRequestExportRows(requestsToDownload, exportProducts);
 
     requestsToDownload.forEach((request, index) => {
       const rowsForSheet = exportRowsByRequest.get(request) || [];
       const rowsToWrite = rowsForSheet.length > 0 ? rowsForSheet : [{ Bilgi: "Kalem detayı bulunamadı." }];
+      const headers = Object.keys(rowsToWrite[0]);
+      const lastColumn = Math.max(headers.length - 1, 0);
+      const lastColumnName = XLSX.utils.encode_col(lastColumn);
       const worksheet = XLSX.utils.aoa_to_sheet([
         [companyName],
         [CORVIAN_PRODUCT_NAME],
-        [`Rapor: ${request.ad || "Talep Listesi"}`, `Oluşturma tarihi: ${formatDateTime(request.created_at || request.tarih)}`],
+        [`Rapor: ${request.ad || "Talep Listesi"} · Oluşturma tarihi: ${formatDateTime(request.created_at || request.tarih)}`],
+        ["Bu dosya Corvian ERP'deki güncel talep ve stok bilgileri kullanılarak oluşturulmuştur."],
         [],
       ]);
-      XLSX.utils.sheet_add_json(worksheet, rowsToWrite, { origin: "A5" });
+      XLSX.utils.sheet_add_json(worksheet, rowsToWrite, { origin: "A6" });
+
+      const titleStyle = {
+        fill: { fgColor: { rgb: "0F172A" } },
+        font: { bold: true, color: { rgb: "FFFFFF" }, sz: 14 },
+        alignment: { vertical: "center" },
+      };
+      const noteStyle = {
+        fill: { fgColor: { rgb: "DBEAFE" } },
+        font: { bold: true, color: { rgb: "1E3A8A" } },
+        alignment: { vertical: "center", wrapText: true },
+      };
+      const headerStyle = {
+        fill: { fgColor: { rgb: "0F172A" } },
+        font: { bold: true, color: { rgb: "FFFFFF" } },
+        alignment: { vertical: "center", wrapText: true },
+        border: {
+          top: { style: "thin", color: { rgb: "CBD5E1" } },
+          bottom: { style: "thin", color: { rgb: "CBD5E1" } },
+          left: { style: "thin", color: { rgb: "CBD5E1" } },
+          right: { style: "thin", color: { rgb: "CBD5E1" } },
+        },
+      };
+      const bodyBorder = {
+        top: { style: "thin", color: { rgb: "E2E8F0" } },
+        bottom: { style: "thin", color: { rgb: "E2E8F0" } },
+        left: { style: "thin", color: { rgb: "E2E8F0" } },
+        right: { style: "thin", color: { rgb: "E2E8F0" } },
+      };
+
+      ["A1", "A2", "A3"].forEach((address) => {
+        if (worksheet[address]) worksheet[address].s = titleStyle;
+      });
+      if (worksheet.A4) worksheet.A4.s = noteStyle;
+
+      for (let column = 0; column <= lastColumn; column += 1) {
+        const headerCell = worksheet[XLSX.utils.encode_cell({ r: 5, c: column })];
+        if (headerCell) headerCell.s = headerStyle;
+      }
+
+      rowsToWrite.forEach((row, rowIndex) => {
+        headers.forEach((header, columnIndex) => {
+          const address = XLSX.utils.encode_cell({ r: rowIndex + 6, c: columnIndex });
+          const cell = worksheet[address];
+          if (!cell) return;
+
+          let fillColor = rowIndex % 2 === 0 ? "F8FAFC" : "FFFFFF";
+          const status = String(row[header] || "");
+          if (header.toLocaleLowerCase("tr-TR").includes("stok") && /stokta yok|ürün kartı bulunamadı/i.test(status)) {
+            fillColor = "FEE2E2";
+          } else if (header.toLocaleLowerCase("tr-TR").includes("stok") && /kısmi stok/i.test(status)) {
+            fillColor = "FFEDD5";
+          } else if (header.toLocaleLowerCase("tr-TR").includes("stok") && /stok yeterli/i.test(status)) {
+            fillColor = "DCFCE7";
+          }
+
+          cell.s = {
+            fill: { fgColor: { rgb: fillColor } },
+            alignment: { vertical: "top", wrapText: true },
+            border: bodyBorder,
+          };
+        });
+      });
+
+      worksheet["!merges"] = [
+        { s: { r: 0, c: 0 }, e: { r: 0, c: lastColumn } },
+        { s: { r: 1, c: 0 }, e: { r: 1, c: lastColumn } },
+        { s: { r: 2, c: 0 }, e: { r: 2, c: lastColumn } },
+        { s: { r: 3, c: 0 }, e: { r: 3, c: lastColumn } },
+      ];
+      worksheet["!autofilter"] = { ref: `A6:${lastColumnName}${rowsToWrite.length + 6}` };
+      worksheet["!rows"] = [{ hpt: 24 }, { hpt: 20 }, { hpt: 20 }, { hpt: 30 }, { hpt: 8 }, { hpt: 30 }];
+      worksheet["!cols"] = headers.map((header) => {
+        const contentLengths = rowsToWrite.map((row) => String(row[header] ?? "").length);
+        return { wch: Math.min(42, Math.max(12, header.length + 2, ...contentLengths) + 2) };
+      });
+
       XLSX.utils.book_append_sheet(
         workbook,
         worksheet,
@@ -1230,7 +1275,7 @@ export default function TaleplerPage() {
       requestsToDownload.length === 1
         ? requestsToDownload[0].ad || "talep-listesi"
         : `secilen-talep-listeleri-${new Date().toISOString().slice(0, 10)}`;
-    XLSX.writeFile(workbook, `${safeFileName(baseName)}.xlsx`);
+    XLSX.writeFile(workbook, `${safeFileName(baseName)}.xlsx`, { cellStyles: true });
   };
 
   const downloadRequestsAsPdf = async (requestsToDownload) => {
@@ -1709,18 +1754,9 @@ export default function TaleplerPage() {
                             {isExpanded ? "Detayı Gizle" : "Detay"}
                           </button>
 
-                          {req.filepath && (
-                            <button type="button"
-                              onClick={() => handleSavedRequestDownload(req.filepath)}
-                              className="rounded-md bg-green-600 px-2.5 py-1.5 text-xs font-bold text-white"
-                            >
-                              Orijinal Excel
-                            </button>
-                          )}
-
                           <button type="button"
                             onClick={() => downloadRequestsAsExcel([req])}
-                            className="rounded-md bg-emerald-50 px-2.5 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-100"
+                            className="rounded-md bg-green-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-green-700"
                           >
                             İndir
                           </button>
