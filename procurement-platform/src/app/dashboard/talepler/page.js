@@ -70,6 +70,7 @@ function getRequestMeta(request) {
 
 function requestSourceLabel(request) {
   const meta = getRequestMeta(request);
+  if (meta.source === "merged-export") return "Seçilen talepler";
   if (meta.source === "manual") return "Manuel talep";
   if (request?.project_id || getRequestItems(request).some((item) => Array.isArray(item.allocations) && item.allocations.length > 0)) {
     return "Projeden aktarıldı";
@@ -78,6 +79,10 @@ function requestSourceLabel(request) {
 }
 
 function requestProjectSummary(request) {
+  const meta = getRequestMeta(request);
+  if (meta.source === "merged-export") {
+    return `${Number(meta.sourceRequestCount || 0)} talep birleştirildi`;
+  }
   const items = getRequestItems(request);
   const names = new Set();
   items.forEach((item) => {
@@ -369,6 +374,7 @@ function buildCorvianRequestWorksheet(XLSX, request, rows, companyBranding, shee
   const muted = "64748B";
   const zebra = "F3F7FB";
   const tableStartRow = 10;
+  const isMergedExport = getRequestMeta(request).source === "merged-export";
   const reportRows = rows.length > 0
     ? rows
     : [{
@@ -398,7 +404,7 @@ function buildCorvianRequestWorksheet(XLSX, request, rows, companyBranding, shee
 
   matrix[0][0] = companyName;
   matrix[2][0] = CORVIAN_PRODUCT_NAME;
-  matrix[0][2] = "SATINALMA TALEP LİSTESİ";
+  matrix[0][2] = isMergedExport ? "BİRLEŞİK TALEP İCMALİ" : "SATINALMA TALEP LİSTESİ";
   matrix[1][2] = "Akıllı Satınalma & Teklif Analiz Sistemi";
   matrix[0][5] = "Rapor Tarihi";
   matrix[1][5] = reportDate;
@@ -414,7 +420,7 @@ function buildCorvianRequestWorksheet(XLSX, request, rows, companyBranding, shee
   matrix[5][3] = totalQuantity;
   matrix[6][3] = "Talep edilen adet";
   matrix[4][4] = "RAPOR TÜRÜ";
-  matrix[5][4] = "Talep İcmal";
+  matrix[5][4] = isMergedExport ? "Birleşik İcmal" : "Talep İcmal";
   matrix[6][4] = "Güncel sistem verileri";
   matrix[4][5] = "KAYNAK";
   matrix[5][5] = requestSourceLabel(request);
@@ -456,7 +462,9 @@ function buildCorvianRequestWorksheet(XLSX, request, rows, companyBranding, shee
   matrix[infoRow][0] = "RAPOR AÇIKLAMASI";
   matrix[infoRow + 1][0] = "Bu rapor, Corvian ERP'deki güncel talep ve stok bilgileri kullanılarak oluşturulmuştur.\nÜrün kodu, açıklama, adet ve birim bilgileri standart Corvian formatında sunulmuştur.";
   matrix[infoRow][2] = "SİSTEM BİLGİSİ";
-  matrix[infoRow + 1][2] = "✓ Güncel stok verileri ile oluşturulmuştur.\n✓ Ürün kartı eşleştirmeleri rapora işlenmiştir.\n✓ Manuel kontrol sonrası kullanılmalıdır.\n✓ Seçilen her talep ayrı sekmede gösterilir.";
+  matrix[infoRow + 1][2] = isMergedExport
+    ? "✓ Güncel stok verileri ile oluşturulmuştur.\n✓ Ürün kartı eşleştirmeleri rapora işlenmiştir.\n✓ Aynı ürün kodu ve birime sahip kalemler birleştirilmiştir.\n✓ Talep miktarları toplanarak tek icmalde gösterilmiştir."
+    : "✓ Güncel stok verileri ile oluşturulmuştur.\n✓ Ürün kartı eşleştirmeleri rapora işlenmiştir.\n✓ Manuel kontrol sonrası kullanılmalıdır.\n✓ Talep kalemleri güncel sistem verileriyle gösterilir.";
   matrix[infoRow][4] = "ONAY / İMZA";
   matrix[infoRow + 3][4] = "........................................";
   matrix[infoRow + 4][4] = "Ad Soyad / Unvan";
@@ -724,6 +732,37 @@ function buildMergedPurchasePreview(requests) {
       quantity,
     })),
   }));
+}
+
+function buildMergedExportRequest(requests) {
+  const mergedRows = buildMergedPurchasePreview(requests);
+  const sourceRequestCount = (requests || []).length;
+
+  return {
+    id: `merged-export-${Date.now()}`,
+    ad: "Birleşik Talep İcmali",
+    durum: "İcmal",
+    items: mergedRows.map((row) => ({
+      urunKodu: row.productCode || "",
+      product_code: row.productCode || "",
+      urunAciklamasi: row.productName || "",
+      product_name: row.productName || "",
+      talepEdilenAdet: Number(row.totalQuantity || 0),
+      quantity: Number(row.totalQuantity || 0),
+      birim: row.unit || "adet",
+      unit: row.unit || "adet",
+      allocations: (row.projectDistribution || []).map((project) => ({
+        type: "project",
+        projectId: project.projectId,
+        quantity: Number(project.quantity || 0),
+      })),
+      note: `${row.requestCount} talep listesi birleştirildi`,
+      request_meta: {
+        source: "merged-export",
+        sourceRequestCount,
+      },
+    })),
+  };
 }
 
 function addStockSimulation(rows, products) {
@@ -1539,9 +1578,12 @@ export default function TaleplerPage() {
     const XLSXModule = await import("xlsx-js-style");
     const XLSX = XLSXModule.default || XLSXModule;
     const workbook = XLSX.utils.book_new();
-    const exportRowsByRequest = buildStockAwareRequestExportRows(requestsToDownload, exportProducts);
+    const requestsForWorkbook = requestsToDownload.length > 1
+      ? [buildMergedExportRequest(requestsToDownload)]
+      : requestsToDownload;
+    const exportRowsByRequest = buildStockAwareRequestExportRows(requestsForWorkbook, exportProducts);
 
-    requestsToDownload.forEach((request, index) => {
+    requestsForWorkbook.forEach((request, index) => {
       const rowsForSheet = exportRowsByRequest.get(request) || [];
       const worksheet = buildCorvianRequestWorksheet(
         XLSX,
@@ -1561,7 +1603,7 @@ export default function TaleplerPage() {
     const baseName =
       requestsToDownload.length === 1
         ? requestsToDownload[0].ad || "talep-listesi"
-        : `secilen-talep-listeleri-${new Date().toISOString().slice(0, 10)}`;
+        : `birlesik-talep-icmali-${new Date().toISOString().slice(0, 10)}`;
     XLSX.writeFile(workbook, `${safeFileName(baseName)}.xlsx`, { cellStyles: true });
   };
 
