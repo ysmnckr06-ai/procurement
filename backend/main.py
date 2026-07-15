@@ -1816,11 +1816,8 @@ async def analyze_offers(
 
         if unmatched_offers:
             warnings.append(
-                f"{len(unmatched_offers)} teklif satırı talep listesiyle eşleşmedi, ayrıca rapora eklendi."
+                f"{len(unmatched_offers)} teklif satırı talep listesiyle eşleşmedi ve yeni talep kalemi oluşturmaması için rapora eklenmedi."
             )
-
-            extra_groups = group_rows(unmatched_offers)
-            groups.extend(extra_groups)
 
     else:
         groups = group_rows(filtered)

@@ -187,31 +187,57 @@ def is_stock_replenishment_header(value):
 
 def find_header_row(df):
     max_scan = min(len(df), 25)
+    best_row = 0
+    best_score = -1
 
     for i in range(max_scan):
-        row_text = " ".join(normalize_text(x) for x in df.iloc[i].values)
+        cells = [normalize_text(x) for x in df.iloc[i].values]
+        row_text = " ".join(cells)
 
+        # Corvian raporlarındaki üst bilgi alanında da "Ürün kalemi" ve
+        # "Talep edilen adet" metinleri bulunur. İlk uygun satırı seçmek bu
+        # alanı tablo başlığı sanıp ürün kodlarını boş, miktarları stok adedi
+        # olarak okuyordu. En zengin tablo başlığını puanlayarak seçiyoruz.
+        has_code = any(
+            any(alias in cell for alias in ["urun kodu", "malzeme kodu", "stok kodu"])
+            for cell in cells
+        )
+        has_description = any(
+            any(alias in cell for alias in ["urun aciklamasi", "malzeme aciklamasi", "aciklama"])
+            for cell in cells
+        )
         has_product = any(x in row_text for x in ["urun", "malzeme", "aciklama"])
         has_qty = any(x in row_text for x in ["miktar", "adet"])
         has_replenishment = is_stock_replenishment_header(row_text)
-        has_unit = "birim" in row_text
+        has_unit = any(cell == "birim" or cell == "unit" for cell in cells)
 
-        if has_product and (has_qty or has_replenishment):
-            return i
+        score = (
+            (4 if has_code else 0)
+            + (3 if has_description else 0)
+            + (2 if has_qty or has_replenishment else 0)
+            + (1 if has_unit else 0)
+            + (1 if has_product else 0)
+        )
 
-        if has_product and has_unit:
-            return i
+        if score > best_score:
+            best_score = score
+            best_row = i
 
-    return 0
+    return best_row
 
 
 def find_col(columns, aliases):
+    normalized_aliases = [normalize_text(alias) for alias in aliases]
+
+    # Önce tam eşleşmeyi ara. Böylece "ürün" alanı, kendisinden önce gelen
+    # "ürün kodu" sütununu yanlışlıkla ürün açıklaması olarak seçmez.
+    for col in columns:
+        if normalize_text(col) in normalized_aliases:
+            return col
+
     for col in columns:
         col_norm = normalize_text(col)
-
-        for alias in aliases:
-            alias_norm = normalize_text(alias)
-
+        for alias_norm in normalized_aliases:
             if col_norm == alias_norm or alias_norm in col_norm:
                 return col
 

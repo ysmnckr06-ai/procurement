@@ -68,5 +68,28 @@ def parse_discount(value) -> float:
 
 def extract_days(text: str) -> int:
     s = normalize_text(text)
-    m = re.search(r"(\d+)", s)
-    return int(m.group(1)) if m else 0
+
+    if not s:
+        return 0
+
+    # "200 ad. stok" teslim süresi değil, hazır bulunan miktardır. İçinde
+    # açık bir zaman birimi yoksa stok/hazır ifadelerindeki sayıyı gün sanma.
+    has_time_unit = any(unit in s for unit in ["gun", "hafta", "ay", "vade"])
+    if any(word in s for word in ["stok", "hazir"]) and not has_time_unit:
+        return 0
+
+    unit_factors = {"gun": 1, "hafta": 7, "ay": 30}
+
+    # Aralıklarda satınalma açısından güvenli olan üst sınırı kullan.
+    range_match = re.search(r"(\d+)\s*-\s*(\d+)\s*(gun|hafta|ay)", s)
+    if range_match:
+        upper = int(range_match.group(2))
+        return upper * unit_factors[range_match.group(3)]
+
+    duration_match = re.search(r"(\d+)\s*(?:is\s*)?(gun|hafta|ay)", s)
+    if duration_match:
+        return int(duration_match.group(1)) * unit_factors[duration_match.group(2)]
+
+    # "ÖDEME 90 VADE" gibi birimsiz fakat bağlamı açık ifadeleri destekle.
+    fallback = re.search(r"(\d+)", s)
+    return int(fallback.group(1)) if fallback else 0

@@ -765,8 +765,7 @@ def build_excel_report(analyzed_groups, output_path, company_info=None):
         "Ürün Açıklaması",
         "Birim",
         "Talep Edilen Adet",
-        "Stoktan Karşılanabilir",
-        "Satın Alınacak"
+        "Stoktan Karşılanabilir"
     ]
 
     for col, h in enumerate(base_headers):
@@ -858,7 +857,6 @@ def build_excel_report(analyzed_groups, output_path, company_info=None):
         ws.write(row, 4, birim, base_cell)
         ws.write_number(row, 5, talep, base_cell)
         ws.write_number(row, 6, _safe_num(group.get("stockCoverableQuantity", 0)), base_cell)
-        ws.write_number(row, 7, _safe_num(group.get("purchaseQuantity", talep)), base_cell)
 
         c = len(base_headers)
 
@@ -1134,6 +1132,15 @@ def build_excel_report(analyzed_groups, output_path, company_info=None):
     ws.set_row(4, 22)
     ws.set_row(7, 24)
     ws.set_row(8, 38)
+
+    # Özet sayfası kullanıcı açısından tekrar niteliğindeydi. XlsxWriter çalışma
+    # kitabından sayfa silmek için genel bir API sunmadığından, paketlenmeden
+    # hemen önce oluşturulmuş özet nesnesini çalışma kitabı kayıtlarından çıkar.
+    # Böylece indirilen dosyada yalnız kalem bazlı mukayese ve varsa marka/kod
+    # mukayese sayfaları bulunur.
+    if summary_ws in wb.worksheets_objs:
+        wb.worksheets_objs.remove(summary_ws)
+        wb.sheetnames.pop(summary_sheet_name, None)
 
     for bucket in _brand_code_groups(analyzed_groups):
         _write_brand_comparison_sheet(wb, bucket, used_sheet_names)

@@ -312,8 +312,10 @@ def score_offer(row, exchange_rates, talep_edilen_adet, config=None, constraints
     else:
         net_toplam_try = calculate_net_total(net_birim_try, talep_edilen_adet)
 
-    vade_days = extract_days(row.get("vade", "0"))
-    termin_days = extract_days(row.get("termin", "0"))
+    raw_vade = str(row.get("vade", "") or "").strip()
+    raw_termin = str(row.get("termin", "") or "").strip()
+    vade_days = extract_days(raw_vade)
+    termin_days = extract_days(raw_termin)
 
     eksik_adet = 0
     if firma_adedi > 0 and firma_adedi < talep_edilen_adet:
@@ -378,6 +380,8 @@ def score_offer(row, exchange_rates, talep_edilen_adet, config=None, constraints
         "netToplamTRY": round(net_toplam_try, 4),
         "vadeDays": vade_days,
         "terminDays": termin_days,
+        "vadeKnown": bool(raw_vade),
+        "terminKnown": bool(raw_termin),
         "financeAdvantageTRY": round(finance_advantage, 4),
         "delayPenaltyTRY": round(delay_penalty, 4),
         "missingQtyCostTRY": round(missing_qty_cost, 4),
@@ -495,6 +499,7 @@ def choose_best_offer(offers):
             safe_float(x.get("evaluatedCostTRY", 999999999)),
             safe_float(x.get("tcoTRY", 999999999)),
             -safe_float(x.get("vadeDays", 0)),
+            0 if x.get("terminKnown") else 1,
             safe_float(x.get("terminDays", 999999999)),
         )
     )

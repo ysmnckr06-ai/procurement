@@ -40,6 +40,21 @@ def clean_desc(desc):
     return normalize_text(str(desc or "")).strip()
 
 
+def clean_unit(unit):
+    normalized = clean_desc(unit or "adet")
+    aliases = {
+        "ad": "adet",
+        "adet": "adet",
+        "pcs": "adet",
+        "piece": "adet",
+        "mt": "metre",
+        "m": "metre",
+        "metre": "metre",
+        "meter": "metre",
+    }
+    return aliases.get(normalized, normalized)
+
+
 def token_set(desc):
     return set(clean_desc(desc).split())
 
@@ -79,19 +94,29 @@ def rows_match(row1, row2):
     desc1 = clean_desc(row1.get("urunAciklamasi", ""))
     desc2 = clean_desc(row2.get("urunAciklamasi", ""))
 
-    birim1 = clean_desc(row1.get("birim", "adet") or "adet")
-    birim2 = clean_desc(row2.get("birim", "adet") or "adet")
-
-    if birim1 and birim2 and birim1 != birim2:
-        return False
+    birim1 = clean_unit(row1.get("birim", "adet") or "adet")
+    birim2 = clean_unit(row2.get("birim", "adet") or "adet")
 
     if not desc1 or not desc2:
         return False
 
-    if is_real_product_code(kod1) and is_real_product_code(kod2) and kod1 == kod2:
+    has_real_code1 = is_real_product_code(kod1)
+    has_real_code2 = is_real_product_code(kod2)
+
+    # İki tarafta da gerçek ürün kodu varsa açıklama benzerliğiyle farklı
+    # ürünleri birleştirme. Özellikle SH 201-C 6 / SH 201-C 16 gibi yakın
+    # isimli ABB ürünlerinde kod tek güvenilir anahtardır.
+    if has_real_code1 and has_real_code2:
+        return kod1 == kod2
+
+    # Kodsuz tekliflerde birebir açıklama eşleşmesi birim yazımı farklı olsa
+    # da güvenlidir (örn. AD/adet, MT/metre veya başlıkta ADET yazılması).
+    if desc1 == desc2:
         return True
 
-    # Açıklama aynıysa kod farklı olsa bile eşleşir.
+    if birim1 and birim2 and birim1 != birim2:
+        return False
+
     if desc_is_same(desc1, desc2):
         return True
 

@@ -245,6 +245,12 @@ def split_brand_from_description(brand, desc):
     if normalize_col(candidate) in ["seri", "tipi", "pano", "trafo", "transfer", "kompanzasyon"]:
         return brand, desc
 
+    # Açıklamanın ilk parçasında rakam varsa bu çoğunlukla ürün tanımının
+    # parçasıdır (4X7X125A Dağıtım barası, 36LI SİGORTA KUTUSU). Marka gibi
+    # ayırmak talep açıklamasıyla eşleşmeyi bozar.
+    if any(ch.isdigit() for ch in candidate):
+        return brand, desc
+
     return candidate, rest
 
 
@@ -605,6 +611,7 @@ def detect_footer_info(df):
 
     if not termin:
         termin_match = re.search(
+            r"(?:termin|teslim(?:at| suresi)?)\s*:?\s*"
             r"(\d{1,2}\s*-\s*\d{1,2}\s*hafta|\d{1,3}\s*gun|hazir|stok)",
             normalized_context,
         )
