@@ -324,6 +324,60 @@ def detect_currency_token(value):
     return ""
 
 
+def detect_currency_from_number_format(number_format):
+    """Read currencies stored only in Excel's cell style (for example [$USD] or [$$-409])."""
+    text = str(number_format or "").upper()
+
+    if "[$USD" in text or "[$$" in text:
+        return "USD"
+    if "[$EUR" in text or "[€" in text:
+        return "EUR"
+    if "[$GBP" in text or "[£" in text:
+        return "GBP"
+    if "[$TRY" in text or "[$TL" in text or "[₺" in text:
+        return "TRY"
+
+    return ""
+
+
+def excel_style_currency(file_path, sheet_name, excel_row, zero_based_columns):
+    """Return the first explicit currency found in the relevant styled cells."""
+    try:
+        workbook = load_workbook(file_path, read_only=False, data_only=True)
+        sheet = workbook[sheet_name] if sheet_name in workbook.sheetnames else workbook.worksheets[0]
+        currency = ""
+        for column in zero_based_columns:
+            if column is None:
+                continue
+            cell = sheet.cell(row=int(excel_row), column=int(column) + 1)
+            currency = detect_currency_token(cell.value) or detect_currency_from_number_format(cell.number_format)
+            if currency:
+                break
+        workbook.close()
+        return currency
+    except Exception:
+        return ""
+
+
+def detect_workbook_style_currency(file_path, sheet_name):
+    """Detect a workbook-wide currency when offer templates store it only as number formatting."""
+    try:
+        workbook = load_workbook(file_path, read_only=False, data_only=True)
+        sheet = workbook[sheet_name] if sheet_name in workbook.sheetnames else workbook.worksheets[0]
+        counts = {}
+        for row in sheet.iter_rows():
+            for cell in row:
+                if not isinstance(cell.value, (int, float)):
+                    continue
+                currency = detect_currency_from_number_format(cell.number_format)
+                if currency:
+                    counts[currency] = counts.get(currency, 0) + 1
+        workbook.close()
+        return max(counts.items(), key=lambda item: item[1])[0] if counts else ""
+    except Exception:
+        return ""
+
+
 def detect_excel_currency_context(raw_df):
     brand_currency = {}
     currency_counts = {}
@@ -404,35 +458,35 @@ def find_header_row_strict(df):
 
 
 def read_best_excel_sheet(file_path):
-    excel = pd.ExcelFile(file_path)
     best = None
+    with pd.ExcelFile(file_path) as excel:
+        sheet_names = list(excel.sheet_names)
+        for sheet_name in sheet_names:
+            try:
+                sample_df = excel.parse(sheet_name=sheet_name, header=None, nrows=160)
+            except Exception:
+                continue
 
-    for sheet_name in excel.sheet_names:
-        try:
-            sample_df = pd.read_excel(file_path, sheet_name=sheet_name, header=None, nrows=160)
-        except Exception:
-            continue
+            header_row = find_header_row_strict(sample_df)
 
-        header_row = find_header_row_strict(sample_df)
+            if header_row is None:
+                continue
 
-        if header_row is None:
-            continue
+            nonempty_after_header = len(sample_df.iloc[header_row + 1:].dropna(how="all"))
+            sheet_bonus = 1000 if "teklif" in normalize_col(sheet_name) else 0
+            score = sheet_bonus + nonempty_after_header
 
-        nonempty_after_header = len(sample_df.iloc[header_row + 1:].dropna(how="all"))
-        sheet_bonus = 1000 if "teklif" in normalize_col(sheet_name) else 0
-        score = sheet_bonus + nonempty_after_header
-
-        if best is None or score > best["score"]:
-            best = {
-                "sheet_name": sheet_name,
-                "header_row": header_row,
-                "score": score,
-            }
+            if best is None or score > best["score"]:
+                best = {
+                    "sheet_name": sheet_name,
+                    "header_row": header_row,
+                    "score": score,
+                }
 
     if best:
         return pd.read_excel(file_path, sheet_name=best["sheet_name"], header=None), best["sheet_name"]
 
-    return pd.read_excel(file_path, header=None), excel.sheet_names[0] if excel.sheet_names else None
+    return pd.read_excel(file_path, header=None), sheet_names[0] if sheet_names else None
 
 
 def find_col_exact_or_contains(columns, keywords, exclude_keywords=None):
@@ -741,10 +795,14 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
     firma = detect_firma_adi(raw_df, firma_adi, file_name)
     footer = detect_footer_info(raw_df)
     brand_currency_map, default_sheet_currency = detect_excel_currency_context(raw_df)
+    style_default_currency = detect_workbook_style_currency(file_path, selected_sheet_name)
+    if style_default_currency:
+        default_sheet_currency = style_default_currency
     header_row = find_header_row(raw_df)
 
     df = raw_df.copy()
     df.columns = unique_columns(df.iloc[header_row])
+    source_column_indexes = {column: index for index, column in enumerate(df.columns)}
     df = df[header_row + 1:]
     df = df.dropna(how="all")
 
@@ -963,8 +1021,19 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
         discount = clean_number(r.get(discount_col)) if discount_col is not None else 0.0
         net_price_from_file = clean_number(r.get(net_price_col)) if net_price_col is not None else 0.0
         explicit_currency = detect_currency_token(r.get(currency_col)) if currency_col is not None else detect_currency_token(joined)
+        styled_currency = excel_style_currency(
+            file_path,
+            selected_sheet_name,
+            int(row_index) + 1,
+            [
+                source_column_indexes.get(currency_col),
+                source_column_indexes.get(price_col),
+                source_column_indexes.get(net_price_col),
+                source_column_indexes.get(total_col),
+            ],
+        )
         brand_currency = brand_currency_map.get(normalize_col(brand), "")
-        row_currency = explicit_currency or brand_currency or default_sheet_currency or "TRY"
+        row_currency = explicit_currency or styled_currency or brand_currency or default_sheet_currency or "TRY"
         row_vade = clean_text(r.get(payment_col)) if payment_col is not None else footer.get("vade", "")
         row_termin = clean_text(r.get(delivery_col)) if delivery_col is not None else footer.get("termin", "")
         row_warnings = []

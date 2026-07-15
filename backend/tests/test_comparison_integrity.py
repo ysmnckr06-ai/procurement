@@ -5,10 +5,12 @@ from pathlib import Path
 import sys
 
 import pandas as pd
+from openpyxl import Workbook
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.parsers.request_parser import parse_request_excel
+from app.parsers.excel_parser import parse_excel_with_audit
 from app.services.analyzer import analyze_groups
 from app.services.matcher import match_offers_to_requests, rows_match
 from app.services.report_builder import build_excel_report
@@ -143,8 +145,50 @@ class ComparisonIntegrityTests(unittest.TestCase):
 
         self.assertNotIn("Özet", workbook_xml)
         self.assertNotIn("Ozet", workbook_xml)
+        self.assertNotIn("Stoktan", shared_strings)
         self.assertIn("Kalem Bazlı Mukayese", workbook_xml)
         self.assertNotIn("Satın Alınacak", shared_strings)
+
+
+    def test_excel_currency_is_read_from_cell_number_format(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "usd_offer.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.append(["S", "STOK NO", "URUN ADI", "MIKTAR", "BIRIM FIYATI", "TUTAR"])
+            sheet.append([1, "ABC-1", "Test Urunu", 5, 1.5, 7.5])
+            sheet["E2"].number_format = "[$$-409]#,##0.00"
+            sheet["F2"].number_format = "[$$-409]#,##0.00"
+            workbook.save(path)
+            audit = parse_excel_with_audit(path, "USD Supplier", path.name)
+
+        self.assertTrue(audit["rows"])
+        self.assertEqual(audit["rows"][0]["paraBirimi"], "USD")
+
+    def test_partial_offer_is_completed_by_split_allocation(self):
+        request = {"urunKodu": "SINYAL", "urunAciklamasi": "Sinyal Lambasi", "birim": "adet", "talepEdilenAdet": 138}
+        offers = [
+            {
+                "firma": "Ucuz Kismi", "urunKodu": "SINYAL", "urunAciklamasi": "Sinyal Lambasi",
+                "birim": "adet", "firmaAdedi": 137, "netBirimFiyat": 0.005, "netToplam": 0.685,
+                "paraBirimi": "USD", "vade": "90 gun", "termin": "15 is gunu",
+            },
+            {
+                "firma": "Pahali Tam", "urunKodu": "SINYAL", "urunAciklamasi": "Sinyal Lambasi",
+                "birim": "adet", "firmaAdedi": 138, "netBirimFiyat": 1.5, "netToplam": 207,
+                "paraBirimi": "USD", "vade": "90 gun", "termin": "",
+            },
+        ]
+        groups = match_offers_to_requests(offers, [request])
+        analyzed = analyze_groups(groups, {"TRY": 1.0, "USD": 47.0})
+        result = analyzed[0]
+
+        self.assertEqual([(item["firma"], item["quantity"]) for item in result["recommendedAllocation"]], [
+            ("Ucuz Kismi", 137.0),
+            ("Pahali Tam", 1.0),
+        ])
+        self.assertEqual(result["uncoveredQuantity"], 0)
+        self.assertGreater(result["savingsVsFullTRY"], 9000)
 
 
 if __name__ == "__main__":

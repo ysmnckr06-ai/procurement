@@ -245,7 +245,12 @@ def normalize_weights(preferences):
     )
 
     if total <= 0:
-        return DEFAULT_USER_PREFERENCES.copy()
+        return {
+            "price_weight": 0.50,
+            "vade_weight": 0.20,
+            "termin_weight": 0.20,
+            "risk_weight": 0.10,
+        }
 
     return {
         "price_weight": safe_float(preferences.get("price_weight", 0)) / total,
@@ -473,6 +478,10 @@ def score_offer(row, exchange_rates, talep_edilen_adet, config=None, constraints
     metrics.update({
         "eligible": constraint_result["eligible"],
         "uygunMu": net_birim_try > 0 and constraint_result["eligible"] and uygun,
+        "allocationEligible": net_birim_try > 0 and all(
+            "eksik adet" in str(reason).lower()
+            for reason in constraint_result["eliminationReasons"]
+        ),
         "eliminationReasons": constraint_result["eliminationReasons"],
         "kararNotlari": karar_notlari,
     })
@@ -505,6 +514,60 @@ def choose_best_offer(offers):
     )
 
     return eligible_offers[0]
+
+
+def build_recommended_allocation(offers, requested_quantity):
+    """Build the lowest-cost complete allocation without hiding partial quotations."""
+    remaining = max(safe_float(requested_quantity), 0)
+    candidates = []
+
+    for offer in offers:
+        if offer.get("allocationEligible") is False:
+            continue
+        offered_quantity = safe_float(offer.get("firmaAdedi", 0))
+        unit_cost = safe_float(offer.get("netBirimFiyatTRY", 0))
+        if offered_quantity <= 0 or unit_cost <= 0:
+            continue
+
+        economic_total = (
+            safe_float(offer.get("netToplamTRY", 0))
+            + safe_float(offer.get("delayPenaltyTRY", 0))
+            + safe_float(offer.get("supplierRiskCostTRY", 0))
+            + safe_float(offer.get("advancedRiskCostTRY", 0))
+            - safe_float(offer.get("financeAdvantageTRY", 0))
+        )
+        economic_unit = economic_total / offered_quantity if economic_total > 0 else unit_cost
+        candidates.append((economic_unit, unit_cost, offer))
+
+    candidates.sort(key=lambda item: (
+        item[0],
+        item[1],
+        0 if item[2].get("terminKnown") else 1,
+        -safe_float(item[2].get("vadeDays", 0)),
+    ))
+    allocations = []
+
+    for economic_unit, unit_cost, offer in candidates:
+        if remaining <= 0:
+            break
+        quantity = min(remaining, safe_float(offer.get("firmaAdedi", 0)))
+        if quantity <= 0:
+            continue
+        allocations.append({
+            "firma": offer.get("firma") or offer.get("firmaAdi") or "",
+            "firmaAdi": offer.get("firmaAdi") or offer.get("firma") or "",
+            "quantity": round(quantity, 4),
+            "unitPriceTRY": round(unit_cost, 4),
+            "economicUnitCostTRY": round(economic_unit, 4),
+            "totalTRY": round(quantity * unit_cost, 4),
+            "paraBirimi": offer.get("paraBirimi") or "TRY",
+            "kur": safe_float(offer.get("kur", 1)),
+            "vade": offer.get("vade", ""),
+            "termin": offer.get("termin", ""),
+        })
+        remaining -= quantity
+
+    return allocations, round(max(remaining, 0), 4)
 
 def generate_decision(best, offers):
     if not best:
@@ -563,6 +626,19 @@ def analyze_groups(groups, exchange_rates, config=None, constraints=None, prefer
         )
 
         best_offer = choose_best_offer(offers)
+        recommended_allocation, uncovered_quantity = build_recommended_allocation(offers, talep_edilen_adet)
+        recommended_total = sum(safe_float(item.get("totalTRY", 0)) for item in recommended_allocation)
+        full_offers = [
+            offer for offer in offers
+            if safe_float(offer.get("firmaAdedi", 0)) >= talep_edilen_adet
+            and safe_float(offer.get("netBirimFiyatTRY", 0)) > 0
+            and offer.get("allocationEligible") is not False
+        ]
+        cheapest_full_offer = min(
+            full_offers,
+            key=lambda offer: safe_float(offer.get("netToplamTRY", 999999999)),
+            default=None,
+        )
 
         analyzed.append({
             "urunKodu": master.get("urunKodu", ""),
@@ -573,6 +649,14 @@ def analyze_groups(groups, exchange_rates, config=None, constraints=None, prefer
             "talepEdilenAdet": talep_edilen_adet,
             "offers": offers,
             "bestOffer": best_offer,
+            "recommendedAllocation": recommended_allocation,
+            "recommendedTotalTRY": round(recommended_total, 4),
+            "uncoveredQuantity": uncovered_quantity,
+            "cheapestFullOffer": cheapest_full_offer,
+            "savingsVsFullTRY": round(
+                max(safe_float((cheapest_full_offer or {}).get("netToplamTRY", 0)) - recommended_total, 0),
+                4,
+            ) if cheapest_full_offer and uncovered_quantity <= 0 else 0,
             "onerilenFirma": best_offer.get("firma", "") if best_offer else "",
             "kararNedeni": generate_decision(best_offer, offers),
             "enAvantajliNetTutarTRY": best_offer.get("netToplamTRY", 0) if best_offer else 0,

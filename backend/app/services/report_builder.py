@@ -345,7 +345,7 @@ def _write_brand_comparison_sheet(wb, bucket, used_sheet_names):
     return sheet_name
 
 
-def build_excel_report(analyzed_groups, output_path, company_info=None):
+def _build_excel_report_legacy(analyzed_groups, output_path, company_info=None):
     company_info = company_info or {}
     company_name = str(company_info.get("company_name") or "Firma adı belirtilmedi").strip()
     product_name = str(company_info.get("product_name") or "Corvian ERP").strip()
@@ -1147,4 +1147,211 @@ def build_excel_report(analyzed_groups, output_path, company_info=None):
 
     wb.close()
 
+    return output_path
+
+
+def _allocation_text(group):
+    allocations = group.get("recommendedAllocation", []) or []
+    if not allocations:
+        return "Geçerli fiyatlı teklif yok"
+    return " + ".join(
+        f"{_clean(item.get('firma') or item.get('firmaAdi') or '-')}: {_safe_num(item.get('quantity')):g}"
+        for item in allocations
+    )
+
+
+def _price_spread_note(offers):
+    priced = [
+        (_firma_name(offer), _safe_num(offer.get("netBirimFiyatTRY", 0)))
+        for offer in offers
+        if _safe_num(offer.get("netBirimFiyatTRY", 0)) > 0
+    ]
+    if len(priced) < 2:
+        return ""
+    cheapest = min(priced, key=lambda item: item[1])
+    highest = max(priced, key=lambda item: item[1])
+    ratio = highest[1] / cheapest[1] if cheapest[1] else 0
+    if ratio >= 3:
+        return f"Fiyat farkı {ratio:.1f} kat: {cheapest[0]}–{highest[0]}; fiyat/ürün kapsamını doğrulayın."
+    return ""
+
+
+def build_excel_report(analyzed_groups, output_path, company_info=None):
+    """Create a compact, decision-oriented procurement comparison workbook."""
+    company_info = company_info or {}
+    workbook = xlsxwriter.Workbook(output_path)
+    workbook.set_properties({
+        "title": "Teklif Karşılaştırma ve Satınalma Karar Raporu",
+        "subject": "Miktar, fiyat, kur, vade ve termin karşılaştırması",
+        "company": _clean(company_info.get("name") or company_info.get("company_name") or "Corvian ERP"),
+    })
+
+    navy = "#0B2F63"
+    blue = "#DCEBFA"
+    green = "#DDF4E8"
+    amber = "#FFF1CC"
+    red = "#FDE2E2"
+    white = "#FFFFFF"
+    gray = "#667085"
+    border = "#B8C5D6"
+
+    title_fmt = workbook.add_format({"bold": True, "font_size": 18, "font_color": navy})
+    subtitle_fmt = workbook.add_format({"font_size": 9, "font_color": gray})
+    header_fmt = workbook.add_format({
+        "bold": True, "font_color": white, "bg_color": navy, "border": 1,
+        "border_color": navy, "align": "center", "valign": "vcenter", "text_wrap": True,
+    })
+    text_fmt = workbook.add_format({"border": 1, "border_color": border, "valign": "top", "text_wrap": True})
+    center_fmt = workbook.add_format({"border": 1, "border_color": border, "align": "center", "valign": "vcenter"})
+    qty_fmt = workbook.add_format({"border": 1, "border_color": border, "align": "right", "num_format": "0.####"})
+    money_fmt = workbook.add_format({"border": 1, "border_color": border, "align": "right", "num_format": "#,##0.00"})
+    unit_money_fmt = workbook.add_format({"border": 1, "border_color": border, "align": "right", "num_format": "#,##0.0000"})
+    rate_fmt = workbook.add_format({"border": 1, "border_color": border, "align": "right", "num_format": "0.0000"})
+    percent_fmt = workbook.add_format({"border": 1, "border_color": border, "align": "right", "num_format": "0.00%"})
+    good_fmt = workbook.add_format({"border": 1, "border_color": border, "bg_color": green, "text_wrap": True, "valign": "top"})
+    warn_fmt = workbook.add_format({"border": 1, "border_color": border, "bg_color": amber, "text_wrap": True, "valign": "top"})
+    bad_fmt = workbook.add_format({"border": 1, "border_color": border, "bg_color": red, "text_wrap": True, "valign": "top"})
+    note_fmt = workbook.add_format({"font_size": 9, "font_color": navy, "bg_color": blue, "text_wrap": True, "valign": "vcenter"})
+    total_fmt = workbook.add_format({"bold": True, "font_color": white, "bg_color": navy, "border": 1, "num_format": "#,##0.00"})
+
+    decision = workbook.add_worksheet("Kalem Bazlı Mukayese")
+    decision.hide_gridlines(2)
+    decision.freeze_panes(5, 0)
+    decision.set_landscape()
+    decision.fit_to_pages(1, 0)
+    decision.set_margins(0.25, 0.25, 0.4, 0.4)
+    decision.merge_range("A1:N1", "TEKLİF KARŞILAŞTIRMA VE SATINALMA KARAR RAPORU", title_fmt)
+    decision.merge_range(
+        "A2:N2",
+        f"{_clean(company_info.get('name') or company_info.get('company_name') or 'Corvian ERP')} · "
+        f"Rapor tarihi: {datetime.now().strftime('%d.%m.%Y %H:%M')} · Tüm yabancı para teklifleri canlı analiz kuru ile TRY'ye çevrilmiştir.",
+        subtitle_fmt,
+    )
+    decision.merge_range(
+        "A3:N3",
+        "Karar yöntemi: Talep miktarı, teklif edilen miktar, KDV hariç net fiyat, para birimi/kur, iskonto, vade ve termin birlikte değerlendirilir. "
+        "Kısmi teklif saklanmaz; eksik miktar ve gerekiyorsa bölünmüş alım önerisi açıkça gösterilir.",
+        note_fmt,
+    )
+
+    decision_headers = [
+        "S.No", "Ürün Kodu", "Ürün Açıklaması", "Birim", "Talep Edilen", "Önerilen Alım",
+        "Karşılanan", "Açık Miktar", "Önerilen Net Toplam (TRY, KDV Hariç)", "Tam Teklif Alternatifi",
+        "Tam Teklif Net Toplamı (TRY, KDV Hariç)", "Tasarruf (TRY)", "Vade / Termin", "Karar ve Kontrol Notu",
+    ]
+    for column, header in enumerate(decision_headers):
+        decision.write(4, column, header, header_fmt)
+
+    for index, group in enumerate(analyzed_groups, start=1):
+        row = index + 4
+        requested = _safe_num(group.get("talepEdilenAdet", 0))
+        uncovered = _safe_num(group.get("uncoveredQuantity", 0))
+        covered = max(requested - uncovered, 0)
+        full = group.get("cheapestFullOffer") or {}
+        allocations = group.get("recommendedAllocation", []) or []
+        timing = " | ".join(
+            f"{_clean(item.get('firma') or item.get('firmaAdi'))}: "
+            f"Vade {_clean(item.get('vade')) or 'belirtilmedi'}, Termin {_clean(item.get('termin')) or 'belirtilmedi'}"
+            for item in allocations
+        ) or "-"
+        quantity_notes = []
+        for offer in group.get("offers", []):
+            missing = _safe_num(offer.get("eksikAdet", 0))
+            if missing > 0:
+                quantity_notes.append(
+                    f"{_firma_name(offer)} teklifi {_safe_num(offer.get('firmaAdedi')):g}/{requested:g}; {missing:g} eksik."
+                )
+        spread_note = _price_spread_note(group.get("offers", []))
+        if len(allocations) > 1:
+            quantity_notes.append("Bölünmüş alım önerisi: minimum sipariş, nakliye ve tek tedarikçi şartını onaylayın.")
+        note = " ".join(quantity_notes + ([spread_note] if spread_note else [])) or "Miktar ve fiyat açısından olağan dışı fark yok."
+        decision.write_number(row, 0, index, center_fmt)
+        decision.write(row, 1, _clean(group.get("urunKodu")), text_fmt)
+        decision.write(row, 2, _clean(group.get("urunAciklamasi")), text_fmt)
+        decision.write(row, 3, _clean(group.get("birim")), center_fmt)
+        decision.write_number(row, 4, requested, qty_fmt)
+        decision.write(row, 5, _allocation_text(group), good_fmt if uncovered <= 0 else bad_fmt)
+        decision.write_number(row, 6, covered, qty_fmt)
+        decision.write_number(row, 7, uncovered, bad_fmt if uncovered > 0 else qty_fmt)
+        decision.write_number(row, 8, _safe_num(group.get("recommendedTotalTRY", 0)), money_fmt)
+        decision.write(row, 9, _firma_name(full) or "Tam teklif yok", text_fmt)
+        decision.write_number(row, 10, _safe_num(full.get("netToplamTRY", 0)), money_fmt)
+        decision.write_number(row, 11, _safe_num(group.get("savingsVsFullTRY", 0)), money_fmt)
+        decision.write(row, 12, timing, text_fmt)
+        decision.write(row, 13, note, warn_fmt if quantity_notes or spread_note else text_fmt)
+        decision.set_row(row, 34)
+
+    last_decision_row = 4 + len(analyzed_groups)
+    decision.autofilter(4, 0, max(last_decision_row, 4), len(decision_headers) - 1)
+    widths = [7, 20, 34, 10, 13, 30, 12, 11, 18, 23, 19, 15, 34, 50]
+    for column, width in enumerate(widths):
+        decision.set_column(column, column, width)
+
+    detail = workbook.add_worksheet("Teklif Detayı")
+    detail.hide_gridlines(2)
+    detail.freeze_panes(5, 0)
+    detail.set_landscape()
+    detail.fit_to_pages(1, 0)
+    detail.merge_range("A1:S1", "TEKLİF DETAYI · KAYNAK VERİ VE UYGUNLUK KONTROLÜ", title_fmt)
+    detail.merge_range(
+        "A2:S2",
+        "Net birim fiyatlar kaynak dosyanın ham hücre değeridir; ekranda yuvarlanan fiyatlardan hesap yapılmaz. "
+        "Kur, her teklifin gerçek para birimine uygulanır.",
+        note_fmt,
+    )
+    detail_headers = [
+        "S.No", "Ürün Kodu", "Ürün Açıklaması", "Firma", "Talep", "Teklif Adedi", "Eksik",
+        "Karşılama %", "Liste Birim Fiyat", "İskonto %", "Net Birim Fiyat", "Para Birimi",
+        "Canlı Kur", "Net Toplam (Döviz, KDV Hariç)", "Net Toplam (TRY, KDV Hariç)", "Vade", "Termin",
+        "Miktar Durumu", "Değerlendirme Notu",
+    ]
+    for column, header in enumerate(detail_headers):
+        detail.write(4, column, header, header_fmt)
+
+    detail_row = 5
+    for index, group in enumerate(analyzed_groups, start=1):
+        requested = _safe_num(group.get("talepEdilenAdet", 0))
+        spread_note = _price_spread_note(group.get("offers", []))
+        for offer in group.get("offers", []):
+            offered = _safe_num(offer.get("firmaAdedi", 0))
+            missing = max(requested - offered, 0) if offered > 0 else requested
+            coverage = min(offered / requested, 1) if requested > 0 else 0
+            status = "Tam" if missing <= 0 else f"Kısmi · {missing:g} eksik"
+            warnings = list(offer.get("parserUyarilari", []) or [])
+            if spread_note:
+                warnings.append(spread_note)
+            if missing > 0:
+                warnings.append(f"Talep {requested:g}, teklif {offered:g}; eksik miktar tamamlanmalı.")
+            if not _clean(offer.get("vade")):
+                warnings.append("Vade belirtilmemiş.")
+            if not _clean(offer.get("termin")):
+                warnings.append("Termin belirtilmemiş.")
+            values = [
+                index, _clean(group.get("urunKodu")), _clean(group.get("urunAciklamasi")), _firma_name(offer),
+                requested, offered, missing, coverage, _safe_num(offer.get("birimFiyat", 0)),
+                _safe_num(offer.get("iskonto", 0)) / 100, _safe_num(offer.get("netBirimFiyat", 0)),
+                _clean(offer.get("paraBirimi")) or "TRY", _safe_num(offer.get("kur", 1)),
+                _safe_num(offer.get("netToplam", 0)), _safe_num(offer.get("netToplamTRY", 0)),
+                _clean(offer.get("vade")) or "Belirtilmedi", _clean(offer.get("termin")) or "Belirtilmedi",
+                status, " ".join(str(item) for item in warnings) or "-",
+            ]
+            formats = [
+                center_fmt, text_fmt, text_fmt, text_fmt, qty_fmt, qty_fmt, qty_fmt, percent_fmt,
+                unit_money_fmt, percent_fmt, unit_money_fmt, center_fmt, rate_fmt, money_fmt, money_fmt,
+                text_fmt, text_fmt, bad_fmt if missing > 0 else good_fmt, warn_fmt if warnings else text_fmt,
+            ]
+            for column, (value, cell_format) in enumerate(zip(values, formats)):
+                if isinstance(value, (int, float)) and column not in [1, 2, 3, 11, 15, 16, 17, 18]:
+                    detail.write_number(detail_row, column, value, cell_format)
+                else:
+                    detail.write(detail_row, column, value, cell_format)
+            detail.set_row(detail_row, 30)
+            detail_row += 1
+
+    detail.autofilter(4, 0, max(detail_row - 1, 4), len(detail_headers) - 1)
+    detail_widths = [7, 20, 32, 25, 11, 13, 10, 12, 17, 12, 17, 12, 12, 18, 18, 18, 18, 18, 55]
+    for column, width in enumerate(detail_widths):
+        detail.set_column(column, column, width)
+
+    workbook.close()
     return output_path
