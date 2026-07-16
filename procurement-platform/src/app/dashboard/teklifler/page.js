@@ -4,7 +4,7 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
-import { findOrCreateBusinessPartner } from "@/lib/businessPartners";
+import { canonicalPartnerName, findOrCreateBusinessPartner } from "@/lib/businessPartners";
 import { formatMoney } from "@/lib/currency";
 import { fetchLiveTryRates, liveCurrencyOptions, liveRateFor } from "@/lib/liveCurrency";
 
@@ -20,13 +20,6 @@ const defaultCompanySettings = {
   accepted_termin_days: 15,
   daily_delay_cost_try: 0,
   missing_data_policy: "manual_review",
-  critical_level: "medium",
-  delay_impact: "medium",
-  alternative_stock: "partial",
-  shipping_included: "included",
-  supplier_trust: "medium",
-  quality_history: "unknown",
-  currency_risk: "medium",
   max_file_size_mb: 10,
   max_offer_files: 15,
   default_payment_term: "60 gün",
@@ -200,15 +193,8 @@ function TekliflerPageContent() {
   const [cashFlowImportance, setCashFlowImportance] = useState("medium");
   const [paymentTermImportance, setPaymentTermImportance] = useState("high");
   const [paymentHabit, setPaymentHabit] = useState("60_90");
-  const [criticalLevel, setCriticalLevel] = useState("medium");
-  const [delayImpact, setDelayImpact] = useState("medium");
-  const [alternativeStock, setAlternativeStock] = useState("partial");
-  const [shippingIncluded, setShippingIncluded] = useState("included");
-  const [shippingCost, setShippingCost] = useState("");
-  const [supplierTrust, setSupplierTrust] = useState("medium");
-  const [qualityHistory, setQualityHistory] = useState("unknown");
-  const [currencyRisk, setCurrencyRisk] = useState("medium");
   const [companySettings, setCompanySettings] = useState(defaultCompanySettings);
+  const [supplierProfiles, setSupplierProfiles] = useState([]);
   const [liveRates, setLiveRates] = useState(null);
   const [liveRateWarning, setLiveRateWarning] = useState("");
 
@@ -222,6 +208,7 @@ function TekliflerPageContent() {
   useEffect(() => {
     loadRequests();
     loadCompanySettings();
+    loadSupplierProfiles();
   }, []);
 
   const maxOfferFiles = Number(companySettings.max_offer_files || 15);
@@ -315,13 +302,6 @@ const loadCompanySettings = async () => {
     setCompanySettings(nextSettings);
     setAnnualInterestRate(Number(nextSettings.annual_interest_rate || 45));
     setMaxTerminDays(String(nextSettings.accepted_termin_days ?? 15));
-    setCriticalLevel(nextSettings.critical_level || "medium");
-    setDelayImpact(nextSettings.delay_impact || "medium");
-    setAlternativeStock(nextSettings.alternative_stock || "partial");
-    setShippingIncluded(nextSettings.shipping_included || "included");
-    setSupplierTrust(nextSettings.supplier_trust || "medium");
-    setQualityHistory(nextSettings.quality_history || "unknown");
-    setCurrencyRisk(nextSettings.currency_risk || "medium");
     setExchangeRates({
       TRY: 1,
       USD: Number(nextSettings.usd_rate || 39.2),
@@ -332,6 +312,38 @@ const loadCompanySettings = async () => {
     console.error(err);
   } finally {
     await loadLiveExchangeRates();
+  }
+};
+
+const loadSupplierProfiles = async () => {
+  try {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return;
+
+    const { data, error } = await supabase
+      .from("suppliers")
+      .select("*")
+      .eq("user_id", user.id);
+
+    if (error) {
+      console.error("Tedarikçi değerlendirmeleri yüklenemedi:", error);
+      setSupplierProfiles([]);
+      return;
+    }
+
+    setSupplierProfiles((data || []).map((supplier) => ({
+      id: supplier.id,
+      name: supplier.name || "",
+      canonical_name: canonicalPartnerName(supplier.name || ""),
+      status: supplier.status || "Aktif",
+      trust_level: supplier.procurement_trust_level || "auto",
+      quality_history: supplier.procurement_quality_history || "auto",
+    })));
+  } catch (error) {
+    console.error("Tedarikçi değerlendirmeleri yüklenemedi:", error);
+    setSupplierProfiles([]);
   }
 };
 
@@ -527,17 +539,7 @@ const loadCompanySettings = async () => {
       formData.append("daily_delay_cost", Number(companySettings.daily_delay_cost_try || 0));
       formData.append("missing_data_policy", companySettings.missing_data_policy || "manual_review");
 
-      formData.append("critical_level", criticalLevel);
-      formData.append("delay_impact", delayImpact);
-      formData.append("alternative_stock", alternativeStock);
-
-      formData.append("shipping_included", shippingIncluded);
-      formData.append("shipping_cost", shippingCost);
-
-      formData.append("supplier_trust", supplierTrust);
-      formData.append("quality_history", qualityHistory);
-
-      formData.append("currency_risk", currencyRisk);
+      formData.append("supplier_profiles_json", JSON.stringify(supplierProfiles));
       const analysisExchangeRates = {
         TRY: 1,
         ...Object.fromEntries(liveCurrencyOptions.map((currency) => [currency, Number(exchangeRates[currency])])),
@@ -1038,140 +1040,6 @@ const loadCompanySettings = async () => {
                 </div>
               </div>
 
-              <div className="hidden">
-                <h3 className="text-xl font-bold text-slate-800">
-                  TCO Risk Analizi
-                </h3>
-
-                <p className="mt-2 text-sm text-slate-500">
-                  Sistem TCO, risk maliyeti ve değerlendirilmiş maliyet hesaplarını bu bilgilerle oluşturur.
-                </p>
-
-                <div className="mt-6 grid grid-cols-1 gap-5 md:grid-cols-2">
-                  <div>
-                    <label className="mb-2 block text-sm font-bold text-slate-700">
-                      Ürün Kritiklik Seviyesi
-                    </label>
-                    <select
-                      value={criticalLevel}
-                      onChange={(e) => setCriticalLevel(e.target.value)}
-                      className="w-full rounded-xl border border-slate-300 p-3"
-                    >
-                      <option value="low">Kritik değil</option>
-                      <option value="medium">Orta kritik</option>
-                      <option value="high">Üretimi etkiler</option>
-                      <option value="critical">Operasyonu durdurabilir</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="mb-2 block text-sm font-bold text-slate-700">
-                      Geç Teslim Etkisi
-                    </label>
-                    <select
-                      value={delayImpact}
-                      onChange={(e) => setDelayImpact(e.target.value)}
-                      className="w-full rounded-xl border border-slate-300 p-3"
-                    >
-                      <option value="none">Etkilemez</option>
-                      <option value="low">Küçük gecikme</option>
-                      <option value="medium">İş kaybı olabilir</option>
-                      <option value="high">Operasyon durabilir</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="mb-2 block text-sm font-bold text-slate-700">
-                      Alternatif Stok Durumu
-                    </label>
-                    <select
-                      value={alternativeStock}
-                      onChange={(e) => setAlternativeStock(e.target.value)}
-                      className="w-full rounded-xl border border-slate-300 p-3"
-                    >
-                      <option value="full">Yeterli stok var</option>
-                      <option value="partial">Kısmen var</option>
-                      <option value="none">Stok yok</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="mb-2 block text-sm font-bold text-slate-700">
-                      Nakliye Durumu
-                    </label>
-                    <select
-                      value={shippingIncluded}
-                      onChange={(e) => setShippingIncluded(e.target.value)}
-                      className="w-full rounded-xl border border-slate-300 p-3"
-                    >
-                      <option value="included">Nakliye dahil</option>
-                      <option value="excluded">Nakliye hariç</option>
-                      <option value="unknown">Emin değilim</option>
-                    </select>
-                  </div>
-
-                  {shippingIncluded === "excluded" && (
-                    <div>
-                      <label className="mb-2 block text-sm font-bold text-slate-700">
-                        Tahmini Nakliye Maliyeti
-                      </label>
-                      <input
-                        type="number"
-                        value={shippingCost}
-                        onChange={(e) => setShippingCost(e.target.value)}
-                        className="w-full rounded-xl border border-slate-300 p-3"
-                      />
-                    </div>
-                  )}
-
-                  <div>
-                    <label className="mb-2 block text-sm font-bold text-slate-700">
-                      Tedarikçi Güven Seviyesi
-                    </label>
-                    <select
-                      value={supplierTrust}
-                      onChange={(e) => setSupplierTrust(e.target.value)}
-                      className="w-full rounded-xl border border-slate-300 p-3"
-                    >
-                      <option value="low">İlk kez çalışıyoruz</option>
-                      <option value="medium">Birkaç kez çalıştık</option>
-                      <option value="high">Uzun süredir çalışıyoruz</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="mb-2 block text-sm font-bold text-slate-700">
-                      Kalite Geçmişi
-                    </label>
-                    <select
-                      value={qualityHistory}
-                      onChange={(e) => setQualityHistory(e.target.value)}
-                      className="w-full rounded-xl border border-slate-300 p-3"
-                    >
-                      <option value="unknown">Bilinmiyor</option>
-                      <option value="good">Problem yaşanmadı</option>
-                      <option value="medium">Ara sıra yaşandı</option>
-                      <option value="bad">Sık yaşandı</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="mb-2 block text-sm font-bold text-slate-700">
-                      Kur Riski
-                    </label>
-                    <select
-                      value={currencyRisk}
-                      onChange={(e) => setCurrencyRisk(e.target.value)}
-                      className="w-full rounded-xl border border-slate-300 p-3"
-                    >
-                      <option value="none">Kur riski yok</option>
-                      <option value="low">Düşük</option>
-                      <option value="medium">Orta</option>
-                      <option value="high">Yüksek</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
             </section>
           </div>
 

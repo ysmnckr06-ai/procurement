@@ -18,13 +18,6 @@ const defaultSettings = {
   accepted_termin_days: 15,
   daily_delay_cost_try: 0,
   missing_data_policy: "manual_review",
-  critical_level: "medium",
-  delay_impact: "medium",
-  alternative_stock: "partial",
-  shipping_included: "included",
-  supplier_trust: "medium",
-  quality_history: "unknown",
-  currency_risk: "medium",
   max_file_size_mb: 10,
   max_offer_files: 15,
   default_payment_term: "60 gün",
@@ -194,13 +187,6 @@ export default function SettingsPage() {
       accepted_termin_days: acceptedTerminDays,
       daily_delay_cost_try: dailyDelayCost,
       missing_data_policy: settings.missing_data_policy,
-      critical_level: settings.critical_level,
-      delay_impact: settings.delay_impact,
-      alternative_stock: settings.alternative_stock,
-      shipping_included: settings.shipping_included,
-      supplier_trust: settings.supplier_trust,
-      quality_history: settings.quality_history,
-      currency_risk: settings.currency_risk,
       max_file_size_mb: maxFileSize,
       max_offer_files: maxOfferFiles,
       default_payment_term: settings.default_payment_term.trim(),
@@ -403,17 +389,15 @@ export default function SettingsPage() {
 
               <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
                 <Select label="Eksik Vade / Termin Bilgisi" name="missing_data_policy" value={settings.missing_data_policy} onChange={handleChange} helpText="Teklifte vade veya termin yoksa sistemin davranışıdır. Güvenli başlangıç: otomatik önerme, incelemeye bırak." options={[{ value: "manual_review", label: "Otomatik önerme, incelemeye bırak" }, { value: "warn_only", label: "Uyar ama değerlendirmeye al" }]} />
-                <Select label="Varsayılan Ürün Kritikliği" name="critical_level" value={settings.critical_level} onChange={handleChange} helpText="Ürün özelinde bilgi yoksa kullanılacak operasyon etkisidir. Başlangıç önerisi: Orta kritik." options={[{ value: "low", label: "Kritik değil" }, { value: "medium", label: "Orta kritik" }, { value: "high", label: "Üretimi etkiler" }, { value: "critical", label: "Operasyonu durdurabilir" }]} />
-                <Select label="Varsayılan Geç Teslim Etkisi" name="delay_impact" value={settings.delay_impact} onChange={handleChange} helpText="Gecikmenin şirket operasyonuna etkisidir. Başlangıç önerisi: İş kaybı olabilir." options={[{ value: "none", label: "Etkilemez" }, { value: "low", label: "Düşük" }, { value: "medium", label: "İş kaybı olabilir" }, { value: "high", label: "Operasyon durabilir" }]} />
-                <Select label="Varsayılan Alternatif Stok" name="alternative_stock" value={settings.alternative_stock} onChange={handleChange} helpText="Muadil veya yedek ürün erişimini belirtir. Başlangıç önerisi: Kısmen var." options={[{ value: "full", label: "Yeterli" }, { value: "partial", label: "Kısmen var" }, { value: "none", label: "Yok" }]} />
-                <Select label="Varsayılan Nakliye Politikası" name="shipping_included" value={settings.shipping_included} onChange={handleChange} helpText="Tüm tekliflerde navlun kesin olarak dahil değilse Bilinmiyor seçmek daha güvenlidir." options={[{ value: "included", label: "Fiyata dahil" }, { value: "excluded", label: "Hariç" }, { value: "unknown", label: "Bilinmiyor" }]} />
-                <Select label="Varsayılan Tedarikçi Güveni" name="supplier_trust" value={settings.supplier_trust} onChange={handleChange} helpText="Teslimat ve hizmet geçmişi yoksa Orta; yeni veya sorunlu tedarikçide Düşük seçin." options={[{ value: "high", label: "Yüksek" }, { value: "medium", label: "Orta" }, { value: "low", label: "Düşük / yeni" }]} />
-                <Select label="Varsayılan Kalite Geçmişi" name="quality_history" value={settings.quality_history} onChange={handleChange} helpText="İade veya kalite kaydı yoksa Bilinmiyor seçin; tahmine dayalı olumlu puan verilmez." options={[{ value: "good", label: "Sorunsuz" }, { value: "medium", label: "Ara sıra sorun" }, { value: "bad", label: "Sık sorun" }, { value: "unknown", label: "Bilinmiyor" }]} />
-                <Select label="Varsayılan Kur Riski" name="currency_risk" value={settings.currency_risk} onChange={handleChange} helpText="Dövizli teklifler için varsayılan risktir. Başlangıç önerisi: Orta; TRY tekliflere uygulanmaz." options={[{ value: "none", label: "Yok" }, { value: "low", label: "Düşük" }, { value: "medium", label: "Orta" }, { value: "high", label: "Yüksek" }]} />
               </div>
 
-              <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900">
-                Firma veya ürün bazında güvenilir veri yoksa sistem kesin karar vermek yerine kontrol uyarısı üretir.
+              <div className="mt-5 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-950">
+                <div className="font-black">Değerlendirme kaynağı artık doğru karttan alınır</div>
+                <div className="mt-1 leading-6">
+                  Tedarikçi güveni ve kalite geçmişi her firma için <b>İş Ortakları</b> kartında ayrı tutulur.
+                  Para birimi, kur, termin, vade ve nakliye bilgisi ilgili tekliften okunur. Ürün ve stok bilgileri talep verisinde ayrıca değerlendirilir;
+                  güvenilir ürün riski yoksa bütün kalemlere tahmini bir risk primi eklenmez. Böylece bir firmaya ait değer diğer firmalara uygulanmaz.
+                </div>
               </div>
             </div>
 

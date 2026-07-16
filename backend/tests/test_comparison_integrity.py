@@ -206,6 +206,58 @@ class ComparisonIntegrityTests(unittest.TestCase):
         )
         self.assertEqual(analyzed[0]["offers"][0]["currencyRiskRate"], 0)
 
+    def test_supplier_risk_is_resolved_per_supplier_card(self):
+        request = {"urunKodu": "CARD-1", "urunAciklamasi": "Kart Testi", "birim": "adet", "talepEdilenAdet": 10}
+        offers = [
+            {
+                "firma": "EKA Kopya", "urunKodu": "CARD-1", "urunAciklamasi": "Kart Testi",
+                "birim": "adet", "firmaAdedi": 10, "netBirimFiyat": 100, "netToplam": 1000,
+                "paraBirimi": "TRY", "vade": "30 gun", "termin": "5 gun",
+            },
+            {
+                "firma": "Elizan", "urunKodu": "CARD-1", "urunAciklamasi": "Kart Testi",
+                "birim": "adet", "firmaAdedi": 10, "netBirimFiyat": 100, "netToplam": 1000,
+                "paraBirimi": "TRY", "vade": "30 gun", "termin": "5 gun",
+            },
+        ]
+        analyzed = analyze_groups(
+            match_offers_to_requests(offers, [request]),
+            {"TRY": 1.0},
+            constraints={
+                "missing_data_policy": "warn_only",
+                "supplier_profiles": [
+                    {"name": "EKA", "trust_level": "high", "quality_history": "good", "status": "Aktif"},
+                    {"name": "Elizan", "trust_level": "low", "quality_history": "bad", "status": "Riskli"},
+                ],
+            },
+        )
+        offers_by_name = {offer["firma"]: offer for offer in analyzed[0]["offers"]}
+
+        self.assertTrue(offers_by_name["EKA Kopya"]["supplierProfileMatched"])
+        self.assertEqual(offers_by_name["EKA Kopya"]["supplierTrustRiskRate"], 0)
+        self.assertEqual(offers_by_name["EKA Kopya"]["qualityRiskRate"], 0)
+        self.assertEqual(offers_by_name["Elizan"]["supplierTrustRiskRate"], 0.05)
+        self.assertEqual(offers_by_name["Elizan"]["qualityRiskRate"], 0.08)
+        self.assertEqual(analyzed[0]["bestOffer"]["firma"], "EKA Kopya")
+
+    def test_missing_supplier_card_does_not_invent_positive_or_negative_history(self):
+        request = {"urunKodu": "NEW-1", "urunAciklamasi": "Yeni Urun", "birim": "adet", "talepEdilenAdet": 1}
+        offer = {
+            "firma": "Yeni Firma", "urunKodu": "NEW-1", "urunAciklamasi": "Yeni Urun",
+            "birim": "adet", "firmaAdedi": 1, "netBirimFiyat": 100, "netToplam": 100,
+            "paraBirimi": "TRY", "vade": "30 gun", "termin": "5 gun",
+        }
+        analyzed = analyze_groups(
+            match_offers_to_requests([offer], [request]),
+            {"TRY": 1.0},
+            constraints={"missing_data_policy": "warn_only", "supplier_profiles": []},
+        )
+        result = analyzed[0]["offers"][0]
+
+        self.assertFalse(result["supplierProfileMatched"])
+        self.assertEqual(result["supplierTrustRiskRate"], 0)
+        self.assertEqual(result["qualityRiskRate"], 0)
+
     def test_near_equal_offers_require_manual_decision(self):
         request = {"urunKodu": "TIE-1", "urunAciklamasi": "Esit Urun", "birim": "adet", "talepEdilenAdet": 10}
         offers = [

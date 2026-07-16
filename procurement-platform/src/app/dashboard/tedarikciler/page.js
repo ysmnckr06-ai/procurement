@@ -27,6 +27,8 @@ const emptyForm = {
   address: "",
   notes: "",
   status: "Aktif",
+  procurement_trust_level: "auto",
+  procurement_quality_history: "auto",
 };
 
 const statusOptions = ["Tümü", "Aktif", "Pasif", "Onay Bekliyor", "Riskli"];
@@ -740,6 +742,8 @@ export default function BusinessPartnersPage() {
       address: partner.address || "",
       notes: partner.notes || "",
       status: partner.status || "Aktif",
+      procurement_trust_level: partner.procurement_trust_level || "auto",
+      procurement_quality_history: partner.procurement_quality_history || "auto",
     });
     setMessage("");
     setPartnerChoice({ mode: "existing", partnerId: partner.id });
@@ -782,6 +786,8 @@ export default function BusinessPartnersPage() {
       address: form.address || "",
       notes: form.notes || "",
       status: form.status || "Aktif",
+      procurement_trust_level: form.procurement_trust_level || "auto",
+      procurement_quality_history: form.procurement_quality_history || "auto",
       updated_at: new Date().toISOString(),
     };
     const duplicateTaxPartner = findPartnerByTaxNumber(partners, payload.tax_number, { excludeId: editingId || "" });
@@ -851,6 +857,16 @@ export default function BusinessPartnersPage() {
         );
         return;
       }
+
+      await supabase
+        .from("suppliers")
+        .update({
+          procurement_trust_level: payload.procurement_trust_level,
+          procurement_quality_history: payload.procurement_quality_history,
+          updated_at: payload.updated_at,
+        })
+        .eq("id", partner.id)
+        .eq("user_id", user.id);
 
       setEditingId(partner.id);
       setSelectedId(partner.id);
@@ -1145,6 +1161,43 @@ export default function BusinessPartnersPage() {
                   ))}
               </select>
             </label>
+            {String(form.partner_type || "").startsWith("Tedarik") && (
+              <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 md:col-span-12">
+                <div className="text-sm font-black text-blue-950">Firmaya özel satın alma değerlendirmesi</div>
+                <p className="mt-1 text-xs leading-5 text-blue-800">
+                  Bu değerler yalnız bu tedarikçinin tekliflerine uygulanır. Otomatik seçeneğinde firma durumu kullanılır;
+                  kalite geçmişi kaydı yoksa değerlendirme nötr kalır ve olumlu puan uydurulmaz.
+                </p>
+                <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <label className="text-sm font-bold text-slate-700">
+                    Tedarikçi güveni
+                    <select
+                      className="mt-2 h-12 w-full rounded-xl border border-blue-200 bg-white px-4 text-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+                      value={form.procurement_trust_level}
+                      onChange={(event) => updateForm("procurement_trust_level", event.target.value)}
+                    >
+                      <option value="auto">Otomatik değerlendir</option>
+                      <option value="high">Yüksek · düzenli ve güvenilir</option>
+                      <option value="medium">Orta · yeterli geçmiş var</option>
+                      <option value="low">Düşük · yeni veya sorunlu</option>
+                    </select>
+                  </label>
+                  <label className="text-sm font-bold text-slate-700">
+                    Kalite geçmişi
+                    <select
+                      className="mt-2 h-12 w-full rounded-xl border border-blue-200 bg-white px-4 text-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+                      value={form.procurement_quality_history}
+                      onChange={(event) => updateForm("procurement_quality_history", event.target.value)}
+                    >
+                      <option value="auto">Otomatik değerlendir</option>
+                      <option value="good">Sorunsuz</option>
+                      <option value="medium">Ara sıra sorun</option>
+                      <option value="bad">Sık iade / kalite sorunu</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+            )}
             <label className="text-sm font-bold text-slate-700 md:col-span-6">
               Yetkili
               <input

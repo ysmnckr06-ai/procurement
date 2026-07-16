@@ -1623,17 +1623,18 @@ async def analyze_offers(
     daily_delay_cost: float = Form(0),
     missing_data_policy: str = Form("manual_review"),
 
-    critical_level: str = Form("medium"),
-    delay_impact: str = Form("medium"),
-    alternative_stock: str = Form("partial"),
+    critical_level: str = Form("low"),
+    delay_impact: str = Form("none"),
+    alternative_stock: str = Form("full"),
 
-    shipping_included: str = Form("included"),
+    shipping_included: str = Form("unknown"),
     shipping_cost: float = Form(0),
 
-    supplier_trust: str = Form("medium"),
+    supplier_trust: str = Form("unknown"),
     quality_history: str = Form("unknown"),
 
     currency_risk: str = Form("medium"),
+    supplier_profiles_json: str = Form("[]"),
     exchange_rates_json: str = Form(""),
 
 ):
@@ -1656,6 +1657,16 @@ async def analyze_offers(
     all_rows = []
     warnings = []
 
+    supplier_profiles = []
+    if supplier_profiles_json:
+        try:
+            parsed_profiles = json.loads(supplier_profiles_json)
+            if isinstance(parsed_profiles, list):
+                supplier_profiles = [profile for profile in parsed_profiles if isinstance(profile, dict)]
+        except Exception as profile_error:
+            logger.debug("TEDARIKCI PROFILLERI OKUNAMADI:", str(profile_error))
+            warnings.append("Tedarikçi kartı değerlendirmeleri okunamadı; güven ve kalite için nötr değerlendirme kullanıldı.")
+
     user_constraints = {
     "max_budget": safe_float_form(max_budget),
     "min_vade_days": safe_int_form(min_vade_days),
@@ -1665,17 +1676,20 @@ async def analyze_offers(
     "annual_interest_rate": annual_interest_rate,
     "missing_data_policy": missing_data_policy if missing_data_policy in {"manual_review", "warn_only"} else "manual_review",
 
-    "critical_level": critical_level,
-    "delay_impact": delay_impact,
-    "alternative_stock": alternative_stock,
+    # Ürün ve teklif bazlı alanlar şirket geneli varsayımından alınmaz.
+    "critical_level": "low",
+    "delay_impact": "none",
+    "alternative_stock": "full",
 
-    "shipping_included": shipping_included,
-    "shipping_cost": shipping_cost,
+    "shipping_included": "unknown",
+    "shipping_cost": 0,
 
-    "supplier_trust": supplier_trust,
-    "quality_history": quality_history,
+    "supplier_trust": "unknown",
+    "quality_history": "unknown",
+    "supplier_profiles": supplier_profiles,
 
-    "currency_risk": currency_risk
+    # TRY için sıfır, yabancı para için teklif bazlı otomatik kur riski uygulanır.
+    "currency_risk": "medium"
     }
     
     logger.debug("USER CONSTRAINTS:", user_constraints)

@@ -1,3 +1,6 @@
+import re
+import unicodedata
+
 from app.utils import extract_days
 
 DEFAULT_DECISION_CONFIG = {
@@ -156,6 +159,65 @@ def calculate_missing_qty_cost(eksik_adet, net_birim_try, multiplier):
 def calculate_supplier_risk(net_toplam_try, supplier_risk_rate):
     return net_toplam_try * (supplier_risk_rate / 100)
 
+def normalize_supplier_key(value):
+    text = str(value or "").strip().lower()
+    text = text.translate(str.maketrans({"ı": "i", "ş": "s", "ğ": "g", "ü": "u", "ö": "o", "ç": "c"}))
+    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+    parts = re.sub(r"[^a-z0-9]+", " ", text).split()
+    suffixes = {"as", "anonim", "ltd", "limited", "sti", "sirketi", "tic", "ticaret", "san", "sanayi", "co", "corp", "inc", "llc"}
+    return " ".join(part for part in parts if part not in suffixes)
+
+
+def resolve_supplier_profile(row, constraints):
+    supplier_name = row.get("firma") or row.get("firmaAdi") or ""
+    supplier_key = normalize_supplier_key(supplier_name)
+    candidates = []
+    for profile in constraints.get("supplier_profiles", []) or []:
+        profile_key = normalize_supplier_key(profile.get("canonical_name") or profile.get("name"))
+        if not profile_key:
+            continue
+        if profile_key == supplier_key:
+            candidates.append((1000 + len(profile_key), profile))
+        elif len(profile_key) >= 3 and len(supplier_key) >= 3 and (profile_key in supplier_key or supplier_key in profile_key):
+            candidates.append((len(profile_key), profile))
+
+    profile = max(candidates, key=lambda item: item[0])[1] if candidates else None
+    if not profile:
+        return {
+            "matched": False,
+            "name": supplier_name,
+            "trust_level": "unknown",
+            "quality_history": "unknown",
+            "trust_source": "missing",
+            "quality_source": "missing",
+        }
+
+    trust_level = str(profile.get("trust_level") or "auto").lower()
+    quality_history = str(profile.get("quality_history") or "auto").lower()
+    status = str(profile.get("status") or "").lower()
+
+    if trust_level == "auto":
+        trust_level = "low" if any(term in status for term in ("risk", "bekli", "pasif")) else "medium"
+        trust_source = "status"
+    else:
+        trust_source = "supplier_card"
+
+    if quality_history == "auto":
+        quality_history = "unknown"
+        quality_source = "history_pending"
+    else:
+        quality_source = "supplier_card"
+
+    return {
+        "matched": True,
+        "name": profile.get("name") or supplier_name,
+        "trust_level": trust_level if trust_level in {"high", "medium", "low"} else "unknown",
+        "quality_history": quality_history if quality_history in {"good", "medium", "bad"} else "unknown",
+        "trust_source": trust_source,
+        "quality_source": quality_source,
+    }
+
+
 def calculate_advanced_risk_costs(net_toplam_try, constraints, currency="TRY"):
     critical_map = {
         "low": 0.00,
@@ -180,20 +242,21 @@ def calculate_advanced_risk_costs(net_toplam_try, constraints, currency="TRY"):
     shipping_map = {
         "included": 0.00,
         "excluded": 0.03,
-        "unknown": 0.05,
+        "unknown": 0.00,
     }
 
     trust_map = {
         "high": 0.00,
         "medium": 0.02,
         "low": 0.05,
+        "unknown": 0.00,
     }
 
     quality_map = {
         "good": 0.00,
         "medium": 0.03,
         "bad": 0.08,
-        "unknown": 0.04,
+        "unknown": 0.00,
     }
 
     currency_map = {
@@ -203,12 +266,12 @@ def calculate_advanced_risk_costs(net_toplam_try, constraints, currency="TRY"):
         "high": 0.08,
     }
 
-    critical_rate = critical_map.get(constraints.get("critical_level", "medium"), 0.03)
-    delay_rate = delay_map.get(constraints.get("delay_impact", "medium"), 0.05)
-    stock_rate = stock_map.get(constraints.get("alternative_stock", "partial"), 0.05)
-    shipping_rate = shipping_map.get(constraints.get("shipping_included", "included"), 0.00)
-    trust_rate = trust_map.get(constraints.get("supplier_trust", "medium"), 0.02)
-    quality_rate = quality_map.get(constraints.get("quality_history", "unknown"), 0.04)
+    critical_rate = critical_map.get(constraints.get("critical_level", "low"), 0.00)
+    delay_rate = delay_map.get(constraints.get("delay_impact", "none"), 0.00)
+    stock_rate = stock_map.get(constraints.get("alternative_stock", "full"), 0.00)
+    shipping_rate = shipping_map.get(constraints.get("shipping_included", "unknown"), 0.00)
+    trust_rate = trust_map.get(constraints.get("supplier_trust", "unknown"), 0.00)
+    quality_rate = quality_map.get(constraints.get("quality_history", "unknown"), 0.00)
     # Kur riski yalnız yabancı para tekliflerine uygulanır. TRY teklifine kur
     # primi eklemek, yerli para teklifini yapay biçimde pahalılaştırır.
     currency_rate = (
@@ -364,7 +427,15 @@ def score_offer(row, exchange_rates, talep_edilen_adet, config=None, constraints
         net_toplam_try,
         safe_float(row.get("supplierRiskRate", config.get("supplier_risk_rate", 0)))
     )
-    advanced_risk = calculate_advanced_risk_costs(net_toplam_try, constraints, currency)
+    supplier_profile = resolve_supplier_profile(row, constraints)
+    offer_risk_context = {
+        **constraints,
+        "supplier_trust": supplier_profile.get("trust_level", "unknown"),
+        "quality_history": supplier_profile.get("quality_history", "unknown"),
+        "shipping_included": row.get("shippingIncluded") or row.get("nakliyeDahil") or "unknown",
+        "shipping_cost": safe_float(row.get("shippingCost") or row.get("nakliyeMaliyeti"), 0),
+    }
+    advanced_risk = calculate_advanced_risk_costs(net_toplam_try, offer_risk_context, currency)
     advanced_risk_cost = safe_float(advanced_risk.get("advancedRiskCostTRY"), 0)
 
 # TCO = gerçek toplam maliyet.
@@ -421,6 +492,12 @@ def score_offer(row, exchange_rates, talep_edilen_adet, config=None, constraints
         "supplierTrustRiskRate": round(advanced_risk.get("supplierTrustRiskRate", 0), 4),
         "qualityRiskRate": round(advanced_risk.get("qualityRiskRate", 0), 4),
         "currencyRiskRate": round(advanced_risk.get("currencyRiskRate", 0), 4),
+        "supplierProfileMatched": bool(supplier_profile.get("matched")),
+        "supplierProfileName": supplier_profile.get("name", ""),
+        "supplierTrustLevel": supplier_profile.get("trust_level", "unknown"),
+        "supplierQualityHistory": supplier_profile.get("quality_history", "unknown"),
+        "supplierTrustSource": supplier_profile.get("trust_source", "missing"),
+        "supplierQualitySource": supplier_profile.get("quality_source", "missing"),
     }
 
     uygun = True
@@ -485,6 +562,15 @@ def score_offer(row, exchange_rates, talep_edilen_adet, config=None, constraints
 
         if supplier_risk_cost > 0:
             karar_notlari.append(f"Risk primi: {supplier_risk_cost:.2f} TRY")
+
+        if supplier_profile.get("matched"):
+            karar_notlari.append(
+                "Tedarikçi kartı: "
+                f"güven {supplier_profile.get('trust_level', 'unknown')}, "
+                f"kalite {supplier_profile.get('quality_history', 'unknown')}"
+            )
+        else:
+            karar_notlari.append("Tedarikçi kartı eşleşmedi; firma güveni ve kalite için risk primi eklenmedi")
 
         if birim_fiyat <= 0:
             karar_notlari.append("Fiyat eksik")
