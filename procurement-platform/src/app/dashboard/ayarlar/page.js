@@ -352,20 +352,37 @@ export default function SettingsPage() {
                   min="0"
                   value={settings.annual_interest_rate}
                   onChange={handleChange}
+                  helpText="Şirketin yıllık kredi veya sermaye fırsat maliyetidir. Finans biriminiz kesinleştirmediyse başlangıç için %45 kullanılabilir."
                 />
-                <Input label="Kabul Edilen Termin (gün)" name="accepted_termin_days" type="number" min="0" value={settings.accepted_termin_days} onChange={handleChange} />
-                <Input label="Günlük Gecikme Maliyeti (TRY/gün)" name="daily_delay_cost_try" type="number" min="0" value={settings.daily_delay_cost_try} onChange={handleChange} />
+                <Input
+                  label="Kabul Edilen Termin (gün)"
+                  name="accepted_termin_days"
+                  type="number"
+                  min="0"
+                  value={settings.accepted_termin_days}
+                  onChange={handleChange}
+                  helpText="Bu süreden sonraki teslimatlar gecikme olarak değerlendirilir. Başlangıç önerisi: 15 gün."
+                />
+                <Input
+                  label="Günlük Gecikme Maliyeti (TRY/gün)"
+                  name="daily_delay_cost_try"
+                  type="number"
+                  min="0"
+                  value={settings.daily_delay_cost_try}
+                  onChange={handleChange}
+                  helpText="Üretim kaybı, bekleyen ekip ve olası cezanın günlük tahminidir. 0 girilirse termin gecikmesi parasal olarak hesaplanmaz."
+                />
               </div>
 
               <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-                <Select label="Eksik Vade / Termin Bilgisi" name="missing_data_policy" value={settings.missing_data_policy} onChange={handleChange} options={[{ value: "manual_review", label: "Otomatik önerme, incelemeye bırak" }, { value: "warn_only", label: "Uyar ama değerlendirmeye al" }]} />
-                <Select label="Varsayılan Ürün Kritikliği" name="critical_level" value={settings.critical_level} onChange={handleChange} options={[{ value: "low", label: "Kritik değil" }, { value: "medium", label: "Orta kritik" }, { value: "high", label: "Üretimi etkiler" }, { value: "critical", label: "Operasyonu durdurabilir" }]} />
-                <Select label="Varsayılan Geç Teslim Etkisi" name="delay_impact" value={settings.delay_impact} onChange={handleChange} options={[{ value: "none", label: "Etkilemez" }, { value: "low", label: "Düşük" }, { value: "medium", label: "İş kaybı olabilir" }, { value: "high", label: "Operasyon durabilir" }]} />
-                <Select label="Varsayılan Alternatif Stok" name="alternative_stock" value={settings.alternative_stock} onChange={handleChange} options={[{ value: "full", label: "Yeterli" }, { value: "partial", label: "Kısmen var" }, { value: "none", label: "Yok" }]} />
-                <Select label="Varsayılan Nakliye Politikası" name="shipping_included" value={settings.shipping_included} onChange={handleChange} options={[{ value: "included", label: "Fiyata dahil" }, { value: "excluded", label: "Hariç" }, { value: "unknown", label: "Bilinmiyor" }]} />
-                <Select label="Varsayılan Tedarikçi Güveni" name="supplier_trust" value={settings.supplier_trust} onChange={handleChange} options={[{ value: "high", label: "Yüksek" }, { value: "medium", label: "Orta" }, { value: "low", label: "Düşük / yeni" }]} />
-                <Select label="Varsayılan Kalite Geçmişi" name="quality_history" value={settings.quality_history} onChange={handleChange} options={[{ value: "good", label: "Sorunsuz" }, { value: "medium", label: "Ara sıra sorun" }, { value: "bad", label: "Sık sorun" }, { value: "unknown", label: "Bilinmiyor" }]} />
-                <Select label="Varsayılan Kur Riski" name="currency_risk" value={settings.currency_risk} onChange={handleChange} options={[{ value: "none", label: "Yok" }, { value: "low", label: "Düşük" }, { value: "medium", label: "Orta" }, { value: "high", label: "Yüksek" }]} />
+                <Select label="Eksik Vade / Termin Bilgisi" name="missing_data_policy" value={settings.missing_data_policy} onChange={handleChange} helpText="Teklifte vade veya termin yoksa sistemin davranışıdır. Güvenli başlangıç: otomatik önerme, incelemeye bırak." options={[{ value: "manual_review", label: "Otomatik önerme, incelemeye bırak" }, { value: "warn_only", label: "Uyar ama değerlendirmeye al" }]} />
+                <Select label="Varsayılan Ürün Kritikliği" name="critical_level" value={settings.critical_level} onChange={handleChange} helpText="Ürün özelinde bilgi yoksa kullanılacak operasyon etkisidir. Başlangıç önerisi: Orta kritik." options={[{ value: "low", label: "Kritik değil" }, { value: "medium", label: "Orta kritik" }, { value: "high", label: "Üretimi etkiler" }, { value: "critical", label: "Operasyonu durdurabilir" }]} />
+                <Select label="Varsayılan Geç Teslim Etkisi" name="delay_impact" value={settings.delay_impact} onChange={handleChange} helpText="Gecikmenin şirket operasyonuna etkisidir. Başlangıç önerisi: İş kaybı olabilir." options={[{ value: "none", label: "Etkilemez" }, { value: "low", label: "Düşük" }, { value: "medium", label: "İş kaybı olabilir" }, { value: "high", label: "Operasyon durabilir" }]} />
+                <Select label="Varsayılan Alternatif Stok" name="alternative_stock" value={settings.alternative_stock} onChange={handleChange} helpText="Muadil veya yedek ürün erişimini belirtir. Başlangıç önerisi: Kısmen var." options={[{ value: "full", label: "Yeterli" }, { value: "partial", label: "Kısmen var" }, { value: "none", label: "Yok" }]} />
+                <Select label="Varsayılan Nakliye Politikası" name="shipping_included" value={settings.shipping_included} onChange={handleChange} helpText="Tüm tekliflerde navlun kesin olarak dahil değilse Bilinmiyor seçmek daha güvenlidir." options={[{ value: "included", label: "Fiyata dahil" }, { value: "excluded", label: "Hariç" }, { value: "unknown", label: "Bilinmiyor" }]} />
+                <Select label="Varsayılan Tedarikçi Güveni" name="supplier_trust" value={settings.supplier_trust} onChange={handleChange} helpText="Teslimat ve hizmet geçmişi yoksa Orta; yeni veya sorunlu tedarikçide Düşük seçin." options={[{ value: "high", label: "Yüksek" }, { value: "medium", label: "Orta" }, { value: "low", label: "Düşük / yeni" }]} />
+                <Select label="Varsayılan Kalite Geçmişi" name="quality_history" value={settings.quality_history} onChange={handleChange} helpText="İade veya kalite kaydı yoksa Bilinmiyor seçin; tahmine dayalı olumlu puan verilmez." options={[{ value: "good", label: "Sorunsuz" }, { value: "medium", label: "Ara sıra sorun" }, { value: "bad", label: "Sık sorun" }, { value: "unknown", label: "Bilinmiyor" }]} />
+                <Select label="Varsayılan Kur Riski" name="currency_risk" value={settings.currency_risk} onChange={handleChange} helpText="Dövizli teklifler için varsayılan risktir. Başlangıç önerisi: Orta; TRY tekliflere uygulanmaz." options={[{ value: "none", label: "Yok" }, { value: "low", label: "Düşük" }, { value: "medium", label: "Orta" }, { value: "high", label: "Yüksek" }]} />
               </div>
 
               <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900">
@@ -395,6 +412,7 @@ export default function SettingsPage() {
                   name="default_payment_term"
                   value={settings.default_payment_term}
                   onChange={handleChange}
+                  helpText="Teklifte vade yazmıyorsa kullanılacak şirket standardıdır. Şirket politikanız buysa 60 gün bırakın."
                 />
               </div>
             </div>
@@ -411,6 +429,7 @@ export default function SettingsPage() {
                   name="risk_level"
                   value={settings.risk_level}
                   onChange={handleChange}
+                  helpText="Yeni kayıtlarda başlangıç riskidir. Genel kullanım için Orta uygundur."
                   options={["Düşük", "Orta", "Yüksek", "Kritik"]}
                 />
                 <label className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm font-semibold text-slate-700">
@@ -420,7 +439,12 @@ export default function SettingsPage() {
                     checked={settings.approval_required}
                     onChange={handleChange}
                   />
-                  Sipariş oluşturmadan önce onay gerekli
+                  <span>
+                    Sipariş oluşturmadan önce onay gerekli
+                    <span className="mt-1 block text-xs font-medium leading-5 text-slate-500">
+                      Güvenli kullanım için açık bırakın; sistem önerisi doğrudan siparişe dönüşmez.
+                    </span>
+                  </span>
                 </label>
               </div>
             </div>
@@ -450,7 +474,7 @@ function SectionTitle({ title, text }) {
   );
 }
 
-function Input({ label, name, value, onChange, type = "text", min, readOnly = false }) {
+function Input({ label, name, value, onChange, type = "text", min, readOnly = false, helpText = "" }) {
   return (
     <label className="block">
       <span className="mb-2 block text-sm font-bold text-slate-700">{label}</span>
@@ -464,11 +488,12 @@ function Input({ label, name, value, onChange, type = "text", min, readOnly = fa
         readOnly={readOnly}
         className={`w-full rounded-xl border border-slate-300 p-3 text-sm ${readOnly ? "bg-slate-100 text-slate-600" : "bg-white"}`}
       />
+      {helpText && <span className="mt-2 block text-xs font-medium leading-5 text-slate-500">{helpText}</span>}
     </label>
   );
 }
 
-function Select({ label, name, value, onChange, options }) {
+function Select({ label, name, value, onChange, options, helpText = "" }) {
   return (
     <label className="block">
       <span className="mb-2 block text-sm font-bold text-slate-700">{label}</span>
@@ -483,6 +508,7 @@ function Select({ label, name, value, onChange, options }) {
           return <option key={option.value} value={option.value}>{option.label}</option>;
         })}
       </select>
+      {helpText && <span className="mt-2 block text-xs font-medium leading-5 text-slate-500">{helpText}</span>}
     </label>
   );
 }
