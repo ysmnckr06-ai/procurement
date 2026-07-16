@@ -16,6 +16,16 @@ const defaultCompanySettings = {
   eur_rate: 42.8,
   gbp_rate: 41.2,
   annual_interest_rate: 45,
+  accepted_termin_days: 15,
+  daily_delay_cost_try: 0,
+  missing_data_policy: "manual_review",
+  critical_level: "medium",
+  delay_impact: "medium",
+  alternative_stock: "partial",
+  shipping_included: "included",
+  supplier_trust: "medium",
+  quality_history: "unknown",
+  currency_risk: "medium",
   max_file_size_mb: 10,
   max_offer_files: 15,
   default_payment_term: "60 gün",
@@ -301,6 +311,14 @@ const loadCompanySettings = async () => {
 
     setCompanySettings(nextSettings);
     setAnnualInterestRate(Number(nextSettings.annual_interest_rate || 45));
+    setMaxTerminDays(String(nextSettings.accepted_termin_days ?? 15));
+    setCriticalLevel(nextSettings.critical_level || "medium");
+    setDelayImpact(nextSettings.delay_impact || "medium");
+    setAlternativeStock(nextSettings.alternative_stock || "partial");
+    setShippingIncluded(nextSettings.shipping_included || "included");
+    setSupplierTrust(nextSettings.supplier_trust || "medium");
+    setQualityHistory(nextSettings.quality_history || "unknown");
+    setCurrencyRisk(nextSettings.currency_risk || "medium");
     setExchangeRates({
       TRY: 1,
       USD: Number(nextSettings.usd_rate || 39.2),
@@ -441,31 +459,7 @@ const loadCompanySettings = async () => {
     resetInput();
   };
 
-  const calculateAnnualInterestRate = () => {
-  let score = 0;
-
-  if (creditUsage === "none") score += 5;
-  if (creditUsage === "sometimes") score += 15;
-  if (creditUsage === "often") score += 25;
-
-  if (cashFlowImportance === "low") score += 5;
-  if (cashFlowImportance === "medium") score += 15;
-  if (cashFlowImportance === "high") score += 25;
-
-  if (paymentTermImportance === "low") score += 5;
-  if (paymentTermImportance === "medium") score += 15;
-  if (paymentTermImportance === "high") score += 25;
-
-  if (paymentHabit === "cash") score += 5;
-  if (paymentHabit === "30_60") score += 10;
-  if (paymentHabit === "60_90") score += 15;
-  if (paymentHabit === "long") score += 20;
-
-  if (score <= 25) return Math.min(annualInterestRate, 25);
-  if (score <= 45) return Math.max(annualInterestRate - 10, 30);
-  if (score <= 65) return annualInterestRate;
-  return Math.max(annualInterestRate + 15, 60);
-    };
+  const calculateAnnualInterestRate = () => annualInterestRate;
 
   const handleAnalyze = async () => {
     if (files.length === 0) {
@@ -527,6 +521,8 @@ const loadCompanySettings = async () => {
       formData.append("max_termin_days", maxTerminDays);
       formData.append("allow_missing_qty", allowMissingQty ? "true" : "false");
       formData.append("annual_interest_rate", calculateAnnualInterestRate());
+      formData.append("daily_delay_cost", Number(companySettings.daily_delay_cost_try || 0));
+      formData.append("missing_data_policy", companySettings.missing_data_policy || "manual_review");
 
       formData.append("critical_level", criticalLevel);
       formData.append("delay_impact", delayImpact);

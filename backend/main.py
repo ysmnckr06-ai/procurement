@@ -1620,6 +1620,8 @@ async def analyze_offers(
     allow_missing_qty: str = Form("false"),
     authorization: str = Header(None),
     annual_interest_rate: float = Form(45),
+    daily_delay_cost: float = Form(0),
+    missing_data_policy: str = Form("manual_review"),
 
     critical_level: str = Form("medium"),
     delay_impact: str = Form("medium"),
@@ -1661,6 +1663,7 @@ async def analyze_offers(
     "allow_missing_qty": allow_missing_qty == "true",
 
     "annual_interest_rate": annual_interest_rate,
+    "missing_data_policy": missing_data_policy if missing_data_policy in {"manual_review", "warn_only"} else "manual_review",
 
     "critical_level": critical_level,
     "delay_impact": delay_impact,
@@ -1859,7 +1862,7 @@ async def analyze_offers(
     # --- ŞİRKET / KARAR MOTORU AYARLARI ---
     decision_config = {
         "annual_interest_rate": 45.0,
-        "daily_delay_cost": 0.0,
+        "daily_delay_cost": max(float(daily_delay_cost or 0), 0.0),
         "missing_qty_penalty_multiplier": 1.25,
         "supplier_risk_rate": 0.0,
     }

@@ -15,6 +15,16 @@ const defaultSettings = {
   gbp_rate: 41.2,
   exchange_rate_date: new Date().toISOString().slice(0, 10),
   annual_interest_rate: 45,
+  accepted_termin_days: 15,
+  daily_delay_cost_try: 0,
+  missing_data_policy: "manual_review",
+  critical_level: "medium",
+  delay_impact: "medium",
+  alternative_stock: "partial",
+  shipping_included: "included",
+  supplier_trust: "medium",
+  quality_history: "unknown",
+  currency_risk: "medium",
   max_file_size_mb: 10,
   max_offer_files: 15,
   default_payment_term: "60 gün",
@@ -137,6 +147,9 @@ export default function SettingsPage() {
     const gbpRate = parsePositiveNumber(settings.gbp_rate);
     const maxFileSize = parsePositiveNumber(settings.max_file_size_mb);
     const maxOfferFiles = parsePositiveNumber(settings.max_offer_files);
+    const annualInterestRate = Number(settings.annual_interest_rate);
+    const acceptedTerminDays = Number(settings.accepted_termin_days);
+    const dailyDelayCost = Number(settings.daily_delay_cost_try);
 
     if (!usdRate || !eurRate || !gbpRate) {
       setMessage("Kur değerleri boş, 0, negatif veya geçersiz olamaz.");
@@ -145,6 +158,11 @@ export default function SettingsPage() {
 
     if (!maxFileSize || !maxOfferFiles) {
       setMessage("Dosya limitleri 0'dan büyük olmalıdır.");
+      return;
+    }
+
+    if (![annualInterestRate, acceptedTerminDays, dailyDelayCost].every((value) => Number.isFinite(value) && value >= 0)) {
+      setMessage("Finansman oranı, kabul edilen termin ve gecikme maliyeti negatif veya geçersiz olamaz.");
       return;
     }
 
@@ -158,7 +176,17 @@ export default function SettingsPage() {
       eur_rate: eurRate,
       gbp_rate: gbpRate,
       exchange_rate_date: settings.exchange_rate_date || new Date().toISOString().slice(0, 10),
-      annual_interest_rate: Number(settings.annual_interest_rate || 0),
+      annual_interest_rate: annualInterestRate,
+      accepted_termin_days: acceptedTerminDays,
+      daily_delay_cost_try: dailyDelayCost,
+      missing_data_policy: settings.missing_data_policy,
+      critical_level: settings.critical_level,
+      delay_impact: settings.delay_impact,
+      alternative_stock: settings.alternative_stock,
+      shipping_included: settings.shipping_included,
+      supplier_trust: settings.supplier_trust,
+      quality_history: settings.quality_history,
+      currency_risk: settings.currency_risk,
       max_file_size_mb: maxFileSize,
       max_offer_files: maxOfferFiles,
       default_payment_term: settings.default_payment_term.trim(),
@@ -315,18 +343,42 @@ export default function SettingsPage() {
 
             <div className="mt-8 border-t border-slate-200 pt-6">
               <SectionTitle
-                title="Analiz Varsayılanları"
-                text="Teklif değerlendirme ve dosya yükleme sınırları için başlangıç değerleri."
+                title="Satın Alma Karar Politikası"
+                text="Şirketiniz bu değerleri bir kez tanımlar; teklif mukayeseleri otomatik olarak aynı politikayı kullanır."
               />
 
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                 <Input
-                  label="Yıllık Finansman Oranı"
+                  label="Yıllık Finansman / Fırsat Maliyeti (%)"
                   name="annual_interest_rate"
                   type="number"
+                  min="0"
                   value={settings.annual_interest_rate}
                   onChange={handleChange}
                 />
+                <Input label="Kabul Edilen Termin (gün)" name="accepted_termin_days" type="number" min="0" value={settings.accepted_termin_days} onChange={handleChange} />
+                <Input label="Günlük Gecikme Maliyeti (TRY/gün)" name="daily_delay_cost_try" type="number" min="0" value={settings.daily_delay_cost_try} onChange={handleChange} />
+              </div>
+
+              <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+                <Select label="Eksik Vade / Termin Bilgisi" name="missing_data_policy" value={settings.missing_data_policy} onChange={handleChange} options={[{ value: "manual_review", label: "Otomatik önerme, incelemeye bırak" }, { value: "warn_only", label: "Uyar ama değerlendirmeye al" }]} />
+                <Select label="Varsayılan Ürün Kritikliği" name="critical_level" value={settings.critical_level} onChange={handleChange} options={[{ value: "low", label: "Kritik değil" }, { value: "medium", label: "Orta kritik" }, { value: "high", label: "Üretimi etkiler" }, { value: "critical", label: "Operasyonu durdurabilir" }]} />
+                <Select label="Varsayılan Geç Teslim Etkisi" name="delay_impact" value={settings.delay_impact} onChange={handleChange} options={[{ value: "none", label: "Etkilemez" }, { value: "low", label: "Düşük" }, { value: "medium", label: "İş kaybı olabilir" }, { value: "high", label: "Operasyon durabilir" }]} />
+                <Select label="Varsayılan Alternatif Stok" name="alternative_stock" value={settings.alternative_stock} onChange={handleChange} options={[{ value: "full", label: "Yeterli" }, { value: "partial", label: "Kısmen var" }, { value: "none", label: "Yok" }]} />
+                <Select label="Varsayılan Nakliye Politikası" name="shipping_included" value={settings.shipping_included} onChange={handleChange} options={[{ value: "included", label: "Fiyata dahil" }, { value: "excluded", label: "Hariç" }, { value: "unknown", label: "Bilinmiyor" }]} />
+                <Select label="Varsayılan Tedarikçi Güveni" name="supplier_trust" value={settings.supplier_trust} onChange={handleChange} options={[{ value: "high", label: "Yüksek" }, { value: "medium", label: "Orta" }, { value: "low", label: "Düşük / yeni" }]} />
+                <Select label="Varsayılan Kalite Geçmişi" name="quality_history" value={settings.quality_history} onChange={handleChange} options={[{ value: "good", label: "Sorunsuz" }, { value: "medium", label: "Ara sıra sorun" }, { value: "bad", label: "Sık sorun" }, { value: "unknown", label: "Bilinmiyor" }]} />
+                <Select label="Varsayılan Kur Riski" name="currency_risk" value={settings.currency_risk} onChange={handleChange} options={[{ value: "none", label: "Yok" }, { value: "low", label: "Düşük" }, { value: "medium", label: "Orta" }, { value: "high", label: "Yüksek" }]} />
+              </div>
+
+              <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900">
+                Firma veya ürün bazında güvenilir veri yoksa sistem kesin karar vermek yerine kontrol uyarısı üretir.
+              </div>
+            </div>
+
+            <div className="mt-8 border-t border-slate-200 pt-6">
+              <SectionTitle title="Analiz Varsayılanları" text="Dosya yükleme sınırları ve rapor başlangıç değerleri." />
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
                 <Input
                   label="Maksimum Dosya Boyutu MB"
                   name="max_file_size_mb"
@@ -428,9 +480,10 @@ function Select({ label, name, value, onChange, options }) {
         onChange={onChange}
         className="w-full rounded-xl border border-slate-300 p-3 text-sm"
       >
-        {options.map((option) => (
-          <option key={option}>{option}</option>
-        ))}
+        {options.map((item) => {
+          const option = typeof item === "string" ? { value: item, label: item } : item;
+          return <option key={option.value} value={option.value}>{option.label}</option>;
+        })}
       </select>
     </label>
   );

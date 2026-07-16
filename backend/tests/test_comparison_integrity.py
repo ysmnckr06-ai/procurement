@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.parsers.request_parser import parse_request_excel
 from app.parsers.excel_parser import parse_excel_with_audit
-from app.services.analyzer import analyze_groups
+from app.services.analyzer import analyze_groups, calculate_delay_penalty, calculate_finance_advantage
 from app.services.matcher import match_offers_to_requests, rows_match
 from app.services.report_builder import build_excel_report
 from app.utils import extract_days
@@ -180,7 +180,11 @@ class ComparisonIntegrityTests(unittest.TestCase):
             },
         ]
         groups = match_offers_to_requests(offers, [request])
-        analyzed = analyze_groups(groups, {"TRY": 1.0, "USD": 47.0})
+        analyzed = analyze_groups(
+            groups,
+            {"TRY": 1.0, "USD": 47.0},
+            constraints={"missing_data_policy": "warn_only"},
+        )
         result = analyzed[0]
 
         self.assertEqual([(item["firma"], item["quantity"]) for item in result["recommendedAllocation"]], [
@@ -189,6 +193,14 @@ class ComparisonIntegrityTests(unittest.TestCase):
         ])
         self.assertEqual(result["uncoveredQuantity"], 0)
         self.assertGreater(result["savingsVsFullTRY"], 9000)
+
+    def test_finance_advantage_uses_present_value(self):
+        advantage = calculate_finance_advantage(7302.10, 75, 45)
+        self.assertAlmostEqual(advantage, 536.75, places=2)
+
+    def test_delay_cost_only_applies_after_company_target(self):
+        self.assertEqual(calculate_delay_penalty(15, 15, 100), 0)
+        self.assertEqual(calculate_delay_penalty(20, 15, 100), 500)
 
 
 if __name__ == "__main__":

@@ -13,6 +13,7 @@ DEFAULT_USER_CONSTRAINTS = {
     "min_vade_days": None,             # örn: 60
     "max_termin_days": None,           # örn: 10
     "allow_missing_qty": False,
+    "missing_data_policy": "manual_review",
 }
 
 DEFAULT_USER_PREFERENCES = {
@@ -138,11 +139,14 @@ def calculate_net_total(net_birim_fiyat_try, talep_edilen_adet):
     return net_birim_fiyat_try * adet
 
 def calculate_finance_advantage(net_toplam_try, vade_days, annual_interest_rate):
-    daily_rate = (annual_interest_rate / 100) / 365
-    return net_toplam_try * daily_rate * vade_days
+    if net_toplam_try <= 0 or vade_days <= 0 or annual_interest_rate <= 0:
+        return 0
+    present_value = net_toplam_try / ((1 + annual_interest_rate / 100) ** (vade_days / 365))
+    return net_toplam_try - present_value
 
-def calculate_delay_penalty(termin_days, daily_delay_cost):
-    return termin_days * daily_delay_cost
+def calculate_delay_penalty(termin_days, accepted_termin_days, daily_delay_cost):
+    delayed_days = max(termin_days - max(accepted_termin_days, 0), 0)
+    return delayed_days * daily_delay_cost
 
 def calculate_missing_qty_cost(eksik_adet, net_birim_try, multiplier):
     if eksik_adet <= 0:
@@ -282,6 +286,12 @@ def apply_constraints(metrics, constraints):
     if not allow_missing and metrics["eksikAdet"] > 0:
         reasons.append(f"Eksik adet var ({metrics['eksikAdet']})")
 
+    if constraints.get("missing_data_policy", "manual_review") == "manual_review":
+        if not metrics.get("vadeKnown"):
+            reasons.append("Vade bilgisi eksik; manuel kontrol gerekli")
+        if not metrics.get("terminKnown"):
+            reasons.append("Termin bilgisi eksik; manuel kontrol gerekli")
+
     return {
         "eligible": len(reasons) == 0,
         "eliminationReasons": reasons,
@@ -334,6 +344,7 @@ def score_offer(row, exchange_rates, talep_edilen_adet, config=None, constraints
 
     delay_penalty = calculate_delay_penalty(
         termin_days,
+        safe_float(constraints.get("max_termin_days"), 0),
         safe_float(config.get("daily_delay_cost", 0))
     )
 
