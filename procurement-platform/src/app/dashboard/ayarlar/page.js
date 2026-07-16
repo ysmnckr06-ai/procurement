@@ -341,7 +341,7 @@ export default function SettingsPage() {
               </div>
             </div>
 
-            <div className="mt-8 border-t border-slate-200 pt-6">
+            <div id="satinalma-politikasi" className="mt-8 scroll-mt-6 border-t border-slate-200 pt-6">
               <SectionTitle
                 title="Satın Alma Karar Politikası"
                 text="Şirketiniz bu değerleri bir kez tanımlar; teklif mukayeseleri otomatik olarak aynı politikayı kullanır."

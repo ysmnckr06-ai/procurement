@@ -2,6 +2,7 @@
 
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { findOrCreateBusinessPartner } from "@/lib/businessPartners";
 import { formatMoney } from "@/lib/currency";
@@ -1175,6 +1176,40 @@ const loadCompanySettings = async () => {
           </div>
 
           <div className="space-y-6">
+            <section className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-6 shadow-sm">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <div className="text-xs font-black uppercase tracking-wide text-emerald-700">
+                    Şirket genelinde geçerli
+                  </div>
+                  <h2 className="mt-1 text-xl font-bold text-slate-800">Aktif Satın Alma Politikası</h2>
+                  <p className="mt-2 text-sm text-slate-600">
+                    Ayarlar bölümünde tanımlanan kurallar bu mukayese analizine otomatik uygulanır.
+                  </p>
+                </div>
+                <Link
+                  href="/dashboard/ayarlar#satinalma-politikasi"
+                  className="shrink-0 rounded-xl border border-emerald-300 bg-white px-4 py-2 text-sm font-bold text-emerald-800 hover:bg-emerald-100"
+                >
+                  Politikayı Görüntüle
+                </Link>
+              </div>
+
+              <div className="mt-5 grid grid-cols-2 gap-3">
+                <PolicyValue label="Finansman oranı" value={`%${Number(companySettings.annual_interest_rate || 0)}`} />
+                <PolicyValue label="Kabul edilen termin" value={`${Number(companySettings.accepted_termin_days || 0)} gün`} />
+                <PolicyValue label="Gecikme maliyeti" value={`${Number(companySettings.daily_delay_cost_try || 0)} TRY/gün`} />
+                <PolicyValue
+                  label="Eksik bilgi kararı"
+                  value={companySettings.missing_data_policy === "warn_only" ? "Uyar ve değerlendir" : "Manuel kontrol"}
+                />
+              </div>
+
+              <div className="mt-4 rounded-xl border border-emerald-200 bg-white/80 p-3 text-xs font-semibold leading-5 text-emerald-900">
+                Aşırı fiyat farkı, eksik vade/termin veya birbirine çok yakın teklifler oluşursa sistem otomatik öneriyi durdurup kontrol ister.
+              </div>
+            </section>
+
             <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
               <h2 className="text-xl font-bold text-slate-800">Kur Bilgileri</h2>
               <p className="mt-2 text-sm text-slate-600">
@@ -1295,4 +1330,13 @@ const loadCompanySettings = async () => {
     </main>
   </div>
 );
+}
+
+function PolicyValue({ label, value }) {
+  return (
+    <div className="rounded-xl border border-emerald-100 bg-white p-3">
+      <div className="text-xs font-semibold text-slate-500">{label}</div>
+      <div className="mt-1 text-sm font-black text-slate-900">{value}</div>
+    </div>
+  );
 }
