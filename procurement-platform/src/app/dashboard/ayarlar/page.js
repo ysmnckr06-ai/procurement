@@ -51,11 +51,9 @@ function StatCard({ title, value, text }) {
 export default function SettingsPage() {
   const router = useRouter();
   const [settings, setSettings] = useState(defaultSettings);
-  const [recordId, setRecordId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [liveRateInfo, setLiveRateInfo] = useState(null);
-  const [loadingRates, setLoadingRates] = useState(false);
 
   useEffect(() => {
     loadSettings();
@@ -69,6 +67,7 @@ export default function SettingsPage() {
     } = await supabase.auth.getUser();
 
     if (!user) {
+      setLoading(false);
       router.push("/login");
       return;
     }
@@ -88,13 +87,39 @@ export default function SettingsPage() {
       return;
     }
 
-    if (data?.[0]) {
-      setRecordId(data[0].id);
-      setSettings({
-        ...defaultSettings,
-        ...data[0],
-      });
+    const savedSettings = data?.[0] || null;
+
+    let nextSettings = {
+      ...defaultSettings,
+      ...(savedSettings || {}),
+      company_name:
+        String(savedSettings?.company_name || "").trim() ||
+        String(user.user_metadata?.company_name || "").trim(),
+      tax_no:
+        String(savedSettings?.tax_no || "").trim() ||
+        String(user.user_metadata?.tax_no || "").trim(),
+      notify_email:
+        String(savedSettings?.notify_email || "").trim() ||
+        String(user.email || "").trim(),
+    };
+
+    try {
+      const live = await fetchLiveTryRates();
+      setLiveRateInfo(live);
+      nextSettings = {
+        ...nextSettings,
+        usd_rate: Number(live.rates.USD || nextSettings.usd_rate || 1).toFixed(4),
+        eur_rate: Number(live.rates.EUR || nextSettings.eur_rate || 1).toFixed(4),
+        gbp_rate: Number(live.rates.GBP || nextSettings.gbp_rate || 1).toFixed(4),
+        exchange_rate_date: live.date || new Date().toISOString().slice(0, 10),
+      };
+    } catch (liveRateError) {
+      console.error(liveRateError);
+      setLiveRateInfo(null);
+      setMessage("Canlı kur otomatik alınamadı. Sistem kayıtlı son geçerli kurları kullanacak.");
     }
+
+    setSettings(nextSettings);
 
     setLoading(false);
   }
@@ -105,28 +130,6 @@ export default function SettingsPage() {
       ...prev,
       [name]: type === "checkbox" ? checked : value,
     }));
-  }
-
-  async function loadLiveRates() {
-    setLoadingRates(true);
-    setMessage("");
-    try {
-      const live = await fetchLiveTryRates();
-      setLiveRateInfo(live);
-      setSettings((prev) => ({
-        ...prev,
-        usd_rate: Number(live.rates.USD || prev.usd_rate || 1).toFixed(4),
-        eur_rate: Number(live.rates.EUR || prev.eur_rate || 1).toFixed(4),
-        gbp_rate: Number(live.rates.GBP || prev.gbp_rate || 1).toFixed(4),
-        exchange_rate_date: live.date || new Date().toISOString().slice(0, 10),
-      }));
-      setMessage("Canlı kurlar alındı. Kayıt/onay kuru olarak kullanmak için ayarları kaydedin.");
-    } catch (error) {
-      console.error(error);
-      setMessage("Canlı kur alınamadı. Manuel kur alanlarını kullanabilirsiniz.");
-    } finally {
-      setLoadingRates(false);
-    }
   }
 
   async function handleSubmit(event) {
@@ -195,27 +198,14 @@ export default function SettingsPage() {
       notify_email: settings.notify_email.trim(),
     };
 
-    const existing = recordId
-      ? { id: recordId }
-      : (
-          await supabase
-            .from("company_settings")
-            .select("id")
-            .eq("user_id", user.id)
-            .order("updated_at", { ascending: false })
-            .order("created_at", { ascending: false })
-            .limit(1)
-        ).data?.[0];
-
-    const request = existing?.id
-      ? supabase
-          .from("company_settings")
-          .update({ ...payload, updated_at: new Date().toISOString() })
-          .eq("id", existing.id)
-          .eq("user_id", user.id)
-      : supabase.from("company_settings").insert(payload);
-
-    const { data, error } = await request.select("*").limit(1);
+    const { data, error } = await supabase
+      .from("company_settings")
+      .upsert(
+        { ...payload, updated_at: new Date().toISOString() },
+        { onConflict: "user_id" },
+      )
+      .select("*")
+      .limit(1);
 
     if (error) {
       console.error(error);
@@ -224,11 +214,20 @@ export default function SettingsPage() {
     }
 
     if (data?.[0]?.id) {
-      setRecordId(data[0].id);
       setSettings({
         ...defaultSettings,
         ...data[0],
       });
+    }
+
+    const { error: metadataError } = await supabase.auth.updateUser({
+      data: {
+        company_name: payload.company_name,
+        tax_no: payload.tax_no,
+      },
+    });
+    if (metadataError) {
+      console.error(metadataError);
     }
 
     setMessage("Ayarlar kaydedildi. Yeni teklif ve siparişlerde bu değerler kullanılacak.");
@@ -251,7 +250,10 @@ export default function SettingsPage() {
             </div>
             <button
               type="button"
-              onClick={loadSettings}
+              onClick={() => {
+                setMessage("");
+                loadSettings();
+              }}
               className="rounded-xl border border-slate-300 bg-white px-5 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
             >
               Yenile
@@ -278,7 +280,7 @@ export default function SettingsPage() {
           >
             <SectionTitle
               title="Şirket Bilgileri"
-              text="Rapor ve sipariş ekranlarında kullanılacak temel bilgiler."
+              text="Bu bilgiler kullanıcı hesabınıza kalıcı olarak kaydedilir; sonraki girişlerde rapor ve sipariş ekranlarında otomatik kullanılır."
             />
 
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -314,9 +316,9 @@ export default function SettingsPage() {
               />
               <div className="mb-4 flex flex-col gap-3 rounded-2xl border border-blue-100 bg-blue-50 p-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <div className="text-sm font-black text-blue-900">Canlı kur takibi</div>
+                  <div className="text-sm font-black text-blue-900">Canlı kur takibi · Otomatik</div>
                   <div className="mt-1 text-sm font-semibold text-blue-700">
-                    Proje, sipariş ve ödeme kayıtlarında sabit kur saklanır; canlı kur farkı takip için gösterilir.
+                    Güncel kurlar sayfa açıldığında otomatik alınır. Proje, sipariş ve ödeme kayıtlarında işlem anındaki kur ayrıca sabitlenir.
                   </div>
                   {liveRateInfo && (
                     <div className="mt-2 text-xs font-bold text-blue-800">
@@ -324,20 +326,15 @@ export default function SettingsPage() {
                     </div>
                   )}
                 </div>
-                <button
-                  type="button"
-                  onClick={loadLiveRates}
-                  disabled={loadingRates}
-                  className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white hover:bg-blue-700 disabled:bg-slate-300"
-                >
-                  {loadingRates ? "Alınıyor..." : "Canlı Kurları Al"}
-                </button>
+                <div className="w-fit rounded-full bg-blue-600 px-4 py-2 text-xs font-black text-white">
+                  Otomatik güncel
+                </div>
               </div>
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-                <Input label="USD Kuru" name="usd_rate" type="number" min="0.000001" value={settings.usd_rate} onChange={handleChange} />
-                <Input label="EUR Kuru" name="eur_rate" type="number" min="0.000001" value={settings.eur_rate} onChange={handleChange} />
-                <Input label="GBP Kuru" name="gbp_rate" type="number" min="0.000001" value={settings.gbp_rate} onChange={handleChange} />
-                <Input label="Kur Tarihi" name="exchange_rate_date" type="date" value={settings.exchange_rate_date} onChange={handleChange} />
+                <Input label="USD Kuru" name="usd_rate" type="number" min="0.000001" value={settings.usd_rate} onChange={handleChange} readOnly />
+                <Input label="EUR Kuru" name="eur_rate" type="number" min="0.000001" value={settings.eur_rate} onChange={handleChange} readOnly />
+                <Input label="GBP Kuru" name="gbp_rate" type="number" min="0.000001" value={settings.gbp_rate} onChange={handleChange} readOnly />
+                <Input label="Kur Tarihi" name="exchange_rate_date" type="date" value={settings.exchange_rate_date} onChange={handleChange} readOnly />
               </div>
             </div>
 
@@ -453,7 +450,7 @@ function SectionTitle({ title, text }) {
   );
 }
 
-function Input({ label, name, value, onChange, type = "text", min }) {
+function Input({ label, name, value, onChange, type = "text", min, readOnly = false }) {
   return (
     <label className="block">
       <span className="mb-2 block text-sm font-bold text-slate-700">{label}</span>
@@ -464,7 +461,8 @@ function Input({ label, name, value, onChange, type = "text", min }) {
         onChange={onChange}
         step={type === "number" ? "any" : undefined}
         min={min}
-        className="w-full rounded-xl border border-slate-300 p-3 text-sm"
+        readOnly={readOnly}
+        className={`w-full rounded-xl border border-slate-300 p-3 text-sm ${readOnly ? "bg-slate-100 text-slate-600" : "bg-white"}`}
       />
     </label>
   );

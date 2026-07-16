@@ -2,6 +2,16 @@ import { NextResponse } from "next/server";
 
 const TARGETS = ["USD", "EUR", "GBP"];
 
+function normalizeIsoDate(value) {
+  const raw = String(value || "").trim();
+  const turkishDate = raw.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+  if (turkishDate) {
+    return `${turkishDate[3]}-${turkishDate[2]}-${turkishDate[1]}`;
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  return new Date().toISOString().slice(0, 10);
+}
+
 function textBetween(text, start, end) {
   const match = String(text || "").match(new RegExp(`${start}([\\s\\S]*?)${end}`));
   return match?.[1]?.trim() || "";
@@ -18,7 +28,7 @@ function normalizeRatesFromTcmb(xmlText) {
     const selling = Number(textBetween(block, "<ForexSelling>", "</ForexSelling>"));
     if (selling > 0) rates[currency] = selling / unit;
   });
-  const date = String(xmlText || "").match(/Tarih="([^"]+)"/)?.[1] || new Date().toISOString().slice(0, 10);
+  const date = normalizeIsoDate(String(xmlText || "").match(/Tarih="([^"]+)"/)?.[1]);
   return {
     date,
     source: "TCMB döviz satış",
@@ -33,7 +43,7 @@ function normalizeRatesFromFrankfurter(data) {
     if (tryToCurrency > 0) rates[currency] = 1 / tryToCurrency;
   });
   return {
-    date: data?.date || new Date().toISOString().slice(0, 10),
+    date: normalizeIsoDate(data?.date),
     source: "Frankfurter / ECB",
     rates,
   };
