@@ -165,7 +165,7 @@ class ComparisonIntegrityTests(unittest.TestCase):
         self.assertTrue(audit["rows"])
         self.assertEqual(audit["rows"][0]["paraBirimi"], "USD")
 
-    def test_partial_offer_is_completed_by_split_allocation(self):
+    def test_extreme_price_spread_requires_manual_review(self):
         request = {"urunKodu": "SINYAL", "urunAciklamasi": "Sinyal Lambasi", "birim": "adet", "talepEdilenAdet": 138}
         offers = [
             {
@@ -187,12 +187,46 @@ class ComparisonIntegrityTests(unittest.TestCase):
         )
         result = analyzed[0]
 
-        self.assertEqual([(item["firma"], item["quantity"]) for item in result["recommendedAllocation"]], [
-            ("Ucuz Kismi", 137.0),
-            ("Pahali Tam", 1.0),
-        ])
-        self.assertEqual(result["uncoveredQuantity"], 0)
-        self.assertGreater(result["savingsVsFullTRY"], 9000)
+        self.assertEqual(result["decisionStatus"], "manual_review")
+        self.assertIsNone(result["bestOffer"])
+        self.assertEqual(result["recommendedAllocation"], [])
+        self.assertTrue(any("fark" in warning.lower() for warning in result["decisionWarnings"]))
+
+    def test_try_offer_has_no_currency_risk_premium(self):
+        request = {"urunKodu": "TRY-1", "urunAciklamasi": "TRY Urun", "birim": "adet", "talepEdilenAdet": 1}
+        offer = {
+            "firma": "Yerli", "urunKodu": "TRY-1", "urunAciklamasi": "TRY Urun",
+            "birim": "adet", "firmaAdedi": 1, "netBirimFiyat": 100, "netToplam": 100,
+            "paraBirimi": "TRY", "vade": "30 gun", "termin": "5 gun",
+        }
+        analyzed = analyze_groups(
+            match_offers_to_requests([offer], [request]),
+            {"TRY": 1.0},
+            constraints={"currency_risk": "high", "missing_data_policy": "warn_only"},
+        )
+        self.assertEqual(analyzed[0]["offers"][0]["currencyRiskRate"], 0)
+
+    def test_near_equal_offers_require_manual_decision(self):
+        request = {"urunKodu": "TIE-1", "urunAciklamasi": "Esit Urun", "birim": "adet", "talepEdilenAdet": 10}
+        offers = [
+            {
+                "firma": "Firma A", "urunKodu": "TIE-1", "urunAciklamasi": "Esit Urun",
+                "birim": "adet", "firmaAdedi": 10, "netBirimFiyat": 100, "netToplam": 1000,
+                "paraBirimi": "TRY", "vade": "30 gun", "termin": "5 gun",
+            },
+            {
+                "firma": "Firma B", "urunKodu": "TIE-1", "urunAciklamasi": "Esit Urun",
+                "birim": "adet", "firmaAdedi": 10, "netBirimFiyat": 100.2, "netToplam": 1002,
+                "paraBirimi": "TRY", "vade": "30 gun", "termin": "5 gun",
+            },
+        ]
+        analyzed = analyze_groups(
+            match_offers_to_requests(offers, [request]),
+            {"TRY": 1.0},
+            constraints={"missing_data_policy": "warn_only"},
+        )
+        self.assertEqual(analyzed[0]["decisionStatus"], "manual_review")
+        self.assertTrue(any("%0,5" in warning for warning in analyzed[0]["decisionWarnings"]))
 
     def test_finance_advantage_uses_present_value(self):
         advantage = calculate_finance_advantage(7302.10, 75, 45)

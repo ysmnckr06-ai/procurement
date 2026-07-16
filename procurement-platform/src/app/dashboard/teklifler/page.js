@@ -300,6 +300,8 @@ const loadCompanySettings = async () => {
       .from("company_settings")
       .select("*")
       .eq("user_id", user.id)
+      .order("updated_at", { ascending: false })
+      .order("created_at", { ascending: false })
       .limit(1);
 
     if (error || !data?.[0]) return;

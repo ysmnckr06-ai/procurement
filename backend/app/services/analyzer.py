@@ -156,7 +156,7 @@ def calculate_missing_qty_cost(eksik_adet, net_birim_try, multiplier):
 def calculate_supplier_risk(net_toplam_try, supplier_risk_rate):
     return net_toplam_try * (supplier_risk_rate / 100)
 
-def calculate_advanced_risk_costs(net_toplam_try, constraints):
+def calculate_advanced_risk_costs(net_toplam_try, constraints, currency="TRY"):
     critical_map = {
         "low": 0.00,
         "medium": 0.03,
@@ -209,7 +209,13 @@ def calculate_advanced_risk_costs(net_toplam_try, constraints):
     shipping_rate = shipping_map.get(constraints.get("shipping_included", "included"), 0.00)
     trust_rate = trust_map.get(constraints.get("supplier_trust", "medium"), 0.02)
     quality_rate = quality_map.get(constraints.get("quality_history", "unknown"), 0.04)
-    currency_rate = currency_map.get(constraints.get("currency_risk", "medium"), 0.05)
+    # Kur riski yalnız yabancı para tekliflerine uygulanır. TRY teklifine kur
+    # primi eklemek, yerli para teklifini yapay biçimde pahalılaştırır.
+    currency_rate = (
+        currency_map.get(constraints.get("currency_risk", "medium"), 0.05)
+        if normalize_currency(currency) != "TRY"
+        else 0.00
+    )
 
     shipping_cost = safe_float(constraints.get("shipping_cost"), 0)
 
@@ -358,7 +364,7 @@ def score_offer(row, exchange_rates, talep_edilen_adet, config=None, constraints
         net_toplam_try,
         safe_float(row.get("supplierRiskRate", config.get("supplier_risk_rate", 0)))
     )
-    advanced_risk = calculate_advanced_risk_costs(net_toplam_try, constraints)
+    advanced_risk = calculate_advanced_risk_costs(net_toplam_try, constraints, currency)
     advanced_risk_cost = safe_float(advanced_risk.get("advancedRiskCostTRY"), 0)
 
 # TCO = gerçek toplam maliyet.
@@ -527,6 +533,41 @@ def choose_best_offer(offers):
     return eligible_offers[0]
 
 
+def automatic_decision_warnings(offers, price_spread_limit=3.0, tie_tolerance=0.005):
+    """Return conditions where the engine must not make a blind recommendation."""
+    warnings = []
+    eligible = [offer for offer in offers if offer.get("uygunMu") is True]
+    priced = [
+        safe_float(offer.get("netBirimFiyatTRY", 0))
+        for offer in offers
+        if safe_float(offer.get("netBirimFiyatTRY", 0)) > 0
+    ]
+
+    if len(priced) >= 2:
+        cheapest = min(priced)
+        highest = max(priced)
+        ratio = highest / cheapest if cheapest > 0 else 0
+        if ratio >= price_spread_limit:
+            warnings.append(
+                f"Birim fiyatlar arasında {ratio:.1f} kat fark var; ürün kapsamı ve fiyat para birimi doğrulanmalı"
+            )
+
+    ranked = sorted(
+        eligible,
+        key=lambda offer: safe_float(offer.get("evaluatedCostTRY", 999999999)),
+    )
+    if len(ranked) >= 2:
+        first_cost = safe_float(ranked[0].get("evaluatedCostTRY", 0))
+        second_cost = safe_float(ranked[1].get("evaluatedCostTRY", 0))
+        baseline = max(min(first_cost, second_cost), 0.000001)
+        if abs(second_cost - first_cost) / baseline <= tie_tolerance:
+            warnings.append(
+                "En iyi iki teklifin değerlendirilmiş maliyet farkı %0,5 veya altında; kullanıcı kararı gerekli"
+            )
+
+    return warnings
+
+
 def build_recommended_allocation(offers, requested_quantity):
     """Build the lowest-cost complete allocation without hiding partial quotations."""
     remaining = max(safe_float(requested_quantity), 0)
@@ -636,8 +677,14 @@ def analyze_groups(groups, exchange_rates, config=None, constraints=None, prefer
             )
         )
 
-        best_offer = choose_best_offer(offers)
-        recommended_allocation, uncovered_quantity = build_recommended_allocation(offers, talep_edilen_adet)
+        provisional_best_offer = choose_best_offer(offers)
+        decision_warnings = automatic_decision_warnings(offers)
+        manual_review_required = bool(decision_warnings)
+        best_offer = None if manual_review_required else provisional_best_offer
+        if manual_review_required:
+            recommended_allocation, uncovered_quantity = [], talep_edilen_adet
+        else:
+            recommended_allocation, uncovered_quantity = build_recommended_allocation(offers, talep_edilen_adet)
         recommended_total = sum(safe_float(item.get("totalTRY", 0)) for item in recommended_allocation)
         full_offers = [
             offer for offer in offers
@@ -660,6 +707,9 @@ def analyze_groups(groups, exchange_rates, config=None, constraints=None, prefer
             "talepEdilenAdet": talep_edilen_adet,
             "offers": offers,
             "bestOffer": best_offer,
+            "provisionalBestOffer": provisional_best_offer,
+            "decisionStatus": "manual_review" if manual_review_required else ("automatic" if best_offer else "no_eligible_offer"),
+            "decisionWarnings": decision_warnings,
             "recommendedAllocation": recommended_allocation,
             "recommendedTotalTRY": round(recommended_total, 4),
             "uncoveredQuantity": uncovered_quantity,
@@ -669,7 +719,11 @@ def analyze_groups(groups, exchange_rates, config=None, constraints=None, prefer
                 4,
             ) if cheapest_full_offer and uncovered_quantity <= 0 else 0,
             "onerilenFirma": best_offer.get("firma", "") if best_offer else "",
-            "kararNedeni": generate_decision(best_offer, offers),
+            "kararNedeni": (
+                "Manuel kontrol gerekli: " + " | ".join(decision_warnings)
+                if manual_review_required
+                else generate_decision(best_offer, offers)
+            ),
             "enAvantajliNetTutarTRY": best_offer.get("netToplamTRY", 0) if best_offer else 0,
             "enAvantajliTCOTRY": best_offer.get("tcoTRY", 0) if best_offer else 0,
             "productId": master.get("productId"),

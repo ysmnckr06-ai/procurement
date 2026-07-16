@@ -1264,13 +1264,18 @@ def build_excel_report(analyzed_groups, output_path, company_info=None):
         spread_note = _price_spread_note(group.get("offers", []))
         if len(allocations) > 1:
             quantity_notes.append("Bölünmüş alım önerisi: minimum sipariş, nakliye ve tek tedarikçi şartını onaylayın.")
-        note = " ".join(quantity_notes + ([spread_note] if spread_note else [])) or "Miktar ve fiyat açısından olağan dışı fark yok."
+        decision_warnings = [str(item) for item in group.get("decisionWarnings", []) if str(item).strip()]
+        if group.get("decisionStatus") == "manual_review":
+            quantity_notes.insert(0, "Otomatik öneri durduruldu; manuel satınalma kontrolü gerekli.")
+        note = " ".join(quantity_notes + decision_warnings + ([spread_note] if spread_note else [])) or "Miktar ve fiyat açısından olağan dışı fark yok."
         decision.write_number(row, 0, index, center_fmt)
         decision.write(row, 1, _clean(group.get("urunKodu")), text_fmt)
         decision.write(row, 2, _clean(group.get("urunAciklamasi")), text_fmt)
         decision.write(row, 3, _clean(group.get("birim")), center_fmt)
         decision.write_number(row, 4, requested, qty_fmt)
-        decision.write(row, 5, _allocation_text(group), good_fmt if uncovered <= 0 else bad_fmt)
+        allocation_text = "Manuel kontrol gerekli" if group.get("decisionStatus") == "manual_review" else _allocation_text(group)
+        allocation_format = warn_fmt if group.get("decisionStatus") == "manual_review" else (good_fmt if uncovered <= 0 else bad_fmt)
+        decision.write(row, 5, allocation_text, allocation_format)
         decision.write_number(row, 6, covered, qty_fmt)
         decision.write_number(row, 7, uncovered, bad_fmt if uncovered > 0 else qty_fmt)
         decision.write_number(row, 8, _safe_num(group.get("recommendedTotalTRY", 0)), money_fmt)
