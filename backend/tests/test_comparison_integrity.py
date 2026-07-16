@@ -5,7 +5,7 @@ from pathlib import Path
 import sys
 
 import pandas as pd
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -154,6 +154,91 @@ class ComparisonIntegrityTests(unittest.TestCase):
         self.assertNotIn("Stoktan", shared_strings)
         self.assertIn("Kalem Bazlı Mukayese", workbook_xml)
         self.assertNotIn("Satın Alınacak", shared_strings)
+
+    def test_report_uses_approved_side_by_side_supplier_layout_and_policy_formulas(self):
+        request = {
+            "urunKodu": "ABC-1",
+            "urunAciklamasi": "Test Ürünü",
+            "marka": "ABB",
+            "birim": "adet",
+            "talepEdilenAdet": 5,
+        }
+        offers = [
+            {
+                "firma": "EKA - Kopya.xlsx",
+                "urunKodu": "ABC-1",
+                "urunAciklamasi": "Test Ürünü",
+                "marka": "ABB",
+                "birim": "adet",
+                "firmaAdedi": 5,
+                "birimFiyat": 10,
+                "iskonto": 10,
+                "netBirimFiyat": 9,
+                "netToplam": 45,
+                "paraBirimi": "TRY",
+                "vade": "60 gün",
+                "termin": "10 gün",
+            },
+            {
+                "firma": "Elizan.pdf",
+                "urunKodu": "ABC-1",
+                "urunAciklamasi": "Test Ürünü",
+                "marka": "ABB",
+                "birim": "adet",
+                "firmaAdedi": 5,
+                "birimFiyat": 11,
+                "iskonto": 0,
+                "netBirimFiyat": 11,
+                "netToplam": 55,
+                "paraBirimi": "TRY",
+                "vade": "30 gün",
+                "termin": "12 gün",
+            },
+        ]
+        analyzed = analyze_groups(
+            match_offers_to_requests(offers, [request]),
+            {"TRY": 1.0},
+            constraints={
+                "missing_data_policy": "warn_only",
+                "supplier_profiles": [
+                    {"name": "EKA", "trust_level": "medium", "quality_history": "good", "status": "Aktif"},
+                    {"name": "ELIZAN", "trust_level": "medium", "quality_history": "good", "status": "Aktif"},
+                ],
+            },
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "approved-layout.xlsx"
+            build_excel_report(
+                analyzed,
+                path,
+                {
+                    "company_name": "Test Şirketi",
+                    "annual_interest_rate": 32,
+                    "accepted_termin_days": 12,
+                    "daily_delay_cost_try": 250,
+                    "missing_data_policy": "warn_only",
+                },
+            )
+            workbook = load_workbook(path, data_only=False)
+
+        self.assertEqual(
+            workbook.sheetnames,
+            ["Kalem Bazlı Mukayese", "Hesaplama Varsayımları", "Kontroller"],
+        )
+        main = workbook["Kalem Bazlı Mukayese"]
+        self.assertEqual(main["A5"].value, "TALEP BİLGİSİ")
+        self.assertEqual(main["G5"].value, "EKA")
+        self.assertEqual(main["U5"].value, "ELIZAN")
+        self.assertEqual(main["AI5"].value, "ÖNERİLEN ALIM")
+        self.assertEqual(main["J7"].value, "=H7*(1-I7)")
+        self.assertIn("'Hesaplama Varsayımları'!$B$3", main["O7"].value)
+        self.assertNotIn("Teklif Detayı", workbook.sheetnames)
+
+        assumptions = workbook["Hesaplama Varsayımları"]
+        self.assertEqual(assumptions["B3"].value, 0.32)
+        self.assertEqual(assumptions["B4"].value, 12)
+        self.assertEqual(assumptions["B5"].value, 250)
 
 
     def test_excel_currency_is_read_from_cell_number_format(self):

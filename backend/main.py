@@ -1875,7 +1875,7 @@ async def analyze_offers(
 
     # --- ŞİRKET / KARAR MOTORU AYARLARI ---
     decision_config = {
-        "annual_interest_rate": 45.0,
+        "annual_interest_rate": max(float(annual_interest_rate or 0), 0.0),
         "daily_delay_cost": max(float(daily_delay_cost or 0), 0.0),
         "missing_qty_penalty_multiplier": 1.25,
         "supplier_risk_rate": 0.0,
@@ -1905,7 +1905,15 @@ async def analyze_offers(
     report_storage_bucket = "request-reports"
     report_storage_path = f"{user_id}/comparison/{report_name}"
 
-    build_excel_report(analyzed, report_path, resolve_company_info(user))
+    report_company_info = resolve_company_info(user) or {}
+    report_termin_days = safe_int_form(max_termin_days)
+    report_company_info.update({
+        "annual_interest_rate": max(float(annual_interest_rate or 0), 0.0),
+        "accepted_termin_days": report_termin_days if report_termin_days is not None else 15,
+        "daily_delay_cost_try": max(float(daily_delay_cost or 0), 0.0),
+        "missing_data_policy": user_constraints["missing_data_policy"],
+    })
+    build_excel_report(analyzed, report_path, report_company_info)
     upload_private_report(report_path, report_storage_path)
 
     order_items = []
