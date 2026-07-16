@@ -598,10 +598,13 @@ const loadSupplierProfiles = async () => {
               findOrCreateBusinessPartner(supabase, user.id, {
                 name,
                 partnerType: "Tedarikçi",
-                allowCreate: false,
+                allowCreate: true,
+                matchPartnerType: true,
+                notes: "Teklif analizi sırasında otomatik oluşturuldu.",
               }),
             ),
           );
+          await loadSupplierProfiles();
         }
         setReportReady(true);
         setReportPath(

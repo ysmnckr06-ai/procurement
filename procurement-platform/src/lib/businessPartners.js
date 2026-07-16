@@ -235,6 +235,7 @@ export async function findOrCreateBusinessPartner(
     allowCreate = true,
     forceCreate = false,
     allowProbableMatch = false,
+    matchPartnerType = false,
     rejectDuplicateTax = false,
   } = {},
 ) {
@@ -262,10 +263,17 @@ export async function findOrCreateBusinessPartner(
     throw error;
   }
 
+  const matchCandidates = matchPartnerType
+    ? (partners || []).filter(
+        (partner) =>
+          normalizePartnerRecord(partner).partner_type === partnerType,
+      )
+    : partners || [];
+
   const match = forceCreate
     ? null
     : findBestPartnerMatch(
-        partners || [],
+        matchCandidates,
         {
           name: cleanName,
           taxNumber,
