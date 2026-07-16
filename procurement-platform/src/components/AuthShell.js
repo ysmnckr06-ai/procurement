@@ -178,6 +178,8 @@ export function AuthInput({
   autoComplete,
   icon,
   rightElement,
+  inputMode,
+  maxLength,
 }) {
   return (
     <label htmlFor={id} className="block">
@@ -192,6 +194,8 @@ export function AuthInput({
           placeholder={placeholder}
           required={required}
           autoComplete={autoComplete}
+          inputMode={inputMode}
+          maxLength={maxLength}
           className="h-full min-w-0 flex-1 bg-transparent text-sm font-semibold text-slate-950 outline-none placeholder:text-slate-400"
         />
         {rightElement}

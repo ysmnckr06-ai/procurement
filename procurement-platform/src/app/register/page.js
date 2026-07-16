@@ -42,6 +42,7 @@ export default function RegisterPage() {
 
   const [fullName, setFullName] = useState("");
   const [companyName, setCompanyName] = useState("");
+  const [taxNo, setTaxNo] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -63,6 +64,13 @@ export default function RegisterPage() {
       return;
     }
 
+    const normalizedTaxNo = taxNo.replace(/\D/g, "");
+    if (!/^\d{10,11}$/.test(normalizedTaxNo)) {
+      setMessageType("error");
+      setMessage("Vergi numarası 10 veya 11 rakam olmalıdır.");
+      return;
+    }
+
     setLoading(true);
 
     const { error } = await supabase.auth.signUp({
@@ -70,8 +78,9 @@ export default function RegisterPage() {
       password,
       options: {
         data: {
-          full_name: fullName,
-          company_name: companyName,
+          full_name: fullName.trim(),
+          company_name: companyName.trim(),
+          tax_no: normalizedTaxNo,
         },
       },
     });
@@ -134,17 +143,36 @@ export default function RegisterPage() {
             />
           </div>
 
-          <AuthInput
-            id="email"
-            label="E-posta adresiniz"
-            type="email"
-            value={email}
-            onChange={setEmail}
-            placeholder="ornek@firma.com"
-            autoComplete="email"
-            required
-            icon={<FieldIcon type="mail" />}
-          />
+          <div className="grid gap-5 md:grid-cols-2">
+            <AuthInput
+              id="taxNo"
+              label="Vergi Numarası"
+              value={taxNo}
+              onChange={(value) => setTaxNo(value.replace(/\D/g, "").slice(0, 11))}
+              placeholder="10 veya 11 rakam"
+              autoComplete="off"
+              inputMode="numeric"
+              maxLength={11}
+              required
+              icon={<FieldIcon type="building" />}
+            />
+
+            <AuthInput
+              id="email"
+              label="E-posta adresiniz"
+              type="email"
+              value={email}
+              onChange={setEmail}
+              placeholder="ornek@firma.com"
+              autoComplete="email"
+              required
+              icon={<FieldIcon type="mail" />}
+            />
+          </div>
+
+          <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-xs font-semibold leading-5 text-blue-800">
+            Firma adı ve vergi numarası şirket kimliğinizdir. Kayıt tamamlandıktan sonra kullanıcı tarafından değiştirilemez.
+          </div>
 
           <div className="grid gap-5 md:grid-cols-2">
             <AuthInput

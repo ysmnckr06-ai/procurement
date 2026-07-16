@@ -153,6 +153,17 @@ export default function SettingsPage() {
     const annualInterestRate = Number(settings.annual_interest_rate);
     const acceptedTerminDays = Number(settings.accepted_termin_days);
     const dailyDelayCost = Number(settings.daily_delay_cost_try);
+    const normalizedTaxNo = String(settings.tax_no || "").replace(/\D/g, "");
+
+    if (!String(settings.company_name || "").trim()) {
+      setMessage("Şirket adı zorunludur.");
+      return;
+    }
+
+    if (!/^\d{10,11}$/.test(normalizedTaxNo)) {
+      setMessage("Vergi numarası 10 veya 11 rakam olmalıdır.");
+      return;
+    }
 
     if (!usdRate || !eurRate || !gbpRate) {
       setMessage("Kur değerleri boş, 0, negatif veya geçersiz olamaz.");
@@ -172,7 +183,7 @@ export default function SettingsPage() {
     const payload = {
       user_id: user.id,
       company_name: settings.company_name.trim(),
-      tax_no: settings.tax_no.trim(),
+      tax_no: normalizedTaxNo,
       default_currency: settings.default_currency,
       base_currency: settings.base_currency || settings.default_currency || "TRY",
       usd_rate: usdRate,
@@ -220,14 +231,16 @@ export default function SettingsPage() {
       });
     }
 
-    const { error: metadataError } = await supabase.auth.updateUser({
-      data: {
-        company_name: payload.company_name,
-        tax_no: payload.tax_no,
-      },
-    });
-    if (metadataError) {
-      console.error(metadataError);
+    const missingIdentityMetadata = {};
+    if (!String(user.user_metadata?.company_name || "").trim() && payload.company_name) {
+      missingIdentityMetadata.company_name = payload.company_name;
+    }
+    if (!String(user.user_metadata?.tax_no || "").trim() && payload.tax_no) {
+      missingIdentityMetadata.tax_no = payload.tax_no;
+    }
+    if (Object.keys(missingIdentityMetadata).length > 0) {
+      const { error: metadataError } = await supabase.auth.updateUser({ data: missingIdentityMetadata });
+      if (metadataError) console.error(metadataError);
     }
 
     setMessage("Ayarlar kaydedildi. Yeni teklif ve siparişlerde bu değerler kullanılacak.");
@@ -280,12 +293,26 @@ export default function SettingsPage() {
           >
             <SectionTitle
               title="Şirket Bilgileri"
-              text="Bu bilgiler kullanıcı hesabınıza kalıcı olarak kaydedilir; sonraki girişlerde rapor ve sipariş ekranlarında otomatik kullanılır."
+              text="Firma adı ve vergi numarası kayıt sırasında kullanıcı hesabına bağlanır ve sonradan değiştirilemez."
             />
 
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <Input label="Şirket Adı" name="company_name" value={settings.company_name} onChange={handleChange} />
-              <Input label="Vergi No" name="tax_no" value={settings.tax_no} onChange={handleChange} />
+              <Input
+                label="Şirket Adı"
+                name="company_name"
+                value={settings.company_name}
+                onChange={handleChange}
+                readOnly={Boolean(String(settings.company_name || "").trim())}
+                helpText={settings.company_name ? "Kayıt sırasında tanımlanan kalıcı firma bilgisidir." : "Eski hesapta eksik. Bir kez girilip kaydedildikten sonra değiştirilemez."}
+              />
+              <Input
+                label="Vergi No"
+                name="tax_no"
+                value={settings.tax_no}
+                onChange={handleChange}
+                readOnly={Boolean(String(settings.tax_no || "").trim())}
+                helpText={settings.tax_no ? "Kayıt sırasında tanımlanan kalıcı vergi bilgisidir." : "Eski hesapta eksik. 10 veya 11 rakam olarak bir kez girin."}
+              />
               <Input
                 label="Bildirim E-postası"
                 name="notify_email"

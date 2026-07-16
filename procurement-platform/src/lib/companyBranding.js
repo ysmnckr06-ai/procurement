@@ -57,6 +57,8 @@ export async function fetchCompanyBranding(supabase, suppliedUser = null) {
   return {
     companyName,
     brandLine: companyBrandLine(companyName),
-    taxNo: cleanCompanyName(settingsResult.data?.tax_no),
+    taxNo:
+      cleanCompanyName(settingsResult.data?.tax_no) ||
+      cleanCompanyName(user?.user_metadata?.tax_no),
   };
 }
