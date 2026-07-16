@@ -1331,6 +1331,8 @@ def build_excel_report(analyzed_groups, output_path, company_info=None):
                 warnings.append("Vade belirtilmemiş.")
             if not _clean(offer.get("termin")):
                 warnings.append("Termin belirtilmemiş.")
+            if not offer.get("supplierProfileMatched"):
+                warnings.append("Tedarikçi geçmişi bilinmiyor; sipariş öncesi firma doğrulaması gerekli.")
             values = [
                 index, _clean(group.get("urunKodu")), _clean(group.get("urunAciklamasi")), _firma_name(offer),
                 requested, offered, missing, coverage, _safe_num(offer.get("birimFiyat", 0)),

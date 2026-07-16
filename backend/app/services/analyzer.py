@@ -765,6 +765,18 @@ def analyze_groups(groups, exchange_rates, config=None, constraints=None, prefer
 
         provisional_best_offer = choose_best_offer(offers)
         decision_warnings = automatic_decision_warnings(offers)
+        missing_data_policy = (constraints or {}).get(
+            "missing_data_policy",
+            DEFAULT_USER_CONSTRAINTS["missing_data_policy"],
+        )
+        if (
+            provisional_best_offer
+            and not provisional_best_offer.get("supplierProfileMatched")
+            and missing_data_policy == "manual_review"
+        ):
+            decision_warnings.append(
+                "Önerilen tedarikçinin geçmiş kartı bulunamadı; sipariş öncesi firma doğrulaması gerekli"
+            )
         manual_review_required = bool(decision_warnings)
         best_offer = None if manual_review_required else provisional_best_offer
         if manual_review_required:

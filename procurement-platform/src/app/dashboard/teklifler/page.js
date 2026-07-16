@@ -4,7 +4,7 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
-import { canonicalPartnerName, findOrCreateBusinessPartner } from "@/lib/businessPartners";
+import { canonicalPartnerName } from "@/lib/businessPartners";
 import { formatMoney } from "@/lib/currency";
 import { fetchLiveTryRates, liveCurrencyOptions, liveRateFor } from "@/lib/liveCurrency";
 
@@ -128,37 +128,6 @@ function StatCard({ icon, title, value, text }) {
     </div>
   );
 }
-
-function collectPartnerNames(value, found = new Set()) {
-  if (!value) return found;
-
-  if (Array.isArray(value)) {
-    value.forEach((item) => {
-      collectPartnerNames(item, found);
-    });
-    return found;
-  }
-
-  if (typeof value !== "object") return found;
-
-  for (const [key, item] of Object.entries(value)) {
-    const normalizedKey = String(key || "").toLocaleLowerCase("tr-TR");
-    const looksLikeCompanyKey =
-      normalizedKey.includes("firma") ||
-      normalizedKey.includes("supplier") ||
-      normalizedKey.includes("company") ||
-      normalizedKey.includes("tedarik");
-
-    if (looksLikeCompanyKey && typeof item === "string" && item.trim().length > 1) {
-      found.add(item.trim());
-    }
-
-    if (typeof item === "object") collectPartnerNames(item, found);
-  }
-
-  return found;
-}
-
 
 export default function TekliflerPage() {
   return (
@@ -588,24 +557,6 @@ const loadSupplierProfiles = async () => {
       const data = await response.json();
 
       if (data.success) {
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
-        const partnerNames = Array.from(collectPartnerNames(data));
-        if (user && partnerNames.length > 0) {
-          await Promise.all(
-            partnerNames.map((name) =>
-              findOrCreateBusinessPartner(supabase, user.id, {
-                name,
-                partnerType: "Tedarikçi",
-                allowCreate: true,
-                matchPartnerType: true,
-                notes: "Teklif analizi sırasında otomatik oluşturuldu.",
-              }),
-            ),
-          );
-          await loadSupplierProfiles();
-        }
         setReportReady(true);
         setReportPath(
           API_URL + data.reportPath

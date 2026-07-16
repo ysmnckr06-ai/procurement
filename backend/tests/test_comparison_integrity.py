@@ -107,6 +107,12 @@ class ComparisonIntegrityTests(unittest.TestCase):
         analyzed = analyze_groups(
             groups,
             {"TRY": 1.0},
+            constraints={
+                "supplier_profiles": [
+                    {"name": "Teslim Belirsiz", "trust_level": "medium", "quality_history": "medium", "status": "Aktif"},
+                    {"name": "Teslim Belirli", "trust_level": "medium", "quality_history": "medium", "status": "Aktif"},
+                ],
+            },
             preferences={"price_weight": 50, "vade_weight": 20, "termin_weight": 20, "risk_weight": 10},
         )
         self.assertEqual(analyzed[0]["bestOffer"]["firma"], "Teslim Belirli")
@@ -257,6 +263,26 @@ class ComparisonIntegrityTests(unittest.TestCase):
         self.assertFalse(result["supplierProfileMatched"])
         self.assertEqual(result["supplierTrustRiskRate"], 0)
         self.assertEqual(result["qualityRiskRate"], 0)
+
+    def test_missing_supplier_card_requires_review_without_blocking_comparison(self):
+        request = {"urunKodu": "NEW-2", "urunAciklamasi": "Yeni Urun", "birim": "adet", "talepEdilenAdet": 1}
+        offer = {
+            "firma": "Yeni Firma", "urunKodu": "NEW-2", "urunAciklamasi": "Yeni Urun",
+            "birim": "adet", "firmaAdedi": 1, "netBirimFiyat": 100, "netToplam": 100,
+            "paraBirimi": "TRY", "vade": "30 gun", "termin": "5 gun",
+        }
+        analyzed = analyze_groups(
+            match_offers_to_requests([offer], [request]),
+            {"TRY": 1.0},
+            constraints={"missing_data_policy": "manual_review", "supplier_profiles": []},
+        )
+        group = analyzed[0]
+
+        self.assertEqual(len(group["offers"]), 1)
+        self.assertIsNotNone(group["provisionalBestOffer"])
+        self.assertIsNone(group["bestOffer"])
+        self.assertEqual(group["decisionStatus"], "manual_review")
+        self.assertTrue(any("firma doğrulaması" in warning for warning in group["decisionWarnings"]))
 
     def test_near_equal_offers_require_manual_decision(self):
         request = {"urunKodu": "TIE-1", "urunAciklamasi": "Esit Urun", "birim": "adet", "talepEdilenAdet": 10}

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { findOrCreateBusinessPartner } from "@/lib/businessPartners";
 
 function num(value) { return Number(value || 0) || 0; }
 function normalize(value) { return String(value || "").trim().toLocaleLowerCase("tr-TR").replace(/\s+/g, " "); }
@@ -174,6 +175,22 @@ export default function ComparisonPage() {
     if (duplicateGroups.length > 0) {
       setMessage(`Bu mukayese grubundan sipariş zaten oluşturulmuş: ${duplicateGroups.map((order) => order.order_no).join(", ")}`);
       creatingRef.current = false; setCreating(false); return;
+    }
+
+    for (const entry of bySupplier.values()) {
+      if (entry.partner) continue;
+      const partner = await findOrCreateBusinessPartner(supabase, user.id, {
+        name: entry.name,
+        partnerType: "Tedarikçi",
+        allowCreate: true,
+        matchPartnerType: true,
+        notes: "Mukayese sonucu siparişe seçildi.",
+      });
+      if (!partner) {
+        setMessage(`${entry.name} için tedarikçi kartı oluşturulamadı. Sipariş oluşturulmadı.`);
+        creatingRef.current = false; setCreating(false); return;
+      }
+      entry.partner = partner;
     }
 
     const today = new Date().toISOString().slice(0, 10);
