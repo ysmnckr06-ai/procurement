@@ -139,6 +139,7 @@ export default function SupportCenterPage() {
   const [saving, setSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+  const [notificationConfigured, setNotificationConfigured] = useState(null);
   const [replyMessage, setReplyMessage] = useState("");
   const [newTicket, setNewTicket] = useState({
     subject: "",
@@ -266,8 +267,27 @@ export default function SupportCenterPage() {
 
   useEffect(() => {
     loadTickets();
+    fetch("/api/support/notify", { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload) => setNotificationConfigured(Boolean(payload?.configured)))
+      .catch(() => setNotificationConfigured(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  async function notifyFounder(event, ticketId) {
+    try {
+      const response = await fetch("/api/support/notify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ event, ticketId }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      setNotificationConfigured(Boolean(payload.configured));
+      return { ok: response.ok, ...payload };
+    } catch {
+      return { ok: false, configured: notificationConfigured, sent: false };
+    }
+  }
 
   async function handleSelectTicket(ticketId) {
     setSelectedTicketId(ticketId);
@@ -299,9 +319,16 @@ export default function SupportCenterPage() {
       priority: "Orta",
       message: "",
     });
-    setSuccessMessage("Destek talebiniz oluşturuldu.");
     setActiveView("tickets");
     await loadTickets(data);
+    const notification = await notifyFounder("ticket_created", data);
+    setSuccessMessage(
+      notification.sent
+        ? "Destek talebiniz oluşturuldu ve kurucuya e-posta bildirimi gönderildi."
+        : notification.configured
+          ? "Destek talebiniz oluşturuldu; ancak e-posta bildirimi gönderilemedi. Talep admin ekranında kayıtlıdır."
+          : "Destek talebiniz oluşturuldu. Kurucu e-posta bildirimi henüz yapılandırılmadı; talep admin ekranında kayıtlıdır.",
+    );
     setSaving(false);
   }
 
@@ -325,8 +352,17 @@ export default function SupportCenterPage() {
     }
 
     setReplyMessage("");
-    setSuccessMessage("Mesaj gönderildi.");
     await loadTickets(selectedTicket.id);
+    const notification = isAdmin
+      ? { sent: false, configured: notificationConfigured }
+      : await notifyFounder("customer_reply", selectedTicket.id);
+    setSuccessMessage(
+      isAdmin
+        ? "Mesaj gönderildi."
+        : notification.sent
+          ? "Mesaj gönderildi ve kurucuya e-posta bildirimi iletildi."
+          : "Mesaj gönderildi; talep admin ekranında güncellendi.",
+    );
     setSaving(false);
   }
 
@@ -398,6 +434,17 @@ export default function SupportCenterPage() {
             {isAdmin && (
               <span className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-black text-emerald-700">
                 Admin görünümü açık
+              </span>
+            )}
+            {isAdmin && notificationConfigured !== null && (
+              <span
+                className={`rounded-xl border px-4 py-3 text-sm font-black ${
+                  notificationConfigured
+                    ? "border-blue-200 bg-blue-50 text-blue-700"
+                    : "border-amber-200 bg-amber-50 text-amber-800"
+                }`}
+              >
+                {notificationConfigured ? "Kurucu e-posta bildirimi aktif" : "Kurucu e-postası yapılandırılmalı"}
               </span>
             )}
           </div>
@@ -599,9 +646,15 @@ export default function SupportCenterPage() {
       )}
 
       <section className="rounded-2xl border border-slate-200 bg-white p-6 text-sm font-semibold leading-6 text-slate-600 shadow-sm">
-        <h2 className="text-lg font-black text-slate-950">V2 notu</h2>
+        <h2 className="text-lg font-black text-slate-950">Bildirim ve kayıt güvenliği</h2>
         <p className="mt-2">
-          Dosya ekleri, e-posta bildirimi ve müşteri onaylı geçici uzak destek erişimi bu ilk sürüme eklenmedi. V2 için süre sınırlı erişim, audit log ve private storage signed URL planlanmalıdır.
+          Tüm destek talepleri ve mesajlar sistemde saklanır ve admin görünümünde izlenir.
+          {notificationConfigured
+            ? " Yeni talepler ile müşteri yanıtları ayrıca kurucunun bildirim e-posta adresine gönderilir."
+            : " Kurucu e-posta bildirimi henüz yapılandırılmadığı için kayıtlar şu anda yalnız admin ekranından takip edilir."}
+        </p>
+        <p className="mt-2 text-xs text-slate-500">
+          Dosya ekleri ilerleyen sürümde private storage ve süreli erişim bağlantılarıyla desteklenecektir.
         </p>
       </section>
     </main>

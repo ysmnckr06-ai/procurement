@@ -29,8 +29,8 @@ const sections = [
   {
     title: "4. Üçüncü Taraf Hizmetler",
     paragraphs: [
-      "OpenAI API anahtarı tanımlanırsa, AI Asistan için özet operasyon verileri OpenAI hizmetine gönderilebilir. Hassas verilerin AI kullanım politikası müşteriyle ayrıca netleştirilmelidir.",
-      "OpenAI API anahtarı tanımlı değilse AI Asistan yerel read-only analiz modunda çalışır ve OpenAI'a veri göndermez.",
+      "Sistem Destek ekranı kural tabanlı ve salt okunur çalışır; operasyon verileri harici bir yapay zekâ hizmetine gönderilmez.",
+      "Sistem Destek yalnız yetkili kullanıcının erişebildiği kayıtları özetler ve sistem kayıtlarını değiştirmez.",
     ],
   },
   {

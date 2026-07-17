@@ -3,556 +3,192 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
-const REQUIRED_HEADINGS = [
-  "Proje Özeti",
-  "Stoktan Karşılanabilirler",
-  "Satınalma Gerekenler",
-  "Maliyet Riski",
-  "Önerilen Aksiyon",
-];
+const QUESTIONS = {
+  system_overview: { title: "Sistemin genel durumu", description: "Projelerden teslimatlara kadar açık işlerin kısa özeti." },
+  stock_risk: { title: "Riskli stoklar", description: "Kullanılabilir stoğu kritik seviyede veya tükenmiş ürünler." },
+  stock_coverage: { title: "Stoktan karşılanabilecek ihtiyaçlar", description: "Mevcut stokla karşılanabilecek proje ihtiyaçları." },
+  request_queue: { title: "İşlem bekleyen talepler", description: "Henüz teklif veya sipariş aşamasına ilerlememiş talepler." },
+  offer_waiting: { title: "Teklif bekleyen işler", description: "Talep açılmış fakat yeterli teklif alınmamış işler." },
+  comparison_gaps: { title: "Mukayese kontrolü", description: "Eksik teklif, eksik miktar ve inceleme gerektiren kalemler." },
+  open_orders: { title: "Açık ve geciken siparişler", description: "Teslimatı tamamlanmamış veya termini aşılmış siparişler." },
+  delivery_gaps: { title: "Eksik teslimatlar", description: "Sipariş edilen ve teslim alınan miktarlar arasındaki fark." },
+  cost_hotspots: { title: "Yüksek maliyetli kalemler", description: "Tutarı en yüksek ürün ve sipariş kalemleri." },
+  data_quality: { title: "Veri kalitesi kontrolü", description: "Eksik kod, fiyat, para birimi, termin veya firma bilgileri." },
+};
 
-function num(value) {
-  const parsed = Number(value || 0);
-  return Number.isFinite(parsed) ? parsed : 0;
+const n = (value) => {
+  const number = Number(value || 0);
+  return Number.isFinite(number) ? number : 0;
+};
+const text = (value, fallback = "-") => String(value || "").trim() || fallback;
+const money = (value, currency = "TRY") => `${n(value).toLocaleString("tr-TR", { maximumFractionDigits: 2 })} ${currency}`;
+const dateValue = (value) => {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+async function rows(supabase, table, userId) {
+  const { data, error } = await supabase.from(table).select("*").eq("user_id", userId);
+  if (!error) return data || [];
+  const message = String(error.message || "");
+  if (message.includes("does not exist") || message.includes("Could not find")) return [];
+  throw new Error(`${table}: ${message}`);
 }
 
-function normalizeText(value) {
-  return String(value || "")
-    .trim()
-    .toLocaleLowerCase("tr-TR")
-    .replaceAll("ı", "i")
-    .replaceAll("ğ", "g")
-    .replaceAll("ü", "u")
-    .replaceAll("ş", "s")
-    .replaceAll("ö", "o")
-    .replaceAll("ç", "c")
-    .replace(/\s+/g, " ");
+function embeddedItems(records) {
+  return records.flatMap((record) =>
+    (Array.isArray(record.items) ? record.items : []).map((item) => ({ ...item, parent: record })),
+  );
 }
 
-function normalizeCode(value) {
-  return String(value || "").trim().toLocaleUpperCase("tr-TR").replace(/\s+/g, "");
+function productIdentity(item) {
+  return text(item.product_code || item.code || item.urunKodu || item.product_name || item.name, "Ürün bilgisi yok");
 }
 
-function compactName(value, fallback = "-") {
-  const text = String(value || "").trim();
-  return text ? text.slice(0, 140) : fallback;
+function requestItems(requests) {
+  return embeddedItems(requests).map((item) => ({
+    ...item,
+    requestNo: item.parent.request_no || item.parent.request_number || item.parent.no || item.parent.id,
+    requestStatus: item.parent.status || item.parent.durum,
+  }));
 }
 
-function moneyBucket(total, currency = "TRY") {
+function orderItems(orders, storedItems) {
+  const embedded = embeddedItems(orders).map((item) => ({
+    ...item,
+    orderNo: item.parent.order_no || item.parent.order_number || item.parent.id,
+    supplier: item.parent.supplier_name || item.parent.partner_name || item.parent.company,
+    termin: item.parent.termin_date || item.parent.delivery_date,
+    orderStatus: item.parent.status || item.parent.durum,
+    currency: item.currency || item.parent.currency || "TRY",
+  }));
+  return [...embedded, ...storedItems];
+}
+
+function response(questionId, headline, summary, metrics, columns, resultRows, findings, actions, emptyMessage) {
   return {
-    amount: Number(num(total).toFixed(2)),
-    currency: currency || "TRY",
+    mode: "rule_based_read_only",
+    generatedAt: new Date().toISOString(),
+    question: { id: questionId, ...QUESTIONS[questionId] },
+    analysis: { headline, summary, metrics, columns, rows: resultRows, findings, actions, emptyMessage },
   };
-}
-
-async function readOwnRows(supabase, table, userId, options = {}) {
-  const query = supabase.from(table).select(options.select || "*").eq("user_id", userId);
-  if (options.limit) query.limit(options.limit);
-  if (options.order) query.order(options.order.column, { ascending: options.order.ascending });
-
-  const { data, error } = await query;
-  if (error) {
-    const message = String(error.message || "");
-    if (message.includes("does not exist") || message.includes("Could not find the table")) {
-      return [];
-    }
-    throw new Error(`${table}: ${message}`);
-  }
-  return data || [];
-}
-
-function findMentionedProject(projects, question) {
-  const normalizedQuestion = normalizeText(question);
-  const normalizedCodeQuestion = normalizeCode(question);
-
-  const exactCodeMatch = projects.find((project) => {
-    const code = normalizeCode(project.project_code);
-    return code && normalizedCodeQuestion.includes(code);
-  });
-  if (exactCodeMatch) return exactCodeMatch;
-
-  return projects.find((project) => {
-    const code = normalizeText(project.project_code);
-    const name = normalizeText(project.project_name);
-    return (
-      (code && normalizedQuestion.includes(code)) ||
-      (name && (normalizedQuestion.includes(name) || name.includes(normalizedQuestion)))
-    );
-  }) || null;
-}
-
-function projectDisplay(project) {
-  if (!project) return "Tüm projeler";
-  return [project.project_code, project.project_name].filter(Boolean).join(" - ");
-}
-
-function productKeyFromRow(row) {
-  const code = normalizeCode(row.product_code || row.productCode || row.urunKodu);
-  if (code) return `code:${code}`;
-  return `name:${normalizeText(row.product_name || row.productName || row.urunAciklamasi || row.name)}`;
-}
-
-function buildProductLookup(products) {
-  const byKey = new Map();
-  products.forEach((product) => {
-    const codeKey = productKeyFromRow(product);
-    if (codeKey !== "name:") byKey.set(codeKey, product);
-    const nameKey = `name:${normalizeText(product.product_name)}`;
-    if (nameKey !== "name:") byKey.set(nameKey, product);
-  });
-  return byKey;
-}
-
-function flattenOrderItems(orders, orderItems) {
-  const embedded = orders.flatMap((order) => {
-    const items = Array.isArray(order.items) ? order.items : [];
-    return items.map((item) => ({
-      ...item,
-      order_id: order.id,
-      project_id: order.project_id,
-      order_no: order.order_no || order.orderNo || order.id,
-      supplier_name: order.supplier_name || order.company || order.partner_name || "",
-      status: order.status || "",
-      currency: item.currency || order.currency || "TRY",
-    }));
-  });
-
-  return [...embedded, ...orderItems];
-}
-
-function itemQuantity(item) {
-  return num(
-    item.estimated_quantity ??
-      item.quantity ??
-      item.miktar ??
-      item.qty ??
-      item.talepEdilenAdet,
-  );
-}
-
-function itemUnitPrice(item) {
-  return num(
-    item.estimated_unit_price ??
-      item.unit_price ??
-      item.unitPrice ??
-      item.birimFiyat ??
-      item.netUnitPrice,
-  );
-}
-
-function itemTotal(item) {
-  const explicit = num(
-    item.estimated_total ??
-      item.total ??
-      item.quote_total ??
-      item.net_total ??
-      item.netTotal,
-  );
-  if (explicit > 0) return explicit;
-  return itemQuantity(item) * itemUnitPrice(item);
-}
-
-function summarizeStock({ selectedItems, products, stockMovements }) {
-  const productLookup = buildProductLookup(products);
-  const stockByKey = new Map();
-
-  products.forEach((product) => {
-    const key = productKeyFromRow(product);
-    if (!key || key === "name:") return;
-    stockByKey.set(key, {
-      productCode: product.product_code || "",
-      productName: product.product_name || "",
-      unit: product.unit || "adet",
-      currentStock: num(product.current_stock),
-      reservedStock: num(product.reserved_stock),
-      freeStock: Math.max(num(product.current_stock) - num(product.reserved_stock), 0),
-      criticalStock: num(product.critical_stock || product.min_stock),
-      lastUnitPrice: num(product.last_unit_price || product.manual_unit_price),
-      currency: product.last_currency || "TRY",
-      incoming: 0,
-      outgoing: 0,
-    });
-  });
-
-  stockMovements.forEach((movement) => {
-    const key = productKeyFromRow(movement);
-    const row = stockByKey.get(key);
-    if (!row) return;
-    const quantity = num(movement.quantity);
-    const type = normalizeText(movement.movement_type);
-    if (type.includes("out") || type.includes("cikis") || type.includes("çıkış")) {
-      row.outgoing += quantity;
-    } else {
-      row.incoming += quantity;
-    }
-  });
-
-  const demandByKey = new Map();
-  selectedItems.forEach((item) => {
-    const product = item.product_id
-      ? products.find((row) => row.id === item.product_id)
-      : productLookup.get(productKeyFromRow(item));
-    const key = product ? productKeyFromRow(product) : productKeyFromRow(item);
-    if (!key || key === "name:") return;
-
-    const existing = demandByKey.get(key) || {
-      productCode: product?.product_code || item.product_code || "",
-      productName: product?.product_name || item.product_name || "",
-      unit: product?.unit || item.unit || "adet",
-      requiredQuantity: 0,
-      reservedQuantity: 0,
-      receivedQuantity: 0,
-      estimatedTotal: 0,
-    };
-
-    existing.requiredQuantity += itemQuantity(item);
-    existing.reservedQuantity += num(item.reserved_quantity);
-    existing.receivedQuantity += num(item.received_quantity);
-    existing.estimatedTotal += itemTotal(item);
-    demandByKey.set(key, existing);
-  });
-
-  const availability = new Map(
-    [...stockByKey.entries()].map(([key, value]) => [key, value.freeStock]),
-  );
-
-  const rows = [...demandByKey.entries()].map(([key, demand]) => {
-    const stock = stockByKey.get(key) || {};
-    const remainingNeed = Math.max(
-      demand.requiredQuantity - demand.reservedQuantity - demand.receivedQuantity,
-      0,
-    );
-    const freeStock = Math.max(num(availability.get(key)), 0);
-    const stockCoverable = Math.min(freeStock, remainingNeed);
-    availability.set(key, freeStock - stockCoverable);
-    const purchaseRequired = Math.max(remainingNeed - stockCoverable, 0);
-
-    return {
-      productCode: demand.productCode,
-      productName: compactName(demand.productName, "Ürün"),
-      unit: demand.unit,
-      requiredQuantity: Number(demand.requiredQuantity.toFixed(2)),
-      reservedQuantity: Number(demand.reservedQuantity.toFixed(2)),
-      receivedQuantity: Number(demand.receivedQuantity.toFixed(2)),
-      freeStockBeforeAllocation: Number(freeStock.toFixed(2)),
-      stockCoverable: Number(stockCoverable.toFixed(2)),
-      purchaseRequired: Number(purchaseRequired.toFixed(2)),
-      criticalStock: num(stock.criticalStock),
-      estimatedTotal: moneyBucket(demand.estimatedTotal),
-    };
-  });
-
-  return {
-    sampleRows: rows.slice(0, 30),
-    totals: {
-      lineCount: rows.length,
-      requiredQuantity: Number(rows.reduce((sum, row) => sum + row.requiredQuantity, 0).toFixed(2)),
-      stockCoverableQuantity: Number(rows.reduce((sum, row) => sum + row.stockCoverable, 0).toFixed(2)),
-      purchaseRequiredQuantity: Number(rows.reduce((sum, row) => sum + row.purchaseRequired, 0).toFixed(2)),
-      criticalLineCount: rows.filter((row) => row.purchaseRequired > 0 || row.freeStockBeforeAllocation <= row.criticalStock).length,
-    },
-    stockCoverableTop: rows.filter((row) => row.stockCoverable > 0).slice(0, 12),
-    purchaseRequiredTop: rows.filter((row) => row.purchaseRequired > 0).slice(0, 12),
-  };
-}
-
-function lineBelongsToProjects(line, projectIds) {
-  if (projectIds.has(line.project_id)) return true;
-  const allocations = Array.isArray(line.allocations) ? line.allocations : [];
-  return allocations.some((allocation) =>
-    projectIds.has(allocation.projectId || allocation.project_id),
-  );
-}
-
-function summarizePrices({ quoteItems, orders, orderItems, projectIds }) {
-  const relevantQuoteItems = quoteItems.filter((item) => lineBelongsToProjects(item, projectIds));
-  const relevantOrderItems = flattenOrderItems(
-    orders.filter((order) => projectIds.has(order.project_id)),
-    orderItems.filter((item) => lineBelongsToProjects(item, projectIds)),
-  ).filter((item) => lineBelongsToProjects(item, projectIds));
-
-  const quoteTotal = relevantQuoteItems.reduce((sum, item) => sum + itemTotal(item), 0);
-  const orderTotal = orders
-    .filter((order) => projectIds.has(order.project_id))
-    .reduce((sum, order) => sum + num(order.order_total_base || order.base_amount || order.order_total || order.total_amount), 0);
-
-  const orderedLineTotal = relevantOrderItems.reduce((sum, item) => sum + itemTotal(item), 0);
-  const unitPrices = [...relevantQuoteItems, ...relevantOrderItems]
-    .map(itemUnitPrice)
-    .filter((value) => value > 0);
-
-  return {
-    quote: {
-      lineCount: relevantQuoteItems.length,
-      total: moneyBucket(quoteTotal),
-    },
-    order: {
-      orderCount: orders.filter((order) => projectIds.has(order.project_id)).length,
-      lineCount: relevantOrderItems.length,
-      total: moneyBucket(orderTotal || orderedLineTotal),
-    },
-    unitPrice: {
-      min: unitPrices.length ? Number(Math.min(...unitPrices).toFixed(2)) : 0,
-      max: unitPrices.length ? Number(Math.max(...unitPrices).toFixed(2)) : 0,
-      average: unitPrices.length
-        ? Number((unitPrices.reduce((sum, value) => sum + value, 0) / unitPrices.length).toFixed(2))
-        : 0,
-    },
-    openOrders: orders
-      .filter((order) => projectIds.has(order.project_id))
-      .filter((order) => !["Tam Teslim", "Teslim Edildi", "İptal"].includes(order.status))
-      .slice(0, 8)
-      .map((order) => ({
-        orderNo: order.order_no || order.orderNo || order.id,
-        supplier: compactName(order.supplier_name || order.partner_name || order.company),
-        status: order.status || "-",
-        total: moneyBucket(num(order.order_total_base || order.base_amount || order.order_total || order.total_amount), order.base_currency || order.currency || "TRY"),
-      })),
-  };
-}
-
-function summarizeProjects(projects, selectedProject, selectedItems) {
-  const selectedProjects = selectedProject ? [selectedProject] : projects.slice(0, 20);
-  const selectedProjectIds = new Set(selectedProjects.map((project) => project.id));
-  const itemRows = selectedItems.filter((item) => selectedProjectIds.has(item.project_id));
-
-  return {
-    scope: selectedProject ? "matched_project" : "all_projects",
-    matchedProject: selectedProject
-      ? {
-          code: selectedProject.project_code || "",
-          name: selectedProject.project_name || "",
-          customer: selectedProject.customer_name || "",
-          status: selectedProject.status || "",
-          plannedEndDate: selectedProject.planned_end_date || null,
-          contract: moneyBucket(selectedProject.contract_base_amount || selectedProject.contract_amount, selectedProject.contract_currency || "TRY"),
-          budget: moneyBucket(selectedProject.estimated_budget_base_amount || selectedProject.estimated_budget, selectedProject.estimated_budget_currency || "TRY"),
-          actualCost: moneyBucket(selectedProject.actual_cost || 0),
-        }
-      : null,
-    projectCount: selectedProjects.length,
-    projectNames: selectedProjects.slice(0, 8).map(projectDisplay),
-    itemCount: itemRows.length,
-    totalEstimatedNeed: moneyBucket(itemRows.reduce((sum, item) => sum + itemTotal(item), 0)),
-  };
-}
-
-function ensureHeadings(answer) {
-  const text = String(answer || "").trim();
-  if (REQUIRED_HEADINGS.every((heading) => text.includes(heading))) return text;
-
-  return REQUIRED_HEADINGS.map((heading) => `## ${heading}\n${heading === "Önerilen Aksiyon" ? text || "Analiz üretilemedi." : "Verilen özetten net sonuç çıkarılamadı."}`).join("\n\n");
-}
-
-function formatAmount(bucket) {
-  const amount = num(bucket?.amount);
-  const currency = bucket?.currency || "TRY";
-  return `${amount.toLocaleString("tr-TR", { maximumFractionDigits: 2 })} ${currency}`;
-}
-
-function formatRows(rows, emptyText, mapper) {
-  if (!rows.length) return `- ${emptyText}`;
-  return rows.slice(0, 5).map((row) => `- ${mapper(row)}`).join("\n");
-}
-
-function buildLocalAnalysisAnswer(context) {
-  const project = context.projectSummary;
-  const stock = context.stockSummary;
-  const price = context.priceSummary;
-  const matched = project.matchedProject;
-  const projectTitle = matched
-    ? `${matched.code} - ${matched.name}`
-    : `${project.projectCount} proje`;
-  const budgetRisk =
-    price.order.total.amount > 0 && matched?.budget?.amount > 0
-      ? price.order.total.amount > matched.budget.amount
-      : stock.totals.purchaseRequiredQuantity > 0 || price.openOrders.length > 0;
-
-  return [
-    `## ${REQUIRED_HEADINGS[0]}`,
-    `- Kapsam: ${projectTitle}.`,
-    `- Proje kalemi sayısı: ${project.itemCount}; tahmini ihtiyaç toplamı: ${formatAmount(project.totalEstimatedNeed)}.`,
-    `- Sipariş toplamı: ${formatAmount(price.order.total)}; açık sipariş sayısı: ${price.openOrders.length}.`,
-    "",
-    `## ${REQUIRED_HEADINGS[1]}`,
-    formatRows(
-      stock.stockCoverableTop,
-      "Stoktan karşılanabilecek net kalem görünmüyor.",
-      (row) => `${row.productCode || row.productName}: ${row.stockCoverable} ${row.unit} stoktan karşılanabilir; serbest stok ${row.freeStockBeforeAllocation} ${row.unit}.`,
-    ),
-    "",
-    `## ${REQUIRED_HEADINGS[2]}`,
-    formatRows(
-      stock.purchaseRequiredTop,
-      "Satınalma gerektiren açık miktar görünmüyor.",
-      (row) => `${row.productCode || row.productName}: ${row.purchaseRequired} ${row.unit} satınalma ihtiyacı var; tahmini tutar ${formatAmount(row.estimatedTotal)}.`,
-    ),
-    "",
-    `## ${REQUIRED_HEADINGS[3]}`,
-    `- ${budgetRisk ? "Maliyet/termin takibi gerekli." : "Mevcut özetlerde kritik maliyet riski görünmüyor."}`,
-    `- Ortalama birim fiyat: ${price.unitPrice.average.toLocaleString("tr-TR", { maximumFractionDigits: 2 })} TRY; en yüksek birim fiyat: ${price.unitPrice.max.toLocaleString("tr-TR", { maximumFractionDigits: 2 })} TRY.`,
-    `- Kritik veya açık miktarlı kalem sayısı: ${stock.totals.criticalLineCount}.`,
-    "",
-    `## ${REQUIRED_HEADINGS[4]}`,
-    "- Önce stoktan karşılanabilen kalemleri rezerve edin, kalan miktarlar için teklif/sipariş sürecini ilerletin.",
-    "- Açık siparişleri termin ve ödeme durumuna göre kontrol edin.",
-    "- Bu yanıt yerel read-only analizdir; sistem kaydı oluşturmaz, değiştirmez veya silmez.",
-  ].join("\n");
 }
 
 export async function POST(request) {
   try {
-    const { question } = await request.json();
-    const cleanedQuestion = String(question || "").trim().slice(0, 1200);
-
-    if (!cleanedQuestion) {
-      return NextResponse.json({ error: "Lütfen bir soru yazın." }, { status: 400 });
-    }
+    const body = await request.json();
+    const questionId = String(body?.questionId || "system_overview");
+    if (!QUESTIONS[questionId]) return NextResponse.json({ error: "Geçersiz kontrol seçildi." }, { status: 400 });
 
     const supabase = await createServerSupabaseClient();
-    const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.getUser();
+    const { data: auth } = await supabase.auth.getUser();
+    const user = auth?.user;
+    if (!user) return NextResponse.json({ error: "Oturum bulunamadı." }, { status: 401 });
 
-    if (userError || !user) {
-      return NextResponse.json({ error: "Oturum bulunamadı." }, { status: 401 });
-    }
-
-    const [
-      projects,
-      projectItems,
-      products,
-      quoteItems,
-      orders,
-      orderItems,
-      stockMovements,
-    ] = await Promise.all([
-      readOwnRows(supabase, "projects", user.id, { order: { column: "updated_at", ascending: false } }),
-      readOwnRows(supabase, "project_items", user.id),
-      readOwnRows(supabase, "products", user.id),
-      readOwnRows(supabase, "quote_items", user.id),
-      readOwnRows(supabase, "orders", user.id),
-      readOwnRows(supabase, "order_items", user.id),
-      readOwnRows(supabase, "stock_movements", user.id, { limit: 1000 }),
+    const [projects, projectItems, products, requests, offers, reports, orders, storedOrderItems] = await Promise.all([
+      rows(supabase, "projects", user.id),
+      rows(supabase, "project_items", user.id),
+      rows(supabase, "products", user.id),
+      rows(supabase, "requests", user.id),
+      rows(supabase, "offers", user.id),
+      rows(supabase, "reports", user.id),
+      rows(supabase, "orders", user.id),
+      rows(supabase, "order_items", user.id),
     ]);
+    const reqItems = requestItems(requests);
+    const ordItems = orderItems(orders, storedOrderItems);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
 
-    const matchedProject = findMentionedProject(projects, cleanedQuestion);
-    const selectedProjects = matchedProject ? [matchedProject] : projects.slice(0, 20);
-    const selectedProjectIds = new Set(selectedProjects.map((project) => project.id));
-    const selectedItems = projectItems.filter((item) => selectedProjectIds.has(item.project_id));
-    const selectedMovements = stockMovements.filter((movement) =>
-      !movement.project_id || selectedProjectIds.has(movement.project_id),
-    );
-
-    const stockSummary = summarizeStock({
-      selectedItems,
-      products,
-      stockMovements: selectedMovements,
-    });
-    const priceSummary = summarizePrices({
-      quoteItems,
-      orders,
-      orderItems,
-      projectIds: selectedProjectIds,
-    });
-
-    const assistantContext = {
-      question: cleanedQuestion,
-      generatedAt: new Date().toISOString(),
-      readOnlyGuarantee: "Bu route sadece select işlemi yapar; sipariş, stok, fiyat veya ürün kaydı değiştirmez.",
-      projectSummary: summarizeProjects(projects, matchedProject, selectedItems),
-      stockSummary,
-      priceSummary,
-      dataCoverage: {
-        projects: projects.length,
-        project_items: projectItems.length,
-        products: products.length,
-        quote_items: quoteItems.length,
-        orders: orders.length,
-        order_items: orderItems.length,
-        stock_movements: stockMovements.length,
-      },
-    };
-
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      return NextResponse.json({
-        answer: ensureHeadings(buildLocalAnalysisAnswer(assistantContext)),
-        matchedProject: matchedProject
-          ? {
-              id: matchedProject.id,
-              code: matchedProject.project_code,
-              name: matchedProject.project_name,
-            }
-          : null,
-        mode: "local_read_only",
-        summary: {
-          scope: matchedProject ? "project" : "all_projects",
-          purchaseRequiredLines: stockSummary.purchaseRequiredTop.length,
-          stockCoverableLines: stockSummary.stockCoverableTop.length,
-        },
-      });
+    if (questionId === "system_overview") {
+      const openRequests = requests.filter((item) => !/tamam|kapal|sipariş/i.test(text(item.status || item.durum, ""))).length;
+      const openOrders = orders.filter((item) => !/teslim|tamam|iptal/i.test(text(item.status || item.durum, ""))).length;
+      const riskyProducts = products.filter((p) => n(p.current_stock) - n(p.reserved_stock) <= n(p.critical_stock || p.min_stock)).length;
+      return NextResponse.json(response(questionId, "Operasyon özeti hazır", "Sistem kayıtları salt okunur olarak kontrol edildi.", [
+        { label: "Proje", value: projects.length, tone: "blue" }, { label: "Açık talep", value: openRequests, tone: "amber" },
+        { label: "Açık sipariş", value: openOrders, tone: "indigo" }, { label: "Riskli stok", value: riskyProducts, tone: riskyProducts ? "red" : "green" },
+      ], [{ key: "area", label: "Alan" }, { key: "status", label: "Durum" }, { key: "note", label: "Açıklama" }], [
+        { area: "Projeler", status: `${projects.length} kayıt`, note: `${projectItems.length} proje kalemi izleniyor.` },
+        { area: "Talepler", status: `${openRequests} açık`, note: `${offers.length} teklif kaydı bulunuyor.` },
+        { area: "Siparişler", status: `${openOrders} açık`, note: `${orders.length} toplam sipariş bulunuyor.` },
+      ], riskyProducts ? [`${riskyProducts} stok kartı kritik seviyede veya altında.`] : ["Kritik stok sinyali bulunmadı."], ["Önce kırmızı ve gecikmiş kayıtları inceleyin.", "Eksik veri kontrolünü düzenli çalıştırın."], "Henüz operasyon kaydı yok."));
     }
 
-    const openAiResponse = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
-        temperature: 0.2,
-        max_output_tokens: 900,
-        input: [
-          {
-            role: "system",
-            content:
-              "Sen Corvian içinde çalışan read-only bir satınalma asistanısın. Türkçe, sade ve satınalma yöneticisi gibi konuş. Sadece analiz ve öneri üret. Veritabanına yazma, stok düşme, sipariş oluşturma, ürün silme veya fiyat değiştirme işlemi yaptığını asla söyleme. Cevabı yalnızca şu başlıklarla ver: Proje Özeti, Stoktan Karşılanabilirler, Satınalma Gerekenler, Maliyet Riski, Önerilen Aksiyon.",
-          },
-          {
-            role: "user",
-            content: `Kullanıcı sorusu: ${cleanedQuestion}\n\nHam veritabanı değil, özet operasyon verisi:\n${JSON.stringify(assistantContext, null, 2)}`,
-          },
-        ],
-      }),
-    });
-
-    const openAiPayload = await openAiResponse.json();
-    if (!openAiResponse.ok) {
-      return NextResponse.json(
-        { error: openAiPayload?.error?.message || "OpenAI yanıtı alınamadı." },
-        { status: 502 },
-      );
+    if (questionId === "stock_risk") {
+      const risky = products.map((p) => ({
+        code: productIdentity(p), name: text(p.product_name || p.name), available: n(p.current_stock) - n(p.reserved_stock),
+        critical: n(p.critical_stock || p.min_stock), reserved: n(p.reserved_stock),
+      })).filter((p) => p.available <= p.critical).sort((a, b) => a.available - b.available).slice(0, 50);
+      return NextResponse.json(response(questionId, `${risky.length} riskli stok kartı`, "Kullanılabilir stok, kritik seviye ile karşılaştırıldı.", [
+        { label: "Riskli kart", value: risky.length, tone: risky.length ? "red" : "green" },
+        { label: "Stok kartı", value: products.length, tone: "blue" },
+      ], [{ key: "code", label: "Kod" }, { key: "name", label: "Ürün" }, { key: "available", label: "Kullanılabilir" }, { key: "critical", label: "Kritik seviye" }, { key: "reserved", label: "Ayrılan" }], risky, risky.length ? ["Kullanılabilir stok kritik seviyenin altında olanlar önceliklidir."] : [], ["Tükenen ürünlerin açık talep ve sipariş durumunu kontrol edin."], "Riskli stok bulunmadı."));
     }
 
-    const answer = ensureHeadings(
-      openAiPayload.output_text ||
-        openAiPayload.output?.flatMap((item) => item.content || [])
-          .map((content) => content.text || "")
-          .join("\n"),
-    );
+    if (questionId === "stock_coverage") {
+      const lookup = new Map(products.map((p) => [productIdentity(p).toLocaleUpperCase("tr-TR"), p]));
+      const covered = reqItems.map((item) => {
+        const product = lookup.get(productIdentity(item).toLocaleUpperCase("tr-TR"));
+        const need = n(item.quantity || item.requested_quantity || item.miktar);
+        const available = product ? Math.max(n(product.current_stock) - n(product.reserved_stock), 0) : 0;
+        return { code: productIdentity(item), request: text(item.requestNo), need, available, covered: Math.min(need, available) };
+      }).filter((item) => item.covered > 0).sort((a, b) => b.covered - a.covered).slice(0, 50);
+      return NextResponse.json(response(questionId, `${covered.length} talep kalemi stoktan karşılanabilir`, "Talep miktarı ile boşta kullanılabilir stok karşılaştırıldı.", [{ label: "Karşılanabilir kalem", value: covered.length, tone: "green" }], [{ key: "code", label: "Ürün" }, { key: "request", label: "Talep" }, { key: "need", label: "İhtiyaç" }, { key: "available", label: "Kullanılabilir" }, { key: "covered", label: "Stoktan karşılanır" }], covered, [], ["Stok rezervasyonunu taleple ilişkilendirerek yapın."], "Stoktan karşılanabilecek açık talep kalemi bulunmadı."));
+    }
 
-    return NextResponse.json({
-      answer,
-      matchedProject: matchedProject
-        ? {
-            id: matchedProject.id,
-            code: matchedProject.project_code,
-            name: matchedProject.project_name,
-          }
-        : null,
-      summary: {
-        scope: matchedProject ? "project" : "all_projects",
-        purchaseRequiredLines: stockSummary.purchaseRequiredTop.length,
-        stockCoverableLines: stockSummary.stockCoverableTop.length,
-      },
-    });
+    if (questionId === "request_queue") {
+      const queued = requests.filter((r) => !/tamam|kapal|sipariş/i.test(text(r.status || r.durum, ""))).map((r) => ({
+        no: text(r.request_no || r.request_number || r.no || r.id), status: text(r.status || r.durum, "Yeni"),
+        owner: text(r.requested_by || r.created_by_name || r.department), items: Array.isArray(r.items) ? r.items.length : n(r.totalitems || r.item_count),
+        date: text(r.created_at ? new Date(r.created_at).toLocaleDateString("tr-TR") : ""),
+      }));
+      return NextResponse.json(response(questionId, `${queued.length} talep işlem bekliyor`, "Tamamlanmamış talepler listelendi.", [{ label: "Bekleyen talep", value: queued.length, tone: queued.length ? "amber" : "green" }], [{ key: "no", label: "Talep no" }, { key: "status", label: "Durum" }, { key: "owner", label: "Açan / birim" }, { key: "items", label: "Kalem" }, { key: "date", label: "Tarih" }], queued, [], ["Yeni talepleri teklif toplama sürecine alın."], "İşlem bekleyen talep yok."));
+    }
+
+    if (questionId === "offer_waiting") {
+      const counts = offers.reduce((map, o) => map.set(String(o.request_id), (map.get(String(o.request_id)) || 0) + 1), new Map());
+      const waiting = requests.map((r) => ({ no: text(r.request_no || r.request_number || r.no || r.id), status: text(r.status || r.durum, "Yeni"), offers: counts.get(String(r.id)) || 0, items: Array.isArray(r.items) ? r.items.length : n(r.totalitems || r.item_count) })).filter((r) => r.offers < 2 && !/tamam|kapal|sipariş/i.test(r.status));
+      return NextResponse.json(response(questionId, `${waiting.length} talepte teklif ihtiyacı var`, "Karşılaştırma için iki teklif eşiği kullanıldı.", [{ label: "Teklif bekleyen", value: waiting.length, tone: waiting.length ? "amber" : "green" }, { label: "Toplam teklif", value: offers.length, tone: "blue" }], [{ key: "no", label: "Talep no" }, { key: "status", label: "Durum" }, { key: "items", label: "Kalem" }, { key: "offers", label: "Teklif sayısı" }], waiting, waiting.length ? ["Tek teklifli taleplerde fiyat mukayesesi sınırlıdır."] : [], ["Eksik teklifleri tamamlayın veya tek kaynak gerekçesi kaydedin."], "Teklif bekleyen talep yok."));
+    }
+
+    if (questionId === "comparison_gaps") {
+      const gaps = reqItems.map((item) => {
+        const required = n(item.quantity || item.requested_quantity || item.miktar);
+        const related = offers.flatMap((offer) => (Array.isArray(offer.items) ? offer.items : []).map((row) => ({ ...row, offer }))).filter((row) => productIdentity(row).toLocaleUpperCase("tr-TR") === productIdentity(item).toLocaleUpperCase("tr-TR"));
+        const maxOffered = Math.max(0, ...related.map((row) => n(row.quantity || row.miktar)));
+        return { code: productIdentity(item), request: text(item.requestNo), required, offered: maxOffered, offerCount: related.length, gap: Math.max(required - maxOffered, 0) };
+      }).filter((row) => row.offerCount === 0 || row.gap > 0).slice(0, 50);
+      return NextResponse.json(response(questionId, `${gaps.length} kalem inceleme gerektiriyor`, "Talep ve teklif miktarları ürün kodu üzerinden karşılaştırıldı.", [{ label: "Kontrol gereken", value: gaps.length, tone: gaps.length ? "red" : "green" }, { label: "Mukayese raporu", value: reports.length, tone: "blue" }], [{ key: "code", label: "Ürün" }, { key: "request", label: "Talep" }, { key: "required", label: "Talep" }, { key: "offered", label: "En yüksek teklif" }, { key: "gap", label: "Eksik" }, { key: "offerCount", label: "Teklif" }], gaps, gaps.length ? ["Eksik miktarlı teklif otomatik olarak tam teklif kabul edilmemelidir."] : [], ["Eksik kalemleri tamamlatın; şüpheli eşleşmeleri manuel doğrulayın."], "Mukayese açığı bulunmadı."));
+    }
+
+    if (questionId === "open_orders") {
+      const open = orders.map((o) => {
+        const termin = dateValue(o.termin_date || o.delivery_date || o.expected_delivery_date);
+        const delivered = n(o.received_total || o.delivered_quantity);
+        const ordered = n(o.total_quantity || o.quantity) || (Array.isArray(o.items) ? o.items.reduce((s, i) => s + n(i.quantity), 0) : 0);
+        return { no: text(o.order_no || o.order_number || o.id), supplier: text(o.supplier_name || o.partner_name), status: text(o.status || o.durum, "Açık"), termin: termin ? termin.toLocaleDateString("tr-TR") : "Belirtilmedi", remaining: Math.max(ordered - delivered, 0), overdue: termin && termin < today && delivered < ordered ? "Gecikmiş" : "-" };
+      }).filter((o) => !/teslim|tamam|iptal/i.test(o.status));
+      const overdue = open.filter((o) => o.overdue === "Gecikmiş").length;
+      return NextResponse.json(response(questionId, `${open.length} açık sipariş`, "Sipariş durumu, termin ve kalan miktar birlikte kontrol edildi.", [{ label: "Açık", value: open.length, tone: "amber" }, { label: "Gecikmiş", value: overdue, tone: overdue ? "red" : "green" }], [{ key: "no", label: "Sipariş no" }, { key: "supplier", label: "Tedarikçi" }, { key: "status", label: "Durum" }, { key: "termin", label: "Termin" }, { key: "remaining", label: "Kalan" }, { key: "overdue", label: "Uyarı" }], open, overdue ? [`${overdue} sipariş termin tarihini aşmış görünüyor.`] : [], ["Geciken siparişlerde tedarikçi teyidi ve yeni termin kaydı oluşturun."], "Açık sipariş yok."));
+    }
+
+    if (questionId === "delivery_gaps") {
+      const missing = ordItems.map((i) => { const ordered = n(i.quantity || i.ordered_quantity || i.miktar); const received = n(i.received_quantity || i.delivered_quantity || i.accepted_quantity || i.gelen); return { no: text(i.orderNo || i.order_no || i.order_id), code: productIdentity(i), supplier: text(i.supplier || i.supplier_name), ordered, received, remaining: Math.max(ordered - received, 0) }; }).filter((i) => i.remaining > 0).sort((a, b) => b.remaining - a.remaining).slice(0, 50);
+      return NextResponse.json(response(questionId, `${missing.length} eksik teslimat kalemi`, "Sipariş miktarı ile teslim alınan miktar karşılaştırıldı.", [{ label: "Eksik kalem", value: missing.length, tone: missing.length ? "amber" : "green" }], [{ key: "no", label: "Sipariş" }, { key: "supplier", label: "Tedarikçi" }, { key: "code", label: "Ürün" }, { key: "ordered", label: "Sipariş" }, { key: "received", label: "Teslim" }, { key: "remaining", label: "Kalan" }], missing, [], ["Teslim belgesiyle miktarı doğrulayın ve kısmi teslimi kaydedin."], "Eksik teslimat yok."));
+    }
+
+    if (questionId === "cost_hotspots") {
+      const costly = ordItems.map((i) => { const quantity = n(i.quantity || i.miktar); const unit = n(i.net_unit_price || i.unit_price || i.birim_fiyat); const currency = text(i.currency, "TRY"); return { code: productIdentity(i), supplier: text(i.supplier || i.supplier_name), quantity, unit: money(unit, currency), total: money(n(i.total_amount || i.total) || quantity * unit, currency), numericTotal: n(i.total_amount || i.total) || quantity * unit }; }).filter((i) => i.numericTotal > 0).sort((a, b) => b.numericTotal - a.numericTotal).slice(0, 20).map(({ numericTotal, ...item }) => item);
+      return NextResponse.json(response(questionId, "En yüksek maliyetli kalemler", "Sipariş kalemleri kendi para birimlerindeki tutara göre sıralandı; farklı para birimleri doğrudan birbirine eşit kabul edilmedi.", [{ label: "Fiyatlı kalem", value: costly.length, tone: "blue" }], [{ key: "code", label: "Ürün" }, { key: "supplier", label: "Tedarikçi" }, { key: "quantity", label: "Miktar" }, { key: "unit", label: "Birim fiyat" }, { key: "total", label: "Toplam" }], costly, ["Farklı para birimlerini kesin karar öncesinde işlem tarihindeki sabit kurla karşılaştırın."], ["Yüksek tutarlı kalemlerde mukayese ve onay kaydını kontrol edin."], "Fiyat bilgisi bulunan sipariş kalemi yok."));
+    }
+
+    const issues = [];
+    products.forEach((p) => { if (!p.product_code) issues.push({ area: "Stok", record: text(p.product_name || p.id), issue: "Ürün kodu eksik", severity: "Yüksek" }); if (!p.unit) issues.push({ area: "Stok", record: productIdentity(p), issue: "Birim eksik", severity: "Orta" }); });
+    orders.forEach((o) => { const id = text(o.order_no || o.id); if (!o.supplier_name && !o.partner_name) issues.push({ area: "Sipariş", record: id, issue: "Tedarikçi eksik", severity: "Yüksek" }); if (!o.currency) issues.push({ area: "Sipariş", record: id, issue: "Para birimi eksik", severity: "Yüksek" }); if (!o.termin_date && !o.delivery_date) issues.push({ area: "Sipariş", record: id, issue: "Termin belirtilmemiş", severity: "Orta" }); });
+    offers.forEach((o) => { if (!o.firma_adi && !o.supplier_name && !o.company_name) issues.push({ area: "Teklif", record: text(o.dosya_adi || o.id), issue: "Firma adı eksik", severity: "Yüksek" }); });
+    return NextResponse.json(response(questionId, `${issues.length} veri kalitesi uyarısı`, "Kritik kimlik ve süreç alanları kontrol edildi.", [{ label: "Uyarı", value: issues.length, tone: issues.length ? "red" : "green" }], [{ key: "area", label: "Alan" }, { key: "record", label: "Kayıt" }, { key: "issue", label: "Sorun" }, { key: "severity", label: "Önem" }], issues.slice(0, 100), issues.length ? ["Eksik veriler analiz ve rapor güvenilirliğini düşürür."] : [], ["Önce yüksek önem seviyesindeki kayıtları düzeltin."], "Eksik veya şüpheli temel veri bulunmadı."));
   } catch (error) {
-    return NextResponse.json(
-      { error: error?.message || "AI asistan çalıştırılamadı." },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: error?.message || "Sistem kontrolü tamamlanamadı." }, { status: 500 });
   }
 }

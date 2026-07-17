@@ -299,10 +299,10 @@ export default function FinancePage() {
               Finans Raporu
             </div>
             <h1 className="mt-3 text-4xl font-bold text-slate-900">
-              Genel ve Proje Bazlı Finans
+              Ön Muhasebe ve Finans Özeti
             </h1>
             <p className="mt-2 max-w-2xl text-sm text-slate-600">
-              Tahsilat, iş ortağı ödemesi, gelen ürün değeri ve proje kârlılığı tek ekranda izlenir.
+              Alacak, borç, tahsilat ve ödeme hareketlerini sade bir yönetim görünümünde izleyin.
             </p>
           </div>
           <button
@@ -380,20 +380,51 @@ export default function FinancePage() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-5">
-          <StatCard title="Sözleşme Bedeli" value={formatMoney(report.contractTotal, report.baseCurrency)} text="Base toplam" tone="blue" />
-          <StatCard title="Tahsilat" value={formatMoney(report.projectPaymentTotal, report.baseCurrency)} text="Base alınan ödeme" tone="green" />
-          <StatCard title="Bekleyen Tahsilat" value={formatMoney(report.waitingCollection, report.baseCurrency)} text="Müşteri alacağı" tone="orange" />
-          <StatCard title="Sipariş Tutarı" value={formatMoney(report.orderTotal, report.baseCurrency)} text="Base iş ortağı borç matrahı" />
-          <StatCard title="Kalan İş Ortağı Ödemesi" value={formatMoney(report.supplierDebt, report.baseCurrency)} text="Base ödenecek kalan" tone="red" />
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          <StatCard title="Müşteri Alacağı" value={formatMoney(report.waitingCollection, report.baseCurrency)} text="Henüz tahsil edilmemiş" tone="orange" />
+          <StatCard title="Tedarikçi Borcu" value={formatMoney(report.supplierDebt, report.baseCurrency)} text="Henüz ödenmemiş" tone="red" />
+          <StatCard
+            title="Net Nakit Pozisyonu"
+            value={formatMoney(report.projectPaymentTotal - report.orderPaid, report.baseCurrency)}
+            text="Tahsilat eksi tedarikçi ödemesi"
+            tone={report.projectPaymentTotal - report.orderPaid >= 0 ? "green" : "red"}
+          />
         </div>
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-          <StatCard title="Gelen Ürün Değeri" value={formatMoney(report.receivedValue, report.baseCurrency)} text="Ana para stok giriş değeri" tone="green" />
-          <StatCard title="Gelmeyen Ürün Değeri" value={formatMoney(report.notReceivedValue, report.baseCurrency)} text="Sipariş - gelen" tone="orange" />
-          <StatCard title="Ödendi / Gelmedi" value={formatMoney(report.paidNotReceived, report.baseCurrency)} text="Riskli ödeme" tone="red" />
-          <StatCard title="Geldi / Ödenmedi" value={formatMoney(report.receivedNotPaid, report.baseCurrency)} text="İş ortağı borcu" tone="blue" />
-        </div>
+        <section className="grid gap-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm lg:grid-cols-2">
+          <div>
+            <h2 className="text-base font-black text-slate-950">Finans Hareket Özeti</h2>
+            <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+              {[
+                ["Sözleşme", report.contractTotal],
+                ["Tahsil Edilen", report.projectPaymentTotal],
+                ["Sipariş", report.orderTotal],
+                ["Ödenen", report.orderPaid],
+              ].map(([label, value]) => (
+                <div key={label} className="rounded-xl bg-slate-50 p-3">
+                  <div className="text-xs font-bold text-slate-500">{label}</div>
+                  <div className="mt-1 font-black text-slate-900">{formatMoney(value, report.baseCurrency)}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div>
+            <h2 className="text-base font-black text-slate-950">Mal ve Ödeme Kontrolü</h2>
+            <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+              {[
+                ["Gelen Ürün", report.receivedValue],
+                ["Gelmeyen Ürün", report.notReceivedValue],
+                ["Ödendi / Gelmedi", report.paidNotReceived],
+                ["Geldi / Ödenmedi", report.receivedNotPaid],
+              ].map(([label, value]) => (
+                <div key={label} className="rounded-xl bg-slate-50 p-3">
+                  <div className="text-xs font-bold text-slate-500">{label}</div>
+                  <div className="mt-1 font-black text-slate-900">{formatMoney(value, report.baseCurrency)}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
 
         <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-100 p-5">

@@ -25,10 +25,10 @@ const sections = [
     ],
   },
   {
-    title: "4. AI Asistan Kullanımı",
+    title: "4. Sistem Destek Kullanımı",
     paragraphs: [
-      "AI Asistan yalnızca analiz ve öneri üretir. Kayıt oluşturma, değiştirme, silme, sipariş verme, stok hareketi oluşturma veya ödeme kaydetme yetkisi yoktur.",
-      "OpenAI API anahtarı tanımlı değilse sistem yerel read-only analiz modunda çalışabilir. OpenAI API tanımlandığında daha gelişmiş doğal dil analizi üretilebilir.",
+      "Sistem Destek yalnızca kural tabanlı analiz ve öneri üretir. Kayıt oluşturma, değiştirme, silme, sipariş verme, stok hareketi oluşturma veya ödeme kaydetme yetkisi yoktur.",
+      "Analizler kullanıcının erişebildiği güncel sistem kayıtlarından hazırlanır; veriler harici bir yapay zekâ hizmetine gönderilmez.",
     ],
   },
   {
