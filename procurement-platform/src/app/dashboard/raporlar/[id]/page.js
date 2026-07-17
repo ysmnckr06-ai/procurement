@@ -1,264 +1,121 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
-export default function RaporDetayPage() {
-  const params = useParams();
-  const id = params.id;
+const asArray = (value) => (Array.isArray(value) ? value : []);
+const unique = (values) => [...new Set(values.filter(Boolean))];
 
-  const [rapor, setRapor] = useState(null);
+function sourceInfo(report) {
+  const item = asArray(report?.items)[0] || {};
+  const rawName = String(report?.ad || "Teklif Mukayese Raporu")
+    .replace(/\.(xlsx?|pdf|png|jpe?g)$/i, "")
+    .replace(/satın\s*alma\s*gerekenler/gi, "Talep Mukayesesi");
+  const embeddedNumber = rawName.match(/TLB-\d+/i)?.[0]?.toUpperCase();
+  return {
+    requestId: item.sourceRequestId || report?.request_id || "",
+    requestNumber: item.sourceRequestNumber || embeddedNumber || "Talep numarası bulunamadı",
+    requestTitle: item.sourceRequestTitle || rawName.replace(/^TLB-\d+\s*[·-]?\s*/i, "") || "Teklif Mukayesesi",
+    owner: item.requestOwner || "-",
+    department: item.requestDepartment || "-",
+  };
+}
+
+export default function ReportReviewPage() {
+  const { id } = useParams();
+  const router = useRouter();
+  const [report, setReport] = useState(null);
+  const [orders, setOrders] = useState([]);
   const [message, setMessage] = useState("");
 
   useEffect(() => {
-    const loadReport = async () => {
-      if (!id) return;
-
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) {
-        setMessage("Raporu görmek için giriş yapmanız gerekiyor.");
+    async function load() {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) { router.push("/login"); return; }
+      const [reportResult, orderResult] = await Promise.all([
+        supabase.from("reports").select("*").eq("id", id).eq("user_id", user.id).maybeSingle(),
+        supabase.from("orders").select("id,order_no,partner_name,supplier_name,status,total_amount,currency").eq("report_id", id).eq("user_id", user.id),
+      ]);
+      if (reportResult.error || !reportResult.data) {
+        setMessage("Rapor bulunamadı veya bu kayda erişim yetkiniz yok.");
         return;
       }
-
-      const { data, error } = await supabase
-        .from("reports")
-        .select("*")
-        .eq("id", id)
-        .eq("user_id", user.id)
-        .maybeSingle();
-
-      if (error || !data) {
-        console.error(error);
-        setMessage(error?.message ? `Rapor yüklenemedi: ${error.message}` : "Rapor bulunamadı veya bu kayda erişim yetkiniz yok.");
-        return;
-      }
-
-      setRapor(data);
-    };
-
-    loadReport();
-  }, [id]);
-
-  const raporAdi = useMemo(() => {
-  if (!rapor) return "Rapor Detayı";
-
-  const name =
-    rapor.ad ||
-    rapor.name ||
-    rapor.file_name ||
-    rapor.report_name ||
-    "";
-
-  if (!name || name === "undefined") {
-    return "Karşılaştırma Raporu";
-  }
-
-  return name;
-}, [rapor]);
-
-  const raporTarihi = useMemo(() => {
-    if (!rapor) return "-";
-
-    return rapor.created_at
-      ? new Date(rapor.created_at).toLocaleString("tr-TR")
-      : rapor.tarih || rapor.date || "-";
-  }, [rapor]);
-
-  const raporNumarasi = useMemo(() => {
-    if (!rapor?.id) return "-";
-    return `RPR-${String(rapor.id).replaceAll("-", "").slice(0, 8).toUpperCase()}`;
-  }, [rapor]);
-
-  const analiz = useMemo(() => {
-    if (!rapor) return null;
-
-    return (
-      rapor.analysis ||
-      rapor.analiz ||
-      rapor.data ||
-      rapor.result ||
-      rapor.report_data ||
-      null
-    );
-  }, [rapor]);
-
-const mukayeseRows = useMemo(() => {
-  return rapor?.analysis || [];
-}, [rapor]);
-
-const sonAlimRows = useMemo(() => {
-  return rapor?.analysis || [];
-}, [rapor]);
-
-    const firma =
-      rapor?.onerilenFirma ||
-      rapor?.onerilenfirma ||
-      rapor?.recommended_firm ||
-      rapor?.recommendedFirm ||
-      analiz?.recommended_firm ||
-      analiz?.onerilenFirma ||
-      analiz?.onerilenfirma ||
-      "-";
-
-  const kararOzeti = useMemo(() => {
-    if (!rapor) return [];
-
-    const rawRows = Array.isArray(analiz)
-      ? analiz
-      : Array.isArray(analiz?.items)
-        ? analiz.items
-        : Array.isArray(analiz?.rows)
-          ? analiz.rows
-          : [];
-
-    if (rawRows.length === 0) {
-      return [
-        "Rapor arşivde kayıtlı. Detay dosyası indirildiğinde mukayese satırları ve seçim hesabı incelenebilir.",
-        firma !== "-"
-          ? `${firma} önerilen firma olarak kaydedilmiş.`
-          : "Önerilen firma bilgisi bu rapor kaydında bulunmuyor.",
-      ];
+      setReport(reportResult.data);
+      setOrders(orderResult.data || []);
     }
+    load();
+  }, [id, router]);
 
-    return rawRows.slice(0, 5).map((row, index) => {
-      const supplier =
-        row.recommended_firm ||
-        row.onerilenFirma ||
-        row.firma ||
-        row.supplier ||
-        firma ||
-        "Firma";
-      const reason =
-        row.reason ||
-        row.gerekce ||
-        row.explanation ||
-        row.aciklama ||
-        "fiyat, vade, termin ve risk kriterlerine göre avantajlı görünüyor";
-      const amount =
-        row.total ||
-        row.netToplamTRY ||
-        row.netToplam ||
-        row.toplamTutar ||
-        "";
+  const groups = useMemo(() => asArray(report?.analysis), [report]);
+  const source = useMemo(() => sourceInfo(report), [report]);
+  const suppliers = useMemo(() => unique(groups.flatMap((group) => asArray(group.offers).map((offer) => offer.firmaAdi || offer.firma))), [groups]);
+  const projects = useMemo(() => unique(groups.flatMap((group) => asArray(group.allocations).map((row) => row.projectCode || row.projectName || row.projectId))), [groups]);
+  const incomplete = useMemo(() => groups.filter((group) => asArray(group.offers).some((offer) => Number(offer.firmaAdedi || 0) < Number(group.purchaseQuantity || group.talepEdilenAdet || 0))).length, [groups]);
 
-      return `${index + 1}. ${supplier}: ${reason}${amount ? ` (tutar: ${amount})` : ""}.`;
-    });
-  }, [analiz, firma, rapor]);
-
-  if (!rapor) {
-    return (
-      <div className="min-h-screen bg-slate-100 p-8">
-        <div className="mx-auto max-w-4xl rounded-2xl bg-white p-6 shadow-sm">
-          {message || "Yükleniyor..."}
-        </div>
-      </div>
-    );
-  }
+  if (!report) return <div className="min-h-screen bg-slate-100 p-8"><div className="mx-auto max-w-5xl rounded-2xl bg-white p-6">{message || "Rapor yükleniyor..."}</div></div>;
 
   return (
-    <div className="min-h-screen bg-slate-100 p-8">
-      <div className="mx-auto max-w-5xl space-y-6">
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <Link href="/dashboard/raporlar" className="text-sm font-bold text-blue-700">
-            ← Raporlara Dön
-          </Link>
-
-          <h1 className="mt-4 text-3xl font-bold text-slate-900">
-            {raporAdi}
-          </h1>
-
-          <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-4">
-            <Info label="Tarih" value={raporTarihi} />
-            <Info label="Durum" value={rapor.durum || rapor.status || "Hazır"} />
-            <Info label="Önerilen Firma" value={firma} />
-            <Info label="Rapor No" value={raporNumarasi} />
+    <div className="min-h-screen bg-slate-100 p-4 sm:p-8">
+      <main className="mx-auto max-w-7xl space-y-5">
+        <section className="rounded-3xl bg-slate-950 p-6 text-white shadow-xl">
+          <Link href="/dashboard/raporlar" className="text-sm font-bold text-blue-200">← Raporlara dön</Link>
+          <div className="mt-4 flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <div className="text-sm font-bold text-blue-200">{source.requestNumber}</div>
+              <h1 className="mt-1 text-3xl font-black">{source.requestTitle}</h1>
+              <p className="mt-2 text-sm text-slate-300">Talep, teklifler, mukayese kararı ve sipariş kayıtları aynı işlem zincirinde gösterilir.</p>
+            </div>
+            <Link href={`/dashboard/raporlar/${id}/mukayese`} className="rounded-xl bg-emerald-600 px-5 py-3 text-center font-black text-white">Kalem bazlı mukayeseyi incele</Link>
           </div>
-        </div>
+        </section>
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <SummaryCard
-            title="Mukayese Raporu"
-            description="Teklif karşılaştırma verileri"
-            count={mukayeseRows.length}
-            href={`/dashboard/raporlar/${id}/mukayese`}
-            buttonText="Mukayese Aç"
-          />
+        <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+          <Info label="Rapor No" value={`RPR-${String(id).replaceAll("-", "").slice(0, 8).toUpperCase()}`} />
+          <Info label="Rapor Tarihi" value={new Date(report.created_at || report.tarih).toLocaleString("tr-TR")} />
+          <Info label="Talebi Açan" value={source.owner} />
+          <Info label="Birim" value={source.department} />
+          <Info label="Teklif Veren" value={`${suppliers.length} firma`} />
+          <Info label="Sipariş" value={`${orders.length} kayıt`} />
+        </section>
 
-          <SummaryCard
-            title="Son Alım"
-            description="Geçmiş satın alma verileri"
-            count={sonAlimRows.length}
-            href={`/dashboard/raporlar/${id}/son-alim`}
-            buttonText="Son Alım Aç"
-          />
-        </div>
-
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="text-xl font-bold text-slate-900">Karar Özeti</h2>
-          <p className="mt-2 text-sm text-slate-500">
-            Raporun hangi gerekçeyle bu sonuca yöneldiğini hızlı okumak için tutulur.
-          </p>
-          <div className="mt-4 space-y-3">
-            {kararOzeti.map((item) => (
-              <div
-                key={item}
-                className="rounded-xl bg-slate-50 p-4 text-sm font-semibold text-slate-700"
-              >
-                {item}
-              </div>
-            ))}
+        <section className="grid gap-5 lg:grid-cols-3">
+          <div className="rounded-2xl border bg-white p-5 shadow-sm lg:col-span-2">
+            <h2 className="text-xl font-black text-slate-900">Kısa karşılaştırma</h2>
+            <div className="mt-4 grid gap-3 sm:grid-cols-3">
+              <Metric label="Talep kalemi" value={groups.length} />
+              <Metric label="Teklif veren firma" value={suppliers.length} />
+              <Metric label="Eksik miktar uyarısı" value={incomplete} warning={incomplete > 0} />
+            </div>
+            <div className="mt-4 flex flex-wrap gap-2">
+              {suppliers.map((name) => <span key={name} className="rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-800">{name}</span>)}
+              {!suppliers.length && <span className="text-sm text-slate-500">Teklif veren firma bulunamadı.</span>}
+            </div>
           </div>
-        </div>
-
-        {message && (
-          <div className="rounded-xl bg-slate-50 p-3 text-sm text-slate-700">
-            {message}
+          <div className="rounded-2xl border bg-white p-5 shadow-sm">
+            <h2 className="text-xl font-black text-slate-900">Bağlı projeler</h2>
+            <div className="mt-4 space-y-2 text-sm font-semibold text-slate-700">
+              {projects.map((project) => <div key={project} className="rounded-xl bg-slate-50 p-3">{project}</div>)}
+              {!projects.length && <div className="rounded-xl bg-slate-50 p-3">Proje bağı yok</div>}
+            </div>
           </div>
-        )}
-      </div>
+        </section>
+
+        <section className="rounded-2xl border bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div><h2 className="text-xl font-black text-slate-900">Siparişe dönüşen kayıtlar</h2><p className="mt-1 text-sm text-slate-500">Seçilen tedarikçiler ayrı siparişlerde izlenir; kritik ticari alanlar rapordan sonra kilitlenir.</p></div>
+            <Link href="/dashboard/siparisler" className="rounded-xl border border-blue-200 px-4 py-2 text-sm font-bold text-blue-700">Sipariş takibine git</Link>
+          </div>
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            {orders.map((order) => <Link key={order.id} href={`/dashboard/siparisler/${order.id}`} className="rounded-xl border p-4 hover:border-blue-400"><div className="font-black text-slate-900">{order.order_no}</div><div className="mt-1 text-sm text-slate-600">{order.partner_name || order.supplier_name} · {order.status}</div></Link>)}
+            {!orders.length && <div className="rounded-xl bg-amber-50 p-4 text-sm font-bold text-amber-800">Bu rapordan henüz sipariş oluşturulmadı.</div>}
+          </div>
+        </section>
+      </main>
     </div>
   );
 }
 
-function Info({ label, value, small = false }) {
-  return (
-    <div className="rounded-xl bg-slate-50 p-4">
-      <div className="text-sm text-slate-500">{label}</div>
-      <div
-        className={`mt-1 font-bold text-slate-900 ${
-          small ? "break-all text-xs" : ""
-        }`}
-      >
-        {value || "-"}
-      </div>
-    </div>
-  );
-}
-
-function SummaryCard({ title, description, count, href, buttonText }) {
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-      <h2 className="text-xl font-bold text-slate-900">{title}</h2>
-      <p className="mt-2 text-sm text-slate-500">{description}</p>
-
-      <div className="mt-4 rounded-xl bg-slate-50 p-4">
-        <div className="text-sm text-slate-500">Kayıt Sayısı</div>
-        <div className="mt-1 text-3xl font-black text-slate-900">
-          {count}
-        </div>
-      </div>
-
-      <Link
-        href={href}
-        className="mt-5 inline-flex rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white hover:bg-blue-700"
-      >
-        {buttonText}
-      </Link>
-    </div>
-  );
-}
+function Info({ label, value }) { return <div className="rounded-2xl border bg-white p-4 shadow-sm"><div className="text-xs font-bold text-slate-500">{label}</div><div className="mt-2 break-words text-sm font-black text-slate-900">{value || "-"}</div></div>; }
+function Metric({ label, value, warning }) { return <div className={`rounded-xl p-4 ${warning ? "bg-amber-50 text-amber-900" : "bg-slate-50 text-slate-900"}`}><div className="text-xs font-bold opacity-70">{label}</div><div className="mt-1 text-2xl font-black">{value}</div></div>; }

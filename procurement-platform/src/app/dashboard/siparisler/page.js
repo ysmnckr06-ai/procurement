@@ -761,6 +761,11 @@ export default function OrdersPage() {
   }
 
   function startEdit(order) {
+    if (order.report_id || order.status !== "Taslak") {
+      setMessage("Mukayese kaynaklı veya işleme alınmış siparişlerin tedarikçi, miktar, fiyat ve sipariş numarası değiştirilemez. Teslimat, belge ve ödeme işlemlerini Detay ekranından yönetin.");
+      router.push(`/dashboard/siparisler/${order.id}`);
+      return;
+    }
     setProjectLinkOpen(false);
     setFormData({
       ...emptyForm,
@@ -933,6 +938,11 @@ export default function OrdersPage() {
   }
 
   async function handleDelete(id) {
+    const order = orders.find((item) => item.id === id);
+    if (!order || order.report_id || order.status !== "Taslak") {
+      setMessage("Mukayese kaynaklı veya işleme alınmış siparişler silinemez; kayıt zinciri ve denetim izi korunur.");
+      return;
+    }
     const confirmed = window.confirm("Bu sipariş silinsin mi?");
     if (!confirmed) return;
 
@@ -1818,20 +1828,21 @@ function OrdersTable({ orders, liveRates, onView, onEdit, onDelete }) {
                     >
                       Detay
                     </button>
-                    <button
+                    {!order.report_id && order.status === "Taslak" && <button
                       type="button"
                       onClick={() => onEdit(order)}
                       className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold"
                     >
                       Düzenle
-                    </button>
-                    <button
+                    </button>}
+                    {!order.report_id && order.status === "Taslak" && <button
                       type="button"
                       onClick={() => onDelete(order.id)}
                       className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-bold text-red-600"
                     >
                       Sil
-                    </button>
+                    </button>}
+                    {(order.report_id || order.status !== "Taslak") && <span className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-600" title="Ticari alanlar ve kayıt zinciri korunur">🔒 Kilitli</span>}
                   </div>
                 </td>
               </tr>

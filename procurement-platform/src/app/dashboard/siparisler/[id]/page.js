@@ -2733,6 +2733,7 @@ export default function OrderDetailPage() {
             <p className="mt-1 text-sm text-slate-500">
               Sipariş No: {order.order_no}
             </p>
+            {order.report_id && <p className="mt-2 inline-flex rounded-full bg-slate-200 px-3 py-1 text-xs font-bold text-slate-700">🔒 Mukayese kaynaklı ticari alanlar kilitli · teslimat, belge ve ödeme işlemleri açıktır</p>}
           </div>
 
           <div className="flex flex-wrap justify-start gap-2 lg:justify-end">
@@ -2769,6 +2770,13 @@ export default function OrderDetailPage() {
               className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-bold text-amber-700 hover:bg-amber-100"
             >
               Kısmi Teslim Al
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("documents")}
+              className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-2 text-sm font-bold text-violet-700 hover:bg-violet-100"
+            >
+              Fatura / İrsaliye Ekle
             </button>
             {statusActions.map((action) => (
               <button

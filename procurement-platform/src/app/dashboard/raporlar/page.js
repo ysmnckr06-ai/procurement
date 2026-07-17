@@ -46,6 +46,13 @@ useEffect(() => {
 }, [router]);
 
 const getReportName = useCallback((rapor) => {
+  const sourceItem = Array.isArray(rapor.items) ? rapor.items[0] : null;
+  if (sourceItem?.sourceRequestNumber) {
+    const title = String(sourceItem.sourceRequestTitle || "Teklif Mukayesesi")
+      .replace(/\.(xlsx?|pdf|png|jpe?g)$/i, "")
+      .replace(/satın\s*alma\s*gerekenler/gi, "Talep Mukayesesi");
+    return `${sourceItem.sourceRequestNumber} · ${title}`;
+  }
   const name =
     rapor.ad ||
     rapor.name ||
@@ -64,7 +71,9 @@ const getReportName = useCallback((rapor) => {
     return "Karşılaştırma Raporu";
   }
 
-  return name;
+  return String(name)
+    .replace(/\.(xlsx?|pdf|png|jpe?g)$/i, "")
+    .replace(/satın\s*alma\s*gerekenler/gi, "Talep Mukayesesi");
 }, []);
 
 const getReportFirma = useCallback((rapor) => {

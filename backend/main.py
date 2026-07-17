@@ -1613,6 +1613,10 @@ async def analyze_offers(
     request_report_path: str = Form(""),
     request_file_name: str = Form(""),
     request_items_json: str = Form(""),
+    request_number: str = Form(""),
+    request_title: str = Form(""),
+    request_owner: str = Form(""),
+    request_department: str = Form(""),
 
     max_budget: str = Form(""),
     min_vade_days: str = Form(""),
@@ -1949,6 +1953,11 @@ async def analyze_offers(
             "stockCoverableQuantity": group.get("stockCoverableQuantity") or request_item.get("stockCoverableQuantity") or 0,
             "purchaseQuantity": group.get("purchaseQuantity") or request_item.get("purchaseQuantity") or group.get("talepEdilenAdet") or 0,
             "allocations": group.get("allocations") or request_item.get("allocations") or [],
+            "sourceRequestId": request_id or "",
+            "sourceRequestNumber": request_number or "",
+            "sourceRequestTitle": request_title or request_file_name or "",
+            "requestOwner": request_owner or "",
+            "requestDepartment": request_department or "",
         })
         
     logger.debug("ORDER ITEMS SAYISI:", len(order_items))

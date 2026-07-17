@@ -14,6 +14,15 @@ function money(value, currency = "TRY") {
 }
 function groupKey(index) { return `group-${index}`; }
 function normalizedCurrency(value) { return String(value || "").trim().toUpperCase(); }
+function projectSummary(group) {
+  const rows = Array.isArray(group?.allocations) ? group.allocations : [];
+  const totals = new Map();
+  rows.forEach((row) => {
+    const key = row.projectCode || row.projectName || row.projectId;
+    if (key) totals.set(key, (totals.get(key) || 0) + num(row.quantity));
+  });
+  return Array.from(totals.entries()).map(([key, quantity]) => `${key}: ${quantity}`).join(" · ") || "Proje bağı yok";
+}
 function comparisonOrderKey(name, currency, exchangeRate) {
   return `${normalize(name)}|${normalizedCurrency(currency)}|${num(exchangeRate).toFixed(6)}`;
 }
@@ -105,6 +114,9 @@ export default function ComparisonPage() {
       const itemLabel = `${group.urunKodu || "Kodsuz"} · ${group.urunAciklamasi || "Ürün"}`;
       if (!currency) validationErrors.push(`${itemLabel}: para birimi eksik`);
       if (!currency || exchangeRate <= 0) validationErrors.push(`${itemLabel}: geçerli kur eksik`);
+      if (num(offer.firmaAdedi) < num(group.purchaseQuantity || group.talepEdilenAdet)) {
+        validationErrors.push(`${itemLabel}: teklif miktarı talep miktarını tam karşılamıyor`);
+      }
       const allocationProjectIds = (group.allocations || []).map((allocation) => allocation.projectId).filter(Boolean);
       if (allocationProjectIds.length === 0 && !report.project_id) {
         validationErrors.push(`${itemLabel}: proje bağı yok`);
@@ -225,7 +237,7 @@ export default function ComparisonPage() {
         order_total_base: total * rate,
         remaining_amount: total,
         remaining_amount_base: total * rate,
-        note: `Mukayese raporundan otomatik oluşturuldu: ${report.id}`,
+        note: `${report.ad || "Talep mukayesesi"} üzerinden oluşturuldu. Rapor: ${report.id}`,
       };
     });
     const { data: orders, error } = await supabase.from("orders").insert(payloads).select("id,order_no");
@@ -245,7 +257,7 @@ export default function ComparisonPage() {
   if (!report) return <div className="min-h-screen bg-slate-100 p-8"><div className="mx-auto max-w-5xl rounded-2xl bg-white p-6">{message || "Mukayese yükleniyor..."}</div></div>;
 
   return <div className="min-h-screen bg-slate-100 p-4 sm:p-8"><main className="mx-auto max-w-7xl space-y-5">
-    <div className="rounded-3xl bg-slate-950 p-6 text-white"><Link href={`/dashboard/raporlar/${report.id}`} className="text-sm font-bold text-blue-200">← Rapor detayına dön</Link><div className="mt-3 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><h1 className="text-3xl font-black">Profesyonel Mukayese</h1><p className="mt-2 text-sm text-slate-300">Kalem bazında en iyi veya alternatif teklifi seçin; siparişler tedarikçiye göre gruplanır.</p></div><button type="button" onClick={createOrders} disabled={creating} className="rounded-xl bg-emerald-600 px-5 py-3 font-black text-white disabled:bg-slate-500">{creating ? "Siparişler oluşturuluyor..." : "Seçilenlerden Sipariş Oluştur"}</button></div></div>
+    <div className="rounded-3xl bg-slate-950 p-6 text-white"><Link href={`/dashboard/raporlar/${report.id}`} className="text-sm font-bold text-blue-200">← Rapor özetine dön</Link><div className="mt-3 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><div className="text-sm font-bold text-blue-200">{report.ad || "Talep Mukayesesi"}</div><h1 className="mt-1 text-3xl font-black">Profesyonel Mukayese</h1><p className="mt-2 text-sm text-slate-300">Kalem bazında teklifleri; miktar, iskonto, kur, vade, termin ve risk etkileriyle karşılaştırın. Siparişler tedarikçiye göre gruplanır ve kaynak rapora bağlanır.</p></div><button type="button" onClick={createOrders} disabled={creating} className="rounded-xl bg-emerald-600 px-5 py-3 font-black text-white disabled:bg-slate-500">{creating ? "Siparişler oluşturuluyor..." : "Seçilenlerden Sipariş Oluştur"}</button></div></div>
     {message && <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 font-semibold text-blue-900">{message} {message.includes("oluşturuldu") && <Link href="/dashboard/siparisler" className="ml-2 underline">Siparişlere git</Link>}</div>}
     <section className="rounded-2xl border border-blue-100 bg-blue-50 p-5 shadow-sm">
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
@@ -268,7 +280,7 @@ export default function ComparisonPage() {
       const offers = Array.isArray(group.offers) ? group.offers : [];
       const bestName = normalize(supplierName(group.bestOffer));
       return <section key={groupKey(groupIndex)} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b bg-slate-50 p-4"><div className="font-black text-blue-900">{group.urunKodu || "Kodsuz"} · {group.urunAciklamasi}</div><div className="mt-1 flex flex-wrap gap-3 text-xs font-bold text-slate-600"><span>İhtiyaç: {group.talepEdilenAdet} {group.birim}</span><span>Stoktan: {num(group.stockCoverableQuantity)}</span><span>Satın alınacak: {num(group.purchaseQuantity || group.talepEdilenAdet)}</span><span>Proje: {(group.allocations || []).map((row) => `${row.projectCode || row.projectId}: ${row.quantity}`).join(" | ") || "-"}</span></div></div>
+        <div className="border-b bg-slate-50 p-4"><div className="font-black text-blue-900">{group.urunKodu || "Kodsuz"} · {group.urunAciklamasi}</div><div className="mt-1 flex flex-wrap gap-3 text-xs font-bold text-slate-600"><span>Talep edilen: {group.talepEdilenAdet} {group.birim}</span><span>Teklif sayısı: {offers.length}</span><span>Projeler: {projectSummary(group)}</span></div></div>
         <div className="overflow-x-auto"><table className="min-w-[1450px] w-full text-left text-xs"><thead className="bg-white text-slate-500"><tr><th className="p-3">Seç</th><th className="p-3">Tedarikçi / Puan</th><th className="p-3">Miktar</th><th className="p-3">Birim fiyat</th><th className="p-3">İskonto</th><th className="p-3">Net fiyat</th><th className="p-3">Toplam</th><th className="p-3">Para birimi</th><th className="p-3">Kur</th><th className="p-3">TL karşılığı</th><th className="p-3">Vade</th><th className="p-3">Termin</th><th className="p-3">Sonuç</th></tr></thead><tbody>
           {offers.map((offer, offerIndex) => { const name = supplierName(offer); const isBest = normalize(name) === bestName; const supplier = supplierMap.get(normalize(name)); return <tr key={`${name}-${offerIndex}`} className={`border-t ${isBest ? "bg-emerald-50" : ""}`}><td className="p-3"><input type="radio" name={groupKey(groupIndex)} checked={selectedOffers[groupKey(groupIndex)] === offerIndex} onChange={() => setSelectedOffers((current) => ({ ...current, [groupKey(groupIndex)]: offerIndex }))} /></td><td className="p-3"><div className="font-black text-slate-900">{name}</div><div className="text-blue-700">Puan: {supplier?.score ?? 80}/100</div></td><td className="p-3">{offer.firmaAdedi || group.purchaseQuantity || group.talepEdilenAdet}</td><td className="p-3">{money(offer.birimFiyat, offer.paraBirimi)}</td><td className="p-3">%{num(offer.iskonto)}</td><td className="p-3">{money(offer.netBirimFiyat, offer.paraBirimi)}</td><td className="p-3">{money(offer.netToplam || num(offer.netBirimFiyat) * num(group.purchaseQuantity || group.talepEdilenAdet), offer.paraBirimi)}</td><td className="p-3">{offer.paraBirimi || "TRY"}</td><td className="p-3">{num(offer.kur) || 1}</td><td className="p-3 font-black">{money(offerTryTotal(group, offer), "TRY")}</td><td className="p-3">{offer.vade || `${offer.vadeDays || 0} gün`}</td><td className="p-3">{offer.termin || `${offer.terminDays || 0} gün`}</td><td className="p-3">{isBest ? <span className="rounded-full bg-emerald-600 px-3 py-1 font-black text-white">En iyi teklif</span> : <span className="rounded-full bg-slate-200 px-3 py-1 font-bold text-slate-700">Alternatif</span>}</td></tr>; })}
         </tbody></table></div>

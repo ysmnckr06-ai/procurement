@@ -461,6 +461,7 @@ const loadSupplierProfiles = async () => {
       const formData = new FormData();
 
       if (analysisMode === "withRequest" && selectedRequest) {
+        const selectedRequestMeta = getOfferRequestMeta(selectedRequest);
         const selectedRequestItems = (() => {
           if (Array.isArray(selectedRequest.items)) return selectedRequest.items;
           if (typeof selectedRequest.items === "string" && selectedRequest.items.trim()) {
@@ -483,11 +484,14 @@ const loadSupplierProfiles = async () => {
         );
         formData.append(
           "request_file_name",
-          selectedRequest.fileName ||
-            selectedRequest.filepath ||
-            selectedRequest.ad ||
-            "Talep Listesi"
+          `${selectedRequest.requestNumberLabel || "Talep"} · ${String(
+            selectedRequest.ad || selectedRequest.fileName || "Teklif Mukayesesi"
+          ).replace(/\.(xlsx?|pdf|png|jpe?g)$/i, "").replace(/satın\s*alma\s*gerekenler/gi, "Talep Mukayesesi")}`
         );
+        formData.append("request_number", selectedRequest.requestNumberLabel || "");
+        formData.append("request_title", selectedRequest.ad || selectedRequest.fileName || "Talep Mukayesesi");
+        formData.append("request_owner", selectedRequest.requester || selectedRequest.requested_by || selectedRequest.requestedBy || selectedRequestMeta.requester || selectedRequestMeta.requestedBy || "");
+        formData.append("request_department", selectedRequest.department || selectedRequest.birim || selectedRequestMeta.department || selectedRequestMeta.birim || "");
         formData.append("request_items_json", JSON.stringify(selectedRequestItems));
       } else {
         formData.append("request_report_path", "");
