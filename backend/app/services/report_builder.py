@@ -1405,21 +1405,21 @@ def build_excel_report(analyzed_groups, output_path, company_info=None):
             )
             main.write_formula(row, start + 6, total_formula, formats["money"], net_total_try)
             if vade_days is None:
-                main.write_blank(row, start + 7, None, formats["qty"])
+                main.write(row, start + 7, "Bilinmiyor", formats["text"])
             else:
                 main.write_number(row, start + 7, vade_days, formats["qty"])
             vade_formula = (
-                f'=IF({xl_rowcol_to_cell(row, start + 7)}="",0,{xl_rowcol_to_cell(row, start + 6)}-'
+                f'=IF(NOT(ISNUMBER({xl_rowcol_to_cell(row, start + 7)})),0,{xl_rowcol_to_cell(row, start + 6)}-'
                 f'{xl_rowcol_to_cell(row, start + 6)}/(1+\'Hesaplama Varsayımları\'!$B$3)^('
                 f'{xl_rowcol_to_cell(row, start + 7)}/365))'
             )
             main.write_formula(row, start + 8, vade_formula, formats["money"], finance_advantage)
             if termin_days is None:
-                main.write_blank(row, start + 9, None, formats["qty"])
+                main.write(row, start + 9, "Bilinmiyor", formats["text"])
             else:
                 main.write_number(row, start + 9, termin_days, formats["qty"])
             termin_formula = (
-                f'=IF({xl_rowcol_to_cell(row, start + 9)}="",0,MAX('
+                f'=IF(NOT(ISNUMBER({xl_rowcol_to_cell(row, start + 9)})),0,MAX('
                 f'{xl_rowcol_to_cell(row, start + 9)}-\'Hesaplama Varsayımları\'!$B$4,0)*'
                 f'\'Hesaplama Varsayımları\'!$B$5)'
             )
@@ -1441,20 +1441,22 @@ def build_excel_report(analyzed_groups, output_path, company_info=None):
             main.write_formula(row, start + 13, evaluated_formula, formats["money"], evaluated)
 
         warnings = [str(item).strip() for item in group.get("decisionWarnings", []) if str(item).strip()]
+        decision_notes = [str(item).strip() for item in group.get("decisionNotes", []) if str(item).strip()]
         spread_note = _price_spread_note(group.get("offers", []) or [])
         if spread_note:
             warnings.append(spread_note)
         if group.get("decisionStatus") == "manual_review":
-            provisional = group.get("provisionalBestOffer") or {}
             decision_text = "KONTROL GEREKLİ"
             plan = "Satınalma teyidi bekleniyor"
-            decision_cost = _safe_num(provisional.get("evaluatedCostTRY", 0)) if provisional else 0
-            reason = " | ".join(warnings) or "Eksik veya şüpheli bilgi nedeniyle otomatik firma seçilmedi."
+            decision_cost = None
+            reason = " | ".join(warnings + decision_notes) or "Eksik veya şüpheli bilgi nedeniyle otomatik firma seçilmedi."
         elif group.get("decisionStatus") == "no_eligible_offer":
             decision_text = "TEKLİF YOK"
             plan = "Yeni teklif alınmalı"
-            decision_cost = 0
-            reason = "Talebi karşılayan ve kurallara uygun teklif bulunamadı."
+            decision_cost = None
+            reason = " | ".join(
+                ["Talebi karşılayan ve kurallara uygun teklif bulunamadı."] + decision_notes
+            )
         else:
             allocations = group.get("recommendedAllocation", []) or []
             decision_names = []
@@ -1486,7 +1488,10 @@ def build_excel_report(analyzed_groups, output_path, company_info=None):
 
         main.write(row, recommendation_start, decision_text, rec_text_fmt)
         main.write(row, recommendation_start + 1, plan, rec_text_fmt)
-        main.write_number(row, recommendation_start + 2, decision_cost, rec_money_fmt)
+        if decision_cost is None:
+            main.write(row, recommendation_start + 2, "Hesaplanmadı / Manuel kontrol", rec_text_fmt)
+        else:
+            main.write_number(row, recommendation_start + 2, decision_cost, rec_money_fmt)
         main.write(row, recommendation_start + 3, reason, rec_text_fmt)
         main.set_row(row, 46)
 

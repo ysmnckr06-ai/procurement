@@ -141,8 +141,8 @@ export default function SettingsPage() {
     const usdRate = parsePositiveNumber(settings.usd_rate);
     const eurRate = parsePositiveNumber(settings.eur_rate);
     const gbpRate = parsePositiveNumber(settings.gbp_rate);
-    const maxFileSize = parsePositiveNumber(settings.max_file_size_mb);
-    const maxOfferFiles = parsePositiveNumber(settings.max_offer_files);
+    const maxFileSize = parsePositiveNumber(settings.max_file_size_mb) || defaultSettings.max_file_size_mb;
+    const maxOfferFiles = parsePositiveNumber(settings.max_offer_files) || defaultSettings.max_offer_files;
     const annualInterestRate = Number(settings.annual_interest_rate);
     const acceptedTerminDays = Number(settings.accepted_termin_days);
     const dailyDelayCost = Number(settings.daily_delay_cost_try);
@@ -160,11 +160,6 @@ export default function SettingsPage() {
 
     if (!usdRate || !eurRate || !gbpRate) {
       setMessage("Kur değerleri boş, 0, negatif veya geçersiz olamaz.");
-      return;
-    }
-
-    if (!maxFileSize || !maxOfferFiles) {
-      setMessage("Dosya limitleri 0'dan büyük olmalıdır.");
       return;
     }
 
@@ -189,7 +184,7 @@ export default function SettingsPage() {
       missing_data_policy: settings.missing_data_policy,
       max_file_size_mb: maxFileSize,
       max_offer_files: maxOfferFiles,
-      default_payment_term: settings.default_payment_term.trim(),
+      default_payment_term: String(settings.default_payment_term || defaultSettings.default_payment_term).trim(),
       risk_level: settings.risk_level,
       approval_required: Boolean(settings.approval_required),
       notify_email: settings.notify_email.trim(),
@@ -259,11 +254,10 @@ export default function SettingsPage() {
             </button>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-5">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
             <StatCard title="Para Birimi" value={settings.default_currency} text="Sipariş varsayılanı" />
             <StatCard title="Ana Para" value={settings.base_currency || "TRY"} text="Finans raporu" />
             <StatCard title="Finansman" value={`%${settings.annual_interest_rate || 0}`} text="Teklif analizi" />
-            <StatCard title="Teklif Limiti" value={settings.max_offer_files || 15} text="Maksimum dosya" />
             <StatCard title="Onay" value={settings.approval_required ? "Açık" : "Kapalı"} text="Sipariş kuralı" />
           </div>
 
@@ -398,33 +392,6 @@ export default function SettingsPage() {
                   Para birimi, kur, termin, vade ve nakliye bilgisi ilgili tekliften okunur. Ürün ve stok bilgileri talep verisinde ayrıca değerlendirilir;
                   güvenilir ürün riski yoksa bütün kalemlere tahmini bir risk primi eklenmez. Böylece bir firmaya ait değer diğer firmalara uygulanmaz.
                 </div>
-              </div>
-            </div>
-
-            <div className="mt-8 border-t border-slate-200 pt-6">
-              <SectionTitle title="Analiz Varsayılanları" text="Dosya yükleme sınırları ve rapor başlangıç değerleri." />
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-                <Input
-                  label="Maksimum Dosya Boyutu MB"
-                  name="max_file_size_mb"
-                  type="number"
-                  value={settings.max_file_size_mb}
-                  onChange={handleChange}
-                />
-                <Input
-                  label="Maksimum Teklif Dosyası"
-                  name="max_offer_files"
-                  type="number"
-                  value={settings.max_offer_files}
-                  onChange={handleChange}
-                />
-                <Input
-                  label="Varsayılan Vade"
-                  name="default_payment_term"
-                  value={settings.default_payment_term}
-                  onChange={handleChange}
-                  helpText="Teklifte vade yazmıyorsa kullanılacak şirket standardıdır. Şirket politikanız buysa 60 gün bırakın."
-                />
               </div>
             </div>
 

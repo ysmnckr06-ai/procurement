@@ -570,7 +570,10 @@ def score_offer(row, exchange_rates, talep_edilen_adet, config=None, constraints
                 f"kalite {supplier_profile.get('quality_history', 'unknown')}"
             )
         else:
-            karar_notlari.append("Tedarikçi kartı eşleşmedi; firma güveni ve kalite için risk primi eklenmedi")
+            karar_notlari.append(
+                "Tedarikçi kartı eşleşmedi; firma güveni ve kalite riski doğrulanamadı, "
+                "TCO kısmi hesaplandı"
+            )
 
         if birim_fiyat <= 0:
             karar_notlari.append("Fiyat eksik")
@@ -765,18 +768,57 @@ def analyze_groups(groups, exchange_rates, config=None, constraints=None, prefer
 
         provisional_best_offer = choose_best_offer(offers)
         decision_warnings = automatic_decision_warnings(offers)
+        decision_notes = []
         missing_data_policy = (constraints or {}).get(
             "missing_data_policy",
             DEFAULT_USER_CONSTRAINTS["missing_data_policy"],
         )
-        if (
-            provisional_best_offer
-            and not provisional_best_offer.get("supplierProfileMatched")
-            and missing_data_policy == "manual_review"
-        ):
-            decision_warnings.append(
-                "Önerilen tedarikçinin geçmiş kartı bulunamadı; sipariş öncesi firma doğrulaması gerekli"
+        unmatched_offers = [offer for offer in offers if not offer.get("supplierProfileMatched")]
+        if unmatched_offers:
+            if len(unmatched_offers) == len(offers):
+                profile_note = (
+                    "Teklif veren firmaların hiçbiri İş Ortakları tedarikçi kartıyla eşleşmedi; "
+                    "tedarikçi güveni ve kalite riski doğrulanamadı, TCO kısmi hesaplandı"
+                )
+            else:
+                profile_note = (
+                    "Bazı teklif veren firmalar İş Ortakları tedarikçi kartıyla eşleşmedi; "
+                    "bu firmaların güven ve kalite riski doğrulanamadı, TCO kısmi hesaplandı"
+                )
+            if missing_data_policy == "manual_review":
+                decision_warnings.append(profile_note + "; sipariş öncesi firma doğrulaması gerekli")
+            else:
+                decision_notes.append(profile_note)
+
+        if safe_float((config or {}).get("daily_delay_cost", 0), 0) <= 0:
+            decision_notes.append(
+                "Günlük gecikme maliyeti 0 TRY/gün; termin farkları parasal maliyete çevrilmedi"
             )
+
+        priced_offers = [
+            offer for offer in offers
+            if safe_float(offer.get("evaluatedCostTRY", 0), 0) > 0
+        ]
+        economic_leader = min(
+            priced_offers,
+            key=lambda offer: safe_float(offer.get("evaluatedCostTRY", 999999999), 999999999),
+            default=None,
+        )
+        if economic_leader and provisional_best_offer and economic_leader is not provisional_best_offer:
+            exclusion_reasons = list(economic_leader.get("eliminationReasons") or [])
+            if not exclusion_reasons:
+                if not economic_leader.get("vadeKnown"):
+                    exclusion_reasons.append("vade bilgisi eksik")
+                if not economic_leader.get("terminKnown"):
+                    exclusion_reasons.append("termin bilgisi eksik")
+            if exclusion_reasons:
+                decision_notes.append(
+                    f"{economic_leader.get('firma') or economic_leader.get('firmaAdi') or 'Bir teklif'} "
+                    f"daha düşük değerlendirilmiş maliyete sahip "
+                    f"({safe_float(economic_leader.get('evaluatedCostTRY', 0)):.2f} TRY), ancak "
+                    + ", ".join(exclusion_reasons)
+                    + "; bu nedenle otomatik önerilmedi"
+                )
         manual_review_required = bool(decision_warnings)
         best_offer = None if manual_review_required else provisional_best_offer
         if manual_review_required:
@@ -796,6 +838,17 @@ def analyze_groups(groups, exchange_rates, config=None, constraints=None, prefer
             default=None,
         )
 
+        if manual_review_required:
+            decision_reason = "Manuel kontrol gerekli: " + " | ".join(decision_warnings + decision_notes)
+        elif best_offer:
+            decision_reason = generate_decision(best_offer, offers)
+            if decision_notes:
+                decision_reason += " | " + " | ".join(decision_notes)
+        else:
+            decision_reason = "Uygun teklif bulunamadı"
+            if decision_notes:
+                decision_reason += ": " + " | ".join(decision_notes)
+
         analyzed.append({
             "urunKodu": master.get("urunKodu", ""),
             "marka": master.get("marka", "") or master.get("brand", ""),
@@ -808,6 +861,7 @@ def analyze_groups(groups, exchange_rates, config=None, constraints=None, prefer
             "provisionalBestOffer": provisional_best_offer,
             "decisionStatus": "manual_review" if manual_review_required else ("automatic" if best_offer else "no_eligible_offer"),
             "decisionWarnings": decision_warnings,
+            "decisionNotes": decision_notes,
             "recommendedAllocation": recommended_allocation,
             "recommendedTotalTRY": round(recommended_total, 4),
             "uncoveredQuantity": uncovered_quantity,
@@ -817,11 +871,7 @@ def analyze_groups(groups, exchange_rates, config=None, constraints=None, prefer
                 4,
             ) if cheapest_full_offer and uncovered_quantity <= 0 else 0,
             "onerilenFirma": best_offer.get("firma", "") if best_offer else "",
-            "kararNedeni": (
-                "Manuel kontrol gerekli: " + " | ".join(decision_warnings)
-                if manual_review_required
-                else generate_decision(best_offer, offers)
-            ),
+            "kararNedeni": decision_reason,
             "enAvantajliNetTutarTRY": best_offer.get("netToplamTRY", 0) if best_offer else 0,
             "enAvantajliTCOTRY": best_offer.get("tcoTRY", 0) if best_offer else 0,
             "productId": master.get("productId"),
