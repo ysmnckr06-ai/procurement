@@ -15,11 +15,11 @@ function sourceInfo(report) {
     .replace(/satın\s*alma\s*gerekenler/gi, "Talep Mukayesesi");
   const embeddedNumber = rawName.match(/TLB-\d+/i)?.[0]?.toUpperCase();
   return {
-    requestId: item.sourceRequestId || report?.request_id || "",
-    requestNumber: item.sourceRequestNumber || embeddedNumber || "Talep numarası bulunamadı",
-    requestTitle: item.sourceRequestTitle || rawName.replace(/^TLB-\d+\s*[·-]?\s*/i, "") || "Teklif Mukayesesi",
-    owner: item.requestOwner || "-",
-    department: item.requestDepartment || "-",
+    requestId: report?.source_request_id || item.sourceRequestId || report?.request_id || "",
+    requestNumber: report?.source_request_number || item.sourceRequestNumber || embeddedNumber || "Talep numarası bulunamadı",
+    requestTitle: report?.source_request_title || item.sourceRequestTitle || rawName.replace(/^TLB-\d+\s*[·-]?\s*/i, "") || "Teklif Mukayesesi",
+    owner: report?.source_request_owner || item.requestOwner || "-",
+    department: report?.source_request_department || item.requestDepartment || "-",
   };
 }
 

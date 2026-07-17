@@ -214,7 +214,7 @@ const loadRequests = async () => {
     const requestNumberById = new Map(
       numberedRequests.map((request, index) => [
         String(request.id),
-        requestSequenceLabel(index, numberedRequests.length),
+        request.request_number || requestSequenceLabel(index, numberedRequests.length),
       ]),
     );
 

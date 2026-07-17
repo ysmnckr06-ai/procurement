@@ -680,6 +680,7 @@ export default function OrderDetailPage() {
   const [receiptProductOverrides, setReceiptProductOverrides] = useState({});
   const [receiptProductSuggestion, setReceiptProductSuggestion] = useState(null);
   const [payments, setPayments] = useState([]);
+  const [orderAuditRows, setOrderAuditRows] = useState([]);
   const [documents, setDocuments] = useState([]);
   const [documentItems, setDocumentItems] = useState([]);
   const [documentItemMatchSummary, setDocumentItemMatchSummary] = useState(null);
@@ -709,7 +710,13 @@ export default function OrderDetailPage() {
     document_number: "",
     document_date: "",
     supplier_name: "",
+    supplier_tax_number: "",
+    document_uuid: "",
+    document_profile: "",
     invoice_total: "",
+    tax_exclusive_amount: "",
+    tax_amount: "",
+    payable_amount: "",
     currency: "TRY",
     file: null,
   });
@@ -956,6 +963,7 @@ export default function OrderDetailPage() {
     setDeliveryInputs({});
     setReceiptInputs({});
     setDocuments([]);
+    setOrderAuditRows([]);
 
     const { data: receiptRows } = await supabase
       .from("order_receipts")
@@ -972,6 +980,17 @@ export default function OrderDetailPage() {
       .eq("user_id", user.id)
       .order("payment_date", { ascending: false });
     setPayments(paymentRows || []);
+
+    const { data: auditRows, error: auditError } = await supabase
+      .from("order_audit_log")
+      .select("*")
+      .eq("order_id", data.id)
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: true });
+    if (auditError) {
+      console.error("Sipariş denetim kaydı yüklenemedi:", auditError);
+    }
+    setOrderAuditRows(auditRows || []);
 
     await loadOrderDocuments(data.id, user.id, data.items || []);
 
@@ -1024,8 +1043,25 @@ export default function OrderDetailPage() {
     [rawItems, receipts],
   );
   const historyRows = useMemo(
-    () => (order ? normalizeHistory(order) : []),
-    [order],
+    () => {
+      if (!order) return [];
+      const databaseAuditRows = orderAuditRows.map((row) => {
+        const actionLabels = {
+          insert: "Sipariş kaydı veritabanında oluşturuldu.",
+          update: "Sipariş kaydı veritabanında güncellendi.",
+          delete: "Sipariş kaydı silindi.",
+        };
+        return {
+          type: `database-${row.action}`,
+          title: actionLabels[row.action] || "Sipariş kaydı değiştirildi.",
+          actor: row.actor_email || "Sistem",
+          date: row.created_at,
+        };
+      });
+      return [...normalizeHistory(order), ...databaseAuditRows]
+        .sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
+    },
+    [order, orderAuditRows],
   );
   const totals = useMemo(() => {
     const totalQuantity = items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
@@ -2077,9 +2113,15 @@ export default function OrderDetailPage() {
         document_number: documentForm.document_number.trim() || null,
         document_date: documentForm.document_date || null,
         supplier_name: documentForm.supplier_name.trim() || null,
+        supplier_tax_number: documentForm.supplier_tax_number.replace(/\D/g, "") || null,
+        document_uuid: documentForm.document_uuid.trim() || null,
+        document_profile: documentForm.document_profile || null,
         invoice_total: documentForm.invoice_total === ""
           ? null
           : Number(documentForm.invoice_total),
+        tax_exclusive_amount: documentForm.tax_exclusive_amount === "" ? null : Number(documentForm.tax_exclusive_amount),
+        tax_amount: documentForm.tax_amount === "" ? null : Number(documentForm.tax_amount),
+        payable_amount: documentForm.payable_amount === "" ? null : Number(documentForm.payable_amount),
         currency: documentForm.currency || "TRY",
       })
       .select("*")
@@ -2115,7 +2157,13 @@ export default function OrderDetailPage() {
       document_number: "",
       document_date: "",
       supplier_name: "",
+      supplier_tax_number: "",
+      document_uuid: "",
+      document_profile: "",
       invoice_total: "",
+      tax_exclusive_amount: "",
+      tax_amount: "",
+      payable_amount: "",
       currency: "TRY",
       file: null,
     });
@@ -3880,12 +3928,67 @@ function DocumentsPanel({
               value={form.supplier_name}
               onChange={(value) => onFormChange((prev) => ({ ...prev, supplier_name: value }))}
             />
+            {(["fatura", "irsaliye"].includes(form.document_type)) && (
+              <>
+                <DocumentInput
+                  label="Tedarikçi VKN / TCKN"
+                  value={form.supplier_tax_number}
+                  onChange={(value) => onFormChange((prev) => ({ ...prev, supplier_tax_number: value }))}
+                />
+                <DocumentInput
+                  label="UBL Belge UUID"
+                  value={form.document_uuid}
+                  onChange={(value) => onFormChange((prev) => ({ ...prev, document_uuid: value }))}
+                />
+                <label className="block">
+                  <span className="mb-1 block text-xs font-bold text-slate-600">UBL-TR Profili</span>
+                  <select
+                    value={form.document_profile}
+                    onChange={(event) => onFormChange((prev) => ({ ...prev, document_profile: event.target.value }))}
+                    className="w-full rounded-xl border border-slate-300 bg-white p-3 text-sm"
+                  >
+                    <option value="">Seçiniz</option>
+                    {form.document_type === "irsaliye" ? (
+                      <option value="TEMELIRSALIYE">TEMELİRSALİYE</option>
+                    ) : (
+                      <>
+                        <option value="TEMELFATURA">TEMELFATURA</option>
+                        <option value="TICARIFATURA">TİCARİFATURA</option>
+                        <option value="EARSIVFATURA">E-ARŞİVFATURA</option>
+                      </>
+                    )}
+                  </select>
+                </label>
+              </>
+            )}
             <DocumentInput
               label="Belge Tutarı"
               type="number"
               value={form.invoice_total}
               onChange={(value) => onFormChange((prev) => ({ ...prev, invoice_total: value }))}
             />
+            {form.document_type === "fatura" && (
+              <>
+                <DocumentInput
+                  label="KDV Hariç Tutar"
+                  type="number"
+                  value={form.tax_exclusive_amount}
+                  onChange={(value) => onFormChange((prev) => ({ ...prev, tax_exclusive_amount: value }))}
+                />
+                <DocumentInput
+                  label="Vergi Toplamı"
+                  type="number"
+                  value={form.tax_amount}
+                  onChange={(value) => onFormChange((prev) => ({ ...prev, tax_amount: value }))}
+                />
+                <DocumentInput
+                  label="Ödenecek Tutar"
+                  type="number"
+                  value={form.payable_amount}
+                  onChange={(value) => onFormChange((prev) => ({ ...prev, payable_amount: value }))}
+                />
+              </>
+            )}
             <label className="block">
               <span className="mb-1 block text-xs font-bold text-slate-600">Para Birimi</span>
               <select
@@ -4000,6 +4103,16 @@ function DocumentsPanel({
                             label="Doğrulama Durumu"
                             value={document.verification_status || "-"}
                           />
+                          {(["fatura", "irsaliye"].includes(section.type)) && (
+                            <>
+                              <Info label="UBL-TR Profili" value={document.document_profile || "Eksik"} />
+                              <Info label="UBL UUID" value={document.document_uuid || "Eksik"} />
+                              <Info
+                                label="E-Belge Kontrolü"
+                                value={document.gib_status === "validated" ? "Yerel doğrulama başarılı" : "İnceleme gerekli"}
+                              />
+                            </>
+                          )}
                           {section.type === "fatura" && (
                             <Info
                               label="Onay Durumu"
@@ -4011,6 +4124,11 @@ function DocumentsPanel({
                             />
                           )}
                         </div>
+                        {Array.isArray(document.validation_errors) && document.validation_errors.length > 0 && (
+                          <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-900">
+                            UBL-TR kayıt kontrolü: {document.validation_errors.join(" · ")}
+                          </div>
+                        )}
                         {(document.ocr_result || document.ocr_status === "completed") && (
                           <div className="mt-4 rounded-xl border border-violet-200 bg-violet-50 p-4">
                             <h4 className="font-bold text-violet-950">OCR Sonucu</h4>

@@ -1977,7 +1977,7 @@ export default function TaleplerPage() {
 
                         <div>
                           <div className="text-xs font-semibold text-slate-500 xl:hidden">No</div>
-                          <div className="font-black text-slate-900">{requestSequenceLabel(index, savedRequests.length)}</div>
+                          <div className="font-black text-slate-900">{req.request_number || requestSequenceLabel(index, savedRequests.length)}</div>
                         </div>
 
                         <div className="min-w-0">
