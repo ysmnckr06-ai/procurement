@@ -8,7 +8,24 @@ import { findOrCreateBusinessPartner } from "@/lib/businessPartners";
 
 function num(value) { return Number(value || 0) || 0; }
 function normalize(value) { return String(value || "").trim().toLocaleLowerCase("tr-TR").replace(/\s+/g, " "); }
-function supplierName(offer) { return offer?.firmaAdi || offer?.firma || "Bilinmeyen tedarikçi"; }
+function cleanSupplierName(value) {
+  return String(value || "")
+    .replace(/\.(pdf|xlsx?|xls|png|jpe?g)$/gi, "")
+    .replace(/\bpdf+f*\b/gi, "")
+    .replace(/\b(kopya|copy)\b/gi, "")
+    .replace(/[_]+/g, " ")
+    .replace(/\s+-\s*$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+function supplierName(offer) { return cleanSupplierName(offer?.firmaAdi || offer?.firma) || "Bilinmeyen tedarikçi"; }
+function taxNumber(value) { return String(value || "").replace(/\D/g, ""); }
+function hasValidTaxNumber(value) { return [10, 11].includes(taxNumber(value).length); }
+function hasFileNameArtifact(value) { return /\.(pdf|xlsx?|xls|png|jpe?g)|\bpdf+f*\b|\b(kopya|copy)\b/i.test(String(value || "")); }
+function partnerNeedsCompletion(partner) {
+  return !partner || !hasValidTaxNumber(partner.tax_number) || hasFileNameArtifact(partner.name);
+}
+const emptyPartnerForm = { name: "", taxNumber: "", contactPerson: "", email: "", phone: "", city: "", address: "" };
 function money(value, currency = "TRY") {
   return `${new Intl.NumberFormat("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(num(value))} ${currency}`;
 }
@@ -55,11 +72,16 @@ export default function ComparisonPage() {
   const { id } = useParams();
   const router = useRouter();
   const creatingRef = useRef(false);
+  const partnerOverridesRef = useRef(new Map());
+  const pendingPartnersRef = useRef([]);
   const [report, setReport] = useState(null);
   const [suppliers, setSuppliers] = useState([]);
   const [selectedOffers, setSelectedOffers] = useState({});
   const [message, setMessage] = useState("");
   const [creating, setCreating] = useState(false);
+  const [partnerPrompt, setPartnerPrompt] = useState(null);
+  const [partnerForm, setPartnerForm] = useState(emptyPartnerForm);
+  const [savingPartner, setSavingPartner] = useState(false);
 
   useEffect(() => {
     async function load() {
@@ -67,7 +89,7 @@ export default function ComparisonPage() {
       if (!user) { router.push("/login"); return; }
       const [reportResult, supplierResult] = await Promise.all([
         supabase.from("reports").select("*").eq("id", id).eq("user_id", user.id).single(),
-        supabase.from("suppliers").select("id,name,score,status,partner_type").eq("user_id", user.id),
+        supabase.from("suppliers").select("id,name,score,status,partner_type,tax_number,contact_person,email,phone,city,address,notes").eq("user_id", user.id),
       ]);
       if (reportResult.error || !reportResult.data) {
         setMessage("Mukayese raporu bulunamadı veya erişim yetkiniz yok.");
@@ -87,7 +109,7 @@ export default function ComparisonPage() {
   }, [id, router]);
 
   const groups = useMemo(() => Array.isArray(report?.analysis) ? report.analysis : [], [report]);
-  const supplierMap = useMemo(() => new Map(suppliers.map((supplier) => [normalize(supplier.name), supplier])), [suppliers]);
+  const supplierMap = useMemo(() => new Map(suppliers.map((supplier) => [normalize(cleanSupplierName(supplier.name)), supplier])), [suppliers]);
   const selectedSummary = useMemo(() => {
     const selectedRows = groups
       .map((group, index) => ({ group, offer: group.offers?.[selectedOffers[groupKey(index)]] }))
@@ -142,7 +164,7 @@ export default function ComparisonPage() {
         bySupplier.set(key, {
           key,
           name,
-          partner: supplierMap.get(supplierLookupKey),
+          partner: partnerOverridesRef.current.get(supplierLookupKey) || supplierMap.get(supplierLookupKey),
           currency,
           exchangeRate,
           items: [],
@@ -189,20 +211,31 @@ export default function ComparisonPage() {
       creatingRef.current = false; setCreating(false); return;
     }
 
+    const partnersToComplete = [];
+    const queuedNames = new Set();
     for (const entry of bySupplier.values()) {
-      if (entry.partner) continue;
-      const partner = await findOrCreateBusinessPartner(supabase, user.id, {
-        name: entry.name,
-        partnerType: "Tedarikçi",
-        allowCreate: true,
-        matchPartnerType: true,
-        notes: "Mukayese sonucu siparişe seçildi.",
-      });
-      if (!partner) {
-        setMessage(`${entry.name} için tedarikçi kartı oluşturulamadı. Sipariş oluşturulmadı.`);
-        creatingRef.current = false; setCreating(false); return;
+      const key = normalize(entry.name);
+      if (partnerNeedsCompletion(entry.partner) && !queuedNames.has(key)) {
+        queuedNames.add(key);
+        partnersToComplete.push({ key, name: entry.name, partner: entry.partner || null });
       }
-      entry.partner = partner;
+    }
+    if (partnersToComplete.length > 0) {
+      pendingPartnersRef.current = partnersToComplete;
+      const first = partnersToComplete[0];
+      setPartnerForm({
+        ...emptyPartnerForm,
+        name: cleanSupplierName(first.partner?.name || first.name),
+        taxNumber: first.partner?.tax_number || "",
+        contactPerson: first.partner?.contact_person || "",
+        email: first.partner?.email || "",
+        phone: first.partner?.phone || "",
+        city: first.partner?.city || "",
+        address: first.partner?.address || "",
+      });
+      setPartnerPrompt({ index: 0, total: partnersToComplete.length, entry: first });
+      setMessage("Sipariş henüz oluşturulmadı. Önce tedarikçi firma bilgilerini tamamlayın.");
+      creatingRef.current = false; setCreating(false); return;
     }
 
     const today = new Date().toISOString().slice(0, 10);
@@ -254,9 +287,108 @@ export default function ComparisonPage() {
     creatingRef.current = false; setCreating(false);
   }
 
+  async function savePartnerAndContinue(event) {
+    event.preventDefault();
+    if (!partnerPrompt || savingPartner) return;
+    const cleanName = cleanSupplierName(partnerForm.name);
+    if (!cleanName || !hasValidTaxNumber(partnerForm.taxNumber)) {
+      setMessage("Firma adı ile 10 haneli VKN veya 11 haneli TCKN zorunludur.");
+      return;
+    }
+    setSavingPartner(true);
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) { setSavingPartner(false); router.push("/login"); return; }
+    const values = {
+      name: cleanName,
+      partner_type: "Tedarikçi",
+      tax_number: taxNumber(partnerForm.taxNumber),
+      contact_person: partnerForm.contactPerson.trim() || null,
+      email: partnerForm.email.trim() || null,
+      phone: partnerForm.phone.trim() || null,
+      city: partnerForm.city.trim() || null,
+      address: partnerForm.address.trim() || null,
+      notes: "Mukayese siparişi öncesinde kullanıcı tarafından doğrulandı.",
+      status: "Aktif",
+    };
+    let saved = null;
+    let error = null;
+    if (partnerPrompt.entry.partner?.id) {
+      const result = await supabase.from("suppliers").update(values).eq("id", partnerPrompt.entry.partner.id).eq("user_id", user.id).select("*").single();
+      saved = result.data; error = result.error;
+    } else {
+      try {
+        saved = await findOrCreateBusinessPartner(supabase, user.id, {
+          name: cleanName,
+          partnerType: "Tedarikçi",
+          taxNumber: values.tax_number,
+          contactPerson: values.contact_person,
+          email: values.email,
+          phone: values.phone,
+          city: values.city,
+          address: values.address,
+          notes: values.notes,
+          allowCreate: true,
+          forceCreate: true,
+          rejectDuplicateTax: true,
+        });
+      } catch (caught) {
+        error = caught;
+      }
+    }
+    if (error || !saved) {
+      setMessage(`Tedarikçi kartı kaydedilemedi: ${error?.message || "Bilinmeyen hata"}`);
+      setSavingPartner(false);
+      return;
+    }
+    partnerOverridesRef.current.set(partnerPrompt.entry.key, saved);
+    setSuppliers((current) => [...current.filter((item) => item.id !== saved.id), saved]);
+    const nextIndex = partnerPrompt.index + 1;
+    const next = pendingPartnersRef.current[nextIndex];
+    if (next) {
+      setPartnerForm({
+        ...emptyPartnerForm,
+        name: cleanSupplierName(next.partner?.name || next.name),
+        taxNumber: next.partner?.tax_number || "",
+        contactPerson: next.partner?.contact_person || "",
+        email: next.partner?.email || "",
+        phone: next.partner?.phone || "",
+        city: next.partner?.city || "",
+        address: next.partner?.address || "",
+      });
+      setPartnerPrompt({ index: nextIndex, total: pendingPartnersRef.current.length, entry: next });
+      setMessage(`${cleanName} kaydedildi. Sıradaki tedarikçi bilgilerini tamamlayın.`);
+      setSavingPartner(false);
+      return;
+    }
+    setPartnerPrompt(null);
+    setPartnerForm(emptyPartnerForm);
+    setSavingPartner(false);
+    setMessage("Tedarikçi kartları doğrulandı. Siparişler oluşturuluyor...");
+    setTimeout(() => createOrders(), 0);
+  }
+
   if (!report) return <div className="min-h-screen bg-slate-100 p-8"><div className="mx-auto max-w-5xl rounded-2xl bg-white p-6">{message || "Mukayese yükleniyor..."}</div></div>;
 
   return <div className="min-h-screen bg-slate-100 p-4 sm:p-8"><main className="mx-auto max-w-7xl space-y-5">
+    {partnerPrompt && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
+      <form onSubmit={savePartnerAndContinue} className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl">
+        <div className="flex items-start justify-between gap-4">
+          <div><div className="text-xs font-black uppercase tracking-wider text-blue-700">Tedarikçi bilgisi · {partnerPrompt.index + 1}/{partnerPrompt.total}</div><h2 className="mt-1 text-2xl font-black text-slate-950">Firma bilgilerini tamamlayın</h2><p className="mt-2 text-sm text-slate-600">Teklif dosyasının adı firma kartı olarak kaydedilmez. Sipariş oluşmadan önce gerçek firma bilgileri doğrulanır.</p></div>
+          <button type="button" onClick={() => { setPartnerPrompt(null); pendingPartnersRef.current = []; setMessage("Sipariş oluşturma iptal edildi; hiçbir sipariş kaydedilmedi."); }} className="rounded-xl border px-3 py-2 text-sm font-bold">Vazgeç</button>
+        </div>
+        <div className="mt-5 grid gap-4 md:grid-cols-2">
+          <label className="text-sm font-bold">Firma adı *<input value={partnerForm.name} onChange={(e) => setPartnerForm((current) => ({ ...current, name: e.target.value }))} className="mt-1 w-full rounded-xl border p-3" /></label>
+          <label className="text-sm font-bold">VKN / TCKN *<input value={partnerForm.taxNumber} onChange={(e) => setPartnerForm((current) => ({ ...current, taxNumber: e.target.value }))} inputMode="numeric" className="mt-1 w-full rounded-xl border p-3" placeholder="10 haneli VKN veya 11 haneli TCKN" /></label>
+          <label className="text-sm font-bold">Yetkili<input value={partnerForm.contactPerson} onChange={(e) => setPartnerForm((current) => ({ ...current, contactPerson: e.target.value }))} className="mt-1 w-full rounded-xl border p-3" /></label>
+          <label className="text-sm font-bold">E-posta<input type="email" value={partnerForm.email} onChange={(e) => setPartnerForm((current) => ({ ...current, email: e.target.value }))} className="mt-1 w-full rounded-xl border p-3" /></label>
+          <label className="text-sm font-bold">Telefon<input value={partnerForm.phone} onChange={(e) => setPartnerForm((current) => ({ ...current, phone: e.target.value }))} className="mt-1 w-full rounded-xl border p-3" /></label>
+          <label className="text-sm font-bold">Şehir<input value={partnerForm.city} onChange={(e) => setPartnerForm((current) => ({ ...current, city: e.target.value }))} className="mt-1 w-full rounded-xl border p-3" /></label>
+          <label className="text-sm font-bold md:col-span-2">Adres<textarea value={partnerForm.address} onChange={(e) => setPartnerForm((current) => ({ ...current, address: e.target.value }))} className="mt-1 min-h-20 w-full rounded-xl border p-3" /></label>
+        </div>
+        <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-900">Bu bilgiler İş Ortakları kartına kaydedilir ve sonraki siparişlerde tekrar sorulmaz.</div>
+        <button type="submit" disabled={savingPartner} className="mt-5 w-full rounded-xl bg-blue-600 px-5 py-3 font-black text-white disabled:bg-slate-400">{savingPartner ? "Kaydediliyor..." : "Firma Bilgilerini Kaydet ve Devam Et"}</button>
+      </form>
+    </div>}
     <div className="rounded-3xl bg-slate-950 p-6 text-white"><Link href={`/dashboard/raporlar/${report.id}`} className="text-sm font-bold text-blue-200">← Rapor özetine dön</Link><div className="mt-3 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><div className="text-sm font-bold text-blue-200">{report.ad || "Talep Mukayesesi"}</div><h1 className="mt-1 text-3xl font-black">Profesyonel Mukayese</h1><p className="mt-2 text-sm text-slate-300">Kalem bazında teklifleri; miktar, iskonto, kur, vade, termin ve risk etkileriyle karşılaştırın. Siparişler tedarikçiye göre gruplanır ve kaynak rapora bağlanır.</p></div><button type="button" onClick={createOrders} disabled={creating} className="rounded-xl bg-emerald-600 px-5 py-3 font-black text-white disabled:bg-slate-500">{creating ? "Siparişler oluşturuluyor..." : "Seçilenlerden Sipariş Oluştur"}</button></div></div>
     {message && <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 font-semibold text-blue-900">{message} {message.includes("oluşturuldu") && <Link href="/dashboard/siparisler" className="ml-2 underline">Siparişlere git</Link>}</div>}
     <section className="rounded-2xl border border-blue-100 bg-blue-50 p-5 shadow-sm">

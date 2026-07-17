@@ -11,6 +11,12 @@ import { findOrCreateBusinessPartner, findPartnerMatches } from "@/lib/businessP
 const emptyForm = {
   orderNo: "",
   company: "",
+  partnerTaxNumber: "",
+  partnerContactPerson: "",
+  partnerEmail: "",
+  partnerPhone: "",
+  partnerCity: "",
+  partnerAddress: "",
   product: "",
   orderDate: "",
   dueDate: "",
@@ -26,6 +32,21 @@ const emptyForm = {
   rateLockedAt: "",
   reportId: null,
 };
+
+function cleanPartnerName(value) {
+  return String(value || "")
+    .replace(/\.(pdf|xlsx?|xls|png|jpe?g)$/gi, "")
+    .replace(/\bpdf+f*\b/gi, "")
+    .replace(/\b(kopya|copy)\b/gi, "")
+    .replace(/[_]+/g, " ")
+    .replace(/\s+-\s*$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function hasPartnerFileArtifact(value) {
+  return /\.(pdf|xlsx?|xls|png|jpe?g)|\bpdf+f*\b|\b(kopya|copy)\b/i.test(String(value || ""));
+}
 
 const defaultCompanySettings = {
   default_currency: "TRY",
@@ -324,7 +345,7 @@ export default function OrdersPage() {
 
     const { data: supplierData } = await supabase
       .from("suppliers")
-      .select("id,name,status,partner_type")
+      .select("id,name,status,partner_type,tax_number,contact_person,email,phone,city,address")
       .eq("user_id", user.id)
       .in("partner_type", ["Tedarikçi", "Taşeron", "Nakliye", "Hizmet Sağlayıcı", "Diğer"])
       .order("name", { ascending: true });
@@ -823,13 +844,62 @@ export default function OrdersPage() {
       : partnerMatches.find((match) => match.type === "exact")?.partner;
     let partner = selectedPartner || null;
 
+    if (partner && (![10, 11].includes(String(partner.tax_number || "").replace(/\D/g, "").length) || hasPartnerFileArtifact(partner.name))) {
+      const normalizedTaxNumber = String(formData.partnerTaxNumber || "").replace(/\D/g, "");
+      if (![10, 11].includes(normalizedTaxNumber.length)) {
+        setMessage("Bu tedarikçi kartı eksik. Siparişten önce 10 haneli VKN veya 11 haneli TCKN girin.");
+        isSubmittingRef.current = false;
+        return;
+      }
+      const { data: completedPartner, error: partnerError } = await supabase
+        .from("suppliers")
+        .update({
+          name: cleanPartnerName(formData.company),
+          tax_number: normalizedTaxNumber,
+          contact_person: formData.partnerContactPerson.trim() || partner.contact_person || null,
+          email: formData.partnerEmail.trim() || partner.email || null,
+          phone: formData.partnerPhone.trim() || partner.phone || null,
+          city: formData.partnerCity.trim() || partner.city || null,
+          address: formData.partnerAddress.trim() || partner.address || null,
+        })
+        .eq("id", partner.id)
+        .eq("user_id", user.id)
+        .select("*")
+        .single();
+      if (partnerError || !completedPartner) {
+        setMessage(`Tedarikçi bilgileri kaydedilemedi: ${partnerError?.message || "Bilinmeyen hata"}`);
+        isSubmittingRef.current = false;
+        return;
+      }
+      partner = completedPartner;
+    }
+
     if (!partner && partnerChoice?.mode === "new") {
-      partner = await findOrCreateBusinessPartner(supabase, user.id, {
-        name: formData.company,
-        partnerType: "Tedarikçi",
-        allowCreate: true,
-        forceCreate: true,
-      });
+      const normalizedTaxNumber = String(formData.partnerTaxNumber || "").replace(/\D/g, "");
+      if (![10, 11].includes(normalizedTaxNumber.length)) {
+        setMessage("Yeni tedarikçi için 10 haneli VKN veya 11 haneli TCKN zorunludur.");
+        isSubmittingRef.current = false;
+        return;
+      }
+      try {
+        partner = await findOrCreateBusinessPartner(supabase, user.id, {
+          name: cleanPartnerName(formData.company),
+          partnerType: "Tedarikçi",
+          taxNumber: normalizedTaxNumber,
+          contactPerson: formData.partnerContactPerson,
+          email: formData.partnerEmail,
+          phone: formData.partnerPhone,
+          city: formData.partnerCity,
+          address: formData.partnerAddress,
+          allowCreate: true,
+          forceCreate: true,
+          rejectDuplicateTax: true,
+        });
+      } catch (partnerError) {
+        setMessage(`Tedarikçi bilgileri kaydedilemedi: ${partnerError?.message || "Bilinmeyen hata"}`);
+        isSubmittingRef.current = false;
+        return;
+      }
     }
 
     if (!partner) {
@@ -848,7 +918,7 @@ export default function OrdersPage() {
     const payload = {
       user_id: user.id,
       order_no: formData.orderNo,
-      supplier_name: formData.company,
+      supplier_name: partner?.name || cleanPartnerName(formData.company),
       partner_id: partner?.id || null,
       partner_name: partner?.name || formData.company,
       partner_type: partner?.partner_type || "Tedarikçi",
@@ -1369,6 +1439,11 @@ function OrderForm({
   stockProducts = [],
 }) {
   const items = useMemo(() => normalizeItems(formData.items), [formData.items]);
+  const chosenSupplier = partnerChoice?.mode === "existing"
+    ? suppliers.find((supplier) => supplier.id === partnerChoice.partnerId)
+    : null;
+  const partnerDetailsRequired = partnerChoice?.mode === "new"
+    || (chosenSupplier && (![10, 11].includes(String(chosenSupplier.tax_number || "").replace(/\D/g, "").length) || hasPartnerFileArtifact(chosenSupplier.name)));
   const missingRequiredFields = [
     ["Sipariş No", formData.orderNo],
     ["İş Ortağı", formData.company],
@@ -1418,6 +1493,18 @@ function OrderForm({
           onPartnerChoice={onPartnerChoice}
           required
         />
+        {partnerDetailsRequired && <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 md:col-span-2 xl:col-span-4">
+          <div className="font-black text-amber-950">Tedarikçi firma bilgilerini tamamlayın</div>
+          <p className="mt-1 text-xs font-semibold text-amber-800">Dosya adı firma kartı olarak kullanılmaz. Firma adı ve vergi numarası doğrulanmadan sipariş kaydedilmez.</p>
+          <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <Input label="VKN / TCKN" name="partnerTaxNumber" value={formData.partnerTaxNumber} onChange={onChange} required />
+            <Input label="Yetkili" name="partnerContactPerson" value={formData.partnerContactPerson} onChange={onChange} />
+            <Input label="E-posta" name="partnerEmail" type="email" value={formData.partnerEmail} onChange={onChange} />
+            <Input label="Telefon" name="partnerPhone" value={formData.partnerPhone} onChange={onChange} />
+            <Input label="Şehir" name="partnerCity" value={formData.partnerCity} onChange={onChange} />
+            <Input label="Adres" name="partnerAddress" value={formData.partnerAddress} onChange={onChange} />
+          </div>
+        </div>}
         <Input
           label="Sipariş Başlığı"
           name="product"
