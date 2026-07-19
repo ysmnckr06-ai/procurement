@@ -193,6 +193,7 @@ export default function ComparisonPage() {
   const [partnerForm, setPartnerForm] = useState(emptyPartnerForm);
   const [savingPartner, setSavingPartner] = useState(false);
   const [decisionGroupIndex, setDecisionGroupIndex] = useState(null);
+  const [downloading, setDownloading] = useState("");
 
   useEffect(() => {
     async function load() {
@@ -234,6 +235,54 @@ export default function ComparisonPage() {
       .filter((currency) => currency && currency !== "TRY")));
     return { selectedCount: selectedRows.length, totalTry, foreignCurrencies };
   }, [groups, selectedOffers]);
+
+  async function downloadReportFile(type) {
+    if (!report || downloading) return;
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+    if (!apiUrl) {
+      setMessage("API adresi bulunamadı. Rapor indirilemedi.");
+      return;
+    }
+
+    const path = type === "pdf"
+      ? `/download-comparison-pdf/${report.id}`
+      : report.reportpath || report.report_path || report.reportPath;
+    if (!path) {
+      setMessage(type === "pdf" ? "PDF rapor yolu oluşturulamadı." : "Excel detay dosyası bulunamadı.");
+      return;
+    }
+
+    setDownloading(type);
+    setMessage("");
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error("Oturum bulunamadı. Lütfen tekrar giriş yapın.");
+      const url = /^https?:\/\//i.test(path) ? path : `${apiUrl}${path}`;
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || "Rapor indirilemedi.");
+      }
+
+      const blob = await response.blob();
+      const requestNumber = report.source_request_number || report.items?.[0]?.sourceRequestNumber || "mukayese";
+      const extension = type === "pdf" ? "pdf" : "xlsx";
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = `${requestNumber}-mukayese.${extension}`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(objectUrl);
+    } catch (error) {
+      setMessage(error?.message || "Rapor indirilemedi.");
+    } finally {
+      setDownloading("");
+    }
+  }
 
   async function createOrders() {
     if (!report || creatingRef.current) return;
@@ -550,7 +599,27 @@ export default function ComparisonPage() {
         <button type="submit" disabled={savingPartner} className="mt-5 w-full rounded-xl bg-blue-600 px-5 py-3 font-black text-white disabled:bg-slate-400">{savingPartner ? "Kaydediliyor..." : "Firma Bilgilerini Kaydet ve Devam Et"}</button>
       </form>
     </div>}
-    <div className="rounded-3xl bg-slate-950 p-6 text-white"><Link href={`/dashboard/raporlar/${report.id}`} className="text-sm font-bold text-blue-200">← Rapor özetine dön</Link><div className="mt-3 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><div className="text-sm font-bold text-blue-200">{report.ad || "Talep Mukayesesi"}</div><h1 className="mt-1 text-3xl font-black">Profesyonel Mukayese</h1><p className="mt-2 text-sm text-slate-300">Kalem bazında teklifleri; miktar, iskonto, kur, vade, termin ve risk etkileriyle karşılaştırın. Siparişler tedarikçiye göre gruplanır ve kaynak rapora bağlanır.</p></div><button type="button" onClick={createOrders} disabled={creating} className="rounded-xl bg-emerald-600 px-5 py-3 font-black text-white disabled:bg-slate-500">{creating ? "Siparişler oluşturuluyor..." : "Seçilenlerden Sipariş Oluştur"}</button></div></div>
+    <section className="rounded-3xl bg-slate-950 p-6 text-white shadow-xl">
+      <Link href={`/dashboard/raporlar/${report.id}`} className="text-sm font-bold text-blue-200">← Rapor özetine dön</Link>
+      <div className="mt-4 flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
+        <div>
+          <div className="text-sm font-bold text-blue-200">{report.source_request_number || report.items?.[0]?.sourceRequestNumber || "Talep Mukayesesi"}</div>
+          <h1 className="mt-1 text-3xl font-black">Kalem Bazlı Mukayese</h1>
+          <p className="mt-2 max-w-3xl text-sm text-slate-300">Bu ekran ana mukayese raporudur. Fiyat, vade, termin ve risk etkilerini inceleyebilir; yönetici PDF'sini veya teknik Excel detayını indirebilirsiniz.</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={() => downloadReportFile("pdf")} disabled={Boolean(downloading)} className="rounded-xl bg-blue-600 px-4 py-3 text-sm font-black text-white hover:bg-blue-500 disabled:bg-slate-600">
+            {downloading === "pdf" ? "PDF hazırlanıyor..." : "PDF Raporu İndir"}
+          </button>
+          <button type="button" onClick={() => downloadReportFile("excel")} disabled={Boolean(downloading)} className="rounded-xl border border-slate-500 bg-white/5 px-4 py-3 text-sm font-black text-white hover:bg-white/10 disabled:text-slate-500">
+            {downloading === "excel" ? "Excel indiriliyor..." : "Excel Detayını İndir"}
+          </button>
+          <button type="button" onClick={createOrders} disabled={creating} className="rounded-xl bg-emerald-600 px-4 py-3 text-sm font-black text-white hover:bg-emerald-500 disabled:bg-slate-600">
+            {creating ? "Siparişler oluşturuluyor..." : "Seçilenlerden Sipariş Oluştur"}
+          </button>
+        </div>
+      </div>
+    </section>
     {message && <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 font-semibold text-blue-900">{message} {message.includes("oluşturuldu") && <Link href="/dashboard/siparisler" className="ml-2 underline">Siparişlere git</Link>}</div>}
     <section className="rounded-2xl border border-blue-100 bg-blue-50 p-5 shadow-sm">
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">

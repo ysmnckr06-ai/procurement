@@ -44,6 +44,7 @@ from app.services.matcher import match_offers_to_requests, group_rows
 from app.services.analyzer import analyze_groups
 from app.services.report_builder import build_excel_report
 from app.services.request_report_builder import build_request_excel_report
+from app.services.comparison_pdf_builder import build_comparison_pdf
 
 from app.utils import normalize_text
 
@@ -2103,6 +2104,47 @@ def download_report(file_name: str, authorization: str = Header(None)):
         path=file_path,
         filename=safe_file_name,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+
+@app.get("/download-comparison-pdf/{report_id}")
+def download_comparison_pdf(report_id: str, authorization: str = Header(None)):
+    user = verify_user_token(authorization)
+    user_id = user["id"]
+
+    response = (
+        supabase.table("reports")
+        .select("*")
+        .eq("id", report_id)
+        .eq("user_id", user_id)
+        .limit(1)
+        .execute()
+    )
+    if not response.data:
+        raise HTTPException(status_code=404, detail="Mukayese raporu bulunamadı.")
+
+    report = response.data[0]
+    items = report.get("items") if isinstance(report.get("items"), list) else []
+    first_item = items[0] if items and isinstance(items[0], dict) else {}
+    request_number = (
+        report.get("source_request_number")
+        or first_item.get("sourceRequestNumber")
+        or "mukayese"
+    )
+    safe_request_number = re.sub(r"[^A-Za-z0-9_-]+", "-", str(request_number)).strip("-") or "mukayese"
+
+    try:
+        pdf_bytes = build_comparison_pdf(report)
+    except Exception as exc:
+        logger.exception("MUKAYESE PDF OLUSTURMA HATASI: %s", exc)
+        raise HTTPException(status_code=500, detail="PDF mukayese raporu oluşturulamadı.") from exc
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{safe_request_number}-mukayese.pdf"',
+        },
     )
 
 @app.post("/analyze-requests")

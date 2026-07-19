@@ -498,6 +498,9 @@ def score_offer(row, exchange_rates, talep_edilen_adet, config=None, constraints
         ),
         "vadeKnown": bool(raw_vade),
         "terminKnown": bool(raw_termin),
+        "annualInterestRate": safe_float(
+            constraints.get("annual_interest_rate", config.get("annual_interest_rate", 45))
+        ),
         "financeAdvantageTRY": round(finance_advantage, 4),
         "delayPenaltyTRY": round(delay_penalty, 4),
         "missingQtyCostTRY": round(missing_qty_cost, 4),

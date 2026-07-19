@@ -1,7 +1,7 @@
 ﻿"use client";
 
 import { Suspense, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { canonicalPartnerName } from "@/lib/businessPartners";
@@ -138,6 +138,7 @@ export default function TekliflerPage() {
 }
 
 function TekliflerPageContent() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const requestIdFromUrl = searchParams.get("requestId");
   const projectIdFromUrl = searchParams.get("projectId");
@@ -567,7 +568,10 @@ const loadSupplierProfiles = async () => {
         );
         setCreatedReportId(data.reportId || null);
         setLastReportTime(new Date().toLocaleString("tr-TR"));
-        setMessage("Mukayese raporu oluşturuldu ve Raporlar sayfasına aktarıldı.");
+        setMessage("Mukayese oluşturuldu; kalem bazlı rapor açılıyor.");
+        if (data.reportId) {
+          router.push(`/dashboard/raporlar/${data.reportId}/mukayese`);
+        }
       } else {
         setMessage(
           data.warnings?.join(" | ") ||
@@ -1139,7 +1143,7 @@ const loadSupplierProfiles = async () => {
                       : "cursor-not-allowed bg-slate-200 text-slate-500"
                   }`}
                 >
-                  Raporu İndir
+                  Excel Detayını İndir
                 </button>
                 {reportReady && (
                   <div className="rounded-xl border border-green-300 bg-green-50 px-5 py-3 text-sm font-bold text-green-800">

@@ -14,6 +14,7 @@ from app.parsers.excel_parser import parse_excel_with_audit
 from app.services.analyzer import analyze_groups, calculate_delay_penalty, calculate_finance_advantage, resolve_payment_days
 from app.services.matcher import match_offers_to_requests, rows_match
 from app.services.report_builder import build_excel_report
+from app.services.comparison_pdf_builder import build_comparison_pdf
 from app.utils import extract_days
 
 
@@ -407,6 +408,43 @@ class ComparisonIntegrityTests(unittest.TestCase):
 
         self.assertEqual(days, 15)
         self.assertEqual(source, "delivery_following")
+
+    def test_comparison_pdf_contains_executive_summary_and_decision_reason(self):
+        report = {
+            "id": "12345678-1234-1234-1234-123456789012",
+            "source_request_number": "TLB-00001",
+            "source_request_title": "Pano Malzemeleri",
+            "source_request_owner": "Satınalma Uzmanı",
+            "source_request_department": "Satınalma",
+            "created_at": "2026-07-19T12:00:00Z",
+            "items": [],
+            "analysis": [{
+                "urunKodu": "ABC-1",
+                "urunAciklamasi": "Test Ürünü",
+                "talepEdilenAdet": 10,
+                "birim": "adet",
+                "offers": [
+                    {
+                        "firma": "Firma A", "paraBirimi": "EUR", "kur": 50,
+                        "netToplam": 100, "netToplamTRY": 5000, "evaluatedCostTRY": 4800,
+                        "financeAdvantageTRY": 200, "vade": "60 gün", "termin": "stok",
+                        "uygunMu": True, "annualInterestRate": 45,
+                    },
+                    {
+                        "firma": "Firma B", "paraBirimi": "EUR", "kur": 50,
+                        "netToplam": 120, "netToplamTRY": 6000, "evaluatedCostTRY": 5600,
+                        "financeAdvantageTRY": 400, "vade": "90 gün", "termin": "7 gün",
+                        "uygunMu": True, "annualInterestRate": 45,
+                    },
+                ],
+            }],
+        }
+        report["analysis"][0]["bestOffer"] = report["analysis"][0]["offers"][0]
+
+        pdf_bytes = build_comparison_pdf(report)
+
+        self.assertTrue(pdf_bytes.startswith(b"%PDF"))
+        self.assertGreater(len(pdf_bytes), 5000)
 
 
 if __name__ == "__main__":

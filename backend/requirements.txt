@@ -14,5 +14,6 @@ opencv-python-headless
 rapidfuzz
 xlsxwriter
 pillow
+reportlab
 supabase==2.10.0
 httpx>=0.26,<0.28
