@@ -1842,6 +1842,26 @@ export default function TaleplerPage() {
               )}
             </div>
 
+            <div className="mt-4 rounded-2xl border border-blue-200 bg-blue-50 p-5 text-left">
+              <div className="flex items-start gap-3">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-blue-600 text-lg text-white">
+                  ℹ️
+                </span>
+                <div>
+                  <h3 className="text-sm font-black text-blue-950">Dosyanız nasıl olmalı?</h3>
+                  <ul className="mt-2 space-y-1.5 text-sm font-medium leading-6 text-blue-900">
+                    <li>• Listede ürün kodu veya açıklaması ile birlikte miktar ve birim bilgisi bulunmalıdır.</li>
+                    <li>• En güvenilir format Excel&apos;dir. PDF&apos;lerde metin seçilebilir, görsellerde ise tablo net, düz ve eksiksiz olmalıdır.</li>
+                    <li>• Stok raporu yükleniyorsa sistem talep miktarı olarak <strong>Stok yenileme ihtiyacı</strong> sütununu kullanır; doğrudan Excel dosyasını yüklemeniz önerilir.</li>
+                    <li>• Ürün fotoğrafları, el yazısı, bulanık veya kesilmiş tablolar ve yalnızca taranmış PDF&apos;ler güvenilir şekilde okunamayabilir.</li>
+                  </ul>
+                  <p className="mt-3 rounded-xl bg-white/80 px-3 py-2 text-xs font-bold text-blue-800">
+                    Önerilen sıra: Excel → metin içeren PDF → net tablo görseli
+                  </p>
+                </div>
+              </div>
+            </div>
+
             <div className="mt-5 flex flex-wrap gap-3">
               <button type="button"
                 onClick={openUploadRequestModal}
