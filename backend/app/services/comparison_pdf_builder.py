@@ -101,6 +101,40 @@ def _evaluated_cost(group, offer) -> float:
     return max(tco - _number((offer or {}).get("financeAdvantageTRY")), 0)
 
 
+def _payment_days(offer) -> int:
+    recorded = int(_number((offer or {}).get("vadeDays")))
+    if recorded > 0:
+        return recorded
+    raw = _text((offer or {}).get("vade"), "").casefold()
+    after_delivery = (offer or {}).get("vadeCalculationSource") == "delivery_following" or (
+        "teslim" in raw and any(word in raw for word in ("müteakip", "sonra", "takiben"))
+    )
+    return int(_number((offer or {}).get("terminDays"))) + 1 if after_delivery else 0
+
+
+def _annual_rate(offers) -> float:
+    for offer in offers:
+        recorded = _number((offer or {}).get("annualInterestRate"))
+        if recorded > 0:
+            return recorded
+    for offer in offers:
+        days = _payment_days(offer)
+        nominal_try = _number((offer or {}).get("netToplamTRY"))
+        advantage = _number((offer or {}).get("financeAdvantageTRY"))
+        present_try = nominal_try - advantage
+        if days > 0 and nominal_try > 0 and advantage > 0 and present_try > 0:
+            return ((nominal_try / present_try) ** (365 / days) - 1) * 100
+    return 0
+
+
+def _present_value(group, offer, annual_rate) -> float:
+    total = _offer_original_total(group, offer)
+    days = _payment_days(offer)
+    if annual_rate <= 0 or days <= 0:
+        return total
+    return total / ((1 + annual_rate / 100) ** (days / 365))
+
+
 def _same_supplier(left, right) -> bool:
     return _supplier_name(left).casefold().strip() == _supplier_name(right).casefold().strip()
 
@@ -262,7 +296,7 @@ def build_comparison_pdf(report: dict, output_path: str | os.PathLike | None = N
         alternative = min(eligible_alternatives, key=lambda offer: _evaluated_cost(group, offer), default=None)
 
         story.extend([
-            CondPageBreak(58 * mm),
+            CondPageBreak(70 * mm),
             Paragraph(f"{index}. {_safe(group.get('urunKodu') or 'Kodsuz')} - {_safe(group.get('urunAciklamasi') or 'Ürün')}", product_title),
             Paragraph(
                 f"Talep edilen: <b>{_safe(group.get('talepEdilenAdet'))} {_safe(group.get('birim'))}</b> &nbsp;&nbsp; Teklif sayısı: <b>{len(offers)}</b>",
@@ -321,13 +355,41 @@ def build_comparison_pdf(report: dict, output_path: str | os.PathLike | None = N
             alternative_cost = _evaluated_cost(group, alternative)
             gap = max(alternative_cost - best_cost, 0)
             gap_rate = (gap / alternative_cost * 100) if alternative_cost > 0 else 0
-            decision_text = (
-                f"Neden {_supplier_name(best)}? Vade, termin ve kayıtlı risk etkileri sonrasında değerlendirilmiş maliyet "
-                f"{_money(best_cost, 'TRY')}; en yakın uygun alternatif {_supplier_name(alternative)} için "
-                f"{_money(alternative_cost, 'TRY')}. Ekonomik fark {_money(gap, 'TRY')} (%{gap_rate:.1f}). "
-                f"Vade finansman avantajları sırasıyla {_money(best.get('financeAdvantageTRY'), 'TRY')} ve "
-                f"{_money(alternative.get('financeAdvantageTRY'), 'TRY')} olarak hesaba katıldı."
-            )
+            best_currency = _text(best.get("paraBirimi"), "TRY").upper()
+            alternative_currency = _text(alternative.get("paraBirimi"), "TRY").upper()
+            annual_rate = _annual_rate(offers)
+            if best_currency == alternative_currency:
+                best_total = _offer_original_total(group, best)
+                alternative_total = _offer_original_total(group, alternative)
+                best_present = _present_value(group, best, annual_rate)
+                alternative_present = _present_value(group, alternative, annual_rate)
+                alternative_advantage = max(alternative_total - alternative_present, 0)
+                present_gap = max(alternative_present - best_present, 0)
+                if _payment_days(alternative) > _payment_days(best):
+                    term_sentence = (
+                        f"{_supplier_name(alternative)} daha uzun vadesiyle {_money(alternative_advantage, alternative_currency)} finansman avantajı sağlıyor; "
+                        "ancak bu avantaj fiyat farkını kapatmaya yetmiyor."
+                    )
+                else:
+                    best_advantage = max(best_total - best_present, 0)
+                    term_sentence = (
+                        f"{_supplier_name(best)} daha uzun vadesiyle {_money(best_advantage, best_currency)} finansman avantajı sağlıyor; "
+                        "bu etki ekonomik sonucunu daha da güçlendiriyor."
+                    )
+                decision_text = (
+                    f"Neden {_supplier_name(best)}? {_supplier_name(best)} teklifinin nominal toplamı {_money(best_total, best_currency)}, "
+                    f"{_supplier_name(alternative)} teklifinin toplamı {_money(alternative_total, alternative_currency)}. "
+                    f"{term_sentence} Yıllık %{annual_rate:.1f} oranla bugünkü maliyetler sırasıyla "
+                    f"{_money(best_present, best_currency)} ve {_money(alternative_present, alternative_currency)}; "
+                    f"{_supplier_name(best)} yaklaşık {_money(present_gap, best_currency)} daha avantajlı kalıyor. "
+                    f"Risk ve diğer kayıtlı etkiler dahil değerlendirilen TL maliyet farkı {_money(gap, 'TRY')} (%{gap_rate:.1f})."
+                )
+            else:
+                decision_text = (
+                    f"Neden {_supplier_name(best)}? Teklifler kayıtlı analiz kuruyla TL'ye çevrildi; fiyat, vade, termin ve riskler birlikte değerlendirildi. "
+                    f"{_supplier_name(best)} için değerlendirilmiş maliyet {_money(best_cost, 'TRY')}, en yakın uygun alternatif "
+                    f"{_supplier_name(alternative)} için {_money(alternative_cost, 'TRY')}. Ekonomik fark {_money(gap, 'TRY')} (%{gap_rate:.1f})."
+                )
             decision_box = Table([[_paragraph(decision_text, green_note)]], colWidths=[178 * mm])
             decision_box.setStyle(TableStyle([
                 ("BACKGROUND", (0, 0), (-1, -1), LIGHT_GREEN),

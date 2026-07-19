@@ -61,23 +61,65 @@ function evaluatedOfferCost(group, offer) {
   return Math.max(tco - num(offer?.financeAdvantageTRY), 0);
 }
 
+function isPaymentAfterDelivery(offer) {
+  const raw = normalize(offer?.vade);
+  return offer?.vadeCalculationSource === "delivery_following" || (
+    raw.includes("teslim") && ["müteakip", "sonra", "takiben"].some((word) => raw.includes(word))
+  );
+}
+
+function paymentDayCount(offer) {
+  const recordedDays = num(offer?.vadeDays);
+  if (recordedDays > 0) return recordedDays;
+  if (isPaymentAfterDelivery(offer)) return num(offer?.terminDays) + 1;
+  return 0;
+}
+
 function paymentTiming(offer) {
-  const days = num(offer?.vadeDays);
-  if (offer?.vadeCalculationSource === "delivery_following") {
-    return `${days} gün (teslimden sonraki gün)`;
+  const days = paymentDayCount(offer);
+  if (isPaymentAfterDelivery(offer)) {
+    return `Teslimden sonraki gün (yaklaşık ${days}. gün)`;
   }
   if (days > 0) return `${days} gün`;
-  const raw = String(offer?.vade || "");
-  const normalized = normalize(raw);
-  if (normalized.includes("teslim") && ["müteakip", "sonra", "takiben"].some((word) => normalized.includes(word))) {
-    return "Teslimden sonra (eski raporda sayısal güne çevrilmemiş)";
-  }
-  return raw || "Belirtilmemiş";
+  return String(offer?.vade || "Belirtilmemiş");
 }
 
 function deliveryTiming(offer) {
   if (num(offer?.terminDays) > 0) return `${num(offer.terminDays)} gün`;
   return String(offer?.termin || "Belirtilmemiş");
+}
+
+function resolveAnnualInterestRate(offers) {
+  const recorded = offers.map((offer) => num(offer?.annualInterestRate)).find((rate) => rate > 0);
+  if (recorded) return recorded;
+
+  for (const offer of offers) {
+    const days = paymentDayCount(offer);
+    const nominalTry = num(offer?.netToplamTRY);
+    const financeAdvantage = num(offer?.financeAdvantageTRY);
+    const presentTry = nominalTry - financeAdvantage;
+    if (days > 0 && nominalTry > 0 && financeAdvantage > 0 && presentTry > 0) {
+      return (Math.pow(nominalTry / presentTry, 365 / days) - 1) * 100;
+    }
+  }
+  return 0;
+}
+
+function presentValueDetail(group, offer, annualRate) {
+  const currency = normalizedCurrency(offer?.paraBirimi) || "TRY";
+  const originalTotal = offerOriginalTotal(group, offer);
+  const days = paymentDayCount(offer);
+  const factor = annualRate > 0 && days > 0
+    ? Math.pow(1 + annualRate / 100, days / 365)
+    : 1;
+  const presentValue = originalTotal / factor;
+  return {
+    currency,
+    days,
+    originalTotal,
+    presentValue,
+    financeAdvantage: Math.max(originalTotal - presentValue, 0),
+  };
 }
 
 function buildDecisionInsight(group) {
@@ -96,7 +138,9 @@ function buildDecisionInsight(group) {
   const alternativeCost = alternative ? evaluatedOfferCost(group, alternative) : 0;
   const costGap = alternative ? Math.max(alternativeCost - winnerCost, 0) : 0;
   const gapRate = alternativeCost > 0 ? (costGap / alternativeCost) * 100 : 0;
+  const annualRate = resolveAnnualInterestRate(offers);
   const bullets = [];
+  const narrative = [];
   const cautions = [
     ...(Array.isArray(group?.decisionWarnings) ? group.decisionWarnings : []),
     ...(Array.isArray(group?.decisionNotes) ? group.decisionNotes : []),
@@ -105,47 +149,55 @@ function buildDecisionInsight(group) {
   if (alternative) {
     const winnerCurrency = normalizedCurrency(winner.paraBirimi) || "TRY";
     const alternativeCurrency = normalizedCurrency(alternative.paraBirimi) || "TRY";
+    const winnerValue = presentValueDetail(group, winner, annualRate);
+    const alternativeValue = presentValueDetail(group, alternative, annualRate);
+    const sameCurrency = winnerCurrency === alternativeCurrency;
+    const nominalGap = alternativeValue.originalTotal - winnerValue.originalTotal;
+    const presentGap = alternativeValue.presentValue - winnerValue.presentValue;
+
     if (winnerCurrency === alternativeCurrency) {
-      bullets.push(
-        `Nominal toplam: ${winnerName} ${money(offerOriginalTotal(group, winner), winnerCurrency)}, ${alternativeName} ${money(offerOriginalTotal(group, alternative), alternativeCurrency)}.`,
+      narrative.push(
+        `${winnerName} teklifinin nominal toplamı ${money(winnerValue.originalTotal, winnerCurrency)}, ${alternativeName} teklifinin toplamı ${money(alternativeValue.originalTotal, alternativeCurrency)}. ${nominalGap > 0 ? `${winnerName} başlangıçta ${money(nominalGap, winnerCurrency)} daha ucuz.` : "Nominal fiyat avantajı diğer teklifte."}`,
       );
     } else {
-      bullets.push(
-        `Kurla çevrilen net toplam: ${winnerName} ${money(offerTryTotal(group, winner), "TRY")}, ${alternativeName} ${money(offerTryTotal(group, alternative), "TRY")}.`,
+      narrative.push(
+        `Teklifler farklı para biriminde olduğu için kayıtlı analiz kuruyla karşılaştırıldı: ${winnerName} ${money(offerTryTotal(group, winner), "TRY")}, ${alternativeName} ${money(offerTryTotal(group, alternative), "TRY")}.`,
       );
     }
 
-    const winnerFinance = num(winner.financeAdvantageTRY);
-    const alternativeFinance = num(alternative.financeAdvantageTRY);
-    if (winnerFinance > 0 || alternativeFinance > 0) {
-      bullets.push(
-        `Vade etkisi hesaba katıldı: ${winnerName} için ${money(winnerFinance, "TRY")}, ${alternativeName} için ${money(alternativeFinance, "TRY")} finansman avantajı.`,
-      );
-    } else {
-      bullets.push("Vade koşulları okundu; bu kayıtta parasal bir finansman avantajı oluşmadı.");
+    if (sameCurrency && (winnerValue.financeAdvantage > 0 || alternativeValue.financeAdvantage > 0)) {
+      if (alternativeValue.days > winnerValue.days) {
+        narrative.push(
+          `${alternativeName} daha uzun ödeme süresi sayesinde ${money(alternativeValue.financeAdvantage, winnerCurrency)} finansman avantajı sağlıyor. Ancak bu avantaj ${nominalGap > 0 ? "başlangıçtaki fiyat farkını kapatmaya yetmiyor" : "diğer maliyet etkileriyle birlikte tek başına kararı belirlemiyor"}.`,
+        );
+      } else {
+        narrative.push(
+          `${winnerName} daha uzun ödeme süresi sayesinde ${money(winnerValue.financeAdvantage, winnerCurrency)} finansman avantajı sağlıyor; bu vade etkisi ${nominalGap > 0 ? "mevcut fiyat avantajını daha da güçlendiriyor" : "nominal fiyat dezavantajının bir bölümünü karşılıyor"}.`,
+        );
+      }
     }
 
-    bullets.push(
-      `Ödeme / teslim: ${winnerName} ${paymentTiming(winner)} ödeme ve ${deliveryTiming(winner)} teslim; ${alternativeName} ${paymentTiming(alternative)} ödeme ve ${deliveryTiming(alternative)} teslim.`,
-    );
+    if (sameCurrency) {
+      narrative.push(
+        `Paranın zaman değeri uygulandığında ${winnerName} teklifinin bugünkü maliyeti ${money(winnerValue.presentValue, winnerCurrency)}, ${alternativeName} teklifinin bugünkü maliyeti ${money(alternativeValue.presentValue, alternativeCurrency)} oluyor. Sonuçta ${winnerName} yaklaşık ${money(Math.max(presentGap, 0), winnerCurrency)} daha avantajlı kalıyor.`,
+      );
+    }
 
     const winnerRisk = num(winner.advancedRiskCostTRY) + num(winner.supplierRiskCostTRY);
     const alternativeRisk = num(alternative.advancedRiskCostTRY) + num(alternative.supplierRiskCostTRY);
     if (winnerRisk > 0 || alternativeRisk > 0) {
-      bullets.push(
-        `Risk ve ek maliyet etkisi: ${winnerName} ${money(winnerRisk, "TRY")}, ${alternativeName} ${money(alternativeRisk, "TRY")}.`,
+      narrative.push(
+        `Kayıtlı tedarikçi ve kur riskleri de hesaba katıldı. Tüm etkiler sonrasında değerlendirilmiş maliyet ${winnerName} için ${money(winnerCost, "TRY")}, ${alternativeName} için ${money(alternativeCost, "TRY")}.`,
       );
     }
 
-    if (
-      !winner.vadeCalculationSource &&
-      num(winner.vadeDays) === 0 &&
-      normalize(winner.vade).includes("teslim")
-    ) {
-      cautions.push(
-        `${winnerName} ödeme koşulu teslim sonrasına bağlı; bu eski raporda ödeme günü sayısallaştırılmamış. Güncel analizde termin + 1 gün olarak hesaplanır.`,
-      );
-    }
+    bullets.push(`${winnerName} bugünkü maliyeti: ${money(sameCurrency ? winnerValue.presentValue : winnerCost, sameCurrency ? winnerCurrency : "TRY")}`);
+    bullets.push(`${alternativeName} bugünkü maliyeti: ${money(sameCurrency ? alternativeValue.presentValue : alternativeCost, sameCurrency ? alternativeCurrency : "TRY")}`);
+    bullets.push(`${winnerName} ekonomik avantajı: ${money(Math.max(sameCurrency ? presentGap : costGap, 0), sameCurrency ? winnerCurrency : "TRY")}`);
+    if (annualRate > 0) bullets.push(`Kullanılan yıllık finansman oranı: %${annualRate.toFixed(1)}`);
+    bullets.push(`${winnerName} tahmini ödeme zamanı: ${paymentTiming(winner)}`);
+    bullets.push(`${alternativeName} ödeme zamanı: ${paymentTiming(alternative)}`);
+    bullets.push(`Teslim koşulları: ${winnerName} ${deliveryTiming(winner)}, ${alternativeName} ${deliveryTiming(alternative)}`);
   }
 
   cautions.push("Bu sonuç otomatik ekonomik öneridir; sipariş öncesinde fiyat kapsamı, teslim ve ödeme koşulları yazılı olarak doğrulanmalıdır.");
@@ -159,6 +211,7 @@ function buildDecisionInsight(group) {
     alternativeCost,
     costGap,
     gapRate,
+    narrative,
     bullets,
     cautions: Array.from(new Set(cautions)),
   };
@@ -545,10 +598,11 @@ export default function ComparisonPage() {
 
         <div className="space-y-5 p-6">
           {decisionInsight.alternative ? <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5">
-            <div className="text-sm font-bold text-emerald-800">Ekonomik sonuç</div>
-            <p className="mt-2 text-lg font-black text-emerald-950">
-              Vade, termin ve kayıtlı risk etkileri sonrasında {decisionInsight.winnerName}, en yakın alternatif {decisionInsight.alternativeName} teklifinden {money(decisionInsight.costGap, "TRY")} (%{decisionInsight.gapRate.toFixed(1)}) daha avantajlıdır.
-            </p>
+            <div className="text-sm font-black text-emerald-800">Kısa cevap</div>
+            <div className="mt-3 space-y-3 text-base font-semibold leading-7 text-emerald-950">
+              {decisionInsight.narrative.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
+              <p className="font-black">Bu nedenle {decisionInsight.winnerName}, yalnızca fiyatı düşük olduğu için değil; fiyat, vade, teslim ve kayıtlı riskler birlikte değerlendirildiğinde ekonomik olarak öneriliyor.</p>
+            </div>
           </div> : <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 font-bold text-amber-950">Bu kalemde karşılaştırılabilir başka uygun teklif bulunmadığı için mevcut teklif önerildi.</div>}
 
           <div className="grid gap-4 sm:grid-cols-2">
@@ -565,7 +619,7 @@ export default function ComparisonPage() {
           </div>
 
           <div>
-            <h3 className="text-lg font-black text-slate-950">Kararı oluşturan etkenler</h3>
+            <h3 className="text-lg font-black text-slate-950">Hesabın özeti</h3>
             <ul className="mt-3 space-y-2">
               {decisionInsight.bullets.map((bullet) => <li key={bullet} className="flex gap-3 rounded-xl bg-slate-50 p-3 text-sm font-semibold text-slate-800"><span className="text-emerald-600">✓</span><span>{bullet}</span></li>)}
             </ul>
