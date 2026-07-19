@@ -3210,7 +3210,7 @@ function ConnectionsPanel({ items, projects }) {
                 <th className="p-3">Sıra</th>
                 <th className="p-3">Proje iş ortağı / müşteri</th>
                 <th className="p-3">Proje</th>
-                <th className="p-3">Ana ürün / pano</th>
+                <th className="p-3">Ana ürün</th>
                 <th className="p-3">Satın alınan ürün</th>
                 <th className="p-3">Ayrılan miktar</th>
               </tr>
@@ -4404,7 +4404,7 @@ function ReceivingPanel({
 
               <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
                 <label className="block">
-                  <span className="mb-1 block text-xs font-bold text-slate-500">Ana ürün / pano</span>
+                  <span className="mb-1 block text-xs font-bold text-slate-500">Ana ürün</span>
                   <select
                     value={input.parentItemId || ""}
                     disabled={disabled || projectItems.length === 0}
