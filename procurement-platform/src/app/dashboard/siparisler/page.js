@@ -88,15 +88,20 @@ function formatMoney(value, currency = "TRY") {
   }).format(Number(value || 0))} ${currency}`;
 }
 
-function orderTotalInTry(order) {
+function orderTotalInTry(order, liveRates) {
   const total = Number(order?.total_amount || 0);
+  const currency = String(order?.currency || "TRY").trim().toUpperCase();
+  if (currency === "TRY") return total;
+
+  const liveRate = liveRateFor(currency, liveRates);
+  if (liveRate > 0) return total * liveRate;
+
   const storedBaseAmount = Number(order?.order_total_base ?? order?.base_amount);
   if (Number.isFinite(storedBaseAmount) && (storedBaseAmount > 0 || total <= 0)) {
     return storedBaseAmount;
   }
 
-  const currency = String(order?.currency || "TRY").trim().toUpperCase();
-  const exchangeRate = currency === "TRY" ? 1 : Number(order?.exchange_rate || 0);
+  const exchangeRate = Number(order?.exchange_rate || 0);
 
   return exchangeRate > 0 ? total * exchangeRate : 0;
 }
@@ -360,7 +365,12 @@ export default function OrdersPage() {
   useEffect(() => {
     loadData();
     hydratePendingOrder();
-    fetchLiveTryRates().then(setLiveRates).catch(() => setLiveRates(null));
+    const refreshLiveRates = () => {
+      fetchLiveTryRates().then(setLiveRates).catch(() => setLiveRates(null));
+    };
+    refreshLiveRates();
+    const refreshTimer = window.setInterval(refreshLiveRates, 15 * 60 * 1000);
+    return () => window.clearInterval(refreshTimer);
   }, []);
 
   async function loadData() {
@@ -495,9 +505,16 @@ export default function OrdersPage() {
   }, [enrichedOrders, search, statusFilter]);
 
   const totalAmountTry = enrichedOrders.reduce(
-    (sum, order) => sum + orderTotalInTry(order),
+    (sum, order) => sum + orderTotalInTry(order, liveRates),
     0,
   );
+  const hasForeignCurrencyOrders = enrichedOrders.some(
+    (order) => String(order.currency || "TRY").trim().toUpperCase() !== "TRY",
+  );
+  const allForeignRatesLive = enrichedOrders.every((order) => {
+    const currency = String(order.currency || "TRY").trim().toUpperCase();
+    return currency === "TRY" || liveRateFor(currency, liveRates) > 0;
+  });
   const waitingCount = enrichedOrders.filter(
     (order) => order.status === "Taslak" || order.status === "Onay Bekliyor",
   ).length;
@@ -1136,9 +1153,9 @@ export default function OrdersPage() {
               text="Kayıtlı sipariş"
             />
             <StatCard
-              title="Toplam Tutar (TL)"
+              title="Güncel Toplam (TL)"
               value={formatMoney(totalAmountTry, "TRY")}
-              text="Sipariş tarihindeki sabit kurla"
+              text={hasForeignCurrencyOrders && allForeignRatesLive ? "Bugünkü canlı döviz kuruyla" : "Canlı kur yoksa sipariş kuruyla"}
             />
             <StatCard
               title="Bekleyen"
