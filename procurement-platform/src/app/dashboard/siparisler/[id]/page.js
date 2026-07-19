@@ -630,6 +630,7 @@ export default function OrderDetailPage() {
   const [receipts, setReceipts] = useState([]);
   const [automaticReceiptApplying, setAutomaticReceiptApplying] = useState(false);
   const [automaticReceiptResult, setAutomaticReceiptResult] = useState(null);
+  const [automaticReceiptPanelOpen, setAutomaticReceiptPanelOpen] = useState(false);
   const [receiptProductOverrides, setReceiptProductOverrides] = useState({});
   const [receiptProductSuggestion, setReceiptProductSuggestion] = useState(null);
   const [payments, setPayments] = useState([]);
@@ -915,6 +916,7 @@ export default function OrderDetailPage() {
       currency: data.currency || "TRY",
       exchange_rate: Number(data.exchange_rate || 1),
     }));
+    setAutomaticReceiptPanelOpen(false);
     setReceiptInputs({});
     setDocuments([]);
     setOrderAuditRows([]);
@@ -2586,6 +2588,10 @@ export default function OrderDetailPage() {
   }
 
   const currentStep = getCurrentStep(order.status);
+  const hasReceiptDocument = documents.some(
+    (document) => ["irsaliye", "depo_giris"].includes(document.document_type)
+      && document.approval_status !== "reddedildi",
+  );
 
   return (
     <div className="min-h-screen bg-slate-100 p-6">
@@ -2772,17 +2778,20 @@ export default function OrderDetailPage() {
             )}
             {activeTab === "receiving" && (
               <div className="space-y-6">
-                <AutomaticReceiptSuggestionsPanel
-                  order={order}
-                  items={items}
-                  receipts={receipts}
-                  documentItems={documentItems}
-                  documents={documents}
-                  applying={automaticReceiptApplying}
-                  result={automaticReceiptResult}
-                  onApply={applyAutomaticReceiptSuggestions}
-                  onOpenDocuments={() => setActiveTab("documents")}
-                />
+                {automaticReceiptPanelOpen && hasReceiptDocument && (
+                  <AutomaticReceiptSuggestionsPanel
+                    order={order}
+                    items={items}
+                    receipts={receipts}
+                    documentItems={documentItems}
+                    documents={documents}
+                    applying={automaticReceiptApplying}
+                    result={automaticReceiptResult}
+                    onApply={applyAutomaticReceiptSuggestions}
+                    onOpenDocuments={() => setActiveTab("documents")}
+                    onClose={() => setAutomaticReceiptPanelOpen(false)}
+                  />
+                )}
                 <ReceivingPanel
                   items={items}
                   order={order}
@@ -2792,6 +2801,17 @@ export default function OrderDetailPage() {
                   disabled={order.status === "İptal"}
                   onInputChange={updateReceiptInput}
                   onSave={saveReceipt}
+                  hasReceiptDocument={hasReceiptDocument}
+                  onAutomaticReceipt={() => {
+                    if (hasReceiptDocument) {
+                      setAutomaticReceiptPanelOpen(true);
+                      return;
+                    }
+                    setDocumentForm((prev) => ({ ...prev, document_type: "irsaliye" }));
+                    setDocumentUploadOpen(true);
+                    setActiveTab("documents");
+                    setMessage("Otomatik doldurma için irsaliye veya teslim fişi yükleyin.");
+                  }}
                 />
               </div>
             )}
@@ -3079,6 +3099,7 @@ function AutomaticReceiptSuggestionsPanel({
   result,
   onApply,
   onOpenDocuments,
+  onClose,
 }) {
   const suggestions = calculateAutomaticReceiptSuggestions(
     items,
@@ -3140,14 +3161,23 @@ function AutomaticReceiptSuggestionsPanel({
             İrsaliye OCR kalemleri sipariş satırlarıyla eşleşir; yalnızca güveni en az %80 olan, manuel kontrol gerektirmeyen eşleşmeler kullanıcı onayıyla stok girişine işlenir.
           </p>
         </div>
-        <button
-          type="button"
-          disabled={applying || activeSuggestions.length === 0}
-          onClick={onApply}
-          className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-black text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-        >
-          {applying ? "Teslim Alınıyor..." : "Otomatik Teslim Al"}
-        </button>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
+          >
+            Kapat
+          </button>
+          <button
+            type="button"
+            disabled={applying || activeSuggestions.length === 0}
+            onClick={onApply}
+            className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-black text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+          >
+            {applying ? "Teslim Alınıyor..." : "Otomatik Teslim Al"}
+          </button>
+        </div>
       </div>
       {inactiveReason && (
         <div className="mt-4 flex flex-col gap-3 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-950 md:flex-row md:items-center md:justify-between">
@@ -4342,6 +4372,8 @@ function ReceivingPanel({
   disabled,
   onInputChange,
   onSave,
+  hasReceiptDocument,
+  onAutomaticReceipt,
 }) {
   const parentItems = projectItems.filter((item) => !item.parent_item_id);
   const itemLabel = (projectItem) => {
@@ -4352,13 +4384,24 @@ function ReceivingPanel({
   return (
     <div className="space-y-6">
       <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-4">
-        <h3 className="text-base font-bold text-emerald-950">
-          Depo teslim alma
-        </h3>
-        <p className="mt-1 text-sm text-emerald-800">
-          Gelen miktar stok girişine işlenir; eksik, fazla ve hatalı gelenler
-          ayrı teslim kaydı olarak saklanır.
-        </p>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h3 className="text-base font-bold text-emerald-950">
+              Depo teslim alma
+            </h3>
+            <p className="mt-1 text-sm text-emerald-800">
+              Gelen miktar stok girişine işlenir; eksik, fazla ve hatalı gelenler
+              ayrı teslim kaydı olarak saklanır.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onAutomaticReceipt}
+            className="shrink-0 rounded-lg border border-emerald-300 bg-white px-4 py-2 text-xs font-black text-emerald-800 hover:bg-emerald-100"
+          >
+            {hasReceiptDocument ? "İrsaliyeden Otomatik Doldur" : "İrsaliye Yükle ve Otomatik Doldur"}
+          </button>
+        </div>
         <div className="mt-3 grid grid-cols-1 gap-3 text-sm md:grid-cols-3">
           <div className="rounded-lg bg-white p-3">
             <div className="text-xs font-bold text-slate-500">Sipariş No</div>
