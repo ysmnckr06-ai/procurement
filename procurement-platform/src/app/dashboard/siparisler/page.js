@@ -1246,7 +1246,7 @@ export default function OrdersPage() {
           )}
 
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-[1fr_220px_180px]">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-[1fr_220px]">
               <input
                 placeholder="Sipariş no, iş ortağı veya ürün ara..."
                 value={search}
@@ -1262,13 +1262,6 @@ export default function OrdersPage() {
                   <option key={status}>{status}</option>
                 ))}
               </select>
-              <button
-                type="button"
-                onClick={startNewOrder}
-                className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white"
-              >
-                + Yeni Sipariş
-              </button>
             </div>
           </div>
 
