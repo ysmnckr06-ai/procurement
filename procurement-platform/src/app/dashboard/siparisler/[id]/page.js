@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import DocumentArchivePanel from "@/components/DocumentArchivePanel";
 import { createDocumentSignedUrl, downloadDocumentFile, isPdfDocument } from "@/lib/documentAccess";
 import { supabase } from "@/lib/supabase";
 import { calculateBaseAmount, currencyOptions, getBaseCurrency, getExchangeRate } from "@/lib/currency";
@@ -25,17 +24,6 @@ const statusActions = [
   { status: "Sipariş Geçildi", label: "Sipariş Geçildi" },
   { status: "Tedarikçiden Bekleniyor", label: "Tedarikçiden Bekleniyor" },
   { status: "İptal", label: "İptal Et", danger: true },
-];
-
-const editableStatusOptions = [
-  "Taslak",
-  "Onay Bekliyor",
-  "Sipariş Geçildi",
-  "Tedarikçiden Bekleniyor",
-  "Kısmi Teslim",
-  "Tam Teslim",
-  "Gecikti",
-  "İptal",
 ];
 
 function getToday() {
@@ -74,45 +62,6 @@ async function fileSha256(file) {
   const bytes = await file.arrayBuffer();
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-function createMockOCRResult(document) {
-  const documentNumber = document.document_number
-    || `MOCK-${String(document.id || "BELGE").slice(0, 8).toUpperCase()}`;
-  const documentDate = document.document_date || getToday();
-  const supplierName = document.supplier_name || "Örnek Tedarikçi";
-  const supplierTaxNumber = document.supplier_tax_number || "0000000000";
-  const invoiceTotal = Number(document.invoice_total || 0);
-  const currency = document.currency || "TRY";
-  const processedAt = new Date().toISOString();
-
-  return {
-    document_number: documentNumber,
-    document_date: documentDate,
-    supplier_name: supplierName,
-    supplier_tax_number: supplierTaxNumber,
-    invoice_total: invoiceTotal,
-    currency,
-    ocr_status: "completed",
-    ocr_text: [
-      `Belge No: ${documentNumber}`,
-      `Tarih: ${documentDate}`,
-      `Tedarikçi: ${supplierName}`,
-      `Vergi No: ${supplierTaxNumber}`,
-      `Toplam: ${invoiceTotal} ${currency}`,
-    ].join("\n"),
-    ocr_result: {
-      source: "mock",
-      document_number: documentNumber,
-      document_date: documentDate,
-      supplier_name: supplierName,
-      supplier_tax_number: supplierTaxNumber,
-      invoice_total: invoiceTotal,
-      currency,
-    },
-    ocr_confidence: 0.92,
-    ocr_processed_at: processedAt,
-  };
 }
 
 function getOCRDocumentItems(document) {
@@ -671,7 +620,6 @@ export default function OrderDetailPage() {
   const [order, setOrder] = useState(null);
   const [activeTab, setActiveTab] = useState("items");
   const [message, setMessage] = useState("");
-  const [deliveryInputs, setDeliveryInputs] = useState({});
   const [receiptInputs, setReceiptInputs] = useState({});
   const receiptSavingRef = useRef(new Set());
   const [receipts, setReceipts] = useState([]);
@@ -706,7 +654,7 @@ export default function OrderDetailPage() {
   const [documentApprovalNotes, setDocumentApprovalNotes] = useState({});
   const [documentApprovalUpdatingId, setDocumentApprovalUpdatingId] = useState(null);
   const [documentForm, setDocumentForm] = useState({
-    document_type: "siparis_formu",
+    document_type: "fatura",
     document_number: "",
     document_date: "",
     supplier_name: "",
@@ -730,7 +678,6 @@ export default function OrderDetailPage() {
   const [companySettings, setCompanySettings] = useState({ default_currency: "TRY", base_currency: "TRY" });
   const [project, setProject] = useState(null);
   const [projectItems, setProjectItems] = useState([]);
-  const [editableStatus, setEditableStatus] = useState("");
 
   // Detail page reloads when the route id changes; loadOrder reads the active route state.
   // biome-ignore lint/correctness/useExhaustiveDependencies: route-scoped initial load
@@ -959,8 +906,6 @@ export default function OrderDetailPage() {
       currency: data.currency || "TRY",
       exchange_rate: Number(data.exchange_rate || 1),
     }));
-    setEditableStatus(data.status === "Teslim Edildi" ? "Tam Teslim" : data.status || "Taslak");
-    setDeliveryInputs({});
     setReceiptInputs({});
     setDocuments([]);
     setOrderAuditRows([]);
@@ -1257,105 +1202,6 @@ export default function OrderDetailPage() {
     }
 
     setMessage(`${nextStatus} durumu kaydedildi.`);
-    await loadOrder();
-  }
-
-  async function saveDelivery() {
-    if (!order) return;
-
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    if (!user) {
-      router.push("/login");
-      return;
-    }
-
-    const nextItems = items.map((item, index) => {
-      const rawValue =
-        deliveryInputs[index] === undefined
-          ? item.deliveredQuantity
-          : deliveryInputs[index];
-      const deliveredQuantity = Math.min(
-        item.quantity,
-        Math.max(0, Number(rawValue || 0)),
-      );
-      return { ...item, deliveredQuantity };
-    });
-
-    const totalQuantity = nextItems.reduce(
-      (sum, item) => sum + item.quantity,
-      0,
-    );
-    const deliveredQuantity = nextItems.reduce(
-      (sum, item) => sum + item.deliveredQuantity,
-      0,
-    );
-    const calculatedStatus =
-      deliveredQuantity >= totalQuantity && totalQuantity > 0
-        ? "Tam Teslim"
-        : deliveredQuantity > 0
-          ? "Kısmi Teslim"
-          : "Taslak";
-    const nextStatus = editableStatus || calculatedStatus;
-    const deliveryChanged = nextItems.some(
-      (item, index) =>
-        item.deliveredQuantity !== items[index].deliveredQuantity,
-    );
-    const statusChanged = nextStatus !== order.status;
-
-    const nextHistory = buildStatusHistory(order, {
-      type: deliveryChanged ? "delivery-adjustment" : "status",
-      title:
-        deliveryChanged && statusChanged
-          ? "Teslimat adetleri ve durum güncellendi."
-          : deliveryChanged
-            ? "Teslimat adetleri düzeltildi."
-            : `${nextStatus} durumuna alındı.`,
-      actor: "Kullanıcı",
-      status: nextStatus,
-    });
-    const deliveryDate =
-      nextStatus === "Tam Teslim" ? order.delivery_date || getToday() : null;
-    const payload = {
-      items: nextItems,
-      status: nextStatus,
-      delivery_date: deliveryDate,
-      status_history: nextHistory,
-    };
-    const fallbackPayload = {
-      items: nextItems,
-      status: nextStatus,
-      delivery_date: deliveryDate,
-    };
-
-    for (let index = 0; index < nextItems.length; index += 1) {
-      const item = nextItems[index];
-      const previousItem = items[index];
-      const addedQuantity = Number(item.deliveredQuantity || 0) - Number(previousItem?.deliveredQuantity || 0);
-      if (addedQuantity <= 0) continue;
-      const matchingProjectItem = projectItems.find(
-        (projectItem) =>
-          (item.productCode && projectItem.product_code === item.productCode)
-          || projectItem.product_name === item.productName,
-      );
-      const product = await resolveReceiptProduct(user.id, item, matchingProjectItem || null);
-      if (!product?.id) {
-        setMessage("Ürün kartı kesinleşmediği için teslimat durumu değiştirilmedi.");
-        return;
-      }
-    }
-
-    const { error } = await updateOrder(payload, fallbackPayload);
-
-    if (error) {
-      setMessage("Teslimat kaydedilemedi.");
-      return;
-    }
-
-    setDeliveryInputs({});
-    setMessage("Teslimat durumu güncellendi. Fiziksel stok girişi yalnızca Depo Teslim Alma üzerinden yapılır.");
     await loadOrder();
   }
 
@@ -2153,7 +1999,7 @@ export default function OrderDetailPage() {
     }
 
     setDocumentForm({
-      document_type: "siparis_formu",
+      document_type: "fatura",
       document_number: "",
       document_date: "",
       supplier_name: "",
@@ -2219,40 +2065,6 @@ export default function OrderDetailPage() {
         : "Fatura reddedildi.",
     );
     await loadOrderDocuments(order.id, user.id);
-  }
-
-  async function analyzeDocumentWithMockOCR(document) {
-    if (!order || documentOcrProcessingId) return;
-
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    if (!user) {
-      router.push("/login");
-      return;
-    }
-
-    setDocumentOcrProcessingId(document.id);
-    setMessage("");
-
-    const mockResult = createMockOCRResult(document);
-    const { error } = await supabase
-      .from("documents")
-      .update(mockResult)
-      .eq("id", document.id)
-      .eq("user_id", user.id);
-
-    if (error) {
-      console.error(error);
-      setMessage("OCR analizi kaydedilemedi.");
-      setDocumentOcrProcessingId(null);
-      return;
-    }
-
-    setMessage("Mock OCR analizi tamamlandı.");
-    await loadOrderDocuments(order.id, user.id);
-    setDocumentOcrProcessingId(null);
   }
 
   async function analyzeDocumentWithBackendOCR(document) {
@@ -2784,64 +2596,6 @@ export default function OrderDetailPage() {
             {order.report_id && <p className="mt-2 inline-flex rounded-full bg-slate-200 px-3 py-1 text-xs font-bold text-slate-700">🔒 Mukayese kaynaklı ticari alanlar kilitli · teslimat, belge ve ödeme işlemleri açıktır</p>}
           </div>
 
-          <div className="flex flex-wrap justify-start gap-2 lg:justify-end">
-            <button type="button" onClick={exportInvoicePdf} className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-bold text-red-700 hover:bg-red-100">Fatura PDF</button>
-            <button type="button" onClick={exportDeliveryNotePdf} className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-bold text-blue-700 hover:bg-blue-100">İrsaliye PDF</button>
-            <button type="button" onClick={exportReceiptSlipPdf} className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-bold text-amber-700 hover:bg-amber-100">Teslim Fişi PDF</button>
-            <button type="button" onClick={exportOrderPdf} className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-100">Sipariş PDF</button>
-            <button type="button" onClick={exportOrderExcel} className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-bold text-emerald-700 hover:bg-emerald-100">Excel İndir</button>
-            {project && (
-              <Link
-                href={`/dashboard/projeler/${project.id}`}
-                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
-              >
-                Projeye Git
-              </Link>
-            )}
-            <button
-              type="button"
-              onClick={() => setActiveTab("payment")}
-              className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-bold text-emerald-700 hover:bg-emerald-100"
-            >
-              Ödeme Ekle
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab("receiving")}
-              className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-bold text-blue-700 hover:bg-blue-100"
-            >
-              Teslim Al
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab("receiving")}
-              className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-bold text-amber-700 hover:bg-amber-100"
-            >
-              Kısmi Teslim Al
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab("documents")}
-              className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-2 text-sm font-bold text-violet-700 hover:bg-violet-100"
-            >
-              Fatura / İrsaliye Ekle
-            </button>
-            {statusActions.map((action) => (
-              <button
-                key={action.status}
-                type="button"
-                disabled={isActionDisabled(order.status, action.status)}
-                onClick={() => updateStatus(action.status)}
-                className={`rounded-xl px-4 py-2 text-sm font-bold transition ${
-                  action.danger
-                    ? "border border-red-200 bg-red-50 text-red-700 hover:bg-red-100"
-                    : "border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100"
-                } disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400`}
-              >
-                {action.label}
-              </button>
-            ))}
-          </div>
         </div>
 
         {message && (
@@ -2958,25 +2712,6 @@ export default function OrderDetailPage() {
 
         <DeliveryStatusPanel totals={totals} />
 
-        <DeliveryInvoiceConsistencyPanel
-          order={order}
-          items={items}
-          receipts={receipts}
-          documents={documents}
-          documentItems={documentItems}
-        />
-
-        <AutomaticReceiptSuggestionsPanel
-          order={order}
-          items={items}
-          receipts={receipts}
-          documentItems={documentItems}
-          documents={documents}
-          applying={automaticReceiptApplying}
-          result={automaticReceiptResult}
-          onApply={applyAutomaticReceiptSuggestions}
-        />
-
         <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="flex flex-wrap gap-2 border-b border-slate-100 px-5 pt-4">
             {[
@@ -3009,36 +2744,42 @@ export default function OrderDetailPage() {
               <ItemsTable
                 items={items}
                 currency={order.currency}
-                onEditDelivery={() => setActiveTab("delivery")}
+                onExportOrderPdf={exportOrderPdf}
+                onExportExcel={exportOrderExcel}
+                onReceive={() => setActiveTab("receiving")}
               />
             )}
-            {activeTab === "connections" && <ConnectionsPanel items={items} />}
+            {activeTab === "connections" && <ConnectionsPanel items={items} order={order} />}
             {activeTab === "delivery" && (
-              <DeliveryPanel
+              <DeliveryHistoryPanel
                 items={items}
-                inputs={deliveryInputs}
-                disabled={order.status === "İptal"}
-                status={editableStatus}
-                onStatusChange={setEditableStatus}
-                onInputChange={(index, value) =>
-                  setDeliveryInputs((prev) => ({ ...prev, [index]: value }))
-                }
-                onSave={saveDelivery}
-                progress={totals.progress}
+                receipts={receipts}
+                totals={totals}
               />
             )}
             {activeTab === "receiving" && (
-              <ReceivingPanel
-                items={items}
-                order={order}
-                project={project}
-                projectItems={projectItems}
-                receipts={receipts}
-                inputs={receiptInputs}
-                disabled={order.status === "İptal"}
-                onInputChange={updateReceiptInput}
-                onSave={saveReceipt}
-              />
+              <div className="space-y-6">
+                <AutomaticReceiptSuggestionsPanel
+                  order={order}
+                  items={items}
+                  receipts={receipts}
+                  documentItems={documentItems}
+                  documents={documents}
+                  applying={automaticReceiptApplying}
+                  result={automaticReceiptResult}
+                  onApply={applyAutomaticReceiptSuggestions}
+                />
+                <ReceivingPanel
+                  items={items}
+                  order={order}
+                  project={project}
+                  projectItems={projectItems}
+                  inputs={receiptInputs}
+                  disabled={order.status === "İptal"}
+                  onInputChange={updateReceiptInput}
+                  onSave={saveReceipt}
+                />
+              </div>
             )}
             {activeTab === "payment" && (
               <PaymentPanel
@@ -3051,41 +2792,74 @@ export default function OrderDetailPage() {
               />
             )}
             {activeTab === "documents" && (
-              <DocumentsPanel
-                documents={documents}
-                documentItems={documentItems}
-                orderItems={items}
-                rawOrderItems={order.items || []}
-                matchSummary={documentItemMatchSummary}
-                order={order}
-                companySettings={companySettings}
-                form={documentForm}
-                uploadOpen={documentUploadOpen}
-                uploading={documentUploading}
-                approvalNotes={documentApprovalNotes}
-                approvalUpdatingId={documentApprovalUpdatingId}
-                ocrProcessingId={documentOcrProcessingId}
-                ocrItemsCreatingId={ocrDocumentItemsCreatingId}
-                ocrItemsResults={ocrDocumentItemsResults}
-                preview={documentPreview}
-                accessLoadingId={documentAccessLoadingId}
-                accessError={documentAccessError}
-                onToggleUpload={() => setDocumentUploadOpen((prev) => !prev)}
-                onFormChange={setDocumentForm}
-                onUpload={uploadDocument}
-                onPreviewDocument={previewDocument}
-                onOpenDocument={openDocumentInNewTab}
-                onDownloadDocument={downloadDocument}
-                onApprovalNoteChange={(documentId, value) =>
-                  setDocumentApprovalNotes((prev) => ({ ...prev, [documentId]: value }))
-                }
-                onApproval={updateInvoiceApproval}
-                onAnalyzeOCR={analyzeDocumentWithBackendOCR}
-                onCreateItemsFromOCR={createDocumentItemsFromOCR}
-                onAddDocumentItem={openDocumentItemModal}
+              <div className="space-y-6">
+                <div className="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <button type="button" onClick={exportInvoicePdf} className="rounded-xl bg-red-600 px-4 py-2 text-sm font-bold text-white">Fatura PDF</button>
+                  <button type="button" onClick={exportDeliveryNotePdf} className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white">İrsaliye PDF</button>
+                  <button type="button" onClick={exportReceiptSlipPdf} className="rounded-xl bg-amber-500 px-4 py-2 text-sm font-bold text-white">Teslim Fişi PDF</button>
+                </div>
+                <DeliveryInvoiceConsistencyPanel
+                  order={order}
+                  items={items}
+                  receipts={receipts}
+                  documents={documents}
+                  documentItems={documentItems}
+                />
+                <DocumentsPanel
+                  documents={documents}
+                  documentItems={documentItems}
+                  orderItems={items}
+                  rawOrderItems={order.items || []}
+                  matchSummary={documentItemMatchSummary}
+                  order={order}
+                  companySettings={companySettings}
+                  form={documentForm}
+                  uploadOpen={documentUploadOpen}
+                  uploading={documentUploading}
+                  approvalNotes={documentApprovalNotes}
+                  approvalUpdatingId={documentApprovalUpdatingId}
+                  ocrProcessingId={documentOcrProcessingId}
+                  ocrItemsCreatingId={ocrDocumentItemsCreatingId}
+                  ocrItemsResults={ocrDocumentItemsResults}
+                  preview={documentPreview}
+                  accessLoadingId={documentAccessLoadingId}
+                  accessError={documentAccessError}
+                  onStartUpload={(documentType) => {
+                    setDocumentForm((prev) => ({
+                      ...prev,
+                      document_type: documentType,
+                      supplier_name: prev.supplier_name || order.partner_name || order.supplier_name || "",
+                      currency: order.currency || prev.currency || "TRY",
+                    }));
+                    setDocumentUploadOpen(true);
+                  }}
+                  onToggleUpload={() => setDocumentUploadOpen((prev) => !prev)}
+                  onFormChange={setDocumentForm}
+                  onUpload={uploadDocument}
+                  onPreviewDocument={previewDocument}
+                  onOpenDocument={openDocumentInNewTab}
+                  onDownloadDocument={downloadDocument}
+                  onApprovalNoteChange={(documentId, value) =>
+                    setDocumentApprovalNotes((prev) => ({ ...prev, [documentId]: value }))
+                  }
+                  onApproval={updateInvoiceApproval}
+                  onAnalyzeOCR={analyzeDocumentWithBackendOCR}
+                  onCreateItemsFromOCR={createDocumentItemsFromOCR}
+                  onAddDocumentItem={openDocumentItemModal}
+                />
+              </div>
+            )}
+            {activeTab === "history" && (
+              <HistoryPanel
+                rows={historyRows}
+                status={order.status}
+                actions={statusActions.map((action) => ({
+                  ...action,
+                  disabled: isActionDisabled(order.status, action.status),
+                }))}
+                onStatusChange={updateStatus}
               />
             )}
-            {activeTab === "history" && <HistoryPanel rows={historyRows} />}
             {activeTab === "notes" && (
               <div className="rounded-xl bg-slate-50 p-4 text-sm text-slate-700">
                 {order.note || "Not bulunmuyor."}
@@ -3377,104 +3151,88 @@ function AutomaticReceiptSuggestionsPanel({
   );
 }
 
-function ConnectionsPanel({ items }) {
+function ConnectionsPanel({ items, order }) {
+  const groupedConnections = new Map();
+
+  items.forEach((item) => {
+    (item.allocations || []).forEach((allocation) => {
+      const isStock = allocation.type === "stock";
+      const key = isStock
+        ? "stock"
+        : [
+            allocation.projectId || allocation.projectCode || "project",
+            allocation.parentItemId || allocation.parentItemName || "main-product",
+          ].join("::");
+      const current = groupedConnections.get(key) || {
+        type: isStock ? "stock" : "project",
+        projectId: allocation.projectId || "",
+        projectCode: allocation.projectCode || "-",
+        projectName: allocation.projectName || "-",
+        mainProduct: allocation.parentItemName || allocation.projectItemName || "Ana ürün belirtilmemiş",
+        itemKeys: new Set(),
+        quantities: new Map(),
+      };
+      current.itemKeys.add(`${item.productCode || ""}::${item.productName || ""}`);
+      const unit = item.unit || "adet";
+      current.quantities.set(
+        unit,
+        Number(current.quantities.get(unit) || 0) + Number(allocation.quantity || 0),
+      );
+      groupedConnections.set(key, current);
+    });
+  });
+
+  const rows = Array.from(groupedConnections.values());
+  const formatQuantities = (quantities) => Array.from(quantities.entries())
+    .map(([unit, quantity]) => `${quantity.toLocaleString("tr-TR")} ${unit}`)
+    .join(" · ");
+
   return (
     <div className="space-y-4">
-      {items.map((item, index) => {
-        const allocatedQuantity = item.allocations.reduce(
-          (sum, allocation) => sum + Number(allocation.quantity || 0),
-          0,
-        );
-        const openQuantity = Math.max(Number(item.quantity || 0) - allocatedQuantity, 0);
-        const isOverAllocated = allocatedQuantity > Number(item.quantity || 0);
-        const hasOpenQuantity = allocatedQuantity < Number(item.quantity || 0);
-
-        return (
-          <div
-            key={`${item.productCode}-${item.productName}-${index}`}
-            className="rounded-2xl border border-slate-200 p-4"
-          >
-            <div className="font-black text-slate-900">{item.productName}</div>
-            <div className="mt-1 text-xs text-slate-500">Ürün kodu: {item.productCode || "-"}</div>
-
-            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-              <div className="rounded-xl bg-slate-50 p-3 text-sm">
-                <div className="text-xs font-bold text-slate-500">Sipariş miktarı</div>
-                <div className="mt-1 font-black text-slate-900">
-                  {Number(item.quantity || 0)} {item.unit || "adet"}
-                </div>
-              </div>
-              <div className="rounded-xl bg-blue-50 p-3 text-sm">
-                <div className="text-xs font-bold text-blue-600">Dağıtılan miktar</div>
-                <div className="mt-1 font-black text-blue-900">
-                  {allocatedQuantity} {item.unit || "adet"}
-                </div>
-              </div>
-              <div className="rounded-xl bg-amber-50 p-3 text-sm">
-                <div className="text-xs font-bold text-amber-600">Açıkta kalan miktar</div>
-                <div className="mt-1 font-black text-amber-900">
-                  {openQuantity} {item.unit || "adet"}
-                </div>
-              </div>
-            </div>
-
-            {item.allocations.length > 0 ? (
-              <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {item.allocations.map((allocation, allocationIndex) => (
-                  <div
-                    key={`${allocation.type}-${allocation.projectId || "stock"}-${allocationIndex}`}
-                    className="rounded-xl border border-slate-200 bg-white p-4 text-sm"
-                  >
-                    {allocation.type === "stock" ? (
-                      <>
-                        <div className="font-bold text-emerald-700">Stok için ayrıldı</div>
-                        <div className="mt-3 text-xs font-bold text-slate-500">Miktar</div>
-                        <div className="mt-1 font-black text-slate-900">
-                          {Number(allocation.quantity || 0)} {item.unit || "adet"}
-                        </div>
-                      </>
+      <div className="rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm text-blue-900">
+        Ürünler tek tek tekrarlanmaz; aynı proje ve ana ürüne ait dağıtımlar tek satırda toplanır.
+      </div>
+      {rows.length > 0 ? (
+        <div className="overflow-x-auto rounded-2xl border border-slate-200">
+          <table className="w-full min-w-[860px] text-left text-sm">
+            <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+              <tr>
+                <th className="p-3">Sıra</th>
+                <th className="p-3">İş ortağı</th>
+                <th className="p-3">Proje</th>
+                <th className="p-3">Ana ürün / pano</th>
+                <th className="p-3">Sipariş kalemi</th>
+                <th className="p-3">Ayrılan miktar</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, index) => (
+                <tr key={`${row.type}-${row.projectId}-${row.mainProduct}-${index}`} className="border-t border-slate-100">
+                  <td className="p-3 font-bold text-slate-500">{index + 1}</td>
+                  <td className="p-3 font-bold text-slate-900">{order.partner_name || order.supplier_name || "-"}</td>
+                  <td className="p-3">
+                    {row.type === "stock" ? (
+                      <span className="font-bold text-emerald-700">Depo stoğu</span>
                     ) : (
-                      <>
-                        <div className="text-xs font-bold text-slate-500">Proje kodu</div>
-                        <div className="mt-1 font-black text-slate-900">
-                          {allocation.projectCode || "-"}
-                        </div>
-                        <div className="mt-3 text-xs font-bold text-slate-500">Proje adı</div>
-                        <div className="mt-1 font-semibold text-slate-900">
-                          {allocation.projectName || "-"}
-                        </div>
-                        <div className="mt-3 text-xs font-bold text-slate-500">Proje kalemi</div>
-                        <div className="mt-1 font-semibold text-slate-900">
-                          {allocation.projectItemName || "-"}
-                        </div>
-                        <div className="mt-3 text-xs font-bold text-slate-500">Miktar</div>
-                        <div className="mt-1 font-black text-slate-900">
-                          {Number(allocation.quantity || 0)} {item.unit || "adet"}
-                        </div>
-                      </>
+                      <div>
+                        <div className="font-bold text-slate-900">{row.projectCode}</div>
+                        <div className="text-xs text-slate-500">{row.projectName}</div>
+                      </div>
                     )}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="mt-4 rounded-xl bg-slate-50 p-4 text-sm text-slate-600">
-                Bu kalem henüz projeye veya stoğa dağıtılmamış.
-              </div>
-            )}
-
-            {isOverAllocated && (
-              <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-bold text-red-700">
-                Dağıtım miktarı sipariş miktarını aşıyor.
-              </div>
-            )}
-            {hasOpenQuantity && (
-              <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-bold text-amber-700">
-                Bu kalemde açıkta kalan miktar var.
-              </div>
-            )}
-          </div>
-        );
-      })}
+                  </td>
+                  <td className="p-3 font-semibold text-slate-800">{row.type === "stock" ? "Stok" : row.mainProduct}</td>
+                  <td className="p-3">{row.itemKeys.size} kalem</td>
+                  <td className="p-3 font-black text-blue-700">{formatQuantities(row.quantities)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="rounded-xl bg-slate-50 p-4 text-sm text-slate-600">
+          Bu siparişte proje veya stok dağıtımı bulunmuyor.
+        </div>
+      )}
     </div>
   );
 }
@@ -3853,6 +3611,7 @@ function DocumentsPanel({
   preview,
   accessLoadingId,
   accessError,
+  onStartUpload,
   onToggleUpload,
   onFormChange,
   onUpload,
@@ -3866,28 +3625,51 @@ function DocumentsPanel({
   onAddDocumentItem,
 }) {
   const sections = [
+    { type: "teklif", label: "Kaynak Teklif", description: "Siparişin oluşturulduğu tedarikçi teklifi" },
+    { type: "fatura", label: "Faturalar", description: "Tedarikçi faturalarını yükleyin ve tutarı kontrol edin" },
+    { type: "irsaliye", label: "İrsaliyeler", description: "Sevk ve irsaliye belgelerini yükleyin" },
+    { type: "depo_giris", label: "Teslim Fişleri", description: "Teslim alma veya depo giriş fişlerini yükleyin" },
     { type: "siparis_formu", label: "Sipariş Formu" },
-    { type: "irsaliye", label: "İrsaliyeler" },
-    { type: "fatura", label: "Faturalar" },
-    { type: "depo_giris", label: "Teslim Fişleri" },
     { type: "diger", label: "Diğer Belgeler" },
-    { type: "teklif", label: "Teklif Belgeleri (eski kayıtlar)" },
-    { type: "odeme", label: "Ödeme Belgeleri (eski kayıtlar)" },
   ];
+  const uploadTypes = sections.filter((section) => ["fatura", "irsaliye", "depo_giris"].includes(section.type));
 
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-3 rounded-xl border border-blue-100 bg-blue-50 p-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="text-sm text-blue-900">
-          Bu alanda siparişe bağlı teklif, irsaliye, fatura ve ödeme belgeleri takip edilecek.
+          Kaynak teklif sipariş oluştuğunda otomatik gelir. Fatura, irsaliye ve teslim fişini aşağıdaki ilgili kutudan yükleyin.
         </div>
-        <button
-          type="button"
-          onClick={onToggleUpload}
-          className="shrink-0 rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700"
-        >
-          {uploadOpen ? "Formu Kapat" : "Belge Yükle"}
-        </button>
+        {uploadOpen && (
+          <button
+            type="button"
+            onClick={onToggleUpload}
+            className="shrink-0 rounded-xl bg-slate-700 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800"
+          >
+            Formu Kapat
+          </button>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+        {uploadTypes.map((section) => {
+          const count = documents.filter((document) => document.document_type === section.type).length;
+          return (
+            <button
+              key={section.type}
+              type="button"
+              onClick={() => onStartUpload(section.type)}
+              className="rounded-2xl border border-slate-200 bg-white p-4 text-left transition hover:border-blue-300 hover:bg-blue-50"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <span className="font-black text-slate-900">{section.label}</span>
+                <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">{count} belge</span>
+              </div>
+              <div className="mt-2 text-sm text-slate-500">{section.description}</div>
+              <div className="mt-3 text-sm font-bold text-blue-700">+ Yükle</div>
+            </button>
+          );
+        })}
       </div>
 
       {matchSummary && (
@@ -4023,22 +3805,6 @@ function DocumentsPanel({
         </form>
       )}
 
-      <DocumentArchivePanel
-        documents={documents}
-        title="Belgeler"
-        emptyMessage="Henüz belge yüklenmedi."
-        preview={preview}
-        loadingDocumentId={accessLoadingId}
-        error={accessError}
-        onPreview={onPreviewDocument}
-        onOpen={onOpenDocument}
-        onDownload={onDownloadDocument}
-      />
-
-      <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm font-bold text-slate-700">
-        OCR ve belge kalemi kontrolleri aşağıda yönetilir. Orijinal belge için referans üstteki arşiv panelidir.
-      </div>
-
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         {sections.map((section) => {
           const sectionDocuments = documents.filter(
@@ -4079,15 +3845,28 @@ function DocumentsPanel({
                           <div className="font-bold text-slate-900">
                             {document.original_file_name || "-"}
                           </div>
-                          <button
-                            type="button"
-                            disabled={Boolean(ocrProcessingId)}
-                            onClick={() => onAnalyzeOCR(document)}
-                            className="rounded-lg bg-violet-600 px-3 py-2 text-xs font-bold text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-                          >
-                            {ocrProcessingId === document.id ? "Analiz Ediliyor..." : "OCR Analiz Et"}
-                          </button>
+                          <div className="flex flex-wrap gap-2">
+                            {isPdfDocument(document) && (
+                              <button type="button" disabled={accessLoadingId === document.id} onClick={() => onPreviewDocument(document)} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700">Önizle</button>
+                            )}
+                            <button type="button" disabled={accessLoadingId === document.id} onClick={() => onOpenDocument(document)} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700">Aç</button>
+                            <button type="button" disabled={accessLoadingId === document.id} onClick={() => onDownloadDocument(document)} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white">İndir</button>
+                            {["fatura", "irsaliye", "depo_giris"].includes(section.type) && (
+                              <button
+                                type="button"
+                                disabled={Boolean(ocrProcessingId)}
+                                onClick={() => onAnalyzeOCR(document)}
+                                className="rounded-lg bg-violet-600 px-3 py-2 text-xs font-bold text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                              >
+                                {ocrProcessingId === document.id ? "Analiz Ediliyor..." : "OCR Analiz Et"}
+                              </button>
+                            )}
+                          </div>
                         </div>
+                        {preview?.documentId === document.id && preview.url && (
+                          <iframe title={document.original_file_name || "Belge önizleme"} src={preview.url} className="mt-3 h-80 w-full rounded-xl border border-slate-200 bg-white" />
+                        )}
+                        {accessError && <div className="mt-3 text-xs font-bold text-red-600">{accessError}</div>}
                         <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
                           <Info label="Belge No" value={document.document_number || "-"} />
                           <Info label="Belge Tarihi" value={document.document_date || "-"} />
@@ -4129,7 +3908,7 @@ function DocumentsPanel({
                             UBL-TR kayıt kontrolü: {document.validation_errors.join(" · ")}
                           </div>
                         )}
-                        {(document.ocr_result || document.ocr_status === "completed") && (
+                        {["fatura", "irsaliye", "depo_giris"].includes(section.type) && (document.ocr_result || document.ocr_status === "completed") && (
                           <div className="mt-4 rounded-xl border border-violet-200 bg-violet-50 p-4">
                             <h4 className="font-bold text-violet-950">OCR Sonucu</h4>
                             <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -4183,14 +3962,16 @@ function DocumentsPanel({
                             )}
                           </div>
                         )}
-                        <DocumentItemsPanel
-                          document={document}
-                          items={currentDocumentItems}
-                          orderItems={orderItems}
-                          rawOrderItems={rawOrderItems}
-                          orderCurrency={order.currency}
-                          onAdd={onAddDocumentItem}
-                        />
+                        {["fatura", "irsaliye", "depo_giris"].includes(section.type) && (
+                          <DocumentItemsPanel
+                            document={document}
+                            items={currentDocumentItems}
+                            orderItems={orderItems}
+                            rawOrderItems={rawOrderItems}
+                            orderCurrency={order.currency}
+                            onAdd={onAddDocumentItem}
+                          />
+                        )}
                         {section.type === "fatura" && (
                           <div className="mt-4 rounded-xl border border-slate-200 bg-white p-3">
                             <label className="block">
@@ -4356,26 +4137,21 @@ function DocumentInput({ label, type = "text", value, onChange }) {
   );
 }
 
-function ItemsTable({ items, currency, onEditDelivery }) {
+function ItemsTable({ items, currency, onExportOrderPdf, onExportExcel, onReceive }) {
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-3 rounded-xl border border-blue-100 bg-blue-50 p-4 md:flex-row md:items-center md:justify-between">
         <div>
-          <div className="text-sm font-bold text-blue-950">
-            Teslim adetlerinde hata varsa buradan düzeltebilirsiniz.
-          </div>
+          <div className="text-sm font-bold text-blue-950">Sipariş kalemleri ve çıktıları</div>
           <div className="mt-1 text-sm text-blue-800">
-            Düzenleme ekranı teslim edilen adetleri ve sipariş durumunu tekrar
-            kaydetmenizi sağlar.
+            Ürün ve fiyatları inceleyebilir, sipariş formunu PDF veya Excel olarak alabilirsiniz.
           </div>
         </div>
-        <button
-          type="button"
-          onClick={onEditDelivery}
-          className="rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white hover:bg-blue-700"
-        >
-          Teslimatları Düzenle
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={onExportOrderPdf} className="rounded-xl bg-slate-900 px-4 py-3 text-sm font-bold text-white">Sipariş PDF</button>
+          <button type="button" onClick={onExportExcel} className="rounded-xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white">Excel İndir</button>
+          <button type="button" onClick={onReceive} className="rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white">Depo Teslim Alma</button>
+        </div>
       </div>
 
       <div className="overflow-x-auto">
@@ -4423,136 +4199,61 @@ function ItemsTable({ items, currency, onEditDelivery }) {
   );
 }
 
-function DeliveryPanel({
-  items,
-  inputs,
-  disabled,
-  status,
-  onStatusChange,
-  onInputChange,
-  onSave,
-  progress,
-}) {
+function DeliveryHistoryPanel({ items, receipts, totals }) {
   return (
     <div className="space-y-5">
-      <div className="grid grid-cols-1 gap-4 rounded-xl border border-blue-100 bg-blue-50 p-4 md:grid-cols-[1fr_260px] md:items-end">
-        <div>
-          <h3 className="text-base font-bold text-blue-950">
-            Teslimat düzeltme
-          </h3>
-          <p className="mt-1 text-sm text-blue-800">
-            Yanlış girilen teslim adetlerini veya sipariş durumunu sonradan
-            düzeltebilirsiniz.
-          </p>
-        </div>
-        <label className="block">
-          <span className="mb-2 block text-sm font-bold text-blue-950">
-            Sipariş Durumu
-          </span>
-          <select
-            value={status}
-            disabled={disabled}
-            onChange={(event) => onStatusChange(event.target.value)}
-            className="w-full rounded-xl border border-blue-200 bg-white p-3 text-sm font-bold text-slate-800 disabled:bg-slate-100"
-          >
-            {editableStatusOptions.map((option) => (
-              <option key={option}>{option}</option>
-            ))}
-          </select>
-        </label>
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+        <Info label="Toplam sipariş" value={totals.totalQuantity} />
+        <Info label="Teslim alınan" value={totals.deliveredQuantity} />
+        <Info label="Kalan" value={totals.remainingQuantity} />
       </div>
-
-      <div className="overflow-x-auto">
-        <table className="w-full text-left text-sm">
-          <thead className="bg-slate-50 text-slate-500">
-            <tr>
-              <th className="p-3">Ürün</th>
-              <th className="p-3">Sipariş Miktarı</th>
-              <th className="p-3">Teslim Edilen</th>
-              <th className="p-3">Düzeltilmiş Teslim</th>
-              <th className="p-3">Kalan</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((item, index) => (
-              <tr
-                key={`${item.productName}-${index}`}
-                className="border-t border-slate-100"
-              >
-                <td className="p-3 font-semibold">{item.productName}</td>
-                <td className="p-3">{item.quantity}</td>
-                <td className="p-3">{item.deliveredQuantity}</td>
-                <td className="p-3">
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="number"
-                      min="0"
-                      max={item.quantity}
-                      disabled={disabled}
-                      value={
-                        inputs[index] === undefined
-                          ? item.deliveredQuantity
-                          : inputs[index]
-                      }
-                      onChange={(event) =>
-                        onInputChange(index, event.target.value)
-                      }
-                      className="w-28 rounded border border-slate-300 px-2 py-1 disabled:bg-slate-100"
-                    />
-                    <button
-                      type="button"
-                      disabled={disabled}
-                      onClick={() => onInputChange(index, item.quantity)}
-                      className="whitespace-nowrap rounded border border-green-200 bg-green-50 px-2 py-1 text-xs font-bold text-green-700 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
-                    >
-                      Tamamı
-                    </button>
-                    <button
-                      type="button"
-                      disabled={disabled}
-                      onClick={() => onInputChange(index, 0)}
-                      className="whitespace-nowrap rounded border border-slate-200 bg-white px-2 py-1 text-xs font-bold text-slate-600 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
-                    >
-                      Sıfırla
-                    </button>
-                  </div>
-                </td>
-                <td className="p-3">
-                  {Math.max(
-                    item.quantity -
-                      Number(
-                        inputs[index] === undefined
-                          ? item.deliveredQuantity
-                          : inputs[index] || 0,
-                      ),
-                    0,
-                  )}
-                </td>
+      <div className="rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm text-blue-900">
+        Her teslim hareketi tarih, teslim alan kişi ve kalan miktarla birlikte burada izlenir. Yeni giriş için “Depo Teslim Alma” sekmesini kullanın.
+      </div>
+      {receipts.length > 0 ? (
+        <div className="overflow-x-auto rounded-2xl border border-slate-200">
+          <table className="w-full min-w-[860px] text-left text-sm">
+            <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+              <tr>
+                <th className="p-3">Tarih</th>
+                <th className="p-3">Ürün</th>
+                <th className="p-3">Gelen / kabul</th>
+                <th className="p-3">Hatalı</th>
+                <th className="p-3">Teslim alan</th>
+                <th className="p-3">Güncel kalan</th>
+                <th className="p-3">Durum</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <div>
-        <div className="mb-2 flex justify-between text-sm text-slate-600">
-          <span>Genel Teslimat Durumu</span>
-          <span>%{progress}</span>
+            </thead>
+            <tbody>
+              {receipts.map((receipt) => {
+                const match = matchOrderItem(receipt, items);
+                const matched = items.find(
+                  (item, itemIndex) => getOrderItemMatchId(item, itemIndex) === match.orderItemId,
+                );
+                const remaining = matched
+                  ? Math.max(Number(matched.quantity || 0) - Number(matched.deliveredQuantity || 0), 0)
+                  : "-";
+                return (
+                  <tr key={receipt.id} className="border-t border-slate-100">
+                    <td className="p-3 font-semibold">{receipt.receipt_date || "-"}</td>
+                    <td className="p-3">
+                      <div className="font-bold text-slate-900">{receipt.product_name || matched?.productName || "-"}</div>
+                      <div className="text-xs text-slate-500">{receipt.product_code || matched?.productCode || "-"}</div>
+                    </td>
+                    <td className="p-3 font-bold">{Number(receipt.received_quantity || 0)} / {Number(receipt.accepted_quantity || 0)}</td>
+                    <td className="p-3">{Number(receipt.defective_quantity || 0)}</td>
+                    <td className="p-3">{receipt.received_by || "Depo"}</td>
+                    <td className="p-3 font-black text-amber-700">{remaining}</td>
+                    <td className="p-3"><span className={`rounded-full px-3 py-1 text-xs font-bold ${getStatusClass(receipt.receipt_status)}`}>{receipt.receipt_status || "Kaydedildi"}</span></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
-        <div className="h-3 rounded-full bg-slate-100">
-          <div
-            className="h-3 rounded-full bg-green-500"
-            style={{ width: `${progress}%` }}
-          />
-        </div>
-      </div>
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={onSave}
-        className="rounded-xl bg-green-600 px-5 py-3 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300"
-      >
-        Düzeltmeleri Kaydet
-      </button>
+      ) : (
+        <div className="rounded-xl bg-slate-50 p-5 text-sm text-slate-500">Henüz teslim alma kaydı yok.</div>
+      )}
     </div>
   );
 }
@@ -4562,7 +4263,6 @@ function ReceivingPanel({
   order,
   project,
   projectItems,
-  receipts,
   inputs,
   disabled,
   onInputChange,
@@ -4621,7 +4321,6 @@ function ReceivingPanel({
               ? "border-emerald-300 bg-emerald-50"
               : "border-amber-300 bg-amber-50";
           const received = Number(input.receivedQuantity ?? remainingToReceive);
-          const defective = Number(input.defectiveQuantity || 0);
           const missing = Math.max(orderedQuantity - received, 0);
           const excess = Math.max(received - orderedQuantity, 0);
 
@@ -4758,32 +4457,6 @@ function ReceivingPanel({
         })}
       </div>
 
-      <div className="rounded-2xl border border-slate-200 p-4">
-        <h3 className="font-black text-slate-900">Teslim alma geçmişi</h3>
-        <div className="mt-3 space-y-2">
-          {receipts.map((receipt) => (
-            <div key={receipt.id} className="grid grid-cols-1 gap-2 rounded-xl bg-slate-50 p-3 text-sm md:grid-cols-[1fr_auto_auto] md:items-center">
-              <div>
-                <div className="font-bold text-slate-900">{receipt.product_name}</div>
-                <div className="text-xs text-slate-500">
-                  {receipt.receipt_date} · {receipt.received_by || "Depo"} · {receipt.note || "-"}
-                </div>
-              </div>
-              <div className="font-bold text-slate-700">
-                Gelen: {receipt.received_quantity} / Kabul: {receipt.accepted_quantity}
-              </div>
-              <span className={`rounded-full px-3 py-1 text-xs font-bold ${getStatusClass(receipt.receipt_status)}`}>
-                {receipt.receipt_status}
-              </span>
-            </div>
-          ))}
-          {receipts.length === 0 && (
-            <div className="rounded-xl bg-slate-50 p-4 text-sm text-slate-500">
-              Henüz teslim alma kaydı yok.
-            </div>
-          )}
-        </div>
-      </div>
     </div>
   );
 }
@@ -4903,9 +4576,30 @@ function PaymentPanel({ order, payments, totals, form, onFormChange, onSave }) {
   );
 }
 
-function HistoryPanel({ rows }) {
+function HistoryPanel({ rows, status, actions, onStatusChange }) {
   return (
-    <div className="space-y-3">
+    <div className="space-y-5">
+      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <div className="font-black text-slate-900">Sipariş durumu: {status}</div>
+            <div className="mt-1 text-sm text-slate-500">Siparişin iş akışı işlemlerini buradan yönetin.</div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {actions.map((action) => (
+              <button
+                key={action.status}
+                type="button"
+                disabled={action.disabled}
+                onClick={() => onStatusChange(action.status)}
+                className={`rounded-xl px-4 py-2 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300 ${action.danger ? "bg-red-600" : "bg-blue-600"}`}
+              >
+                {action.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
       {rows.map((row, index) => (
         <div
           key={`${row.title}-${row.date}-${index}`}

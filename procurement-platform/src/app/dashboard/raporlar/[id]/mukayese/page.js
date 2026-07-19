@@ -419,6 +419,14 @@ export default function ComparisonPage() {
     if (!user) { creatingRef.current = false; setCreating(false); router.push("/login"); return; }
 
     const bySupplier = new Map();
+    const sourceDocumentsBySelection = new Map(
+      (Array.isArray(report.items) ? report.items : [])
+        .filter((item) => item.sourceOfferDocumentId)
+        .map((item) => [
+          `${normalize(item.productCode || item.productName)}|${normalize(item.selectedFirm)}`,
+          item.sourceOfferDocumentId,
+        ]),
+    );
     selections.forEach(({ group, offer }) => {
       const name = supplierName(offer);
       const currency = normalizedCurrency(offer.paraBirimi);
@@ -453,6 +461,9 @@ export default function ComparisonPage() {
         deliveryTerm: offer.termin || "",
         allocations: proportionalAllocations(group.allocations, quantity),
         sourceReportId: report.id,
+        sourceOfferDocumentId: sourceDocumentsBySelection.get(
+          `${normalize(group.urunKodu || group.urunAciklamasi)}|${normalize(name)}`,
+        ) || null,
       });
     });
 
@@ -541,10 +552,35 @@ export default function ComparisonPage() {
       setMessage(duplicateMessage);
       creatingRef.current = false; setCreating(false); return;
     }
+    const payloadByOrderNo = new Map(payloads.map((payload) => [payload.order_no, payload]));
+    const documentLinks = (orders || []).flatMap((createdOrder) => {
+      const payload = payloadByOrderNo.get(createdOrder.order_no);
+      const documentIds = new Set(
+        (payload?.items || []).map((item) => item.sourceOfferDocumentId).filter(Boolean),
+      );
+      return Array.from(documentIds, (documentId) => ({
+        user_id: user.id,
+        document_id: documentId,
+        order_id: createdOrder.id,
+      }));
+    });
+    let documentLinkWarning = "";
+    if (documentLinks.length > 0) {
+      const { error: documentLinkError } = await supabase
+        .from("document_links")
+        .upsert(documentLinks, {
+          onConflict: "user_id,document_id,order_id",
+          ignoreDuplicates: true,
+        });
+      if (documentLinkError) {
+        console.error(documentLinkError);
+        documentLinkWarning = " Kaynak teklif belgeleri siparişlere bağlanamadı; belge ekranından yeniden bağlanmalıdır.";
+      }
+    }
     await supabase.from("reports").update({ durum: "Tamamlandı" }).eq("id", report.id).eq("user_id", user.id);
     setExistingOrders(orders || []);
     localStorage.setItem("lastCreatedComparisonOrders", JSON.stringify(orders || []));
-    setMessage(`${orders?.length || 0} tedarikçi siparişi oluşturuldu. Proje allocation bilgileri sipariş kalemlerinde korundu.`);
+    setMessage(`${orders?.length || 0} tedarikçi siparişi oluşturuldu. Proje dağıtımları ve kaynak teklifler siparişlerde korundu.${documentLinkWarning}`);
     creatingRef.current = false; setCreating(false);
   }
 

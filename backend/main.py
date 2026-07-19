@@ -3,6 +3,8 @@ import shutil
 import re
 import json
 import uuid
+import hashlib
+import mimetypes
 import requests
 import logging
 from openpyxl import load_workbook
@@ -513,6 +515,69 @@ def upload_private_report(file_path: str, storage_path: str) -> bool:
         )
 
     return True
+
+
+def persist_source_offer_document(
+    file_path: str,
+    original_name: str,
+    user_id: str,
+    report_id: str,
+    supplier_name: str,
+    currency: str,
+):
+    """Store an analyzed source offer once and return its document id."""
+    with open(file_path, "rb") as source_file:
+        file_bytes = source_file.read()
+
+    content_sha256 = hashlib.sha256(file_bytes).hexdigest()
+    existing = (
+        supabase.table("documents")
+        .select("id")
+        .eq("user_id", user_id)
+        .eq("content_sha256", content_sha256)
+        .limit(1)
+        .execute()
+    )
+    if existing.data:
+        return existing.data[0].get("id")
+
+    safe_name = re.sub(r"[^A-Za-z0-9._-]+", "-", original_name or "teklif").strip("-") or "teklif"
+    storage_path = f"{user_id}/offers/{report_id}/{uuid.uuid4()}-{safe_name}"
+    mime_type = mimetypes.guess_type(original_name or "")[0] or "application/octet-stream"
+
+    supabase.storage.from_("order-documents").upload(
+        storage_path,
+        file_bytes,
+        {
+            "content-type": mime_type,
+            "x-upsert": "false",
+        },
+    )
+
+    try:
+        inserted = (
+            supabase.table("documents")
+            .insert({
+                "user_id": user_id,
+                "document_type": "teklif",
+                "original_file_name": original_name,
+                "storage_bucket": "order-documents",
+                "storage_path": storage_path,
+                "mime_type": mime_type,
+                "file_size": len(file_bytes),
+                "content_sha256": content_sha256,
+                "document_number": f"MUK-{report_id}",
+                "supplier_name": supplier_name or None,
+                "currency": currency or "TRY",
+                "verification_status": "source",
+            })
+            .execute()
+        )
+    except Exception:
+        supabase.storage.from_("order-documents").remove([storage_path])
+        raise
+
+    return inserted.data[0].get("id") if inserted.data else None
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMP_DIR = os.path.join(BASE_DIR, "app", "temp")
@@ -1671,8 +1736,10 @@ async def analyze_offers(
             raise HTTPException(status_code=400, detail=f"{file.filename} dosyası 10 MB sınırını aşıyor.")
         await file.seek(0)
 
+    report_id = str(uuid.uuid4())
     all_rows = []
     warnings = []
+    saved_offer_sources = []
 
     supplier_profiles = []
     if supplier_profiles_json:
@@ -1766,6 +1833,14 @@ async def analyze_offers(
 
             if not rows:
                 warnings.append(f"Veri okunamadı: {upload.filename}")
+            else:
+                first_row = rows[0] if isinstance(rows[0], dict) else {}
+                saved_offer_sources.append({
+                    "file_path": save_path,
+                    "original_name": original_name,
+                    "supplier_name": first_row.get("firma") or first_row.get("firmaAdi") or firma_adi,
+                    "currency": first_row.get("paraBirimi") or "TRY",
+                })
 
             all_rows.extend(rows)
 
@@ -1916,7 +1991,6 @@ async def analyze_offers(
 
     logger.debug("ANALİZ EDİLEN GRUP SAYISI:", len(analyzed))
 
-    report_id = str(uuid.uuid4())
     report_name = f"mukayese_raporu_{report_id}.xlsx"
     report_path = os.path.join(TEMP_DIR, report_name)
     report_storage_bucket = "request-reports"
@@ -1932,6 +2006,23 @@ async def analyze_offers(
     })
     build_excel_report(analyzed, report_path, report_company_info)
     upload_private_report(report_path, report_storage_path)
+
+    source_document_ids = {}
+    for source in saved_offer_sources:
+        try:
+            document_id = persist_source_offer_document(
+                source["file_path"],
+                source["original_name"],
+                user_id,
+                report_id,
+                source["supplier_name"],
+                source["currency"],
+            )
+            if document_id:
+                source_document_ids[source["original_name"]] = document_id
+        except Exception as source_document_error:
+            logger.exception("KAYNAK TEKLIF BELGESI KAYDEDILEMEDI: %s", source_document_error)
+            warnings.append(f"{source['original_name']} kaynak teklif belgesi arşive kaydedilemedi.")
 
     order_items = []
     for group in analyzed:
@@ -1971,6 +2062,9 @@ async def analyze_offers(
             "sourceRequestTitle": request_title or request_file_name or "",
             "requestOwner": request_owner or "",
             "requestDepartment": request_department or "",
+            "sourceOfferDocumentId": source_document_ids.get(
+                best.get("kaynakDosya") or best.get("dosyaAdi") or ""
+            ),
         })
         
     logger.debug("ORDER ITEMS SAYISI:", len(order_items))
