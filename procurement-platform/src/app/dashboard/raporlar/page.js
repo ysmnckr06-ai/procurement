@@ -48,16 +48,10 @@ useEffect(() => {
 const getReportName = useCallback((rapor) => {
   const sourceItem = Array.isArray(rapor.items) ? rapor.items[0] : null;
   if (rapor.source_request_number) {
-    const persistedTitle = String(rapor.source_request_title || "Teklif Mukayesesi")
-      .replace(/\.(xlsx?|pdf|png|jpe?g)$/i, "")
-      .replace(/satın\s*alma\s*gerekenler/gi, "Talep Mukayesesi");
-    return `${rapor.source_request_number} · ${persistedTitle}`;
+    return rapor.source_request_number;
   }
   if (sourceItem?.sourceRequestNumber) {
-    const title = String(sourceItem.sourceRequestTitle || "Teklif Mukayesesi")
-      .replace(/\.(xlsx?|pdf|png|jpe?g)$/i, "")
-      .replace(/satın\s*alma\s*gerekenler/gi, "Talep Mukayesesi");
-    return `${sourceItem.sourceRequestNumber} · ${title}`;
+    return sourceItem.sourceRequestNumber;
   }
   const name =
     rapor.ad ||

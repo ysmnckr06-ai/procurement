@@ -437,6 +437,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+OPTIONAL_REPORT_COLUMNS = {
+    "report_storage_bucket",
+    "report_storage_path",
+    "source_request_id",
+    "source_request_number",
+    "source_request_title",
+    "source_request_owner",
+    "source_request_department",
+}
+
+
 def save_report_to_supabase(report_data):
 
     if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
@@ -463,21 +474,22 @@ def save_report_to_supabase(report_data):
     if response.status_code in (200, 201, 204):
         return True
 
-    if (
-        "report_storage_bucket" in response.text
-        or "report_storage_path" in response.text
-    ):
+    # Backend deployments can briefly get ahead of Supabase migrations. PostgREST
+    # rejects the whole insert when even one new column is missing from its schema
+    # cache, so retry without optional columns. Request lineage is also present in
+    # `items`; report downloads can derive the storage path from user/report ids.
+    if any(column in response.text for column in OPTIONAL_REPORT_COLUMNS):
         legacy_report_data = {
             key: value
             for key, value in report_data.items()
-            if key not in ("report_storage_bucket", "report_storage_path")
+            if key not in OPTIONAL_REPORT_COLUMNS
         }
         legacy_response = requests.post(
             url,
             headers=headers,
             json=legacy_report_data,
         )
-        logger.debug("SUPABASE LEGACY REPORT RESPONSE:", legacy_response.status_code)
+        logger.debug("SUPABASE COMPATIBLE REPORT RESPONSE:", legacy_response.status_code)
         logger.debug(legacy_response.text)
         return legacy_response.status_code in (200, 201, 204)
 

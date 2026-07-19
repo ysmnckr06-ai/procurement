@@ -569,7 +569,11 @@ const loadSupplierProfiles = async () => {
         setLastReportTime(new Date().toLocaleString("tr-TR"));
         setMessage("Mukayese raporu oluşturuldu ve Raporlar sayfasına aktarıldı.");
       } else {
-        setMessage(data.warnings?.join(" | ") || "Rapor oluşturulamadı.");
+        setMessage(
+          data.warnings?.join(" | ") ||
+            data.detail ||
+            `Rapor oluşturulamadı (HTTP ${response.status}).`,
+        );
       }
     } catch (error) {
       console.error(error);
