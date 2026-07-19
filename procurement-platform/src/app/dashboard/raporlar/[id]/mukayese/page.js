@@ -242,6 +242,8 @@ export default function ComparisonPage() {
   const [selectedOffers, setSelectedOffers] = useState({});
   const [message, setMessage] = useState("");
   const [creating, setCreating] = useState(false);
+  const [existingOrders, setExistingOrders] = useState([]);
+  const [ordersLoaded, setOrdersLoaded] = useState(false);
   const [partnerPrompt, setPartnerPrompt] = useState(null);
   const [partnerForm, setPartnerForm] = useState(emptyPartnerForm);
   const [savingPartner, setSavingPartner] = useState(false);
@@ -252,9 +254,10 @@ export default function ComparisonPage() {
     async function load() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push("/login"); return; }
-      const [reportResult, supplierResult] = await Promise.all([
+      const [reportResult, supplierResult, orderResult] = await Promise.all([
         supabase.from("reports").select("*").eq("id", id).eq("user_id", user.id).single(),
         supabase.from("suppliers").select("id,name,score,status,partner_type,tax_number,contact_person,email,phone,city,address,notes").eq("user_id", user.id),
+        supabase.from("orders").select("id,order_no").eq("report_id", id).eq("user_id", user.id),
       ]);
       if (reportResult.error || !reportResult.data) {
         setMessage("Mukayese raporu bulunamadı veya erişim yetkiniz yok.");
@@ -262,6 +265,12 @@ export default function ComparisonPage() {
       }
       setReport(reportResult.data);
       setSuppliers(supplierResult.data || []);
+      if (orderResult.error) {
+        setMessage("Bu raporun sipariş durumu kontrol edilemedi. Yeni sipariş oluşturma güvenlik amacıyla kapatıldı.");
+        return;
+      }
+      setExistingOrders(orderResult.data || []);
+      setOrdersLoaded(true);
       const defaults = {};
       (Array.isArray(reportResult.data.analysis) ? reportResult.data.analysis : []).forEach((group, index) => {
         const offers = Array.isArray(group.offers) ? group.offers : [];
@@ -338,7 +347,11 @@ export default function ComparisonPage() {
   }
 
   async function createOrders() {
-    if (!report || creatingRef.current) return;
+    if (!report || creatingRef.current || !ordersLoaded) return;
+    if (existingOrders.length > 0) {
+      setMessage(`Bu mukayeseden sipariş zaten oluşturulmuş: ${existingOrders.map((order) => order.order_no).join(", ")}`);
+      return;
+    }
     const selections = groups
       .map((group, index) => ({ group, offer: group.offers?.[selectedOffers[groupKey(index)]] }))
       .filter((row) => row.offer);
@@ -416,14 +429,9 @@ export default function ComparisonPage() {
       setMessage(`Mükerrer sipariş kontrolü yapılamadı: ${existingError.message}`);
       creatingRef.current = false; setCreating(false); return;
     }
-    const selectedKeys = new Set(bySupplier.keys());
-    const duplicateGroups = (existing || []).filter((order) => selectedKeys.has(comparisonOrderKey(
-      order.partner_name || order.supplier_name,
-      order.currency,
-      order.exchange_rate,
-    )));
-    if (duplicateGroups.length > 0) {
-      setMessage(`Bu mukayese grubundan sipariş zaten oluşturulmuş: ${duplicateGroups.map((order) => order.order_no).join(", ")}`);
+    if ((existing || []).length > 0) {
+      setExistingOrders(existing || []);
+      setMessage(`Bu mukayeseden sipariş zaten oluşturulmuş: ${existing.map((order) => order.order_no).join(", ")}`);
       creatingRef.current = false; setCreating(false); return;
     }
 
@@ -498,6 +506,7 @@ export default function ComparisonPage() {
       creatingRef.current = false; setCreating(false); return;
     }
     await supabase.from("reports").update({ durum: "Tamamlandı" }).eq("id", report.id).eq("user_id", user.id);
+    setExistingOrders(orders || []);
     localStorage.setItem("lastCreatedComparisonOrders", JSON.stringify(orders || []));
     setMessage(`${orders?.length || 0} tedarikçi siparişi oluşturuldu. Proje allocation bilgileri sipariş kalemlerinde korundu.`);
     creatingRef.current = false; setCreating(false);
@@ -668,8 +677,14 @@ export default function ComparisonPage() {
           <button type="button" onClick={() => downloadReportFile("excel")} disabled={Boolean(downloading)} className="rounded-xl border border-slate-500 bg-white/5 px-4 py-3 text-sm font-black text-white hover:bg-white/10 disabled:text-slate-500">
             {downloading === "excel" ? "Excel indiriliyor..." : "Excel Detayını İndir"}
           </button>
-          <button type="button" onClick={createOrders} disabled={creating} className="rounded-xl bg-emerald-600 px-4 py-3 text-sm font-black text-white hover:bg-emerald-500 disabled:bg-slate-600">
-            {creating ? "Siparişler oluşturuluyor..." : "Seçilenlerden Sipariş Oluştur"}
+          <button type="button" onClick={createOrders} disabled={creating || !ordersLoaded || existingOrders.length > 0} className="rounded-xl bg-emerald-600 px-4 py-3 text-sm font-black text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:bg-slate-600">
+            {creating
+              ? "Siparişler oluşturuluyor..."
+              : !ordersLoaded
+                ? "Sipariş durumu kontrol ediliyor..."
+                : existingOrders.length > 0
+                  ? `Sipariş Oluşturuldu (${existingOrders.length})`
+                  : "Seçilenlerden Sipariş Oluştur"}
           </button>
         </div>
       </div>
