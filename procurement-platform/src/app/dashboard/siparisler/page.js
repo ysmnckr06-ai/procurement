@@ -88,6 +88,19 @@ function formatMoney(value, currency = "TRY") {
   }).format(Number(value || 0))} ${currency}`;
 }
 
+function orderTotalInTry(order) {
+  const total = Number(order?.total_amount || 0);
+  const storedBaseAmount = Number(order?.order_total_base ?? order?.base_amount);
+  if (Number.isFinite(storedBaseAmount) && (storedBaseAmount > 0 || total <= 0)) {
+    return storedBaseAmount;
+  }
+
+  const currency = String(order?.currency || "TRY").trim().toUpperCase();
+  const exchangeRate = currency === "TRY" ? 1 : Number(order?.exchange_rate || 0);
+
+  return exchangeRate > 0 ? total * exchangeRate : 0;
+}
+
 function readNumberField(item, primaryKey, fallbackKey, defaultValue = 0) {
   const value = item?.[primaryKey] ?? item?.[fallbackKey] ?? defaultValue;
 
@@ -481,8 +494,8 @@ export default function OrdersPage() {
     });
   }, [enrichedOrders, search, statusFilter]);
 
-  const totalAmount = enrichedOrders.reduce(
-    (sum, order) => sum + Number(order.total_amount || 0),
+  const totalAmountTry = enrichedOrders.reduce(
+    (sum, order) => sum + orderTotalInTry(order),
     0,
   );
   const waitingCount = enrichedOrders.filter(
@@ -1123,9 +1136,9 @@ export default function OrdersPage() {
               text="Kayıtlı sipariş"
             />
             <StatCard
-              title="Toplam Tutar"
-              value={formatMoney(totalAmount)}
-              text="Tüm siparişler"
+              title="Toplam Tutar (TL)"
+              value={formatMoney(totalAmountTry, "TRY")}
+              text="Sipariş tarihindeki sabit kurla"
             />
             <StatCard
               title="Bekleyen"

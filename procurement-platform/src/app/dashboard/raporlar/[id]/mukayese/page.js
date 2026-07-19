@@ -61,6 +61,22 @@ function evaluatedOfferCost(group, offer) {
   return Math.max(tco - num(offer?.financeAdvantageTRY), 0);
 }
 
+function lowestEconomicOfferIndex(group) {
+  const offers = Array.isArray(group?.offers) ? group.offers : [];
+  let lowestIndex = -1;
+  let lowestCost = Number.POSITIVE_INFINITY;
+
+  offers.forEach((offer, index) => {
+    const cost = evaluatedOfferCost(group, offer);
+    if (cost > 0 && cost < lowestCost) {
+      lowestCost = cost;
+      lowestIndex = index;
+    }
+  });
+
+  return lowestIndex;
+}
+
 function isPaymentAfterDelivery(offer) {
   const raw = normalize(offer?.vade);
   return offer?.vadeCalculationSource === "delivery_following" || (
@@ -356,6 +372,10 @@ export default function ComparisonPage() {
       .map((group, index) => ({ group, offer: group.offers?.[selectedOffers[groupKey(index)]] }))
       .filter((row) => row.offer);
     if (!selections.length) { setMessage("Siparişe dönüştürmek için en az bir teklif seçin."); return; }
+    if (selections.length !== groups.length) {
+      setMessage(`Sipariş oluşturulmadı. Tüm kalemler için teklif seçin (${selections.length}/${groups.length}). Manuel kontrol gereken kalemleri inceleyip bilinçli seçim yapın.`);
+      return;
+    }
 
     const validationErrors = [];
     selections.forEach(({ group, offer }) => {
@@ -376,6 +396,22 @@ export default function ComparisonPage() {
     if (validationErrors.length > 0) {
       setMessage(`Sipariş oluşturulmadı. ${validationErrors.join(" | ")}`);
       return;
+    }
+
+    const manualReviewSelections = selections.filter(({ group, offer }) => (
+      group.decisionStatus === "manual_review" || offer.uygunMu === false
+    ));
+    if (manualReviewSelections.length > 0) {
+      const manualItems = manualReviewSelections
+        .map(({ group }) => group.urunKodu || group.urunAciklamasi || "Kodsuz ürün")
+        .join(", ");
+      const confirmed = window.confirm(
+        `Manuel kontrol gereken ${manualReviewSelections.length} kalem seçtiniz: ${manualItems}. Fiyat, miktar, vade ve teslim koşullarını doğruladınız mı?`,
+      );
+      if (!confirmed) {
+        setMessage("Sipariş oluşturulmadı. Manuel kontrol gereken kalemleri yeniden inceleyin.");
+        return;
+      }
     }
 
     creatingRef.current = true; setCreating(true); setMessage("");
@@ -710,10 +746,27 @@ export default function ComparisonPage() {
     {groups.map((group, groupIndex) => {
       const offers = Array.isArray(group.offers) ? group.offers : [];
       const bestName = normalize(supplierName(group.bestOffer));
+      const economicLeaderIndex = lowestEconomicOfferIndex(group);
+      const reviewMessages = Array.from(new Set([
+        ...(Array.isArray(group.decisionWarnings) ? group.decisionWarnings : []),
+        ...(Array.isArray(group.decisionNotes) ? group.decisionNotes : []),
+      ].filter(Boolean)));
       return <section key={groupKey(groupIndex)} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="border-b bg-slate-50 p-4"><div className="font-black text-blue-900">{group.urunKodu || "Kodsuz"} · {group.urunAciklamasi}</div><div className="mt-1 flex flex-wrap gap-3 text-xs font-bold text-slate-600"><span>Talep edilen: {group.talepEdilenAdet} {group.birim}</span><span>Teklif sayısı: {offers.length}</span><span>Projeler: {projectSummary(group)}</span></div></div>
+        {group.decisionStatus === "manual_review" && <div className="border-b border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-950">
+          <div className="font-black">Otomatik seçim yapılmadı — kullanıcı kontrolü gerekli.</div>
+          {reviewMessages.length > 0 && <div className="mt-1">{reviewMessages.join(" · ")}</div>}
+        </div>}
         <div className="overflow-x-auto"><table className="min-w-[1450px] w-full text-left text-xs"><thead className="bg-white text-slate-500"><tr><th className="p-3">Seç</th><th className="p-3">Tedarikçi / Puan</th><th className="p-3">Miktar</th><th className="p-3">Birim fiyat</th><th className="p-3">İskonto</th><th className="p-3">Net fiyat</th><th className="p-3">Toplam</th><th className="p-3">Para birimi</th><th className="p-3">Kur</th><th className="p-3">TL karşılığı</th><th className="p-3">Vade</th><th className="p-3">Termin</th><th className="p-3">Sonuç</th></tr></thead><tbody>
-          {offers.map((offer, offerIndex) => { const name = supplierName(offer); const isBest = normalize(name) === bestName; const supplier = supplierMap.get(normalize(name)); return <tr key={`${name}-${offerIndex}`} className={`border-t ${isBest ? "bg-emerald-50" : ""}`}><td className="p-3"><input type="radio" name={groupKey(groupIndex)} checked={selectedOffers[groupKey(groupIndex)] === offerIndex} onChange={() => setSelectedOffers((current) => ({ ...current, [groupKey(groupIndex)]: offerIndex }))} /></td><td className="p-3"><div className="font-black text-slate-900">{name}</div><div className="text-blue-700">Puan: {supplier?.score ?? 80}/100</div></td><td className="p-3">{offer.firmaAdedi || group.purchaseQuantity || group.talepEdilenAdet}</td><td className="p-3">{money(offer.birimFiyat, offer.paraBirimi)}</td><td className="p-3">%{num(offer.iskonto)}</td><td className="p-3">{money(offer.netBirimFiyat, offer.paraBirimi)}</td><td className="p-3">{money(offer.netToplam || num(offer.netBirimFiyat) * num(group.purchaseQuantity || group.talepEdilenAdet), offer.paraBirimi)}</td><td className="p-3">{offer.paraBirimi || "TRY"}</td><td className="p-3">{num(offer.kur) || 1}</td><td className="p-3 font-black">{money(offerTryTotal(group, offer), "TRY")}</td><td className="p-3">{offer.vade || `${offer.vadeDays || 0} gün`}</td><td className="p-3">{offer.termin || `${offer.terminDays || 0} gün`}</td><td className="p-3">{isBest ? <button type="button" onClick={() => setDecisionGroupIndex(groupIndex)} className="rounded-xl bg-emerald-600 px-3 py-2 text-left font-black text-white shadow-sm transition hover:bg-emerald-700"><span className="block">En iyi teklif</span><span className="block text-[10px] font-bold text-emerald-100">Neden önerildi?</span></button> : <span className="rounded-full bg-slate-200 px-3 py-1 font-bold text-slate-700">Alternatif</span>}</td></tr>; })}
+          {offers.map((offer, offerIndex) => {
+            const name = supplierName(offer);
+            const isBest = normalize(name) === bestName;
+            const isEconomicLeader = offerIndex === economicLeaderIndex;
+            const supplier = supplierMap.get(normalize(name));
+            const eliminationReasons = Array.isArray(offer.eliminationReasons) ? offer.eliminationReasons.filter(Boolean) : [];
+            const offerKey = `${normalize(name)}-${normalizedCurrency(offer.paraBirimi)}-${num(offer.netBirimFiyat)}-${num(offer.firmaAdedi)}`;
+            return <tr key={offerKey} className={`border-t ${isBest ? "bg-emerald-50" : isEconomicLeader && group.decisionStatus === "manual_review" ? "bg-amber-50" : ""}`}><td className="p-3"><input type="radio" name={groupKey(groupIndex)} checked={selectedOffers[groupKey(groupIndex)] === offerIndex} onChange={() => setSelectedOffers((current) => ({ ...current, [groupKey(groupIndex)]: offerIndex }))} /></td><td className="p-3"><div className="font-black text-slate-900">{name}</div><div className="text-blue-700">Puan: {supplier?.score ?? 80}/100</div></td><td className="p-3">{offer.firmaAdedi || group.purchaseQuantity || group.talepEdilenAdet}</td><td className="p-3">{money(offer.birimFiyat, offer.paraBirimi)}</td><td className="p-3">%{num(offer.iskonto)}</td><td className="p-3">{money(offer.netBirimFiyat, offer.paraBirimi)}</td><td className="p-3">{money(offer.netToplam || num(offer.netBirimFiyat) * num(group.purchaseQuantity || group.talepEdilenAdet), offer.paraBirimi)}</td><td className="p-3">{offer.paraBirimi || "TRY"}</td><td className="p-3">{num(offer.kur) || 1}</td><td className="p-3 font-black">{money(offerTryTotal(group, offer), "TRY")}</td><td className="p-3">{offer.vade || `${offer.vadeDays || 0} gün`}</td><td className="p-3">{offer.termin || `${offer.terminDays || 0} gün`}</td><td className="p-3">{isBest ? <button type="button" onClick={() => setDecisionGroupIndex(groupIndex)} className="rounded-xl bg-emerald-600 px-3 py-2 text-left font-black text-white shadow-sm transition hover:bg-emerald-700"><span className="block">En iyi teklif</span><span className="block text-[10px] font-bold text-emerald-100">Neden önerildi?</span></button> : isEconomicLeader && group.decisionStatus === "manual_review" ? <span title={eliminationReasons.join(" · ")} className="inline-block rounded-xl bg-amber-200 px-3 py-2 font-black text-amber-950"><span className="block">En düşük maliyet</span><span className="block text-[10px]">Koşulları kontrol et</span></span> : offer.uygunMu === false ? <span title={eliminationReasons.join(" · ")} className="rounded-full bg-rose-100 px-3 py-1 font-bold text-rose-800">Koşul eksik</span> : <span className="rounded-full bg-slate-200 px-3 py-1 font-bold text-slate-700">Alternatif</span>}</td></tr>;
+          })}
         </tbody></table></div>
       </section>;
     })}
