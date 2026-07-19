@@ -1,7 +1,7 @@
 import re
 import unicodedata
 
-from app.utils import extract_days
+from app.utils import extract_days, normalize_text
 
 DEFAULT_DECISION_CONFIG = {
     "currency_rates": {
@@ -146,6 +146,23 @@ def calculate_finance_advantage(net_toplam_try, vade_days, annual_interest_rate)
         return 0
     present_value = net_toplam_try / ((1 + annual_interest_rate / 100) ** (vade_days / 365))
     return net_toplam_try - present_value
+
+
+def resolve_payment_days(raw_payment_term, termin_days):
+    """Turn payment wording into a cash-out day without inventing generic terms."""
+    explicit_days = extract_days(raw_payment_term)
+    if explicit_days > 0:
+        return explicit_days, "explicit"
+
+    normalized = normalize_text(raw_payment_term)
+    is_after_delivery = "teslim" in normalized and any(
+        phrase in normalized
+        for phrase in ("muteakip", "sonra", "sonrasi", "takiben")
+    )
+    if is_after_delivery:
+        return max(int(termin_days or 0), 0) + 1, "delivery_following"
+
+    return 0, "unparsed" if normalized else "missing"
 
 def calculate_delay_penalty(termin_days, accepted_termin_days, daily_delay_cost):
     delayed_days = max(termin_days - max(accepted_termin_days, 0), 0)
@@ -398,8 +415,8 @@ def score_offer(row, exchange_rates, talep_edilen_adet, config=None, constraints
 
     raw_vade = str(row.get("vade", "") or "").strip()
     raw_termin = str(row.get("termin", "") or "").strip()
-    vade_days = extract_days(raw_vade)
     termin_days = extract_days(raw_termin)
+    vade_days, vade_calculation_source = resolve_payment_days(raw_vade, termin_days)
 
     eksik_adet = 0
     if firma_adedi > 0 and firma_adedi < talep_edilen_adet:
@@ -473,6 +490,12 @@ def score_offer(row, exchange_rates, talep_edilen_adet, config=None, constraints
         "netToplamTRY": round(net_toplam_try, 4),
         "vadeDays": vade_days,
         "terminDays": termin_days,
+        "vadeCalculationSource": vade_calculation_source,
+        "vadeExplanation": (
+            f"Teslimden sonraki odeme, {termin_days} gun termin + 1 gun olarak hesaplandi."
+            if vade_calculation_source == "delivery_following"
+            else ""
+        ),
         "vadeKnown": bool(raw_vade),
         "terminKnown": bool(raw_termin),
         "financeAdvantageTRY": round(finance_advantage, 4),

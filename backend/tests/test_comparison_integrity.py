@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.parsers.request_parser import parse_request_excel
 from app.parsers.excel_parser import parse_excel_with_audit
-from app.services.analyzer import analyze_groups, calculate_delay_penalty, calculate_finance_advantage
+from app.services.analyzer import analyze_groups, calculate_delay_penalty, calculate_finance_advantage, resolve_payment_days
 from app.services.matcher import match_offers_to_requests, rows_match
 from app.services.report_builder import build_excel_report
 from app.utils import extract_days
@@ -398,6 +398,15 @@ class ComparisonIntegrityTests(unittest.TestCase):
     def test_delay_cost_only_applies_after_company_target(self):
         self.assertEqual(calculate_delay_penalty(15, 15, 100), 0)
         self.assertEqual(calculate_delay_penalty(20, 15, 100), 500)
+
+    def test_payment_after_delivery_uses_delivery_day_plus_one(self):
+        days, source = resolve_payment_days(
+            "Bu teklifimize ait ödeme ürünlerin teslimine müteakip gündür.",
+            14,
+        )
+
+        self.assertEqual(days, 15)
+        self.assertEqual(source, "delivery_following")
 
 
 if __name__ == "__main__":

@@ -54,6 +54,116 @@ function offerTryTotal(group, offer) {
   return offerOriginalTotal(group, offer) * (rate || 1);
 }
 
+function evaluatedOfferCost(group, offer) {
+  const evaluated = num(offer?.evaluatedCostTRY);
+  if (evaluated > 0) return evaluated;
+  const tco = num(offer?.tcoTRY) || offerTryTotal(group, offer);
+  return Math.max(tco - num(offer?.financeAdvantageTRY), 0);
+}
+
+function paymentTiming(offer) {
+  const days = num(offer?.vadeDays);
+  if (offer?.vadeCalculationSource === "delivery_following") {
+    return `${days} gün (teslimden sonraki gün)`;
+  }
+  if (days > 0) return `${days} gün`;
+  const raw = String(offer?.vade || "");
+  const normalized = normalize(raw);
+  if (normalized.includes("teslim") && ["müteakip", "sonra", "takiben"].some((word) => normalized.includes(word))) {
+    return "Teslimden sonra (eski raporda sayısal güne çevrilmemiş)";
+  }
+  return raw || "Belirtilmemiş";
+}
+
+function deliveryTiming(offer) {
+  if (num(offer?.terminDays) > 0) return `${num(offer.terminDays)} gün`;
+  return String(offer?.termin || "Belirtilmemiş");
+}
+
+function buildDecisionInsight(group) {
+  const offers = Array.isArray(group?.offers) ? group.offers : [];
+  const winner = group?.bestOffer;
+  if (!winner) return null;
+
+  const winnerName = supplierName(winner);
+  const alternatives = offers
+    .filter((offer) => normalize(supplierName(offer)) !== normalize(winnerName))
+    .filter((offer) => offer?.uygunMu !== false)
+    .sort((left, right) => evaluatedOfferCost(group, left) - evaluatedOfferCost(group, right));
+  const alternative = alternatives[0] || null;
+  const alternativeName = alternative ? supplierName(alternative) : "";
+  const winnerCost = evaluatedOfferCost(group, winner);
+  const alternativeCost = alternative ? evaluatedOfferCost(group, alternative) : 0;
+  const costGap = alternative ? Math.max(alternativeCost - winnerCost, 0) : 0;
+  const gapRate = alternativeCost > 0 ? (costGap / alternativeCost) * 100 : 0;
+  const bullets = [];
+  const cautions = [
+    ...(Array.isArray(group?.decisionWarnings) ? group.decisionWarnings : []),
+    ...(Array.isArray(group?.decisionNotes) ? group.decisionNotes : []),
+  ].filter(Boolean);
+
+  if (alternative) {
+    const winnerCurrency = normalizedCurrency(winner.paraBirimi) || "TRY";
+    const alternativeCurrency = normalizedCurrency(alternative.paraBirimi) || "TRY";
+    if (winnerCurrency === alternativeCurrency) {
+      bullets.push(
+        `Nominal toplam: ${winnerName} ${money(offerOriginalTotal(group, winner), winnerCurrency)}, ${alternativeName} ${money(offerOriginalTotal(group, alternative), alternativeCurrency)}.`,
+      );
+    } else {
+      bullets.push(
+        `Kurla çevrilen net toplam: ${winnerName} ${money(offerTryTotal(group, winner), "TRY")}, ${alternativeName} ${money(offerTryTotal(group, alternative), "TRY")}.`,
+      );
+    }
+
+    const winnerFinance = num(winner.financeAdvantageTRY);
+    const alternativeFinance = num(alternative.financeAdvantageTRY);
+    if (winnerFinance > 0 || alternativeFinance > 0) {
+      bullets.push(
+        `Vade etkisi hesaba katıldı: ${winnerName} için ${money(winnerFinance, "TRY")}, ${alternativeName} için ${money(alternativeFinance, "TRY")} finansman avantajı.`,
+      );
+    } else {
+      bullets.push("Vade koşulları okundu; bu kayıtta parasal bir finansman avantajı oluşmadı.");
+    }
+
+    bullets.push(
+      `Ödeme / teslim: ${winnerName} ${paymentTiming(winner)} ödeme ve ${deliveryTiming(winner)} teslim; ${alternativeName} ${paymentTiming(alternative)} ödeme ve ${deliveryTiming(alternative)} teslim.`,
+    );
+
+    const winnerRisk = num(winner.advancedRiskCostTRY) + num(winner.supplierRiskCostTRY);
+    const alternativeRisk = num(alternative.advancedRiskCostTRY) + num(alternative.supplierRiskCostTRY);
+    if (winnerRisk > 0 || alternativeRisk > 0) {
+      bullets.push(
+        `Risk ve ek maliyet etkisi: ${winnerName} ${money(winnerRisk, "TRY")}, ${alternativeName} ${money(alternativeRisk, "TRY")}.`,
+      );
+    }
+
+    if (
+      !winner.vadeCalculationSource &&
+      num(winner.vadeDays) === 0 &&
+      normalize(winner.vade).includes("teslim")
+    ) {
+      cautions.push(
+        `${winnerName} ödeme koşulu teslim sonrasına bağlı; bu eski raporda ödeme günü sayısallaştırılmamış. Güncel analizde termin + 1 gün olarak hesaplanır.`,
+      );
+    }
+  }
+
+  cautions.push("Bu sonuç otomatik ekonomik öneridir; sipariş öncesinde fiyat kapsamı, teslim ve ödeme koşulları yazılı olarak doğrulanmalıdır.");
+
+  return {
+    winner,
+    winnerName,
+    alternative,
+    alternativeName,
+    winnerCost,
+    alternativeCost,
+    costGap,
+    gapRate,
+    bullets,
+    cautions: Array.from(new Set(cautions)),
+  };
+}
+
 function proportionalAllocations(allocations, targetQuantity) {
   const source = Array.isArray(allocations) ? allocations.filter((row) => num(row.quantity) > 0) : [];
   const total = source.reduce((sum, row) => sum + num(row.quantity), 0);
@@ -82,6 +192,7 @@ export default function ComparisonPage() {
   const [partnerPrompt, setPartnerPrompt] = useState(null);
   const [partnerForm, setPartnerForm] = useState(emptyPartnerForm);
   const [savingPartner, setSavingPartner] = useState(false);
+  const [decisionGroupIndex, setDecisionGroupIndex] = useState(null);
 
   useEffect(() => {
     async function load() {
@@ -109,6 +220,9 @@ export default function ComparisonPage() {
   }, [id, router]);
 
   const groups = useMemo(() => Array.isArray(report?.analysis) ? report.analysis : [], [report]);
+  const decisionInsight = decisionGroupIndex === null
+    ? null
+    : buildDecisionInsight(groups[decisionGroupIndex]);
   const supplierMap = useMemo(() => new Map(suppliers.map((supplier) => [normalize(cleanSupplierName(supplier.name)), supplier])), [suppliers]);
   const selectedSummary = useMemo(() => {
     const selectedRows = groups
@@ -370,6 +484,53 @@ export default function ComparisonPage() {
   if (!report) return <div className="min-h-screen bg-slate-100 p-8"><div className="mx-auto max-w-5xl rounded-2xl bg-white p-6">{message || "Mukayese yükleniyor..."}</div></div>;
 
   return <div className="min-h-screen bg-slate-100 p-4 sm:p-8"><main className="mx-auto max-w-7xl space-y-5">
+    {decisionInsight && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/65 p-4">
+      <div role="dialog" aria-modal="true" aria-labelledby="decision-explanation-title" className="max-h-[92vh] w-full max-w-4xl overflow-y-auto rounded-3xl bg-white shadow-2xl">
+        <div className="sticky top-0 flex items-start justify-between gap-4 border-b bg-white p-6">
+          <div>
+            <div className="text-xs font-black uppercase tracking-wider text-emerald-700">Karar motoru açıklaması</div>
+            <h2 id="decision-explanation-title" className="mt-1 text-2xl font-black text-slate-950">Neden {decisionInsight.winnerName} önerildi?</h2>
+          </div>
+          <button type="button" onClick={() => setDecisionGroupIndex(null)} className="rounded-xl border px-4 py-2 text-sm font-black text-slate-700">Kapat</button>
+        </div>
+
+        <div className="space-y-5 p-6">
+          {decisionInsight.alternative ? <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5">
+            <div className="text-sm font-bold text-emerald-800">Ekonomik sonuç</div>
+            <p className="mt-2 text-lg font-black text-emerald-950">
+              Vade, termin ve kayıtlı risk etkileri sonrasında {decisionInsight.winnerName}, en yakın alternatif {decisionInsight.alternativeName} teklifinden {money(decisionInsight.costGap, "TRY")} (%{decisionInsight.gapRate.toFixed(1)}) daha avantajlıdır.
+            </p>
+          </div> : <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 font-bold text-amber-950">Bu kalemde karşılaştırılabilir başka uygun teklif bulunmadığı için mevcut teklif önerildi.</div>}
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="rounded-2xl border border-emerald-200 p-5">
+              <div className="text-xs font-black uppercase text-emerald-700">Önerilen · {decisionInsight.winnerName}</div>
+              <div className="mt-2 text-2xl font-black text-slate-950">{money(decisionInsight.winnerCost, "TRY")}</div>
+              <div className="mt-1 text-sm text-slate-600">Finansman ve risk etkileri sonrası değerlendirilmiş maliyet</div>
+            </div>
+            {decisionInsight.alternative && <div className="rounded-2xl border border-slate-200 p-5">
+              <div className="text-xs font-black uppercase text-slate-600">En yakın alternatif · {decisionInsight.alternativeName}</div>
+              <div className="mt-2 text-2xl font-black text-slate-950">{money(decisionInsight.alternativeCost, "TRY")}</div>
+              <div className="mt-1 text-sm text-slate-600">Finansman ve risk etkileri sonrası değerlendirilmiş maliyet</div>
+            </div>}
+          </div>
+
+          <div>
+            <h3 className="text-lg font-black text-slate-950">Kararı oluşturan etkenler</h3>
+            <ul className="mt-3 space-y-2">
+              {decisionInsight.bullets.map((bullet) => <li key={bullet} className="flex gap-3 rounded-xl bg-slate-50 p-3 text-sm font-semibold text-slate-800"><span className="text-emerald-600">✓</span><span>{bullet}</span></li>)}
+            </ul>
+          </div>
+
+          {decisionInsight.cautions.length > 0 && <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5">
+            <h3 className="font-black text-amber-950">Kontrol edilmesi gerekenler</h3>
+            <ul className="mt-2 space-y-2 text-sm font-semibold text-amber-950">
+              {decisionInsight.cautions.map((warning) => <li key={warning}>• {warning}</li>)}
+            </ul>
+          </div>}
+        </div>
+      </div>
+    </div>}
     {partnerPrompt && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
       <form onSubmit={savePartnerAndContinue} className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl">
         <div className="flex items-start justify-between gap-4">
@@ -414,7 +575,7 @@ export default function ComparisonPage() {
       return <section key={groupKey(groupIndex)} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="border-b bg-slate-50 p-4"><div className="font-black text-blue-900">{group.urunKodu || "Kodsuz"} · {group.urunAciklamasi}</div><div className="mt-1 flex flex-wrap gap-3 text-xs font-bold text-slate-600"><span>Talep edilen: {group.talepEdilenAdet} {group.birim}</span><span>Teklif sayısı: {offers.length}</span><span>Projeler: {projectSummary(group)}</span></div></div>
         <div className="overflow-x-auto"><table className="min-w-[1450px] w-full text-left text-xs"><thead className="bg-white text-slate-500"><tr><th className="p-3">Seç</th><th className="p-3">Tedarikçi / Puan</th><th className="p-3">Miktar</th><th className="p-3">Birim fiyat</th><th className="p-3">İskonto</th><th className="p-3">Net fiyat</th><th className="p-3">Toplam</th><th className="p-3">Para birimi</th><th className="p-3">Kur</th><th className="p-3">TL karşılığı</th><th className="p-3">Vade</th><th className="p-3">Termin</th><th className="p-3">Sonuç</th></tr></thead><tbody>
-          {offers.map((offer, offerIndex) => { const name = supplierName(offer); const isBest = normalize(name) === bestName; const supplier = supplierMap.get(normalize(name)); return <tr key={`${name}-${offerIndex}`} className={`border-t ${isBest ? "bg-emerald-50" : ""}`}><td className="p-3"><input type="radio" name={groupKey(groupIndex)} checked={selectedOffers[groupKey(groupIndex)] === offerIndex} onChange={() => setSelectedOffers((current) => ({ ...current, [groupKey(groupIndex)]: offerIndex }))} /></td><td className="p-3"><div className="font-black text-slate-900">{name}</div><div className="text-blue-700">Puan: {supplier?.score ?? 80}/100</div></td><td className="p-3">{offer.firmaAdedi || group.purchaseQuantity || group.talepEdilenAdet}</td><td className="p-3">{money(offer.birimFiyat, offer.paraBirimi)}</td><td className="p-3">%{num(offer.iskonto)}</td><td className="p-3">{money(offer.netBirimFiyat, offer.paraBirimi)}</td><td className="p-3">{money(offer.netToplam || num(offer.netBirimFiyat) * num(group.purchaseQuantity || group.talepEdilenAdet), offer.paraBirimi)}</td><td className="p-3">{offer.paraBirimi || "TRY"}</td><td className="p-3">{num(offer.kur) || 1}</td><td className="p-3 font-black">{money(offerTryTotal(group, offer), "TRY")}</td><td className="p-3">{offer.vade || `${offer.vadeDays || 0} gün`}</td><td className="p-3">{offer.termin || `${offer.terminDays || 0} gün`}</td><td className="p-3">{isBest ? <span className="rounded-full bg-emerald-600 px-3 py-1 font-black text-white">En iyi teklif</span> : <span className="rounded-full bg-slate-200 px-3 py-1 font-bold text-slate-700">Alternatif</span>}</td></tr>; })}
+          {offers.map((offer, offerIndex) => { const name = supplierName(offer); const isBest = normalize(name) === bestName; const supplier = supplierMap.get(normalize(name)); return <tr key={`${name}-${offerIndex}`} className={`border-t ${isBest ? "bg-emerald-50" : ""}`}><td className="p-3"><input type="radio" name={groupKey(groupIndex)} checked={selectedOffers[groupKey(groupIndex)] === offerIndex} onChange={() => setSelectedOffers((current) => ({ ...current, [groupKey(groupIndex)]: offerIndex }))} /></td><td className="p-3"><div className="font-black text-slate-900">{name}</div><div className="text-blue-700">Puan: {supplier?.score ?? 80}/100</div></td><td className="p-3">{offer.firmaAdedi || group.purchaseQuantity || group.talepEdilenAdet}</td><td className="p-3">{money(offer.birimFiyat, offer.paraBirimi)}</td><td className="p-3">%{num(offer.iskonto)}</td><td className="p-3">{money(offer.netBirimFiyat, offer.paraBirimi)}</td><td className="p-3">{money(offer.netToplam || num(offer.netBirimFiyat) * num(group.purchaseQuantity || group.talepEdilenAdet), offer.paraBirimi)}</td><td className="p-3">{offer.paraBirimi || "TRY"}</td><td className="p-3">{num(offer.kur) || 1}</td><td className="p-3 font-black">{money(offerTryTotal(group, offer), "TRY")}</td><td className="p-3">{offer.vade || `${offer.vadeDays || 0} gün`}</td><td className="p-3">{offer.termin || `${offer.terminDays || 0} gün`}</td><td className="p-3">{isBest ? <button type="button" onClick={() => setDecisionGroupIndex(groupIndex)} className="rounded-xl bg-emerald-600 px-3 py-2 text-left font-black text-white shadow-sm transition hover:bg-emerald-700"><span className="block">En iyi teklif</span><span className="block text-[10px] font-bold text-emerald-100">Neden önerildi?</span></button> : <span className="rounded-full bg-slate-200 px-3 py-1 font-bold text-slate-700">Alternatif</span>}</td></tr>; })}
         </tbody></table></div>
       </section>;
     })}
