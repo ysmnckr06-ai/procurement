@@ -677,6 +677,7 @@ export default function OrderDetailPage() {
   });
   const [companySettings, setCompanySettings] = useState({ default_currency: "TRY", base_currency: "TRY" });
   const [project, setProject] = useState(null);
+  const [linkedProjects, setLinkedProjects] = useState([]);
   const [projectItems, setProjectItems] = useState([]);
 
   // Detail page reloads when the route id changes; loadOrder reads the active route state.
@@ -970,6 +971,7 @@ export default function OrderDetailPage() {
       ]);
 
       const projectMap = new Map((projectRows || []).map((row) => [row.id, row]));
+      setLinkedProjects(projectRows || []);
       setProject(linkedProjectIds.length === 1 ? projectMap.get(linkedProjectIds[0]) || null : null);
       setProjectItems((projectItemRows || []).map((row) => ({
         ...row,
@@ -978,6 +980,7 @@ export default function OrderDetailPage() {
       })));
     } else {
       setProject(null);
+      setLinkedProjects([]);
       setProjectItems([]);
     }
   }
@@ -2749,7 +2752,9 @@ export default function OrderDetailPage() {
                 onReceive={() => setActiveTab("receiving")}
               />
             )}
-            {activeTab === "connections" && <ConnectionsPanel items={items} order={order} />}
+            {activeTab === "connections" && (
+              <ConnectionsPanel items={items} projects={linkedProjects} />
+            )}
             {activeTab === "delivery" && (
               <DeliveryHistoryPanel
                 items={items}
@@ -3151,8 +3156,9 @@ function AutomaticReceiptSuggestionsPanel({
   );
 }
 
-function ConnectionsPanel({ items, order }) {
+function ConnectionsPanel({ items, projects }) {
   const groupedConnections = new Map();
+  const projectById = new Map((projects || []).map((project) => [project.id, project]));
 
   items.forEach((item) => {
     (item.allocations || []).forEach((allocation) => {
@@ -3169,10 +3175,14 @@ function ConnectionsPanel({ items, order }) {
         projectCode: allocation.projectCode || "-",
         projectName: allocation.projectName || "-",
         mainProduct: allocation.parentItemName || allocation.projectItemName || "Ana ürün belirtilmemiş",
-        itemKeys: new Set(),
+        orderedProducts: new Map(),
         quantities: new Map(),
       };
-      current.itemKeys.add(`${item.productCode || ""}::${item.productName || ""}`);
+      const productKey = `${item.productCode || ""}::${item.productName || ""}`;
+      current.orderedProducts.set(productKey, {
+        code: item.productCode || "",
+        name: item.productName || "Ürün adı yok",
+      });
       const unit = item.unit || "adet";
       current.quantities.set(
         unit,
@@ -3190,7 +3200,7 @@ function ConnectionsPanel({ items, order }) {
   return (
     <div className="space-y-4">
       <div className="rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm text-blue-900">
-        Ürünler tek tek tekrarlanmaz; aynı proje ve ana ürüne ait dağıtımlar tek satırda toplanır.
+        Aynı proje ve ana ürüne ait dağıtımlar tek satırda toplanır. Örneğin “2KUT · 2 adet”, satın alınan ürünün 2 adedinin 2KUT ana ürününde kullanılacağını gösterir.
       </div>
       {rows.length > 0 ? (
         <div className="overflow-x-auto rounded-2xl border border-slate-200">
@@ -3198,10 +3208,10 @@ function ConnectionsPanel({ items, order }) {
             <thead className="bg-slate-50 text-xs uppercase text-slate-500">
               <tr>
                 <th className="p-3">Sıra</th>
-                <th className="p-3">İş ortağı</th>
+                <th className="p-3">Proje iş ortağı / müşteri</th>
                 <th className="p-3">Proje</th>
                 <th className="p-3">Ana ürün / pano</th>
-                <th className="p-3">Sipariş kalemi</th>
+                <th className="p-3">Satın alınan ürün</th>
                 <th className="p-3">Ayrılan miktar</th>
               </tr>
             </thead>
@@ -3209,7 +3219,13 @@ function ConnectionsPanel({ items, order }) {
               {rows.map((row, index) => (
                 <tr key={`${row.type}-${row.projectId}-${row.mainProduct}-${index}`} className="border-t border-slate-100">
                   <td className="p-3 font-bold text-slate-500">{index + 1}</td>
-                  <td className="p-3 font-bold text-slate-900">{order.partner_name || order.supplier_name || "-"}</td>
+                  <td className="p-3 font-bold text-slate-900">
+                    {row.type === "stock"
+                      ? "Şirket stoğu"
+                      : projectById.get(row.projectId)?.customer_partner_name
+                        || projectById.get(row.projectId)?.customer_name
+                        || "Müşteri belirtilmemiş"}
+                  </td>
                   <td className="p-3">
                     {row.type === "stock" ? (
                       <span className="font-bold text-emerald-700">Depo stoğu</span>
@@ -3221,7 +3237,16 @@ function ConnectionsPanel({ items, order }) {
                     )}
                   </td>
                   <td className="p-3 font-semibold text-slate-800">{row.type === "stock" ? "Stok" : row.mainProduct}</td>
-                  <td className="p-3">{row.itemKeys.size} kalem</td>
+                  <td className="p-3">
+                    <div className="space-y-1">
+                      {Array.from(row.orderedProducts.values()).map((product) => (
+                        <div key={`${product.code}-${product.name}`}>
+                          <div className="font-semibold text-slate-900">{product.name}</div>
+                          {product.code && <div className="text-xs text-slate-500">{product.code}</div>}
+                        </div>
+                      ))}
+                    </div>
+                  </td>
                   <td className="p-3 font-black text-blue-700">{formatQuantities(row.quantities)}</td>
                 </tr>
               ))}
