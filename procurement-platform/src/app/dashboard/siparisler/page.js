@@ -21,7 +21,7 @@ const emptyForm = {
   orderDate: "",
   dueDate: "",
   deliveryDate: "",
-  status: "Taslak",
+  status: "Sipariş Geçildi",
   projectId: "",
   items: [],
   totalAmount: 0,
@@ -61,17 +61,21 @@ const defaultCompanySettings = {
 
 const statusOptions = [
   "Tümü",
-  "Taslak",
-  "Onay Bekliyor",
   "Sipariş Geçildi",
-  "Tedarikçiden Bekleniyor",
   "Kısmi Teslim",
-  "Tam Teslim",
+  "Teslim Edildi",
   "Gecikti",
   "İptal",
 ];
 
-const editableStatusOptions = statusOptions.filter((status) => status !== "Tümü");
+function normalizeOrderStatus(status) {
+  const value = String(status || "").trim();
+  if (["", "Taslak", "Onay Bekliyor", "Onaylandı", "Tedarikçiden Bekleniyor"].includes(value)) {
+    return "Sipariş Geçildi";
+  }
+  if (value === "Tam Teslim") return "Teslim Edildi";
+  return value;
+}
 
 function getToday() {
   return new Date().toISOString().split("T")[0];
@@ -228,14 +232,13 @@ function calculateItemCounts(order) {
 }
 
 function getSmartStatus(order) {
-  const status = order.status || "Taslak";
+  const status = normalizeOrderStatus(order.status);
   if (
-    status === "Tam Teslim" ||
     status === "Teslim Edildi" ||
     status === "İptal" ||
     status === "Kısmi Teslim"
   ) {
-    return status === "Teslim Edildi" ? "Tam Teslim" : status;
+    return status;
   }
 
   if (
@@ -251,12 +254,8 @@ function getSmartStatus(order) {
 
 function getStatusClass(status) {
   const classes = {
-    Taslak: "bg-slate-100 text-slate-700",
-    "Onay Bekliyor": "bg-orange-100 text-orange-700",
     "Sipariş Geçildi": "bg-blue-100 text-blue-700",
-    "Tedarikçiden Bekleniyor": "bg-sky-100 text-sky-700",
     "Kısmi Teslim": "bg-amber-100 text-amber-700",
-    "Tam Teslim": "bg-green-100 text-green-700",
     "Teslim Edildi": "bg-green-100 text-green-700",
     Gecikti: "bg-red-100 text-red-700",
     İptal: "bg-slate-200 text-slate-700",
@@ -448,7 +447,7 @@ export default function OrdersPage() {
       product: parsedOrder.reportName || "Karşılaştırma Raporu",
       orderDate: parsedOrder.orderDate || getToday(),
       dueDate: parsedOrder.dueDate || "",
-      status: "Taslak",
+      status: "Sipariş Geçildi",
       projectId: parsedOrder.projectId || "",
       reportId: parsedOrder.reportId || null,
       items,
@@ -516,10 +515,10 @@ export default function OrdersPage() {
     return currency === "TRY" || liveRateFor(currency, liveRates) > 0;
   });
   const waitingCount = enrichedOrders.filter(
-    (order) => order.status === "Taslak" || order.status === "Onay Bekliyor",
+    (order) => ["Sipariş Geçildi", "Kısmi Teslim", "Gecikti"].includes(order.status),
   ).length;
   const deliveredCount = enrichedOrders.filter(
-    (order) => order.status === "Tam Teslim" || order.status === "Teslim Edildi",
+    (order) => order.status === "Teslim Edildi",
   ).length;
   const delayedCount = enrichedOrders.filter(
     (order) => order.status === "Gecikti",
@@ -831,7 +830,7 @@ export default function OrdersPage() {
       company: "",
       product: `${selectedProject.project_code || ""} ${selectedProject.project_name || ""}`.trim() || "Proje Siparişi",
       orderDate: getToday(),
-      status: "Taslak",
+      status: "Sipariş Geçildi",
       projectId: selectedProject.id,
       items,
       totalAmount: calculateOrderTotal(items),
@@ -1025,7 +1024,7 @@ export default function OrdersPage() {
       0,
     );
     if (deliveredQuantity >= totalQuantity && totalQuantity > 0) {
-      payload.status = "Tam Teslim";
+      payload.status = "Teslim Edildi";
       payload.delivery_date = payload.delivery_date || getToday();
     } else if (deliveredQuantity > 0) {
       payload.status = "Kısmi Teslim";
@@ -1158,9 +1157,9 @@ export default function OrdersPage() {
               text={hasForeignCurrencyOrders && allForeignRatesLive ? "Bugünkü canlı döviz kuruyla" : "Canlı kur yoksa sipariş kuruyla"}
             />
             <StatCard
-              title="Bekleyen"
+              title="Teslim Bekleyen"
               value={waitingCount}
-              text="Aksiyon bekliyor"
+              text="Açık sipariş"
             />
             <StatCard
               title="Teslim Edilen"
@@ -1578,13 +1577,12 @@ function OrderForm({
           onChange={onChange}
           required
         />
-        <Select
-          label="Durum"
-          name="status"
-          value={formData.status}
-          onChange={onChange}
-          options={editableStatusOptions}
-        />
+        <div>
+          <label className="mb-2 block text-sm font-semibold text-slate-700">Durum</label>
+          <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm font-bold text-blue-800">
+            Sipariş Geçildi
+          </div>
+        </div>
         <Select
           label="Proje"
           name="projectId"

@@ -526,7 +526,7 @@ export default function ComparisonPage() {
         product_name: `${entry.items.length} kalem · Mukayese siparişi`,
         quantity: entry.items.reduce((sum, item) => sum + num(item.quantity), 0),
         order_date: today,
-        status: "Taslak",
+        status: "Sipariş Geçildi",
         project_id: projectIds.length === 1 ? projectIds[0] : projectIds.length === 0 ? report.project_id : null,
         report_id: report.id,
         items: entry.items,

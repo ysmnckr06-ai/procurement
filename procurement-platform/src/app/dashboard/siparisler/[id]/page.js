@@ -10,19 +10,18 @@ import { findOrCreateBusinessPartner } from "@/lib/businessPartners";
 import { matchProduct } from "@/lib/productMatching";
 import { CORVIAN_PRODUCT_NAME, fetchCompanyBranding } from "@/lib/companyBranding";
 
-const statusFlow = [
-  "Taslak",
-  "Onay Bekliyor",
-  "Sipariş Geçildi",
-  "Tedarikçiden Bekleniyor",
-  "Kısmi Teslim",
-  "Tam Teslim",
-];
+function normalizeOrderStatus(status) {
+  const value = String(status || "").trim();
+  if (["", "Taslak", "Onay Bekliyor", "Onaylandı", "Tedarikçiden Bekleniyor"].includes(value)) {
+    return "Sipariş Geçildi";
+  }
+  if (value === "Tam Teslim") return "Teslim Edildi";
+  return value;
+}
+
+const statusFlow = ["Sipariş Geçildi", "Kısmi Teslim", "Teslim Edildi"];
 
 const statusActions = [
-  { status: "Onay Bekliyor", label: "Durumu Güncelle" },
-  { status: "Sipariş Geçildi", label: "Sipariş Geçildi" },
-  { status: "Tedarikçiden Bekleniyor", label: "Tedarikçiden Bekleniyor" },
   { status: "İptal", label: "İptal Et", danger: true },
 ];
 
@@ -486,10 +485,10 @@ function normalizeItems(items) {
       allocations: Array.isArray(item.allocations) ? item.allocations : [],
       status:
         deliveredQuantity >= quantity && quantity > 0
-          ? "Tam Teslim"
+          ? "Teslim Edildi"
           : deliveredQuantity > 0
             ? "Kısmi Teslim"
-            : "Taslak",
+            : "Sipariş Geçildi",
     };
   });
 }
@@ -520,7 +519,7 @@ function applyReceiptQuantitiesToItems(items, receipts) {
       deliveredQuantity,
       status:
         deliveredQuantity >= quantity && quantity > 0
-          ? "Tam Teslim"
+          ? "Teslim Edildi"
           : deliveredQuantity > 0
             ? "Kısmi Teslim"
             : item.status,
@@ -529,9 +528,19 @@ function applyReceiptQuantitiesToItems(items, receipts) {
 }
 
 function normalizeHistory(order) {
-  const savedHistory = Array.isArray(order.status_history)
+  const savedHistory = (Array.isArray(order.status_history)
     ? order.status_history
-    : [];
+    : []).map((entry) => {
+      const normalizedStatus = normalizeOrderStatus(entry.status);
+      if (!entry.status || normalizedStatus === entry.status) return entry;
+      return {
+        ...entry,
+        status: normalizedStatus,
+        title: entry.type === "status"
+          ? `${normalizedStatus} durumuna alındı.`
+          : entry.title,
+      };
+    });
   const rows = [
     {
       type: "created",
@@ -569,12 +578,8 @@ function normalizeHistory(order) {
 
 function getStatusClass(status) {
   const classes = {
-    Taslak: "bg-slate-100 text-slate-700",
-    "Onay Bekliyor": "bg-orange-100 text-orange-700",
     "Sipariş Geçildi": "bg-blue-100 text-blue-700",
-    "Tedarikçiden Bekleniyor": "bg-sky-100 text-sky-700",
     "Kısmi Teslim": "bg-amber-100 text-amber-700",
-    "Tam Teslim": "bg-green-100 text-green-700",
     "Teslim Edildi": "bg-green-100 text-green-700",
     Gecikti: "bg-red-100 text-red-700",
     İptal: "bg-slate-200 text-slate-700",
@@ -585,7 +590,7 @@ function getStatusClass(status) {
 
 function getCurrentStep(status) {
   if (status === "İptal") return -1;
-  return Math.max(statusFlow.indexOf(status), 0);
+  return Math.max(statusFlow.indexOf(normalizeOrderStatus(status)), 0);
 }
 
 function isActionDisabled(currentStatus, actionStatus) {
@@ -901,7 +906,10 @@ export default function OrderDetailPage() {
       return;
     }
 
-    setOrder(data);
+    setOrder({
+      ...data,
+      status: normalizeOrderStatus(data.status),
+    });
     setPaymentForm((prev) => ({
       ...prev,
       currency: data.currency || "TRY",
@@ -1023,7 +1031,7 @@ export default function OrderDetailPage() {
     const deliveryStatus = deliveredQuantity <= 0
       ? "Bekliyor"
       : allCompleted
-        ? "Tam Teslim"
+        ? "Teslim Edildi"
         : "Kısmen Teslim";
 
     return {
@@ -1180,11 +1188,11 @@ export default function OrderDetailPage() {
       status: nextStatus,
     });
     const completedItems =
-      nextStatus === "Tam Teslim"
+      nextStatus === "Teslim Edildi"
         ? items.map((item) => ({ ...item, deliveredQuantity: item.quantity }))
         : items;
     const deliveryDate =
-      nextStatus === "Tam Teslim" ? getToday() : order.delivery_date;
+      nextStatus === "Teslim Edildi" ? getToday() : order.delivery_date;
     const payload = {
       status: nextStatus,
       delivery_date: deliveryDate,
@@ -1332,7 +1340,7 @@ export default function OrderDetailPage() {
         deliveredQuantity,
         status:
           deliveredQuantity >= Number(row.quantity || 0) && Number(row.quantity || 0) > 0
-            ? "Tam Teslim"
+            ? "Teslim Edildi"
             : deliveredQuantity > 0
               ? "Kısmi Teslim"
               : row.status,
@@ -1364,7 +1372,7 @@ export default function OrderDetailPage() {
     const nextTotalQuantity = nextItems.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
     const nextStatus =
       nextDeliveredQuantity >= nextTotalQuantity && nextTotalQuantity > 0
-        ? "Tam Teslim"
+        ? "Teslim Edildi"
         : nextDeliveredQuantity > 0
           ? "Kısmi Teslim"
           : order.status;
@@ -1407,9 +1415,9 @@ export default function OrderDetailPage() {
       p_report_id: order.report_id || null,
       p_order_items: nextItems,
       p_order_status: nextStatus,
-      p_delivery_date: nextStatus === "Tam Teslim" ? getToday() : order.delivery_date,
+      p_delivery_date: nextStatus === "Teslim Edildi" ? getToday() : order.delivery_date,
       p_status_history: nextHistory,
-      p_order_receipt_status: nextStatus === "Tam Teslim" ? "Depoda" : nextItemReceiptStatus,
+      p_order_receipt_status: nextStatus === "Teslim Edildi" ? "Depoda" : nextItemReceiptStatus,
       p_received_total: nextDeliveredQuantity,
       p_defective_total: Number(order.defective_total || 0) + defectiveQuantity,
     });
@@ -1512,9 +1520,9 @@ export default function OrderDetailPage() {
             .update({
               items: nextItems,
               status: nextStatus,
-              delivery_date: nextStatus === "Tam Teslim" ? getToday() : order.delivery_date,
+              delivery_date: nextStatus === "Teslim Edildi" ? getToday() : order.delivery_date,
               status_history: nextHistory,
-              receipt_status: nextStatus === "Tam Teslim" ? "Depoda" : nextItemReceiptStatus,
+              receipt_status: nextStatus === "Teslim Edildi" ? "Depoda" : nextItemReceiptStatus,
               received_total: nextDeliveredQuantity,
               defective_total: Number(order.defective_total || 0) + defectiveQuantity,
             })
@@ -1723,7 +1731,7 @@ export default function OrderDetailPage() {
           ...item,
           deliveredQuantity,
           status: deliveredQuantity >= orderedQuantity && orderedQuantity > 0
-            ? "Tam Teslim"
+            ? "Teslim Edildi"
             : deliveredQuantity > 0
               ? "Kısmi Teslim"
               : item.status,
@@ -1735,7 +1743,7 @@ export default function OrderDetailPage() {
         0,
       );
       const nextStatus = totalOrdered > 0 && totalDelivered >= totalOrdered
-        ? "Tam Teslim"
+        ? "Teslim Edildi"
         : totalDelivered > 0
           ? "Kısmi Teslim"
           : order.status;
@@ -1750,7 +1758,7 @@ export default function OrderDetailPage() {
           items: nextItems,
           status: nextStatus,
           receipt_status: nextStatus,
-          delivery_date: nextStatus === "Tam Teslim" ? getToday() : order.delivery_date,
+          delivery_date: nextStatus === "Teslim Edildi" ? getToday() : order.delivery_date,
           received_total: totalDelivered,
           status_history: nextHistory,
         },
@@ -1758,7 +1766,7 @@ export default function OrderDetailPage() {
           items: nextItems,
           status: nextStatus,
           receipt_status: nextStatus,
-          delivery_date: nextStatus === "Tam Teslim" ? getToday() : order.delivery_date,
+          delivery_date: nextStatus === "Teslim Edildi" ? getToday() : order.delivery_date,
         },
       );
       if (orderUpdateError) {
@@ -2640,7 +2648,7 @@ export default function OrderDetailPage() {
         )}
 
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-4 xl:grid-cols-7">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
             {statusFlow.map((status, index) => {
               const active = currentStep >= index && order.status !== "İptal";
               const current = order.status === status;
@@ -2893,7 +2901,7 @@ function Info({ label, value }) {
 }
 
 function DeliveryStatusPanel({ totals }) {
-  const statusClass = totals.deliveryStatus === "Tam Teslim"
+  const statusClass = totals.deliveryStatus === "Teslim Edildi"
     ? "bg-emerald-100 text-emerald-700"
     : totals.deliveryStatus === "Kısmen Teslim"
       ? "bg-amber-100 text-amber-700"
@@ -4380,7 +4388,7 @@ function ReceivingPanel({
           const itemStatus = deliveredQuantity <= 0
             ? "Bekliyor"
             : deliveredQuantity >= orderedQuantity
-              ? "Tam Teslim"
+              ? "Teslim Edildi"
               : "Kısmen Teslim";
           const rowClass = isOverDelivered
             ? "border-red-300 bg-red-50"
