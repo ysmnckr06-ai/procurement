@@ -149,7 +149,6 @@ function TekliflerPageContent() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [reportReady, setReportReady] = useState(false);
   const [lastReportTime, setLastReportTime] = useState("");
-  const [reportPath, setReportPath] = useState("");
   const [requestLists, setRequestLists] = useState([]);
   const [selectedRequestId, setSelectedRequestId] = useState("");
   const [maxBudget, setMaxBudget] = useState("");
@@ -563,9 +562,6 @@ const loadSupplierProfiles = async () => {
 
       if (data.success) {
         setReportReady(true);
-        setReportPath(
-          API_URL + data.reportPath
-        );
         setCreatedReportId(data.reportId || null);
         setLastReportTime(new Date().toLocaleString("tr-TR"));
         setMessage("Mukayese oluşturuldu; kalem bazlı rapor açılıyor.");
@@ -591,50 +587,6 @@ const loadSupplierProfiles = async () => {
         window.clearTimeout(timeoutId);
       }
       setIsAnalyzing(false);
-    }
-  };
-
-  const handleDownloadReport = async () => {
-    if (!reportReady || !reportPath) {
-      setMessage("İndirilecek rapor bulunamadı.");
-      return;
-    }
-
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-
-    const token = session?.access_token;
-
-    if (!token) {
-      setMessage("Oturum bulunamadı. Lütfen tekrar giriş yapın.");
-      return;
-    }
-
-    try {
-      const response = await fetch(reportPath, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      if (!response.ok) {
-        setMessage("Rapor indirilemedi.");
-        return;
-      }
-
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = "mukayese_raporu.xlsx";
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
-    } catch (error) {
-      console.error(error);
-      setMessage("Rapor indirme sırasında hata oluştu.");
     }
   };
 
@@ -1133,18 +1085,6 @@ const loadSupplierProfiles = async () => {
                   {isAnalyzing ? "Analiz Yapılıyor..." : "Teklifleri Analiz Et"}
                 </button>
 
-                <button
-                  type="button"
-                  onClick={handleDownloadReport}
-                  disabled={!reportReady}
-                  className={`w-full rounded-xl px-5 py-3 text-sm font-bold transition-all ${
-                    reportReady
-                      ? "bg-green-600 text-white hover:scale-[1.01] hover:bg-green-700"
-                      : "cursor-not-allowed bg-slate-200 text-slate-500"
-                  }`}
-                >
-                  Excel Detayını İndir
-                </button>
                 {reportReady && (
                   <div className="rounded-xl border border-green-300 bg-green-50 px-5 py-3 text-sm font-bold text-green-800">
                     Rapor otomatik olarak Raporlar sayfasına aktarıldı.

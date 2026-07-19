@@ -88,51 +88,6 @@ const getReportFirma = useCallback((rapor) => {
   );
 }, []);
 
-function getReportPath(rapor) {
-  return rapor.reportpath || rapor.report_path || rapor.reportPath || "";
-}
-
-async function downloadReport(rapor) {
-  const path = getReportPath(rapor);
-
-  if (!path) {
-    alert("Rapor dosyası bulunamadı.");
-    return;
-  }
-
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-
-  const token = session?.access_token;
-
-  if (!token) {
-    alert("Oturum bulunamadı. Lütfen tekrar giriş yapın.");
-    return;
-  }
-
-  const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}${path}`, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-  });
-
-  if (!response.ok) {
-    alert("Rapor indirilemedi.");
-    return;
-  }
-
-  const blob = await response.blob();
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = "mukayese_raporu.xlsx";
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
-}
-
   const filtreliRaporlar = useMemo(() => {
     return raporlar.filter((rapor) => {
       const ad = String(getReportName(rapor)).toLowerCase();
@@ -308,16 +263,6 @@ async function deleteReport(reportId) {
 
                 <div style={{ marginTop: "16px", display: "flex", gap: "10px", flexWrap: "wrap" }}>
 
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      downloadReport(rapor);
-                    }}
-                    style={{ background: "#2563eb", color: "#fff", border: "none", borderRadius: "10px", padding: "10px 14px", fontWeight: "600", cursor: "pointer" }}
-                  >
-                    Raporu Indir
-                  </button>
                   <Link
                     href={`/dashboard/raporlar/${rapor.id}`}
                     onClick={(e) => e.stopPropagation()}
