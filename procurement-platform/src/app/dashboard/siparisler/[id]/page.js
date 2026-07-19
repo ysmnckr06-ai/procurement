@@ -2773,6 +2773,7 @@ export default function OrderDetailPage() {
                   applying={automaticReceiptApplying}
                   result={automaticReceiptResult}
                   onApply={applyAutomaticReceiptSuggestions}
+                  onOpenDocuments={() => setActiveTab("documents")}
                 />
                 <ReceivingPanel
                   items={items}
@@ -2798,11 +2799,6 @@ export default function OrderDetailPage() {
             )}
             {activeTab === "documents" && (
               <div className="space-y-6">
-                <div className="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-slate-50 p-4">
-                  <button type="button" onClick={exportInvoicePdf} className="rounded-xl bg-red-600 px-4 py-2 text-sm font-bold text-white">Fatura PDF</button>
-                  <button type="button" onClick={exportDeliveryNotePdf} className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white">İrsaliye PDF</button>
-                  <button type="button" onClick={exportReceiptSlipPdf} className="rounded-xl bg-amber-500 px-4 py-2 text-sm font-bold text-white">Teslim Fişi PDF</button>
-                </div>
                 <DeliveryInvoiceConsistencyPanel
                   order={order}
                   items={items}
@@ -3074,6 +3070,7 @@ function AutomaticReceiptSuggestionsPanel({
   applying,
   result,
   onApply,
+  onOpenDocuments,
 }) {
   const suggestions = calculateAutomaticReceiptSuggestions(
     items,
@@ -3092,11 +3089,39 @@ function AutomaticReceiptSuggestionsPanel({
   const allocationBlockedSuggestions = suggestions.filter(
     (suggestion) => suggestion.allocationReviewRequired,
   );
+  const receiptDocuments = (documents || []).filter(
+    (document) => ["irsaliye", "depo_giris"].includes(document.document_type)
+      && document.approval_status !== "reddedildi",
+  );
+  const receiptDocumentIds = new Set(receiptDocuments.map((document) => document.id));
+  const receiptDocumentItems = (documentItems || []).filter(
+    (documentItem) => receiptDocumentIds.has(documentItem.document_id),
+  );
   const totalSuggestedQuantity = activeSuggestions.reduce(
     (sum, suggestion) => sum + Number(suggestion.suggestedQuantity || 0),
     0,
   );
-  const skippedCount = Math.max(documentItems.length - activeSuggestions.length, 0);
+  const skippedCount = Math.max(receiptDocumentItems.length - activeSuggestions.length, 0);
+  let inactiveReason = "";
+  let showDocumentsAction = false;
+
+  if (activeSuggestions.length === 0) {
+    if (receiptDocuments.length === 0) {
+      inactiveReason = "Bu siparişte teslimatı doğrulayan irsaliye veya teslim fişi bulunmuyor. Kaynak teklif, ürünlerin teslim edildiğini kanıtlamadığı için otomatik teslim alma işlemini başlatmaz.";
+      showDocumentsAction = true;
+    } else if (receiptDocumentItems.length === 0) {
+      inactiveReason = "Teslim belgesi yüklendi ancak OCR kalemleri henüz oluşturulmadı. Belgeyi analiz edip OCR kalemlerini oluşturduğunuzda eşleştirme yapılır.";
+      showDocumentsAction = true;
+    } else if (allocationBlockedSuggestions.length > 0) {
+      inactiveReason = "Eşleşen kalemler birden fazla proje veya ana ürüne dağıtılmış. Hatalı stok dağılımını önlemek için aşağıdaki depo teslim alma alanından proje dağılımını manuel seçmelisiniz.";
+    } else if (suggestions.length === 0) {
+      inactiveReason = "Belgedeki kalemler bu siparişle eşleşmedi. Belgeler sekmesinden OCR sonucunu ve ürün eşleşmelerini kontrol edin.";
+      showDocumentsAction = true;
+    } else {
+      inactiveReason = "Uygun öneri bulunamadı. Eşleşme güveni en az %80 olmalı, kalem manuel kontrol gerektirmemeli ve daha önce teslim alınmamış olmalıdır.";
+      showDocumentsAction = true;
+    }
+  }
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -3116,6 +3141,23 @@ function AutomaticReceiptSuggestionsPanel({
           {applying ? "Teslim Alınıyor..." : "Otomatik Teslim Al"}
         </button>
       </div>
+      {inactiveReason && (
+        <div className="mt-4 flex flex-col gap-3 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-950 md:flex-row md:items-center md:justify-between">
+          <div>
+            <div className="font-black">Otomatik teslim alma neden pasif?</div>
+            <p className="mt-1 font-medium leading-6">{inactiveReason}</p>
+          </div>
+          {showDocumentsAction && (
+            <button
+              type="button"
+              onClick={onOpenDocuments}
+              className="shrink-0 rounded-lg bg-blue-600 px-4 py-2 font-bold text-white hover:bg-blue-700"
+            >
+              Belgeler sekmesine git
+            </button>
+          )}
+        </div>
+      )}
       {allocationBlockedSuggestions.length > 0 && (
         <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm font-bold text-amber-900">
           Bu kalem birden fazla proje dağılımına sahip olduğu için otomatik depo girişi yapılamaz. Lütfen manuel proje kalemi seçin.
@@ -3142,7 +3184,7 @@ function AutomaticReceiptSuggestionsPanel({
       <div className="mt-4">
         <ReceiptSuggestionTable
           rows={activeSuggestions}
-          emptyMessage="Aktif teslim alma önerisi bulunmuyor."
+          emptyMessage={inactiveReason || "Aktif teslim alma önerisi bulunmuyor."}
         />
       </div>
       <div className="mt-6">
