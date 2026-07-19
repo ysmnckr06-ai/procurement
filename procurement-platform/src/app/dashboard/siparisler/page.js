@@ -154,6 +154,35 @@ function normalizeItems(items) {
   });
 }
 
+function collectOrderProjects(order, projectMap) {
+  const linkedProjects = new Map();
+
+  function addProject(source = {}) {
+    const projectId = source.projectId || source.project_id || source.id || "";
+    const canonical = projectId ? projectMap[projectId] : null;
+    const projectCode = canonical?.project_code || source.projectCode || source.project_code || "";
+    const projectName = canonical?.project_name || source.projectName || source.project_name || "";
+    const key = projectId || projectCode || normalizeOrderText(projectName);
+    if (!key || (!projectCode && !projectName)) return;
+
+    linkedProjects.set(key, {
+      id: projectId || canonical?.id || "",
+      project_code: projectCode,
+      project_name: projectName,
+    });
+  }
+
+  if (order.project_id) {
+    addProject(projectMap[order.project_id] || { id: order.project_id });
+  }
+
+  normalizeItems(order.items).forEach((item) => {
+    item.allocations.forEach(addProject);
+  });
+
+  return Array.from(linkedProjects.values());
+}
+
 function calculateOrderTotal(items) {
   return normalizeItems(items).reduce(
     (sum, item) => sum + Number(item.total || 0),
@@ -419,22 +448,29 @@ export default function OrdersPage() {
 
   const enrichedOrders = useMemo(() => {
     const projectMap = Object.fromEntries(projects.map((project) => [project.id, project]));
-    return orders.map((order) => ({
-      ...order,
-      status: getSmartStatus(order),
-      delayDays: calculateDelayDays(order),
-      project: projectMap[order.project_id] || null,
-      paidAmount: Number(order.paid_amount || 0),
-      remainingPayment: Math.max(Number(order.total_amount || 0) - Number(order.paid_amount || 0), 0),
-      ...calculateItemCounts(order),
-    }));
+    return orders.map((order) => {
+      const linkedProjects = collectOrderProjects(order, projectMap);
+      return {
+        ...order,
+        status: getSmartStatus(order),
+        delayDays: calculateDelayDays(order),
+        project: linkedProjects.length === 1 ? linkedProjects[0] : projectMap[order.project_id] || null,
+        projects: linkedProjects,
+        paidAmount: Number(order.paid_amount || 0),
+        remainingPayment: Math.max(Number(order.total_amount || 0) - Number(order.paid_amount || 0), 0),
+        ...calculateItemCounts(order),
+      };
+    });
   }, [orders, projects]);
 
   const filteredOrders = useMemo(() => {
     const needle = search.trim().toLowerCase();
 
     return enrichedOrders.filter((order) => {
-      const haystack = [order.order_no, order.partner_name || order.supplier_name, order.product_name]
+      const projectText = (order.projects || [])
+        .map((project) => `${project.project_code || ""} ${project.project_name || ""}`)
+        .join(" ");
+      const haystack = [order.order_no, order.partner_name || order.supplier_name, order.product_name, projectText]
         .join(" ")
         .toLowerCase();
       const searchMatch = needle ? haystack.includes(needle) : true;
@@ -1873,8 +1909,15 @@ function OrdersTable({ orders, liveRates, onView, onEdit, onDelete }) {
                   {order.order_no}
                 </td>
                 <td className="p-4">
-                  {order.project
-                    ? `${order.project.project_code || ""} ${order.project.project_name || ""}`.trim()
+                  {order.projects?.length > 0
+                    ? <div className="space-y-1">
+                        {order.projects.map((project) => (
+                          <div key={project.id || `${project.project_code}-${project.project_name}`} className="min-w-32">
+                            <div className="font-bold text-blue-800">{project.project_code || "Proje"}</div>
+                            {project.project_name && <div className="mt-0.5 text-xs font-semibold text-slate-500">{project.project_name}</div>}
+                          </div>
+                        ))}
+                      </div>
                     : "-"}
                 </td>
                 <td className="p-4">{order.product_name || "-"}</td>
