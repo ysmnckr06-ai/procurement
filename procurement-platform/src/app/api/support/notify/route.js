@@ -177,7 +177,10 @@ export async function POST(request) {
     html,
   };
   if (event !== "admin_reply" && config.receivingDomain) {
-    emailPayload.reply_to = [`support+${ticket.id}@${config.receivingDomain}`];
+    // Resend's HTTP API accepts a single reply-to address here. Sending it as
+    // an array can be accepted without being persisted in the delivered mail,
+    // which makes mail clients reply to the onboarding sender instead.
+    emailPayload.reply_to = `support+${ticket.id}@${config.receivingDomain}`;
   }
 
   const response = await fetch("https://api.resend.com/emails", {
