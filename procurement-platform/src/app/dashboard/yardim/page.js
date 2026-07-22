@@ -266,7 +266,8 @@ export default function SupportCenterPage() {
   }
 
   useEffect(() => {
-    loadTickets();
+    const ticketFromUrl = new URLSearchParams(window.location.search).get("ticket");
+    loadTickets(ticketFromUrl);
     fetch("/api/support/notify", { cache: "no-store" })
       .then((response) => (response.ok ? response.json() : null))
       .then((payload) => setNotificationConfigured(Boolean(payload?.configured)))
@@ -274,7 +275,7 @@ export default function SupportCenterPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function notifyFounder(event, ticketId) {
+  async function sendSupportNotification(event, ticketId) {
     try {
       const response = await fetch("/api/support/notify", {
         method: "POST",
@@ -321,7 +322,7 @@ export default function SupportCenterPage() {
     });
     setActiveView("tickets");
     await loadTickets(data);
-    const notification = await notifyFounder("ticket_created", data);
+    const notification = await sendSupportNotification("ticket_created", data);
     setSuccessMessage(
       notification.sent
         ? "Destek talebiniz oluşturuldu ve kurucuya e-posta bildirimi gönderildi."
@@ -353,12 +354,15 @@ export default function SupportCenterPage() {
 
     setReplyMessage("");
     await loadTickets(selectedTicket.id);
-    const notification = isAdmin
-      ? { sent: false, configured: notificationConfigured }
-      : await notifyFounder("customer_reply", selectedTicket.id);
+    const notification = await sendSupportNotification(
+      isAdmin ? "admin_reply" : "customer_reply",
+      selectedTicket.id,
+    );
     setSuccessMessage(
       isAdmin
-        ? "Mesaj gönderildi."
+        ? notification.sent
+          ? "Mesaj gönderildi ve müşteriye e-posta bildirimi iletildi."
+          : "Mesaj sistemde gönderildi; ancak müşteriye e-posta bildirimi iletilemedi."
         : notification.sent
           ? "Mesaj gönderildi ve kurucuya e-posta bildirimi iletildi."
           : "Mesaj gönderildi; talep admin ekranında güncellendi.",
