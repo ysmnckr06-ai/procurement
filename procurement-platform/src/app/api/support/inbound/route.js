@@ -63,6 +63,8 @@ function extractNewReply(text, html) {
     if (
       trimmed.startsWith(">") ||
       /^On .+wrote:$/i.test(trimmed) ||
+      /(?:şunları|şunu|bunları)\s+yazdı\b/i.test(trimmed) ||
+      /^(?:iPhone[’']?umdan gönderildi|Sent from my iPhone)$/i.test(trimmed) ||
       /^.+(?:şunu yazdı|yazdı):$/i.test(trimmed) ||
       /^-{2,}\s*Original Message\s*-{2,}$/i.test(trimmed) ||
       /^(From|Kimden):\s/i.test(trimmed)
