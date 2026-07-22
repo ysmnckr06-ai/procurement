@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { Resend } from "resend";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
 const allowedEvents = new Set([
@@ -177,23 +178,12 @@ export async function POST(request) {
     html,
   };
   if (event !== "admin_reply" && config.receivingDomain) {
-    // Resend's HTTP API accepts a single reply-to address here. Sending it as
-    // an array can be accepted without being persisted in the delivered mail,
-    // which makes mail clients reply to the onboarding sender instead.
-    emailPayload.reply_to = `support+${ticket.id}@${config.receivingDomain}`;
+    emailPayload.replyTo = `support+${ticket.id}@${config.receivingDomain}`;
   }
 
-  const response = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${config.apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(emailPayload),
-    cache: "no-store",
-  });
-
-  if (!response.ok) {
+  const resend = new Resend(config.apiKey);
+  const { error: resendError } = await resend.emails.send(emailPayload);
+  if (resendError) {
     return NextResponse.json(
       {
         configured: true,
