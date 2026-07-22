@@ -12,6 +12,7 @@ function notificationConfig() {
     apiKey: String(process.env.RESEND_API_KEY || "").trim(),
     recipient: String(process.env.SUPPORT_NOTIFICATION_EMAIL || "").trim(),
     from: String(process.env.SUPPORT_FROM_EMAIL || "").trim(),
+    receivingDomain: String(process.env.RESEND_RECEIVING_DOMAIN || "").trim(),
   };
 }
 
@@ -169,13 +170,23 @@ export async function POST(request) {
       <p><a href="${escapeHtml(`${siteUrl}/dashboard/yardim?ticket=${encodeURIComponent(ticket.id)}`)}">${escapeHtml(linkLabel)}</a></p>
     </div>`;
 
+  const emailPayload = {
+    from: config.from,
+    to: [recipient],
+    subject,
+    html,
+  };
+  if (event !== "admin_reply" && config.receivingDomain) {
+    emailPayload.reply_to = [`support+${ticket.id}@${config.receivingDomain}`];
+  }
+
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${config.apiKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ from: config.from, to: [recipient], subject, html }),
+    body: JSON.stringify(emailPayload),
     cache: "no-store",
   });
 
