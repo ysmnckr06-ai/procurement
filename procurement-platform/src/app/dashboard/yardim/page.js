@@ -3,11 +3,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
-const categories = ["Hata Bildirimi", "Kullanım Desteği", "Lisans", "Finans", "Öneri", "Diğer"];
+const categories = [
+  "Hata Bildirimi",
+  "Kullanım Desteği",
+  "Lisans",
+  "Finans",
+  "Öneri",
+  "Diğer",
+];
 const priorities = ["Düşük", "Orta", "Yüksek", "Kritik"];
-const statuses = ["Açık", "İnceleniyor", "Yanıtlandı", "Çözüldü", "Kapandı"];
-const adminStatuses = ["İnceleniyor", "Yanıtlandı", "Çözüldü", "Kapandı"];
-
 const priorityStyles = {
   Düşük: "border-slate-200 bg-slate-50 text-slate-700",
   Orta: "border-blue-200 bg-blue-50 text-blue-700",
@@ -36,7 +40,9 @@ function formatDate(value) {
 
 function Badge({ children, className }) {
   return (
-    <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-black ${className}`}>
+    <span
+      className={`inline-flex rounded-full border px-3 py-1 text-xs font-black ${className}`}
+    >
       {children}
     </span>
   );
@@ -53,7 +59,9 @@ function StatCard({ label, value, tone = "blue" }) {
   return (
     <div className={`rounded-2xl border p-4 shadow-sm ${tones[tone]}`}>
       <div className="text-2xl font-black">{value}</div>
-      <div className="mt-1 text-xs font-black uppercase tracking-wide opacity-80">{label}</div>
+      <div className="mt-1 text-xs font-black uppercase tracking-wide opacity-80">
+        {label}
+      </div>
     </div>
   );
 }
@@ -67,7 +75,9 @@ function EmptyState({ children }) {
 }
 
 function TicketCard({ ticket, active, isAdmin, onClick }) {
-  const unreadCount = isAdmin ? ticket.unread_for_admin : ticket.unread_for_customer;
+  const unreadCount = isAdmin
+    ? ticket.unread_for_admin
+    : ticket.unread_for_customer;
 
   return (
     <button
@@ -80,7 +90,9 @@ function TicketCard({ ticket, active, isAdmin, onClick }) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="min-w-0 truncate text-base font-black text-slate-950">{ticket.subject}</h3>
+            <h3 className="min-w-0 truncate text-base font-black text-slate-950">
+              {ticket.subject}
+            </h3>
             {unreadCount > 0 && (
               <span className="rounded-full bg-red-600 px-2 py-0.5 text-xs font-black text-white">
                 {unreadCount} yeni
@@ -92,12 +104,15 @@ function TicketCard({ ticket, active, isAdmin, onClick }) {
           </p>
           {isAdmin && (
             <p className="mt-2 text-xs font-bold text-slate-600">
-              Firma: {ticket.company_name || "-"} · Kullanıcı: {ticket.customer_email || ticket.created_by}
+              Firma: {ticket.company_name || "-"} · Kullanıcı:{" "}
+              {ticket.customer_email || ticket.created_by}
             </p>
           )}
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
-          <Badge className={priorityStyles[ticket.priority]}>{ticket.priority}</Badge>
+          <Badge className={priorityStyles[ticket.priority]}>
+            {ticket.priority}
+          </Badge>
           <Badge className={statusStyles[ticket.status]}>{ticket.status}</Badge>
         </div>
       </div>
@@ -119,16 +134,19 @@ function MessageBubble({ message }) {
       >
         <div className="mb-2 flex flex-wrap items-center gap-2 text-xs font-black uppercase tracking-wide">
           <span>{isAdmin ? "Corvian Destek" : "Müşteri"}</span>
-          <span className="font-bold normal-case tracking-normal text-slate-500">{formatDate(message.created_at)}</span>
+          <span className="font-bold normal-case tracking-normal text-slate-500">
+            {formatDate(message.created_at)}
+          </span>
         </div>
-        <p className="whitespace-pre-wrap text-sm font-semibold leading-6">{message.message}</p>
+        <p className="whitespace-pre-wrap text-sm font-semibold leading-6">
+          {message.message}
+        </p>
       </div>
     </div>
   );
 }
 
 export default function SupportCenterPage() {
-  const [user, setUser] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [activeView, setActiveView] = useState("tickets");
   const [tickets, setTickets] = useState([]);
@@ -139,7 +157,6 @@ export default function SupportCenterPage() {
   const [saving, setSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
-  const [notificationConfigured, setNotificationConfigured] = useState(null);
   const [replyMessage, setReplyMessage] = useState("");
   const [newTicket, setNewTicket] = useState({
     subject: "",
@@ -154,15 +171,21 @@ export default function SupportCenterPage() {
   );
 
   const stats = useMemo(() => {
-    const open = tickets.filter((ticket) => ticket.status === "Açık").length;
-    const waiting = tickets.filter((ticket) => ["Açık", "İnceleniyor"].includes(ticket.status)).length;
-    const answered = tickets.filter((ticket) => ticket.status === "Yanıtlandı").length;
-    const solved = tickets.filter((ticket) => ticket.status === "Çözüldü").length;
+    const waiting = tickets.filter((ticket) =>
+      ["Açık", "İnceleniyor"].includes(ticket.status),
+    ).length;
+    const answered = tickets.filter(
+      (ticket) => ticket.status === "Yanıtlandı",
+    ).length;
     const unread = tickets.reduce(
-      (sum, ticket) => sum + Number(isAdmin ? ticket.unread_for_admin : ticket.unread_for_customer || 0),
+      (sum, ticket) =>
+        sum +
+        Number(
+          isAdmin ? ticket.unread_for_admin : ticket.unread_for_customer || 0,
+        ),
       0,
     );
-    return { open, waiting, answered, solved, unread };
+    return { waiting, answered, unread };
   }, [isAdmin, tickets]);
 
   async function loadTickets(preferredTicketId = selectedTicketId) {
@@ -179,8 +202,6 @@ export default function SupportCenterPage() {
       return;
     }
 
-    setUser(currentUser);
-
     const { data: adminRow, error: adminError } = await supabase
       .from("support_admins")
       .select("role, active")
@@ -189,7 +210,9 @@ export default function SupportCenterPage() {
       .maybeSingle();
 
     if (adminError && adminError.code !== "PGRST116") {
-      setErrorMessage("Destek merkezi tabloları henüz uygulanmamış görünüyor. Lütfen support center migration'ını çalıştırın.");
+      setErrorMessage(
+        "Destek merkezi tabloları henüz uygulanmamış görünüyor. Lütfen support center migration'ını çalıştırın.",
+      );
       setLoading(false);
       return;
     }
@@ -204,7 +227,9 @@ export default function SupportCenterPage() {
       .limit(200);
 
     if (error) {
-      setErrorMessage("Destek talepleri yüklenemedi. Migration/RLS politikalarını kontrol edin.");
+      setErrorMessage(
+        "Destek talepleri yüklenemedi. Migration/RLS politikalarını kontrol edin.",
+      );
       setLoading(false);
       return;
     }
@@ -213,7 +238,8 @@ export default function SupportCenterPage() {
     setTickets(nextTickets);
 
     const nextSelectedId =
-      preferredTicketId && nextTickets.some((ticket) => ticket.id === preferredTicketId)
+      preferredTicketId &&
+      nextTickets.some((ticket) => ticket.id === preferredTicketId)
         ? preferredTicketId
         : nextTickets[0]?.id || null;
 
@@ -265,13 +291,13 @@ export default function SupportCenterPage() {
     );
   }
 
+  // Destek merkezi ilk açılışta bir kez yüklenir; loadTickets işlevi state'e bağlıdır.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: yalnızca ilk sayfa yüklemesinde çalışmalı
   useEffect(() => {
-    const ticketFromUrl = new URLSearchParams(window.location.search).get("ticket");
+    const ticketFromUrl = new URLSearchParams(window.location.search).get(
+      "ticket",
+    );
     loadTickets(ticketFromUrl);
-    fetch("/api/support/notify", { cache: "no-store" })
-      .then((response) => (response.ok ? response.json() : null))
-      .then((payload) => setNotificationConfigured(Boolean(payload?.configured)))
-      .catch(() => setNotificationConfigured(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -283,10 +309,9 @@ export default function SupportCenterPage() {
         body: JSON.stringify({ event, ticketId }),
       });
       const payload = await response.json().catch(() => ({}));
-      setNotificationConfigured(Boolean(payload.configured));
       return { ok: response.ok, ...payload };
     } catch {
-      return { ok: false, configured: notificationConfigured, sent: false };
+      return { ok: false, configured: false, sent: false };
     }
   }
 
@@ -361,35 +386,12 @@ export default function SupportCenterPage() {
     setSuccessMessage(
       isAdmin
         ? notification.sent
-          ? "Mesaj gönderildi ve müşteriye e-posta bildirimi iletildi."
-          : "Mesaj sistemde gönderildi; ancak müşteriye e-posta bildirimi iletilemedi."
+          ? "Yanıt gönderildi."
+          : "Yanıt sisteme kaydedildi. Müşteri hesabından görüntülenebilir."
         : notification.sent
           ? "Mesaj gönderildi ve kurucuya e-posta bildirimi iletildi."
           : "Mesaj gönderildi; talep admin ekranında güncellendi.",
     );
-    setSaving(false);
-  }
-
-  async function handleStatusChange(nextStatus) {
-    if (!selectedTicket || !isAdmin) return;
-
-    setSaving(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-
-    const { error } = await supabase.rpc("set_support_ticket_status", {
-      p_ticket_id: selectedTicket.id,
-      p_status: nextStatus,
-    });
-
-    if (error) {
-      setErrorMessage(error.message || "Durum güncellenemedi.");
-      setSaving(false);
-      return;
-    }
-
-    setSuccessMessage("Talep durumu güncellendi.");
-    await loadTickets(selectedTicket.id);
     setSaving(false);
   }
 
@@ -411,9 +413,13 @@ export default function SupportCenterPage() {
             <p className="text-xs font-black uppercase tracking-wide text-blue-700">
               Yardım / Destek Merkezi
             </p>
-            <h1 className="mt-2 text-3xl font-black text-slate-950">CORVIAN Destek Merkezi</h1>
+            <h1 className="mt-2 text-3xl font-black text-slate-950">
+              {isAdmin ? "Destek Yönetimi" : "CORVIAN Destek Merkezi"}
+            </h1>
             <p className="mt-3 max-w-3xl text-sm font-semibold leading-6 text-slate-600">
-              Destek taleplerinizi sistem içinde açın, yanıtları takip edin ve tüm konuşma geçmişini aynı yerde saklayın.
+              {isAdmin
+                ? "Müşteri taleplerini görüntüleyin ve yanıtlayın. Talep durumu konuşmaya göre otomatik güncellenir."
+                : "Destek talebi oluşturun ve yanıtları buradan takip edin."}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -421,45 +427,36 @@ export default function SupportCenterPage() {
               type="button"
               onClick={() => setActiveView("tickets")}
               className={`rounded-xl px-4 py-3 text-sm font-black transition ${
-                activeView === "tickets" ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                activeView === "tickets"
+                  ? "bg-blue-600 text-white"
+                  : "bg-slate-100 text-slate-700 hover:bg-slate-200"
               }`}
             >
-              Destek Taleplerim
+              {isAdmin ? "Tüm Talepler" : "Taleplerim"}
             </button>
             <button
               type="button"
               onClick={() => setActiveView("new")}
               className={`rounded-xl px-4 py-3 text-sm font-black transition ${
-                activeView === "new" ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                activeView === "new"
+                  ? "bg-blue-600 text-white"
+                  : "bg-slate-100 text-slate-700 hover:bg-slate-200"
               }`}
             >
               Yeni Destek Talebi
             </button>
-            {isAdmin && (
-              <span className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-black text-emerald-700">
-                Admin görünümü açık
-              </span>
-            )}
-            {isAdmin && notificationConfigured !== null && (
-              <span
-                className={`rounded-xl border px-4 py-3 text-sm font-black ${
-                  notificationConfigured
-                    ? "border-blue-200 bg-blue-50 text-blue-700"
-                    : "border-amber-200 bg-amber-50 text-amber-800"
-                }`}
-              >
-                {notificationConfigured ? "Kurucu e-posta bildirimi aktif" : "Kurucu e-postası yapılandırılmalı"}
-              </span>
-            )}
           </div>
         </div>
       </section>
 
-      <section className="grid gap-4 md:grid-cols-4">
-        <StatCard label="Açık talep" value={stats.open} />
-        <StatCard label="Bekleyen" value={stats.waiting} tone="amber" />
+      <section className="grid gap-4 md:grid-cols-3">
+        <StatCard label="Yanıt bekleyen" value={stats.waiting} tone="amber" />
         <StatCard label="Yanıtlanan" value={stats.answered} tone="emerald" />
-        <StatCard label={isAdmin ? "Admin için yeni" : "Yeni destek cevabı"} value={stats.unread} tone="slate" />
+        <StatCard
+          label={isAdmin ? "Yeni mesaj" : "Yeni destek cevabı"}
+          value={stats.unread}
+          tone="slate"
+        />
       </section>
 
       {(errorMessage || successMessage) && (
@@ -474,193 +471,213 @@ export default function SupportCenterPage() {
         </section>
       )}
 
-      {activeView === "new" ? (
-        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="text-2xl font-black text-slate-950">Yeni Destek Talebi</h2>
-          <form onSubmit={handleCreateTicket} className="mt-6 grid gap-5">
-            <label className="block">
-              <span className="mb-2 block text-sm font-black text-slate-700">Konu</span>
-              <input
-                type="text"
-                required
-                value={newTicket.subject}
-                onChange={(event) => setNewTicket((ticket) => ({ ...ticket, subject: event.target.value }))}
-                placeholder="Kısa ve anlaşılır bir konu yazın"
-                className="h-12 w-full rounded-xl border border-slate-300 px-4 text-sm font-semibold outline-none transition focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
-              />
-            </label>
-
-            <div className="grid gap-5 md:grid-cols-2">
+      {activeView === "new"
+        ? <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h2 className="text-2xl font-black text-slate-950">
+              Yeni Destek Talebi
+            </h2>
+            <form onSubmit={handleCreateTicket} className="mt-6 grid gap-5">
               <label className="block">
-                <span className="mb-2 block text-sm font-black text-slate-700">Kategori</span>
-                <select
-                  value={newTicket.category}
-                  onChange={(event) => setNewTicket((ticket) => ({ ...ticket, category: event.target.value }))}
+                <span className="mb-2 block text-sm font-black text-slate-700">
+                  Konu
+                </span>
+                <input
+                  type="text"
+                  required
+                  value={newTicket.subject}
+                  onChange={(event) =>
+                    setNewTicket((ticket) => ({
+                      ...ticket,
+                      subject: event.target.value,
+                    }))
+                  }
+                  placeholder="Kısa ve anlaşılır bir konu yazın"
                   className="h-12 w-full rounded-xl border border-slate-300 px-4 text-sm font-semibold outline-none transition focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
-                >
-                  {categories.map((category) => (
-                    <option key={category} value={category}>
-                      {category}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="block">
-                <span className="mb-2 block text-sm font-black text-slate-700">Öncelik</span>
-                <select
-                  value={newTicket.priority}
-                  onChange={(event) => setNewTicket((ticket) => ({ ...ticket, priority: event.target.value }))}
-                  className="h-12 w-full rounded-xl border border-slate-300 px-4 text-sm font-semibold outline-none transition focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
-                >
-                  {priorities.map((priority) => (
-                    <option key={priority} value={priority}>
-                      {priority}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-
-            <label className="block">
-              <span className="mb-2 block text-sm font-black text-slate-700">Mesaj</span>
-              <textarea
-                required
-                rows={7}
-                value={newTicket.message}
-                onChange={(event) => setNewTicket((ticket) => ({ ...ticket, message: event.target.value }))}
-                placeholder="Yaşadığınız sorunu, ilgili ekranı ve varsa proje/sipariş numarasını yazın."
-                className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-semibold leading-6 outline-none transition focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
-              />
-            </label>
-
-            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold leading-6 text-amber-900">
-              Dosya ekleme ilk sürümde kapalıdır. Ekran görüntüsü veya PDF ekleri V2'de private storage ve signed URL ile eklenecek.
-            </div>
-
-            <button
-              type="submit"
-              disabled={saving}
-              className="w-full rounded-xl bg-blue-600 px-5 py-3 text-sm font-black text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-400 md:w-fit"
-            >
-              {saving ? "Talep oluşturuluyor..." : "Destek Talebi Oluştur"}
-            </button>
-          </form>
-        </section>
-      ) : (
-        <section className="grid gap-6 xl:grid-cols-[420px_1fr]">
-          <div className="space-y-3">
-            {tickets.length === 0 ? (
-              <EmptyState>Henüz destek talebiniz yok</EmptyState>
-            ) : (
-              tickets.map((ticket) => (
-                <TicketCard
-                  key={ticket.id}
-                  ticket={ticket}
-                  active={ticket.id === selectedTicketId}
-                  isAdmin={isAdmin}
-                  onClick={() => handleSelectTicket(ticket.id)}
                 />
-              ))
-            )}
-          </div>
+              </label>
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-            {!selectedTicket ? (
-              <EmptyState>Detayını görmek için bir destek talebi seçin.</EmptyState>
-            ) : (
-              <div className="space-y-6">
-                <div className="flex flex-col gap-4 border-b border-slate-100 pb-5 lg:flex-row lg:items-start lg:justify-between">
-                  <div>
-                    <h2 className="text-2xl font-black text-slate-950">{selectedTicket.subject}</h2>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <Badge className={priorityStyles[selectedTicket.priority]}>{selectedTicket.priority}</Badge>
-                      <Badge className={statusStyles[selectedTicket.status]}>{selectedTicket.status}</Badge>
-                      <Badge className="border-slate-200 bg-slate-50 text-slate-700">{selectedTicket.category}</Badge>
-                    </div>
-                    {isAdmin && (
-                      <div className="mt-4 rounded-xl bg-slate-50 p-4 text-sm font-semibold leading-6 text-slate-700">
-                        <div>Firma: {selectedTicket.company_name || "-"}</div>
-                        <div>Kullanıcı: {selectedTicket.customer_name || "-"} · {selectedTicket.customer_email || selectedTicket.created_by}</div>
-                        <div>Tenant: {selectedTicket.tenant_id}</div>
-                      </div>
-                    )}
-                  </div>
-
-                  {isAdmin && (
-                    <label className="block min-w-56">
-                      <span className="mb-2 block text-xs font-black uppercase tracking-wide text-slate-500">
-                        Durum Değiştir
-                      </span>
-                      <select
-                        value={adminStatuses.includes(selectedTicket.status) ? selectedTicket.status : "İnceleniyor"}
-                        onChange={(event) => handleStatusChange(event.target.value)}
-                        disabled={saving}
-                        className="h-11 w-full rounded-xl border border-slate-300 px-3 text-sm font-bold outline-none transition focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
-                      >
-                        {adminStatuses.map((status) => (
-                          <option key={status} value={status}>
-                            {status}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  )}
-                </div>
-
-                <div className="space-y-4">
-                  {detailLoading ? (
-                    <EmptyState>Mesajlar yükleniyor...</EmptyState>
-                  ) : (
-                    messages.map((message) => <MessageBubble key={message.id} message={message} />)
-                  )}
-                </div>
-
-                <form onSubmit={handleReply} className="space-y-3 border-t border-slate-100 pt-5">
-                  <label className="block">
-                    <span className="mb-2 block text-sm font-black text-slate-700">
-                      {isAdmin ? "Destek cevabı yaz" : "Yanıt yaz"}
-                    </span>
-                    <textarea
-                      rows={4}
-                      required
-                      disabled={selectedTicket.status === "Kapandı"}
-                      value={replyMessage}
-                      onChange={(event) => setReplyMessage(event.target.value)}
-                      placeholder={
-                        selectedTicket.status === "Kapandı"
-                          ? "Kapalı destek talebine yeni mesaj eklenemez."
-                          : "Mesajınızı yazın..."
-                      }
-                      className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-semibold leading-6 outline-none transition focus:border-blue-600 focus:ring-4 focus:ring-blue-100 disabled:bg-slate-100"
-                    />
-                  </label>
-                  <button
-                    type="submit"
-                    disabled={saving || selectedTicket.status === "Kapandı"}
-                    className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-black text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-400"
+              <div className="grid gap-5 md:grid-cols-2">
+                <label className="block">
+                  <span className="mb-2 block text-sm font-black text-slate-700">
+                    Kategori
+                  </span>
+                  <select
+                    value={newTicket.category}
+                    onChange={(event) =>
+                      setNewTicket((ticket) => ({
+                        ...ticket,
+                        category: event.target.value,
+                      }))
+                    }
+                    className="h-12 w-full rounded-xl border border-slate-300 px-4 text-sm font-semibold outline-none transition focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
                   >
-                    {saving ? "Gönderiliyor..." : "Mesaj Gönder"}
-                  </button>
-                </form>
-              </div>
-            )}
-          </div>
-        </section>
-      )}
+                    {categories.map((category) => (
+                      <option key={category} value={category}>
+                        {category}
+                      </option>
+                    ))}
+                  </select>
+                </label>
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-6 text-sm font-semibold leading-6 text-slate-600 shadow-sm">
-        <h2 className="text-lg font-black text-slate-950">Bildirim ve kayıt güvenliği</h2>
-        <p className="mt-2">
-          Tüm destek talepleri ve mesajlar sistemde saklanır ve admin görünümünde izlenir.
-          {notificationConfigured
-            ? " Yeni talepler ile müşteri yanıtları ayrıca kurucunun bildirim e-posta adresine gönderilir."
-            : " Kurucu e-posta bildirimi henüz yapılandırılmadığı için kayıtlar şu anda yalnız admin ekranından takip edilir."}
-        </p>
-        <p className="mt-2 text-xs text-slate-500">
-          Dosya ekleri ilerleyen sürümde private storage ve süreli erişim bağlantılarıyla desteklenecektir.
-        </p>
-      </section>
+                <label className="block">
+                  <span className="mb-2 block text-sm font-black text-slate-700">
+                    Öncelik
+                  </span>
+                  <select
+                    value={newTicket.priority}
+                    onChange={(event) =>
+                      setNewTicket((ticket) => ({
+                        ...ticket,
+                        priority: event.target.value,
+                      }))
+                    }
+                    className="h-12 w-full rounded-xl border border-slate-300 px-4 text-sm font-semibold outline-none transition focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
+                  >
+                    {priorities.map((priority) => (
+                      <option key={priority} value={priority}>
+                        {priority}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <label className="block">
+                <span className="mb-2 block text-sm font-black text-slate-700">
+                  Mesaj
+                </span>
+                <textarea
+                  required
+                  rows={7}
+                  value={newTicket.message}
+                  onChange={(event) =>
+                    setNewTicket((ticket) => ({
+                      ...ticket,
+                      message: event.target.value,
+                    }))
+                  }
+                  placeholder="Yaşadığınız sorunu, ilgili ekranı ve varsa proje/sipariş numarasını yazın."
+                  className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-semibold leading-6 outline-none transition focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
+                />
+              </label>
+
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm font-semibold text-slate-600">
+                Dosya ekleme özelliği yakında kullanıma açılacak.
+              </div>
+
+              <button
+                type="submit"
+                disabled={saving}
+                className="w-full rounded-xl bg-blue-600 px-5 py-3 text-sm font-black text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-400 md:w-fit"
+              >
+                {saving ? "Talep oluşturuluyor..." : "Destek Talebi Oluştur"}
+              </button>
+            </form>
+          </section>
+        : <section className="grid gap-6 xl:grid-cols-[420px_1fr]">
+            <div className="space-y-3">
+              {tickets.length === 0
+                ? <EmptyState>Henüz destek talebiniz yok</EmptyState>
+                : tickets.map((ticket) => (
+                    <TicketCard
+                      key={ticket.id}
+                      ticket={ticket}
+                      active={ticket.id === selectedTicketId}
+                      isAdmin={isAdmin}
+                      onClick={() => handleSelectTicket(ticket.id)}
+                    />
+                  ))}
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              {!selectedTicket
+                ? <EmptyState>
+                    Detayını görmek için bir destek talebi seçin.
+                  </EmptyState>
+                : <div className="space-y-6">
+                    <div className="border-b border-slate-100 pb-5">
+                      <div>
+                        <h2 className="text-2xl font-black text-slate-950">
+                          {selectedTicket.subject}
+                        </h2>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <Badge
+                            className={priorityStyles[selectedTicket.priority]}
+                          >
+                            {selectedTicket.priority}
+                          </Badge>
+                          <Badge
+                            className={statusStyles[selectedTicket.status]}
+                          >
+                            {selectedTicket.status}
+                          </Badge>
+                          <Badge className="border-slate-200 bg-slate-50 text-slate-700">
+                            {selectedTicket.category}
+                          </Badge>
+                        </div>
+                        {isAdmin && (
+                          <div className="mt-4 inline-flex flex-col rounded-xl bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-700">
+                            <span className="font-black">
+                              {selectedTicket.company_name ||
+                                "Firma bilgisi yok"}
+                            </span>
+                            <span>
+                              {selectedTicket.customer_name || "Müşteri"} ·{" "}
+                              {selectedTicket.customer_email ||
+                                "E-posta bilgisi yok"}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="space-y-4">
+                      {detailLoading
+                        ? <EmptyState>Mesajlar yükleniyor...</EmptyState>
+                        : messages.map((message) => (
+                            <MessageBubble key={message.id} message={message} />
+                          ))}
+                    </div>
+
+                    <form
+                      onSubmit={handleReply}
+                      className="space-y-3 border-t border-slate-100 pt-5"
+                    >
+                      <label className="block">
+                        <span className="mb-2 block text-sm font-black text-slate-700">
+                          {isAdmin ? "Müşteriye yanıt yaz" : "Yanıt yaz"}
+                        </span>
+                        <textarea
+                          rows={4}
+                          required
+                          disabled={selectedTicket.status === "Kapandı"}
+                          value={replyMessage}
+                          onChange={(event) =>
+                            setReplyMessage(event.target.value)
+                          }
+                          placeholder={
+                            selectedTicket.status === "Kapandı"
+                              ? "Kapalı destek talebine yeni mesaj eklenemez."
+                              : "Mesajınızı yazın..."
+                          }
+                          className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-semibold leading-6 outline-none transition focus:border-blue-600 focus:ring-4 focus:ring-blue-100 disabled:bg-slate-100"
+                        />
+                      </label>
+                      <button
+                        type="submit"
+                        disabled={saving || selectedTicket.status === "Kapandı"}
+                        className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-black text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-400"
+                      >
+                        {saving
+                          ? "Gönderiliyor..."
+                          : isAdmin
+                            ? "Yanıtı Gönder"
+                            : "Mesajı Gönder"}
+                      </button>
+                    </form>
+                  </div>}
+            </div>
+          </section>}
     </main>
   );
 }
