@@ -109,8 +109,8 @@ export default function RegisterPage() {
   return (
     <AuthShell>
       <AuthCard
-        title="Hesap oluşturun"
-        description="Corvian çalışma alanınızı oluşturun ve hemen başlayın."
+        title="14 günlük ücretsiz demonuzu başlatın"
+        description="CORVIAN çalışma alanınızı oluşturun. Kredi kartı gerekmez; deneme süreniz kayıt işlemi tamamlandığında başlar."
         footerHref="/login"
         footerPrompt="Zaten hesabınız var mı?"
         footerLabel="Giriş Yap"
@@ -233,11 +233,17 @@ export default function RegisterPage() {
 
           <p className="text-center text-xs font-semibold leading-5 text-slate-500">
             Kayıt olarak{" "}
-            <Link href="/kullanim-sartlari" className="text-blue-700 hover:underline">
+            <Link
+              href="/kullanim-sartlari"
+              className="text-blue-700 hover:underline"
+            >
               Kullanım Şartları
             </Link>
             ,{" "}
-            <Link href="/gizlilik-politikasi" className="text-blue-700 hover:underline">
+            <Link
+              href="/gizlilik-politikasi"
+              className="text-blue-700 hover:underline"
+            >
               Gizlilik Politikası
             </Link>{" "}
             ve{" "}
@@ -248,7 +254,7 @@ export default function RegisterPage() {
           </p>
 
           <AuthButton loading={loading} loadingText="Kayıt oluşturuluyor...">
-            Kayıt Ol
+            14 Günlük Ücretsiz Denemeyi Başlat
           </AuthButton>
         </form>
       </AuthCard>
