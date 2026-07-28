@@ -745,6 +745,7 @@ export default function ProjectDetailPage() {
     setDocumentAccessError("");
     setDocumentAccessLoadingId(document.id);
     const targetWindow = window.open("about:blank", "_blank");
+    if (targetWindow) targetWindow.opener = null;
 
     try {
       const openableDocument = document.storage_path

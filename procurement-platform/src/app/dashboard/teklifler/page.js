@@ -83,7 +83,15 @@ function isOfferSpreadsheet(file) {
 async function validateOfferWorkbook(file) {
   const XLSX = await import("xlsx");
   const buffer = await file.arrayBuffer();
-  const workbook = XLSX.read(buffer, { type: "array" });
+  const workbook = XLSX.read(buffer, {
+    type: "array",
+    cellFormula: false,
+    cellHTML: false,
+    cellNF: false,
+    cellStyles: false,
+    sheetRows: 25_000,
+  });
+  if ((workbook.SheetNames || []).length > 50) return false;
   const visibleSheets = (workbook.SheetNames || []).filter((sheetName) => {
     const sheet = workbook.Sheets[sheetName];
     if (!sheet || !sheet["!ref"]) return false;

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import {
@@ -229,6 +230,22 @@ export default function RegisterPage() {
               {message}
             </div>
           )}
+
+          <p className="text-center text-xs font-semibold leading-5 text-slate-500">
+            Kayıt olarak{" "}
+            <Link href="/kullanim-sartlari" className="text-blue-700 hover:underline">
+              Kullanım Şartları
+            </Link>
+            ,{" "}
+            <Link href="/gizlilik-politikasi" className="text-blue-700 hover:underline">
+              Gizlilik Politikası
+            </Link>{" "}
+            ve{" "}
+            <Link href="/kvkk" className="text-blue-700 hover:underline">
+              KVKK Aydınlatma Metni
+            </Link>
+            'ni kabul edersiniz.
+          </p>
 
           <AuthButton loading={loading} loadingText="Kayıt oluşturuluyor...">
             Kayıt Ol

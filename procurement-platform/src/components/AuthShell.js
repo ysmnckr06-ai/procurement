@@ -179,6 +179,7 @@ export function AuthInput({
   icon,
   rightElement,
   inputMode,
+  minLength,
   maxLength,
 }) {
   return (
@@ -195,6 +196,7 @@ export function AuthInput({
           required={required}
           autoComplete={autoComplete}
           inputMode={inputMode}
+          minLength={minLength}
           maxLength={maxLength}
           className="h-full min-w-0 flex-1 bg-transparent text-sm font-semibold text-slate-950 outline-none placeholder:text-slate-400"
         />

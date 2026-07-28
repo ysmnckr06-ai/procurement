@@ -77,14 +77,15 @@ function response(questionId, headline, summary, metrics, columns, resultRows, f
 
 export async function POST(request) {
   try {
-    const body = await request.json();
-    const questionId = String(body?.questionId || "system_overview");
-    if (!QUESTIONS[questionId]) return NextResponse.json({ error: "Geçersiz kontrol seçildi." }, { status: 400 });
-
     const supabase = await createServerSupabaseClient();
     const { data: auth } = await supabase.auth.getUser();
     const user = auth?.user;
     if (!user) return NextResponse.json({ error: "Oturum bulunamadı." }, { status: 401 });
+
+    const body = await request.json().catch(() => null);
+    if (!body) return NextResponse.json({ error: "Geçersiz JSON isteği." }, { status: 400 });
+    const questionId = String(body?.questionId || "system_overview");
+    if (!QUESTIONS[questionId]) return NextResponse.json({ error: "Geçersiz kontrol seçildi." }, { status: 400 });
 
     const [projects, projectItems, products, requests, offers, reports, orders, storedOrderItems] = await Promise.all([
       rows(supabase, "projects", user.id),

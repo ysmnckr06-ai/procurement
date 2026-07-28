@@ -1388,7 +1388,22 @@ export default function TaleplerPage() {
   }
 
   const handleFileChange = (e) => {
-    setFiles(Array.from(e.target.files || []));
+    const selectedFiles = Array.from(e.target.files || []);
+    const oversizedFile = selectedFiles.find((file) => file.size > 15 * 1024 * 1024);
+    const emptyFile = selectedFiles.find((file) => file.size <= 0);
+    if (emptyFile || oversizedFile || selectedFiles.length > 15) {
+      setFiles([]);
+      e.target.value = "";
+      setMessage(
+        emptyFile
+          ? `${emptyFile.name} boş görünüyor.`
+          : oversizedFile
+            ? `${oversizedFile.name} 15 MB sınırını aşıyor.`
+            : "Tek seferde en fazla 15 dosya yükleyebilirsiniz.",
+      );
+      return;
+    }
+    setFiles(selectedFiles);
     setCreatedUploadRequestId("");
     setUploadMatchDecisions({});
     setRows([]);
@@ -1434,13 +1449,15 @@ export default function TaleplerPage() {
     setUploadRequestError("");
 
     const {
-    data: { session },
+      data: { session },
     } = await supabase.auth.getSession();
 
     const token = session?.access_token;
 
     const formData = new FormData();
-    files.forEach((file) => formData.append("files", file));
+    files.forEach((file) => {
+      formData.append("files", file);
+    });
     formData.append("requester", uploadRequestModal.requester.trim());
     formData.append("department", uploadRequestModal.department.trim());
     formData.append("priority", uploadRequestModal.priority || "Normal");
@@ -1560,7 +1577,7 @@ export default function TaleplerPage() {
   if (!reportPath) return;
 
   try {
-    window.open(reportPath, "_blank");
+    window.open(reportPath, "_blank", "noopener,noreferrer");
   } catch (err) {
     console.error(err);
     setMessage("Excel indirilemedi ❌");

@@ -13,7 +13,6 @@ import { migrateLegacySupabaseSession, supabase } from "@/lib/supabase";
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [rememberMe, setRememberMe] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
@@ -61,8 +60,27 @@ export default function LoginPage() {
     }
   };
 
-  const showForgotPasswordMessage = () => {
-    setMessage("Şifre sıfırlama için sistem yöneticinizle iletişime geçin.");
+  const handlePasswordReset = async () => {
+    if (!email.trim()) {
+      setMessage("Şifre sıfırlama bağlantısı için önce e-posta adresinizi girin.");
+      return;
+    }
+    if (loading) return;
+
+    setLoading(true);
+    setMessage("");
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+        redirectTo: `${window.location.origin}/reset-password`,
+      });
+      if (error) throw error;
+      setMessage("Şifre sıfırlama bağlantısı e-posta adresinize gönderildi.");
+    } catch (error) {
+      console.error("PASSWORD RESET:", error);
+      setMessage("Şifre sıfırlama bağlantısı gönderilemedi. Birkaç dakika sonra tekrar deneyin.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -109,19 +127,10 @@ export default function LoginPage() {
             }
           />
 
-          <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
-            <label className="flex cursor-pointer items-center gap-2 font-semibold text-slate-600">
-              <input
-                type="checkbox"
-                checked={rememberMe}
-                onChange={(event) => setRememberMe(event.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 text-blue-600 accent-blue-600"
-              />
-              Beni hatırla
-            </label>
+          <div className="flex justify-end text-sm">
             <button
               type="button"
-              onClick={showForgotPasswordMessage}
+              onClick={handlePasswordReset}
               className="font-black text-blue-700 hover:text-blue-800"
             >
               Şifremi unuttum?
@@ -136,7 +145,7 @@ export default function LoginPage() {
         {message && (
           <div
             className={`mt-5 rounded-xl border px-4 py-3 text-center text-sm font-bold ${
-              message === "Giriş başarılı"
+              message === "Giriş başarılı" || message.includes("gönderildi")
                 ? "border-emerald-200 bg-emerald-50 text-emerald-700"
                 : "border-red-200 bg-red-50 text-red-700"
             }`}

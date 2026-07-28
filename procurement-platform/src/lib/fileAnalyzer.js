@@ -1,6 +1,9 @@
 import { analyzeStockMatrix } from "@/lib/stockImport";
 
 const NON_IMPORT_SHEET_NAMES = new Set(["kullanim kilavuzu", "doldurulmus ornek"]);
+const MAX_IMPORT_FILE_BYTES = 15 * 1024 * 1024;
+const MAX_IMPORT_SHEETS = 50;
+const MAX_IMPORT_ROWS_PER_SHEET = 25_000;
 
 function normalizedSheetName(value) {
   return String(value || "")
@@ -40,7 +43,17 @@ export function analyzeStockSheets(sheets, options = {}) {
 
 async function spreadsheetAnalysis(file, options) {
   const XLSX = await import("xlsx");
-  const workbook = XLSX.read(await file.arrayBuffer(), { type: "array" });
+  const workbook = XLSX.read(await file.arrayBuffer(), {
+    type: "array",
+    cellFormula: false,
+    cellHTML: false,
+    cellNF: false,
+    cellStyles: false,
+    sheetRows: MAX_IMPORT_ROWS_PER_SHEET,
+  });
+  if (workbook.SheetNames.length > MAX_IMPORT_SHEETS) {
+    throw new Error(`${file.name}: En fazla ${MAX_IMPORT_SHEETS} çalışma sayfası içe aktarılabilir.`);
+  }
   if (!workbook.SheetNames.length) throw new Error(`${file.name}: Okunabilir worksheet bulunamadı.`);
   const sheets = workbook.SheetNames.flatMap((sheetName) => {
     const worksheet = workbook.Sheets[sheetName];
@@ -105,6 +118,10 @@ async function pdfMatrix(file) {
 
 export async function analyzeStockFile(file, options = {}) {
   const extension = extensionOf(file.name);
+  if (!file.size) throw new Error(`${file.name}: Dosya boş görünüyor.`);
+  if (file.size > MAX_IMPORT_FILE_BYTES) {
+    throw new Error(`${file.name}: Dosya 15 MB sınırını aşıyor.`);
+  }
   if (!["xlsx", "xls", "csv", "pdf"].includes(extension)) {
     throw new Error(`${file.name}: Desteklenmeyen dosya tipi. XLSX, XLS, CSV veya PDF yükleyin.`);
   }
