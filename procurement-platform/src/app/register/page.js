@@ -42,7 +42,6 @@ export default function RegisterPage() {
 
   const [fullName, setFullName] = useState("");
   const [companyName, setCompanyName] = useState("");
-  const [taxNo, setTaxNo] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -52,7 +51,10 @@ export default function RegisterPage() {
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState("error");
 
-  const passwordStrength = useMemo(() => getPasswordStrength(password), [password]);
+  const passwordStrength = useMemo(
+    () => getPasswordStrength(password),
+    [password],
+  );
 
   const handleRegister = async (event) => {
     event.preventDefault();
@@ -61,13 +63,6 @@ export default function RegisterPage() {
     if (password !== confirmPassword) {
       setMessageType("error");
       setMessage("Şifreler eşleşmiyor.");
-      return;
-    }
-
-    const normalizedTaxNo = taxNo.replace(/\D/g, "");
-    if (!/^\d{10,11}$/.test(normalizedTaxNo)) {
-      setMessageType("error");
-      setMessage("Vergi numarası 10 veya 11 rakam olmalıdır.");
       return;
     }
 
@@ -80,7 +75,6 @@ export default function RegisterPage() {
         data: {
           full_name: fullName.trim(),
           company_name: companyName.trim(),
-          tax_no: normalizedTaxNo,
         },
       },
     });
@@ -102,7 +96,9 @@ export default function RegisterPage() {
     }
 
     setMessageType("success");
-    setMessage("Kayıt başarılı! E-posta doğrulama sayfasına yönlendiriliyorsunuz...");
+    setMessage(
+      "Kayıt başarılı! E-posta doğrulama sayfasına yönlendiriliyorsunuz...",
+    );
 
     setTimeout(() => {
       router.push(`/verify-email?email=${encodeURIComponent(email.trim())}`);
@@ -143,20 +139,7 @@ export default function RegisterPage() {
             />
           </div>
 
-          <div className="grid gap-5 md:grid-cols-2">
-            <AuthInput
-              id="taxNo"
-              label="Vergi Numarası"
-              value={taxNo}
-              onChange={(value) => setTaxNo(value.replace(/\D/g, "").slice(0, 11))}
-              placeholder="10 veya 11 rakam"
-              autoComplete="off"
-              inputMode="numeric"
-              maxLength={11}
-              required
-              icon={<FieldIcon type="building" />}
-            />
-
+          <div>
             <AuthInput
               id="email"
               label="E-posta adresiniz"
@@ -168,10 +151,6 @@ export default function RegisterPage() {
               required
               icon={<FieldIcon type="mail" />}
             />
-          </div>
-
-          <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-xs font-semibold leading-5 text-blue-800">
-            Firma adı ve vergi numarası şirket kimliğinizdir. Kayıt tamamlandıktan sonra kullanıcı tarafından değiştirilemez.
           </div>
 
           <div className="grid gap-5 md:grid-cols-2">
@@ -208,7 +187,11 @@ export default function RegisterPage() {
                 <PasswordToggle
                   visible={showConfirmPassword}
                   onClick={() => setShowConfirmPassword((value) => !value)}
-                  label={showConfirmPassword ? "Şifre tekrarını gizle" : "Şifre tekrarını göster"}
+                  label={
+                    showConfirmPassword
+                      ? "Şifre tekrarını gizle"
+                      : "Şifre tekrarını göster"
+                  }
                 />
               }
             />
@@ -216,14 +199,19 @@ export default function RegisterPage() {
 
           <div>
             <div className="mb-2 text-sm font-bold text-slate-700">
-              Şifre güvenliği: <span className="text-amber-600">{password ? passwordStrength.label : "Bekleniyor"}</span>
+              Şifre güvenliği:{" "}
+              <span className="text-amber-600">
+                {password ? passwordStrength.label : "Bekleniyor"}
+              </span>
             </div>
             <div className="grid grid-cols-4 gap-1.5">
               {[1, 2, 3, 4].map((step) => (
                 <div
                   key={step}
                   className={`h-1.5 rounded-full ${
-                    password && step <= passwordStrength.active ? passwordStrength.color : "bg-slate-200"
+                    password && step <= passwordStrength.active
+                      ? passwordStrength.color
+                      : "bg-slate-200"
                   }`}
                 />
               ))}
