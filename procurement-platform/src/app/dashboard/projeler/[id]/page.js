@@ -6374,7 +6374,6 @@ export default function ProjectDetailPage() {
       project_id: projectId,
       ad: title,
       durum: "Proje Talebi",
-      priority,
       filepath: null,
       totalitems: requestItems.length,
       items: requestItems,
