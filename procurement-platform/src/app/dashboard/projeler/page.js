@@ -726,7 +726,18 @@ export default function ProjectsPage() {
           project_id: projectId,
         });
 
-      return !linkError;
+      if (!linkError) return true;
+
+      const { data: linkAfterInsert } = await supabase
+        .from("document_links")
+        .select("id")
+        .eq("user_id", userId)
+        .eq("document_id", documentId)
+        .eq("project_id", projectId)
+        .limit(1)
+        .maybeSingle();
+
+      return Boolean(linkAfterInsert);
     }
 
     for (const file of files) {
@@ -737,6 +748,8 @@ export default function ProjectsPage() {
           .select("id,storage_path,original_file_name")
           .eq("user_id", userId)
           .eq("content_sha256", contentSha256)
+          .order("created_at", { ascending: false })
+          .limit(1)
           .maybeSingle();
 
         if (existingDocumentError && !isDocumentHashColumnError(existingDocumentError)) {
@@ -746,9 +759,11 @@ export default function ProjectsPage() {
 
         if (existingDocument?.storage_path) {
           const linked = await linkDocumentToProject(existingDocument.id);
-          if (!linked) warnings.push(`${file.name} arsivde var ancak projeye baglanamadi.`);
-          if (linked) archivedDocuments.push(existingDocument);
-          continue;
+          if (linked) {
+            archivedDocuments.push(existingDocument);
+            continue;
+          }
+          warnings.push(`${file.name} arsivdeki kayda baglanamadi; proje icin yeni bir kopya olusturuluyor.`);
         }
 
         const safeFileName = String(file.name || "proje-dosyasi")
@@ -784,30 +799,18 @@ export default function ProjectsPage() {
             document_date: projectPayload.start_date || null,
             currency: projectPayload.estimated_budget_currency || projectPayload.contract_currency || getBaseCurrency(settings),
         };
-        let documentWriteQuery = existingDocument?.id
-          ? supabase
-            .from("documents")
-            .update({ ...documentPayload, updated_at: new Date().toISOString() })
-            .eq("id", existingDocument.id)
-            .eq("user_id", userId)
-          : supabase
-            .from("documents")
-            .insert(documentPayload);
+        const documentWriteQuery = supabase
+          .from("documents")
+          .insert(documentPayload);
         let { data: documentRow, error: documentError } = await documentWriteQuery
           .select("id,storage_path,original_file_name")
           .single();
 
         if (documentError && isDocumentHashColumnError(documentError)) {
           const { content_sha256: _contentSha256, ...documentPayloadWithoutHash } = documentPayload;
-          const fallbackDocumentWriteQuery = existingDocument?.id
-            ? supabase
-              .from("documents")
-              .update({ ...documentPayloadWithoutHash, updated_at: new Date().toISOString() })
-              .eq("id", existingDocument.id)
-              .eq("user_id", userId)
-            : supabase
-              .from("documents")
-              .insert(documentPayloadWithoutHash);
+          const fallbackDocumentWriteQuery = supabase
+            .from("documents")
+            .insert(documentPayloadWithoutHash);
           const fallbackDocumentResult = await fallbackDocumentWriteQuery
             .select("id,storage_path,original_file_name")
             .single();

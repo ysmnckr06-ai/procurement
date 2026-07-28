@@ -869,7 +869,18 @@ export default function ProjectDetailPage() {
         project_id: projectId,
       });
 
-    return !linkError;
+    if (!linkError) return true;
+
+    const { data: linkAfterInsert } = await supabase
+      .from("document_links")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("document_id", documentId)
+      .eq("project_id", projectId)
+      .limit(1)
+      .maybeSingle();
+
+    return Boolean(linkAfterInsert);
   }
 
   async function archiveProjectSourceFiles(files, userId) {
@@ -884,6 +895,8 @@ export default function ProjectDetailPage() {
           .select("*")
           .eq("user_id", userId)
           .eq("content_sha256", contentSha256)
+          .order("created_at", { ascending: false })
+          .limit(1)
           .maybeSingle();
 
         if (existingDocumentError && !isDocumentHashColumnError(existingDocumentError)) {
@@ -904,14 +917,16 @@ export default function ProjectDetailPage() {
             if (!renameError && renamedDocument) documentForArchive = renamedDocument;
           }
           const linked = await linkDocumentToProject(userId, existingDocument.id);
-          if (!linked) warnings.push(`${file.name} arsivde var ancak projeye baglanamadi.`);
-          archivedDocuments.push({
-            ...documentForArchive,
-            original_file_name: documentForArchive.original_file_name || file.name,
-            linked_project_id: projectId,
-            linked_project_code: project?.project_code || null,
-          });
-          continue;
+          if (linked) {
+            archivedDocuments.push({
+              ...documentForArchive,
+              original_file_name: documentForArchive.original_file_name || file.name,
+              linked_project_id: projectId,
+              linked_project_code: project?.project_code || null,
+            });
+            continue;
+          }
+          warnings.push(`${file.name} arsivdeki kayda baglanamadi; proje icin yeni bir kopya olusturuluyor.`);
         }
 
         const safeUploadName = safeProjectUploadName(file.name);
@@ -945,30 +960,18 @@ export default function ProjectDetailPage() {
             document_date: project?.start_date || null,
             currency: project?.estimated_budget_currency || project?.contract_currency || projectCurrencyForDisplay(),
         };
-        let documentWriteQuery = existingDocument?.id
-          ? supabase
-            .from("documents")
-            .update({ ...documentPayload, updated_at: new Date().toISOString() })
-            .eq("id", existingDocument.id)
-            .eq("user_id", userId)
-          : supabase
-            .from("documents")
-            .insert(documentPayload);
+        const documentWriteQuery = supabase
+          .from("documents")
+          .insert(documentPayload);
         let { data: documentRow, error: documentError } = await documentWriteQuery
           .select("*")
           .single();
 
         if (documentError && isDocumentHashColumnError(documentError)) {
           const { content_sha256: _contentSha256, ...documentPayloadWithoutHash } = documentPayload;
-          const fallbackDocumentWriteQuery = existingDocument?.id
-            ? supabase
-              .from("documents")
-              .update({ ...documentPayloadWithoutHash, updated_at: new Date().toISOString() })
-              .eq("id", existingDocument.id)
-              .eq("user_id", userId)
-            : supabase
-              .from("documents")
-              .insert(documentPayloadWithoutHash);
+          const fallbackDocumentWriteQuery = supabase
+            .from("documents")
+            .insert(documentPayloadWithoutHash);
           const fallbackDocumentResult = await fallbackDocumentWriteQuery
             .select("*")
             .single();
@@ -1007,12 +1010,9 @@ export default function ProjectDetailPage() {
   }
 
   async function repairProjectSourceDocuments(userId, sourceFileNames, existingDocuments = [], projectRow = project) {
-    const wantedNames = new Set(
-      (sourceFileNames || [])
-        .map(normalizedDocumentFileName)
-        .filter(Boolean),
-    );
-    if (!wantedNames.size) return [];
+    const knownSourceFileNames = (sourceFileNames || [])
+      .map((fileName) => String(fileName || "").trim())
+      .filter(Boolean);
 
     const existingPaths = new Set(
       (existingDocuments || [])
@@ -1042,11 +1042,11 @@ export default function ProjectDetailPage() {
       if (existingPaths.has(storagePath)) continue;
 
       const normalizedStoredName = normalizedDocumentFileName(objectName);
-      const matchedSourceName = (sourceFileNames || []).find((fileName) =>
+      const matchedSourceName = knownSourceFileNames.find((fileName) =>
         normalizedStoredName.endsWith(normalizedDocumentFileName(fileName))
         || normalizedDocumentFileName(fileName).endsWith(normalizedStoredName)
-      );
-      if (!matchedSourceName || existingNames.has(normalizedDocumentFileName(matchedSourceName))) continue;
+      ) || objectName.replace(/^[0-9a-f-]{20,}-/i, "") || "Proje dosyasi";
+      if (existingNames.has(normalizedDocumentFileName(matchedSourceName))) continue;
 
       const { data: documentRow, error: documentError } = await supabase
         .from("documents")
