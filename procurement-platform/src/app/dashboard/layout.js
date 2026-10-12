@@ -17,7 +17,7 @@ export default async function DashboardLayout({ children }) {
     .eq("user_id", user.id)
     .maybeSingle();
 
-  if (licenseError || !isLicenseActive(license)) redirect("/license-expired");
+  if (licenseError || !isLicenseActive(license)) redirect("/abonelik");
 
   return (
     <DashboardShell
