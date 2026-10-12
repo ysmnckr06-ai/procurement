@@ -1449,6 +1449,7 @@ export default function ProjectsPage() {
           <button
             type="button"
             onClick={openCreateForm}
+            data-tour="yeni-proje"
             className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-bold text-white hover:bg-slate-800"
           >
             Yeni Proje

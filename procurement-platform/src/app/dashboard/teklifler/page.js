@@ -797,6 +797,7 @@ const loadSupplierProfiles = async () => {
               </p>
 
               <div
+                data-tour="teklif-yukle"
                 className="mt-5 rounded-3xl border border-dashed border-blue-300 bg-blue-50/40 p-8 text-center"
                 onDragOver={(event) => event.preventDefault()}
                 onDrop={handleDropFiles}
