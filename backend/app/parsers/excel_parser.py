@@ -1005,8 +1005,24 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
         desc_norm = normalize_col(desc)
         numbers = row_numbers(cells)
         row_total_from_file = clean_number(r.get(total_col)) if total_col is not None else 0.0
-        if row_total_from_file <= 0 and numbers:
-            row_total_from_file = numbers[-1]
+        total_is_explicit = row_total_from_file > 0
+        if row_total_from_file <= 0:
+            # Toplam sütunu yoksa satırdaki son sayıya bakılır; ancak vade,
+            # termin, miktar, iskonto gibi parasal olmayan sütunlar hariç
+            # tutulur. Aksi halde "7 gün" termini satır toplamı sanılıyordu.
+            non_money_columns = {
+                column for column in (
+                    code_col, qty_col, unit_col, discount_col, currency_col,
+                    delivery_col, payment_col, brand_col,
+                ) if column is not None
+            }
+            money_numbers = row_numbers([
+                clean_text(r.get(column))
+                for column in df.columns
+                if column not in non_money_columns
+            ])
+            if money_numbers:
+                row_total_from_file = money_numbers[-1]
         qty = clean_number(r.get(qty_col)) if qty_col is not None else 0.0
 
         if not code and not desc:
@@ -1058,6 +1074,11 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
         if price <= 0 and net_price_from_file > 0:
             price = net_price_from_file
 
+        if price <= 0 and total_is_explicit and qty > 0:
+            # Bazı teklifler yalnızca satır toplamını yazar; birim fiyat
+            # toplam / miktar olarak türetilir.
+            price = row_total_from_file / qty
+
         if discount <= 0 and price > 0 and net_price_from_file > 0 and net_price_from_file < price:
             discount = round((1 - (net_price_from_file / price)) * 100, 4)
 
@@ -1085,7 +1106,21 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
             row_total_from_file = 0
             price_status = "pending_section_total"
 
-        if price_status == "line_priced" and row_total_from_file > 0 and qty > 0 and not money_equals(row_total_calculated, row_total_from_file, 0.10) and net_price_from_file <= 0:
+        if (
+            not total_is_explicit
+            and price_status == "line_priced"
+            and row_total_calculated > 0
+            and not money_equals(row_total_calculated, row_total_from_file, 0.10)
+        ):
+            # Toplam dosyada açıkça yazmıyorsa tahmin edilen değer yerine
+            # birim fiyat × miktar × (1 - iskonto) esas alınır.
+            row_total_from_file = row_total_calculated
+            row_warnings = [
+                warning for warning in row_warnings
+                if not warning.startswith("Satır toplamı kontrol edilmeli")
+            ]
+
+        if total_is_explicit and price_status == "line_priced" and row_total_from_file > 0 and qty > 0 and not money_equals(row_total_calculated, row_total_from_file, 0.10) and net_price_from_file <= 0:
             price = row_total_from_file / qty
             net_price_from_file = price
             discount = 0
