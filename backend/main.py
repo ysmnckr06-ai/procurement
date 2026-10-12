@@ -179,67 +179,6 @@ def normalize_offer_keyword(value):
     return re.sub(r"[^A-Z0-9]+", " ", text).strip()
 
 
-def main_product_candidate_signal(row, code, name, unit_price, row_total, all_rows=None, index=0):
-    text = normalize_offer_keyword(f"{code} {name} {row.get('section_name') or ''}")
-    word_count = len([part for part in text.split(" ") if part])
-    short_description = word_count <= 4 or len(text) <= 42
-    has_total = row_total > 0 or safe_float_form(row.get("section_total")) > 0
-    unit_price_empty = unit_price <= 0
-    section_total_only = row.get("price_status") == "section_total_only" or bool(row.get("section_name"))
-    quantity = safe_float_form(row.get("firmaAdedi")) or safe_float_form(row.get("talepEdilenAdet")) or 0
-    low_quantity = 0 < quantity <= 2
-    description_only = bool(text) and not code and unit_price_empty
-    neighbors = (all_rows or [])[max(0, index - 3):index] + (all_rows or [])[index + 1:index + 4]
-    priced_neighbors = 0
-
-    for neighbor in neighbors:
-        neighbor_price = (
-            safe_float_form(neighbor.get("netBirimFiyat"))
-            or safe_float_form(neighbor.get("netBirimFiyatDosyadan"))
-            or safe_float_form(neighbor.get("birimFiyat"))
-            or 0
-        )
-        neighbor_total = (
-            safe_float_form(neighbor.get("netToplam"))
-            or safe_float_form(neighbor.get("satirToplamDosyadan"))
-            or 0
-        )
-
-        if neighbor_price > 0 or neighbor_total > 0:
-            priced_neighbors += 1
-
-    score = 0
-    reasons = []
-
-    if has_total:
-        score += 2
-        reasons.append("toplam fiyat içeriyor")
-    if section_total_only:
-        score += 3
-        reasons.append("grup başlığı gibi görünüyor")
-    if short_description:
-        score += 1
-        reasons.append("açıklama kısa")
-    if unit_price_empty:
-        score += 1
-        reasons.append("birim fiyat boş veya 0")
-    if low_quantity:
-        score += 1
-        reasons.append("adet düşük")
-    if description_only:
-        score += 1
-        reasons.append("kod/fiyat yerine başlık metni gibi")
-    if priced_neighbors >= 2:
-        score += 1
-        reasons.append("çevresinde ürün satırları var")
-
-    return {
-        "is_candidate": score >= 3,
-        "score": score,
-        "reasons": reasons,
-    }
-
-
 def safe_number_from_raw(value):
     parsed = safe_float_form(value)
     return parsed if parsed is not None else 0
@@ -472,8 +411,8 @@ def save_report_to_supabase(report_data):
         json=report_data
     )
 
-    logger.debug("SUPABASE REPORT RESPONSE:", response.status_code)
-    logger.debug(response.text)
+    logger.debug('SUPABASE REPORT RESPONSE: %s', response.status_code)
+    logger.debug("%s", response.text)
     if response.status_code in (200, 201, 204):
         return True
 
@@ -492,8 +431,8 @@ def save_report_to_supabase(report_data):
             headers=headers,
             json=legacy_report_data,
         )
-        logger.debug("SUPABASE COMPATIBLE REPORT RESPONSE:", legacy_response.status_code)
-        logger.debug(legacy_response.text)
+        logger.debug('SUPABASE COMPATIBLE REPORT RESPONSE: %s', legacy_response.status_code)
+        logger.debug("%s", legacy_response.text)
         return legacy_response.status_code in (200, 201, 204)
 
     return False
@@ -581,12 +520,6 @@ def persist_source_offer_document(
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMP_DIR = os.path.join(BASE_DIR, "app", "temp")
-REPORTS_FILE = os.path.join(TEMP_DIR, "reports.json")
-ORDERS_FILE = os.path.join(TEMP_DIR, "orders.json")
-SUPPLIERS_FILE = os.path.join(TEMP_DIR, "suppliers.json")
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
-
 def parse_license_datetime(value):
     if not value:
         return None
@@ -610,7 +543,7 @@ def require_active_license(user_id: str):
             .execute()
         )
     except Exception as exc:
-        logger.debug("LICENSE CHECK ERROR:", str(exc))
+        logger.debug('LICENSE CHECK ERROR: %s', str(exc))
         raise HTTPException(
             status_code=503,
             detail="Lisans bilgisi doğrulanamadı. Lütfen daha sonra tekrar deneyin.",
@@ -618,7 +551,12 @@ def require_active_license(user_id: str):
 
     license_row = response.data[0] if response.data else None
     if not license_row:
-        return {"plan_type": "active", "license_status": "active", "expires_at": None}
+        # Kayıt olan her kullanıcıya veritabanı tetikleyicisi deneme lisansı açar.
+        # Kaydı olmayan hesaba erişim verilmez (fail-closed).
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "LICENSE_MISSING", "message": "Bu hesap için lisans kaydı bulunamadı."},
+        )
 
     if license_row.get("license_status") != "active":
         raise HTTPException(
@@ -674,7 +612,7 @@ def verify_user_token(authorization: str, enforce_license: bool = True):
             timeout=10,
         )
     except requests.RequestException as e:
-        logger.debug("SUPABASE AUTH CONNECTION ERROR:", str(e))
+        logger.debug('SUPABASE AUTH CONNECTION ERROR: %s', str(e))
         raise HTTPException(
             status_code=503,
             detail="Supabase kullanıcı doğrulamasına ulaşılamadı. Lütfen tekrar deneyin.",
@@ -712,7 +650,7 @@ def resolve_company_info(user: dict) -> dict:
             )
             settings_row = settings_response.data[0] if settings_response.data else None
         except Exception as exc:
-            logger.debug("COMPANY SETTINGS LOOKUP ERROR:", str(exc))
+            logger.debug('COMPANY SETTINGS LOOKUP ERROR: %s', str(exc))
 
         try:
             license_response = (
@@ -724,7 +662,7 @@ def resolve_company_info(user: dict) -> dict:
             )
             license_row = license_response.data[0] if license_response.data else None
         except Exception as exc:
-            logger.debug("LICENSE COMPANY LOOKUP ERROR:", str(exc))
+            logger.debug('LICENSE COMPANY LOOKUP ERROR: %s', str(exc))
 
     company_name = (
         str((settings_row or {}).get("company_name") or "").strip()
@@ -763,22 +701,8 @@ def load_user_products_for_report(user_id: str) -> list[dict]:
 
     return products
 
-def load_json(path):
-    if not os.path.exists(path):
-        return []
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
 
-def save_json(path, data):
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
 
-def user_scoped_rows(rows, user_id):
-    return [
-        row
-        for row in rows
-        if isinstance(row, dict) and row.get("user_id") == user_id
-    ]
 
 def clean_supplier_name(name):
     name = str(name or "").strip()
@@ -811,56 +735,7 @@ def find_best_supplier(analyzed):
 
 os.makedirs(TEMP_DIR, exist_ok=True)
 
-def normalize_supplier_payload(payload: dict, supplier_id: str | None = None):
-    now = datetime.now().isoformat()
-    on_time_rate = safe_int_form(payload.get("onTimeRate")) or 0
-    delivery_score = safe_int_form(payload.get("deliveryScore")) or 4
-    quality_score = safe_int_form(payload.get("qualityScore")) or 4
-    price_score = safe_int_form(payload.get("priceScore")) or 4
 
-    return {
-        "id": supplier_id or payload.get("id") or str(uuid.uuid4()),
-        "name": str(payload.get("name") or "").strip(),
-        "category": payload.get("category") or "",
-        "contact": payload.get("contact") or "",
-        "phone": payload.get("phone") or "",
-        "email": payload.get("email") or "",
-        "city": payload.get("city") or "",
-        "taxNo": payload.get("taxNo") or "",
-        "address": payload.get("address") or "",
-        "website": payload.get("website") or "",
-        "paymentTerm": payload.get("paymentTerm") or "",
-        "lastOrderDate": payload.get("lastOrderDate") or "",
-        "totalOrders": safe_int_form(payload.get("totalOrders")) or 0,
-        "onTimeRate": max(0, min(100, on_time_rate)),
-        "productGroups": payload.get("productGroups") or "",
-        "deliveryScore": max(1, min(5, delivery_score)),
-        "qualityScore": max(1, min(5, quality_score)),
-        "priceScore": max(1, min(5, price_score)),
-        "status": payload.get("status") or "Aktif",
-        "notes": payload.get("notes") or "",
-        "createdAt": payload.get("createdAt") or now,
-        "updatedAt": now,
-    }
-
-def normalized_lookup(value):
-    return re.sub(r"\s+", " ", str(value or "").strip().lower())
-
-def ensure_unique_supplier(suppliers, supplier, supplier_id: str | None = None):
-    supplier_name = normalized_lookup(supplier.get("name"))
-    supplier_tax_no = normalized_lookup(supplier.get("taxNo"))
-
-    for existing in suppliers:
-        existing_id = str(existing.get("id"))
-
-        if supplier_id and existing_id == str(supplier_id):
-            continue
-
-        if supplier_name and normalized_lookup(existing.get("name")) == supplier_name:
-            raise HTTPException(status_code=409, detail="Bu tedarikci adi zaten kayitli")
-
-        if supplier_tax_no and normalized_lookup(existing.get("taxNo")) == supplier_tax_no:
-            raise HTTPException(status_code=409, detail="Bu vergi no zaten kayitli")
 
 def detect_file_type(filename: str) -> str:
     ext = filename.lower().split(".")[-1]
@@ -1074,6 +949,41 @@ async def save_upload_file(upload: UploadFile) -> tuple[str | None, str | None, 
 
     return save_path, original_name, None
 
+
+
+UUID_PATTERN = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+
+
+def ensure_owned_record(table: str, record_id: str, user_id: str, label: str):
+    """Boş değeri None yapar; dolu değerin kullanıcıya ait olduğunu doğrular."""
+    value = str(record_id or "").strip()
+    if not value:
+        return None
+    if not UUID_PATTERN.match(value):
+        raise HTTPException(status_code=400, detail=f"{label} numarası geçersiz.")
+
+    response = (
+        supabase.table(table)
+        .select("id")
+        .eq("id", value)
+        .eq("user_id", user_id)
+        .limit(1)
+        .execute()
+    )
+    if not response.data:
+        raise HTTPException(status_code=404, detail=f"{label} bulunamadı.")
+    return value
+
+
+def remove_temp_files(paths):
+    """Geçici yüklemeleri ve raporları istek bitince sunucu diskinden siler."""
+    for path in paths or []:
+        try:
+            if path and os.path.exists(path):
+                os.remove(path)
+        except OSError:
+            logger.warning("Gecici dosya silinemedi: %s", path)
+
 def clean_key(value: str) -> str:
     text = str(value or "").lower()
 
@@ -1165,10 +1075,10 @@ async def analyze_order_document_ocr(
     except HTTPException:
         raise
     except Exception as error:
-        logger.debug("ORDER DOCUMENT OCR ERROR:", str(error))
+        logger.exception("ORDER DOCUMENT OCR ERROR")
         raise HTTPException(
             status_code=422,
-            detail=f"Belge OCR analizi başarısız: {str(error)}",
+            detail="Belge OCR analizi başarısız oldu. Dosyanın okunaklı olduğundan emin olup tekrar deneyin.",
         ) from error
     finally:
         if save_path and os.path.exists(save_path):
@@ -1384,8 +1294,8 @@ async def bulk_delete_project_items(
         )
 
         if response.status_code >= 400:
-            logger.debug("PROJECT ITEM SELECT ERROR:", response.status_code, response.text)
-            raise HTTPException(status_code=400, detail=response.text or "Proje urunleri okunamadi")
+            logger.debug('PROJECT ITEM SELECT ERROR: %s %s', response.status_code, response.text)
+            raise HTTPException(status_code=400, detail="Proje urunleri okunamadi")
 
         return response.json() or []
 
@@ -1393,7 +1303,7 @@ async def bulk_delete_project_items(
     known_ids = {str(item.get("id")) for item in project_items if item.get("id")}
     selected_ids = unique([item_id for item_id in selected_ids if item_id in known_ids])
 
-    logger.debug("BULK DELETE selected id count:", len(selected_ids))
+    logger.debug('BULK DELETE selected id count: %s', len(selected_ids))
 
     if not selected_ids:
         raise HTTPException(status_code=400, detail="Secili urunler proje listesinde bulunamadi")
@@ -1422,7 +1332,7 @@ async def bulk_delete_project_items(
     descendant_ids = unique([item_id for item_id in descendant_ids if item_id in known_ids])
     selected_remaining_ids = unique([item_id for item_id in selected_ids if item_id not in set(descendant_ids)])
 
-    logger.debug("BULK DELETE child id count:", len(descendant_ids))
+    logger.debug('BULK DELETE child id count: %s', len(descendant_ids))
 
     deleted_ids = []
     batch_logs = []
@@ -1446,8 +1356,8 @@ async def bulk_delete_project_items(
             )
 
             if response.status_code >= 400:
-                logger.debug("BULK DELETE batch error:", label, batch_index, response.status_code, response.text)
-                raise HTTPException(status_code=400, detail=response.text or f"{label} batch silinemedi")
+                logger.debug('BULK DELETE batch error: %s %s %s %s', label, batch_index, response.status_code, response.text)
+                raise HTTPException(status_code=400, detail=f"{label} batch silinemedi")
 
             deleted_rows = response.json() if response.text else []
             deleted_batch_ids = [row.get("id") for row in deleted_rows if row.get("id")]
@@ -1459,7 +1369,7 @@ async def bulk_delete_project_items(
                 "deleted": len(deleted_batch_ids),
             }
             batch_logs.append(log)
-            logger.debug("BULK DELETE batch result:", log)
+            logger.debug('BULK DELETE batch result: %s', log)
 
     delete_batch("children", descendant_ids)
     delete_batch("selected", selected_remaining_ids)
@@ -1470,7 +1380,7 @@ async def bulk_delete_project_items(
         remaining_items.extend(select_project_items({"id": f"in.({','.join(batch_ids)})"}))
 
     remaining_ids = [item.get("id") for item in remaining_items if item.get("id")]
-    logger.debug("BULK DELETE remaining count:", len(remaining_ids))
+    logger.debug('BULK DELETE remaining count: %s', len(remaining_ids))
 
     return {
         "success": True,
@@ -1506,163 +1416,178 @@ async def parse_project_items(
     blocking_errors = []
     parser_debug = []
 
-    for upload in files:
-        save_path, original_name, upload_error = await save_upload_file(upload)
-        if upload_error:
-            warnings.append(upload_error)
-            continue
+    temp_paths = []
+    try:
+        for upload in files:
+            save_path, original_name, upload_error = await save_upload_file(upload)
+            if save_path:
+                temp_paths.append(save_path)
+            if upload_error:
+                warnings.append(upload_error)
+                continue
 
-        try:
-            file_type = detect_file_type(original_name)
-            fallback_name = os.path.splitext(original_name)[0].replace("_", " ").replace("-", " ").title()
+            try:
+                file_type = detect_file_type(original_name)
+                fallback_name = os.path.splitext(original_name)[0].replace("_", " ").replace("-", " ").title()
 
-            if file_type == "excel":
-                audit = parse_excel_with_audit(save_path, fallback_name, original_name)
-                rows = audit["rows"]
-                sections.extend(audit.get("sections", []))
-                blocking_errors.extend(audit.get("errors", []))
-                warnings.extend(audit.get("warnings", []))
-                parser_debug.extend(audit.get("debug", []))
-            elif file_type == "pdf":
-                audit = parse_pdf_with_audit(save_path, fallback_name, original_name)
-                rows = audit["rows"]
-                sections.extend(audit.get("sections", []))
-                blocking_errors.extend(audit.get("errors", []))
-                warnings.extend(audit.get("warnings", []))
-                parser_debug.extend(audit.get("debug", []))
-            elif file_type == "image":
-                rows = parse_image(save_path, fallback_name, original_name)
-            else:
-                rows = []
+                if file_type == "excel":
+                    audit = await run_in_threadpool(parse_excel_with_audit, save_path, fallback_name, original_name)
+                    rows = audit["rows"]
+                    sections.extend(audit.get("sections", []))
+                    blocking_errors.extend(audit.get("errors", []))
+                    warnings.extend(audit.get("warnings", []))
+                    parser_debug.extend(audit.get("debug", []))
+                elif file_type == "pdf":
+                    audit = await run_in_threadpool(parse_pdf_with_audit, save_path, fallback_name, original_name)
+                    rows = audit["rows"]
+                    sections.extend(audit.get("sections", []))
+                    blocking_errors.extend(audit.get("errors", []))
+                    warnings.extend(audit.get("warnings", []))
+                    parser_debug.extend(audit.get("debug", []))
+                elif file_type == "image":
+                    rows = await run_in_threadpool(parse_image, save_path, fallback_name, original_name)
+                else:
+                    rows = []
 
-            if not rows and file_type != "pdf":
-                rows = parse_request_file(save_path, original_name)
+                if not rows and file_type != "pdf":
+                    rows = await run_in_threadpool(parse_request_file, save_path, original_name)
 
-            logger.debug("OKUNAN PROJE MALZEME DOSYASI:", original_name)
-            logger.debug("OKUNAN PROJE MALZEME SATIR SAYISI:", len(rows))
-            logger.debug("OKUNAN PROJE MALZEME ILK SATIRLAR:", rows[:5])
+                logger.debug('OKUNAN PROJE MALZEME DOSYASI: %s', original_name)
+                logger.debug('OKUNAN PROJE MALZEME SATIR SAYISI: %s', len(rows))
+                logger.debug('OKUNAN PROJE MALZEME ILK SATIRLAR: %s', rows[:5])
 
-            if not rows:
-                warnings.append(f"Veri okunamadi: {original_name}")
+                if not rows:
+                    warnings.append(f"Veri okunamadi: {original_name}")
 
-            all_rows.extend(rows)
-        except Exception as e:
-            logger.debug("PROJE MALZEME DOSYASI HATASI:", original_name, str(e))
-            warnings.append(f"Hata ({original_name}): {str(e)}")
+                all_rows.extend(rows)
+            except Exception as e:
+                logger.debug('PROJE MALZEME DOSYASI HATASI: %s %s', original_name, str(e))
+                warnings.append(f"Hata ({original_name}): {str(e)}")
 
-    auto_code_counter = 1
-    result_rows = []
-    raw_items = []
+        auto_code_counter = 1
+        result_rows = []
+        raw_items = []
 
-    for index, row in enumerate(all_rows):
-        code = str(row.get("urunKodu") or "").strip().upper()
-        name = str(row.get("urunAciklamasi") or "").strip()
-        brand = str(row.get("marka") or row.get("brand") or "").strip()
-        unit = str(row.get("birim") or "adet").strip().lower() or "adet"
+        for index, row in enumerate(all_rows):
+            code = str(row.get("urunKodu") or "").strip().upper()
+            name = str(row.get("urunAciklamasi") or "").strip()
+            brand = str(row.get("marka") or row.get("brand") or "").strip()
+            unit = str(row.get("birim") or "adet").strip().lower() or "adet"
 
-        quantity = safe_float_form(row.get("firmaAdedi"))
-        if quantity is None:
-            quantity = safe_float_form(row.get("talepEdilenAdet")) or 0
+            quantity = safe_float_form(row.get("firmaAdedi"))
+            if quantity is None:
+                quantity = safe_float_form(row.get("talepEdilenAdet")) or 0
 
-        unit_price = (
-            safe_float_form(row.get("netBirimFiyat"))
-            or safe_float_form(row.get("netBirimFiyatDosyadan"))
-            or safe_float_form(row.get("birimFiyat"))
-            or 0
-        )
-        original_unit_price = unit_price
+            unit_price = (
+                safe_float_form(row.get("netBirimFiyat"))
+                or safe_float_form(row.get("netBirimFiyatDosyadan"))
+                or safe_float_form(row.get("birimFiyat"))
+                or 0
+            )
+            original_unit_price = unit_price
 
-        row_total = (
-            safe_float_form(row.get("netToplam"))
-            or safe_float_form(row.get("satirToplamDosyadan"))
-            or 0
-        )
-        price_status = row.get("price_status") or "line_priced"
+            row_total = (
+                safe_float_form(row.get("netToplam"))
+                or safe_float_form(row.get("satirToplamDosyadan"))
+                or 0
+            )
+            price_status = row.get("price_status") or "line_priced"
 
-        if price_status not in ["line_priced", "flat_main_item"] or row.get("section_name"):
-            price_status = "section_total_only"
-            unit_price = 0
-            row_total = 0
+            if price_status not in ["line_priced", "flat_main_item"] or row.get("section_name"):
+                price_status = "section_total_only"
+                unit_price = 0
+                row_total = 0
 
-        if row_total > 0 and quantity > 0 and unit_price <= 0:
-            unit_price = row_total / quantity
+            if row_total > 0 and quantity > 0 and unit_price <= 0:
+                unit_price = row_total / quantity
 
-        raw_cells = row.get("raw_cells") or row.get("rawCells") or row.get("cells")
+            raw_cells = row.get("raw_cells") or row.get("rawCells") or row.get("cells")
 
-        if not raw_cells:
-            raw_cells = [value for value in row.values() if value not in [None, ""]]
+            if not raw_cells:
+                raw_cells = [value for value in row.values() if value not in [None, ""]]
 
-        section_total = safe_float_form(row.get("section_total")) or 0
-        raw_quantity = quantity
-        raw_total = row_total if row_total > 0 else quantity * unit_price
+            section_total = safe_float_form(row.get("section_total")) or 0
+            raw_quantity = quantity
+            raw_total = row_total if row_total > 0 else quantity * unit_price
 
-        if price_status == "section_total_only":
-            raw_quantity = quantity if quantity > 0 else 1
-            raw_total = section_total or safe_float_form(row.get("satirToplamDosyadan")) or safe_float_form(row.get("netToplam")) or raw_total
+            if price_status == "section_total_only":
+                raw_quantity = quantity if quantity > 0 else 1
+                raw_total = section_total or safe_float_form(row.get("satirToplamDosyadan")) or safe_float_form(row.get("netToplam")) or raw_total
 
-        raw_items.append({
-            "id": f"raw-{index + 1}",
-            "source_file": row.get("kaynakDosya") or "",
-            "source_type": row.get("kaynakTipi") or "",
-            "row_index": index + 1,
-            "raw_cells": raw_cells,
-            "product_code": code,
-            "brand": brand,
-            "description": name,
-            "quantity": raw_quantity,
-            "unit": unit,
-            "unit_price": unit_price,
-            "total": raw_total,
-            "currency": row.get("paraBirimi") or row.get("currency") or "TRY",
-            "section_name": row.get("section_name") or "",
-            "section_total": section_total,
-            "section_quantity": safe_float_form(row.get("section_quantity")) or 0,
-            "price_status": price_status,
-        })
+            raw_items.append({
+                "id": f"raw-{index + 1}",
+                "source_file": row.get("kaynakDosya") or "",
+                "source_type": row.get("kaynakTipi") or "",
+                "row_index": index + 1,
+                "raw_cells": raw_cells,
+                "product_code": code,
+                "brand": brand,
+                "description": name,
+                "quantity": raw_quantity,
+                "unit": unit,
+                "unit_price": unit_price,
+                "total": raw_total,
+                "currency": row.get("paraBirimi") or row.get("currency") or "TRY",
+                "section_name": row.get("section_name") or "",
+                "section_total": section_total,
+                "section_quantity": safe_float_form(row.get("section_quantity")) or 0,
+                "price_status": price_status,
+            })
 
-        if not name or quantity <= 0:
-            continue
+            if not name or quantity <= 0:
+                continue
 
-        if not code:
-            code = f"PRJ-{auto_code_counter:04d}"
-            auto_code_counter += 1
+            if not code:
+                code = f"PRJ-{auto_code_counter:04d}"
+                auto_code_counter += 1
 
-        result_rows.append({
-            "product_code": code,
-            "brand": brand,
-            "product_name": name,
-            "unit": unit,
-            "estimated_quantity": quantity,
-            "estimated_unit_price": unit_price,
-            "estimated_total": row_total if row_total > 0 else quantity * unit_price,
-            "status": "Bekliyor",
-            "note": row.get("firmaAdi") or row.get("firma") or "",
-            "source_file": row.get("kaynakDosya") or "",
-            "source_type": row.get("kaynakTipi") or "",
-            "section_name": row.get("section_name") or "",
-            "section_total": row.get("section_total") or 0,
-            "section_quantity": row.get("section_quantity") or 0,
-            "price_status": price_status,
-        })
+            result_rows.append({
+                "product_code": code,
+                "brand": brand,
+                "product_name": name,
+                "unit": unit,
+                "estimated_quantity": quantity,
+                "estimated_unit_price": unit_price,
+                "estimated_total": row_total if row_total > 0 else quantity * unit_price,
+                "status": "Bekliyor",
+                "note": row.get("firmaAdi") or row.get("firma") or "",
+                "source_file": row.get("kaynakDosya") or "",
+                "source_type": row.get("kaynakTipi") or "",
+                "section_name": row.get("section_name") or "",
+                "section_total": row.get("section_total") or 0,
+                "section_quantity": row.get("section_quantity") or 0,
+                "price_status": price_status,
+            })
 
-    sections = normalize_project_sections(sections)
+        sections = normalize_project_sections(sections)
 
-    if not result_rows:
+        if not result_rows:
+            return {
+                "success": False,
+                "warnings": warnings + ["Dosyalardan projeye aktarilabilir urun bulunamadi."],
+                "rows": [],
+                "raw_items": raw_items,
+                "rawItems": raw_items,
+                "sections": sections,
+                "debug": parser_debug,
+                "totalRows": 0,
+            }
+
+        if blocking_errors:
+            return {
+                "success": False,
+                "warnings": ["Dosya aktarima kilitlendi."] + blocking_errors,
+                "rows": result_rows,
+                "raw_items": raw_items,
+                "rawItems": raw_items,
+                "sections": sections,
+                "debug": parser_debug,
+                "totalRows": len(result_rows),
+            }
+
         return {
-            "success": False,
-            "warnings": warnings + ["Dosyalardan projeye aktarilabilir urun bulunamadi."],
-            "rows": [],
-            "raw_items": raw_items,
-            "rawItems": raw_items,
-            "sections": sections,
-            "debug": parser_debug,
-            "totalRows": 0,
-        }
-
-    if blocking_errors:
-        return {
-            "success": False,
-            "warnings": ["Dosya aktarima kilitlendi."] + blocking_errors,
+            "success": True,
+            "warnings": warnings,
             "rows": result_rows,
             "raw_items": raw_items,
             "rawItems": raw_items,
@@ -1670,17 +1595,9 @@ async def parse_project_items(
             "debug": parser_debug,
             "totalRows": len(result_rows),
         }
+    finally:
+        remove_temp_files(temp_paths)
 
-    return {
-        "success": True,
-        "warnings": warnings,
-        "rows": result_rows,
-        "raw_items": raw_items,
-        "rawItems": raw_items,
-        "sections": sections,
-        "debug": parser_debug,
-        "totalRows": len(result_rows),
-    }
 
 @app.post("/analyze-offers")
 async def analyze_offers(
@@ -1726,6 +1643,17 @@ async def analyze_offers(
     if len(files) > MAX_UPLOAD_FILES:
         raise HTTPException(status_code=400, detail="En fazla 15 dosya yükleyebilirsiniz.")
 
+    # Rapor ve teklif kayıtları servis rolüyle yazıldığı için, bağlanacak proje ve
+    # talebin bu kullanıcıya ait olduğu burada doğrulanır.
+    project_id = ensure_owned_record("projects", project_id, user_id, "Proje") or ""
+    request_id = ensure_owned_record("requests", request_id, user_id, "Talep") or ""
+
+    if not str(exchange_rates_json or "").strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Kur bilgisi eksik. Sayfayı yenileyip güncel kurlarla tekrar deneyin.",
+        )
+
     MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
 
     for file in files:
@@ -1748,7 +1676,7 @@ async def analyze_offers(
             if isinstance(parsed_profiles, list):
                 supplier_profiles = [profile for profile in parsed_profiles if isinstance(profile, dict)]
         except Exception as profile_error:
-            logger.debug("TEDARIKCI PROFILLERI OKUNAMADI:", str(profile_error))
+            logger.debug('TEDARIKCI PROFILLERI OKUNAMADI: %s', str(profile_error))
             warnings.append("Tedarikçi kartı değerlendirmeleri okunamadı; güven ve kalite için nötr değerlendirme kullanıldı.")
 
     user_constraints = {
@@ -1776,10 +1704,10 @@ async def analyze_offers(
     "currency_risk": "medium"
     }
     
-    logger.debug("USER CONSTRAINTS:", user_constraints)
-    logger.debug("SEÇİLEN TALEP DOSYASI:", request_file_name)
-    logger.debug("SEÇİLEN TALEP PATH:", request_report_path)
-    logger.debug("GELEN TEKLİF DOSYALARI:", [f.filename for f in files])
+    logger.debug('USER CONSTRAINTS: %s', user_constraints)
+    logger.debug('SEÇİLEN TALEP DOSYASI: %s', request_file_name)
+    logger.debug('SEÇİLEN TALEP PATH: %s', request_report_path)
+    logger.debug('GELEN TEKLİF DOSYALARI: %s', [f.filename for f in files])
 
     if len(files) > 15:
         return {
@@ -1796,348 +1724,353 @@ async def analyze_offers(
         if x.strip()
     ]
 
-    for i, upload in enumerate(files):
-        save_path, original_name, upload_error = await save_upload_file(upload)
-        if upload_error:
-            warnings.append(upload_error)
-            continue
+    temp_paths = []
+    try:
+        for i, upload in enumerate(files):
+            save_path, original_name, upload_error = await save_upload_file(upload)
+            if save_path:
+                temp_paths.append(save_path)
+            if upload_error:
+                warnings.append(upload_error)
+                continue
 
-        firma_adi = os.path.splitext(original_name)[0].replace("_", " ").replace("-", " ").title()
-        file_type = detect_file_type(original_name)
+            firma_adi = os.path.splitext(original_name)[0].replace("_", " ").replace("-", " ").title()
+            file_type = detect_file_type(original_name)
 
-        try:
-            ensure_xlsx_workbook_has_data(save_path, original_name)
-
-            if file_type == "excel":
-                audit = parse_excel_with_audit(save_path, firma_adi, original_name)
-                rows = audit["rows"]
-                warnings.extend(audit.get("warnings", []))
-                warnings.extend(audit.get("errors", []))
-
-            elif file_type == "pdf":
-                audit = parse_pdf_with_audit(save_path, firma_adi, original_name)
-                rows = audit["rows"]
-                warnings.extend(audit.get("warnings", []))
-                warnings.extend(audit.get("errors", []))
-
-            elif file_type == "image":
-                rows = parse_image(save_path, firma_adi, original_name)
-
-            else:
-                rows = []
-                warnings.append(f"Desteklenmeyen teklif dosyası: {original_name}")
-
-            logger.debug("OKUNAN TEKLİF DOSYASI:", upload.filename)
-            logger.debug("OKUNAN SATIR SAYISI:", len(rows))
-            logger.debug("İLK SATIRLAR:", rows[:3])
-
-            if not rows:
-                warnings.append(f"Veri okunamadı: {upload.filename}")
-            else:
-                first_row = rows[0] if isinstance(rows[0], dict) else {}
-                saved_offer_sources.append({
-                    "file_path": save_path,
-                    "original_name": original_name,
-                    "supplier_name": first_row.get("firma") or first_row.get("firmaAdi") or firma_adi,
-                    "currency": first_row.get("paraBirimi") or "TRY",
-                })
-
-            all_rows.extend(rows)
-
-        except Exception as e:
-            logger.debug("DOSYA HATASI:", upload.filename, str(e))
-            warnings.append(f"Hata ({upload.filename}): {str(e)}")
-
-    if not all_rows:
-        return {
-            "success": False,
-            "warnings": warnings + ["Hiç teklif satırı okunamadı."],
-            "reportPath": None,
-            "totalRows": 0,
-            "totalGroups": 0,
-        }
-
-    filtered = []
-
-    for row in all_rows:
-        has_code = bool(row.get("urunKodu"))
-        has_desc = bool(row.get("urunAciklamasi"))
-
-        try:
-            has_price = float(row.get("birimFiyat", 0) or 0) > 0
-        except Exception:
-            has_price = False
-
-        if (has_code or has_desc) and has_price:
-            filtered.append(row)
-
-    logger.debug("TOPLAM OKUNAN SATIR:", len(all_rows))
-    logger.debug("FİLTRELENEN GEÇERLİ SATIR:", len(filtered))
-
-    if not filtered:
-        return {
-            "success": False,
-            "warnings": warnings + ["Geçerli ürün/fiyat satırı bulunamadı."],
-            "reportPath": None,
-            "totalRows": 0,
-            "totalGroups": 0,
-        }
-
-    # --- TALEP LİSTESİNİ OKU ---
-    request_items = []
-
-    request_items = normalize_request_items_payload(request_items_json)
-
-    if request_items:
-        logger.debug("SEÇİLEN TALEP JSON SATIR SAYISI:", len(request_items))
-
-    if not request_items and request_report_path:
-        request_file_path = os.path.join(
-            TEMP_DIR,
-            os.path.basename(request_report_path)
-        )
-
-        if os.path.exists(request_file_path):
             try:
-                request_items = parse_request_file(request_file_path, request_file_name)
-                logger.debug("TALEP SATIR SAYISI:", len(request_items))
+                await run_in_threadpool(ensure_xlsx_workbook_has_data, save_path, original_name)
+
+                if file_type == "excel":
+                    audit = await run_in_threadpool(parse_excel_with_audit, save_path, firma_adi, original_name)
+                    rows = audit["rows"]
+                    warnings.extend(audit.get("warnings", []))
+                    warnings.extend(audit.get("errors", []))
+
+                elif file_type == "pdf":
+                    audit = await run_in_threadpool(parse_pdf_with_audit, save_path, firma_adi, original_name)
+                    rows = audit["rows"]
+                    warnings.extend(audit.get("warnings", []))
+                    warnings.extend(audit.get("errors", []))
+
+                elif file_type == "image":
+                    rows = await run_in_threadpool(parse_image, save_path, firma_adi, original_name)
+
+                else:
+                    rows = []
+                    warnings.append(f"Desteklenmeyen teklif dosyası: {original_name}")
+
+                logger.debug('OKUNAN TEKLİF DOSYASI: %s', upload.filename)
+                logger.debug('OKUNAN SATIR SAYISI: %s', len(rows))
+                logger.debug('İLK SATIRLAR: %s', rows[:3])
+
+                if not rows:
+                    warnings.append(f"Veri okunamadı: {upload.filename}")
+                else:
+                    first_row = rows[0] if isinstance(rows[0], dict) else {}
+                    saved_offer_sources.append({
+                        "file_path": save_path,
+                        "original_name": original_name,
+                        "supplier_name": first_row.get("firma") or first_row.get("firmaAdi") or firma_adi,
+                        "currency": first_row.get("paraBirimi") or "TRY",
+                    })
+
+                all_rows.extend(rows)
+
             except Exception as e:
-                logger.debug("TALEP DOSYASI OKUMA HATASI:", str(e))
-                warnings.append(f"Talep dosyası okunamadı: {str(e)}")
-        else:
-            logger.debug("TALEP DOSYASI BULUNAMADI:", request_file_path)
-            warnings.append("Talep dosyası bulunamadı, teklifler kendi içinde gruplanacak.")
+                logger.debug('DOSYA HATASI: %s %s', upload.filename, str(e))
+                warnings.append(f"Hata ({upload.filename}): {str(e)}")
 
-    # --- GRUPLAMA ---
-    if request_items:
-        groups = match_offers_to_requests(filtered, request_items)
-
-        matched_offer_ids = set()
-
-        for g in groups:
-            for o in g.get("offers", []):
-                matched_offer_ids.add(id(o))
-
-        unmatched_offers = [
-            o for o in filtered
-            if id(o) not in matched_offer_ids
-        ]
-
-        if unmatched_offers:
-            warnings.append(
-                f"{len(unmatched_offers)} teklif satırı talep listesiyle eşleşmedi ve yeni talep kalemi oluşturmaması için rapora eklenmedi."
-            )
-
-    else:
-        groups = group_rows(filtered)
-
-    logger.debug("FİRMALARA GÖRE SATIR SAYISI:")
-    firma_debug = {}
-
-    for r in filtered:
-        firma = r.get("firma") or r.get("firmaAdi") or "Bilinmeyen"
-        firma_debug[firma] = firma_debug.get(firma, 0) + 1
-
-    logger.debug(firma_debug)
-    logger.debug("OLUŞAN GRUP SAYISI:", len(groups))
-
-    # --- KUR BİLGİSİ ---
-    exchange_rates = {
-        "TRY": 1.0,
-        "USD": 39.2,
-        "EUR": 42.8,
-    }
-
-    if exchange_rates_json:
-        try:
-            submitted_rates = json.loads(exchange_rates_json)
-            for currency in ["USD", "EUR", "GBP"]:
-                rate = safe_float_form(submitted_rates.get(currency))
-                if rate is None or rate <= 0:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"{currency} kuru 0'dan büyük olmalıdır.",
-                    )
-                exchange_rates[currency] = rate
-        except Exception as e:
-            if isinstance(e, HTTPException):
-                raise
-            logger.debug("KUR BILGISI OKUNAMADI:", str(e))
-            raise HTTPException(status_code=400, detail="Kur bilgisi gecersiz.")
-
-    # --- ŞİRKET / KARAR MOTORU AYARLARI ---
-    decision_config = {
-        "annual_interest_rate": max(float(annual_interest_rate or 0), 0.0),
-        "daily_delay_cost": max(float(daily_delay_cost or 0), 0.0),
-        "missing_qty_penalty_multiplier": 1.25,
-        "supplier_risk_rate": 0.0,
-    }
-
-    # --- KULLANICI ÖNCELİKLERİ ---
-    user_preferences = {
-        "price_weight": 50,
-        "vade_weight": 20,
-        "termin_weight": 20,
-        "risk_weight": 10,
-    }
-
-    analyzed = analyze_groups(
-        groups,
-        exchange_rates,
-        config=decision_config,
-        constraints=user_constraints,
-        preferences=user_preferences,
-    )
-
-    logger.debug("ANALİZ EDİLEN GRUP SAYISI:", len(analyzed))
-
-    report_name = f"mukayese_raporu_{report_id}.xlsx"
-    report_path = os.path.join(TEMP_DIR, report_name)
-    report_storage_bucket = "request-reports"
-    report_storage_path = f"{user_id}/comparison/{report_name}"
-
-    report_company_info = resolve_company_info(user) or {}
-    report_termin_days = safe_int_form(max_termin_days)
-    report_company_info.update({
-        "annual_interest_rate": max(float(annual_interest_rate or 0), 0.0),
-        "accepted_termin_days": report_termin_days if report_termin_days is not None else 15,
-        "daily_delay_cost_try": max(float(daily_delay_cost or 0), 0.0),
-        "missing_data_policy": user_constraints["missing_data_policy"],
-    })
-    build_excel_report(analyzed, report_path, report_company_info)
-    upload_private_report(report_path, report_storage_path)
-
-    source_document_ids = {}
-    for source in saved_offer_sources:
-        try:
-            document_id = persist_source_offer_document(
-                source["file_path"],
-                source["original_name"],
-                user_id,
-                report_id,
-                source["supplier_name"],
-                source["currency"],
-            )
-            if document_id:
-                source_document_ids[source["original_name"]] = document_id
-        except Exception as source_document_error:
-            logger.exception("KAYNAK TEKLIF BELGESI KAYDEDILEMEDI: %s", source_document_error)
-            warnings.append(f"{source['original_name']} kaynak teklif belgesi arşive kaydedilemedi.")
-
-    order_items = []
-    for group in analyzed:
-        best = (
-            group.get("best")
-            or group.get("bestOffer")
-            or group.get("onerilenTeklif")
-            or {}
-        )
-
-        request_item = (
-            group.get("requestItem")
-            or group.get("request")
-            or group.get("talep")
-            or {}
-        )
-
-        order_items.append({
-            "productCode": group.get("urunKodu") or request_item.get("urunKodu") or best.get("urunKodu") or "",
-            "productName": group.get("urunAciklamasi") or request_item.get("urunAciklamasi") or best.get("urunAciklamasi") or "",
-            "quantity": group.get("talepEdilenAdet") or request_item.get("talepEdilenAdet") or best.get("talepEdilenAdet") or 0,
-            "unit": group.get("birim") or request_item.get("birim") or best.get("birim") or "adet",
-            "selectedFirm": best.get("firmaAdi") or best.get("firma") or "",
-            "unitPrice": best.get("birimFiyat") or 0,
-            "discount": best.get("iskonto") or 0,
-            "netUnitPrice": best.get("netBirimFiyat") or 0,
-            "total": best.get("netToplam") or best.get("netToplamTRY") or best.get("toplamTutar") or 0,
-            "paymentTerm": best.get("vade") or "",
-            "deliveryTerm": best.get("termin") or "",
-            "currency": best.get("paraBirimi") or "TRY",
-            "exchangeRate": best.get("kur") or 1,
-            "stockCoverableQuantity": group.get("stockCoverableQuantity") or request_item.get("stockCoverableQuantity") or 0,
-            "purchaseQuantity": group.get("purchaseQuantity") or request_item.get("purchaseQuantity") or group.get("talepEdilenAdet") or 0,
-            "allocations": group.get("allocations") or request_item.get("allocations") or [],
-            "sourceRequestId": request_id or "",
-            "sourceRequestNumber": request_number or "",
-            "sourceRequestTitle": request_title or request_file_name or "",
-            "requestOwner": request_owner or "",
-            "requestDepartment": request_department or "",
-            "sourceOfferDocumentId": source_document_ids.get(
-                best.get("kaynakDosya") or best.get("dosyaAdi") or ""
-            ),
-        })
-        
-    logger.debug("ORDER ITEMS SAYISI:", len(order_items))
-    logger.debug("ORDER ITEMS:", order_items)
-
-    report_record = {
-        "id": report_id,
-        "user_id": user_id,
-        "project_id": project_id if project_id else None,
-        "source_request_id": request_id if request_id else None,
-        "source_request_number": request_number or None,
-        "source_request_title": request_title or request_file_name or None,
-        "source_request_owner": request_owner or None,
-        "source_request_department": request_department or None,
-        "ad": request_file_name or "Teklif Mukayese Raporu",
-        "tarih": datetime.now().strftime("%Y-%m-%d %H:%M"),
-        "tur": "Mukayese",
-        "durum": "Bekliyor",
-        "onerilenfirma": find_best_supplier(analyzed),
-        "reportpath": f"/download-report/{report_name}",
-        "report_storage_bucket": report_storage_bucket,
-        "report_storage_path": report_storage_path,
-        "totalrows": len(filtered),
-        "totalgroups": len(analyzed),
-        "analysis": analyzed,
-        "items": order_items,
-    }
-
-    offer_groups = {}
-
-    for row in filtered:
-        dosya_adi = row.get("kaynakDosya") or row.get("dosyaAdi") or "Bilinmeyen dosya"
-        firma_adi = row.get("firma") or row.get("firmaAdi") or os.path.splitext(dosya_adi)[0]
-
-        if dosya_adi not in offer_groups:
-            offer_groups[dosya_adi] = {
-                "firma_adi": firma_adi,
-                "dosya_adi": dosya_adi,
-                "toplam_tutar": 0,
-                "para_birimi": row.get("paraBirimi") or "TRY",
-                "satir_sayisi": 0,
+        if not all_rows:
+            return {
+                "success": False,
+                "warnings": warnings + ["Hiç teklif satırı okunamadı."],
+                "reportPath": None,
+                "totalRows": 0,
+                "totalGroups": 0,
             }
 
-        offer_groups[dosya_adi]["satir_sayisi"] += 1
-        offer_groups[dosya_adi]["toplam_tutar"] += safe_float_form(
-            row.get("netToplam") or row.get("toplamTutar") or 0
-        )
+        filtered = []
 
-    for offer in offer_groups.values():
-        offer_record = {
-            "user_id": user_id,
-            "request_id": request_id if request_id else None,
-            "project_id": project_id if project_id else None,
-            "firma_adi": offer["firma_adi"],
-            "dosya_adi": offer["dosya_adi"],
-            "para_birimi": offer["para_birimi"],
-            "toplam_tutar": offer["toplam_tutar"],
-            "durum": "Analiz edildi",
+        for row in all_rows:
+            has_code = bool(row.get("urunKodu"))
+            has_desc = bool(row.get("urunAciklamasi"))
+
+            try:
+                has_price = float(row.get("birimFiyat", 0) or 0) > 0
+            except Exception:
+                has_price = False
+
+            if (has_code or has_desc) and has_price:
+                filtered.append(row)
+
+        logger.debug('TOPLAM OKUNAN SATIR: %s', len(all_rows))
+        logger.debug('FİLTRELENEN GEÇERLİ SATIR: %s', len(filtered))
+
+        if not filtered:
+            return {
+                "success": False,
+                "warnings": warnings + ["Geçerli ürün/fiyat satırı bulunamadı."],
+                "reportPath": None,
+                "totalRows": 0,
+                "totalGroups": 0,
+            }
+
+        # --- TALEP LİSTESİNİ OKU ---
+        request_items = []
+
+        request_items = normalize_request_items_payload(request_items_json)
+
+        if request_items:
+            logger.debug('SEÇİLEN TALEP JSON SATIR SAYISI: %s', len(request_items))
+
+        if not request_items and request_report_path:
+            request_file_path = os.path.join(
+                TEMP_DIR,
+                os.path.basename(request_report_path)
+            )
+
+            if os.path.exists(request_file_path):
+                try:
+                    request_items = await run_in_threadpool(parse_request_file, request_file_path, request_file_name)
+                    logger.debug('TALEP SATIR SAYISI: %s', len(request_items))
+                except Exception as e:
+                    logger.debug('TALEP DOSYASI OKUMA HATASI: %s', str(e))
+                    warnings.append(f"Talep dosyası okunamadı: {str(e)}")
+            else:
+                logger.debug('TALEP DOSYASI BULUNAMADI: %s', request_file_path)
+                warnings.append("Talep dosyası bulunamadı, teklifler kendi içinde gruplanacak.")
+
+        # --- GRUPLAMA ---
+        if request_items:
+            groups = match_offers_to_requests(filtered, request_items)
+
+            matched_offer_ids = set()
+
+            for g in groups:
+                for o in g.get("offers", []):
+                    matched_offer_ids.add(id(o))
+
+            unmatched_offers = [
+                o for o in filtered
+                if id(o) not in matched_offer_ids
+            ]
+
+            if unmatched_offers:
+                warnings.append(
+                    f"{len(unmatched_offers)} teklif satırı talep listesiyle eşleşmedi ve yeni talep kalemi oluşturmaması için rapora eklenmedi."
+                )
+
+        else:
+            groups = group_rows(filtered)
+
+        logger.debug("FİRMALARA GÖRE SATIR SAYISI:")
+        firma_debug = {}
+
+        for r in filtered:
+            firma = r.get("firma") or r.get("firmaAdi") or "Bilinmeyen"
+            firma_debug[firma] = firma_debug.get(firma, 0) + 1
+
+        logger.debug("%s", firma_debug)
+        logger.debug('OLUŞAN GRUP SAYISI: %s', len(groups))
+
+        # --- KUR BİLGİSİ ---
+        exchange_rates = {"TRY": 1.0}
+
+        if exchange_rates_json:
+            try:
+                submitted_rates = json.loads(exchange_rates_json)
+                for currency in ["USD", "EUR", "GBP"]:
+                    rate = safe_float_form(submitted_rates.get(currency))
+                    if rate is None or rate <= 0:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"{currency} kuru 0'dan büyük olmalıdır.",
+                        )
+                    exchange_rates[currency] = rate
+            except Exception as e:
+                if isinstance(e, HTTPException):
+                    raise
+                logger.debug('KUR BILGISI OKUNAMADI: %s', str(e))
+                raise HTTPException(status_code=400, detail="Kur bilgisi gecersiz.")
+
+        # --- ŞİRKET / KARAR MOTORU AYARLARI ---
+        decision_config = {
+            "annual_interest_rate": max(float(annual_interest_rate or 0), 0.0),
+            "daily_delay_cost": max(float(daily_delay_cost or 0), 0.0),
+            "missing_qty_penalty_multiplier": 1.25,
+            "supplier_risk_rate": 0.0,
         }
 
-        supabase.table("offers").insert(offer_record).execute()
+        # --- KULLANICI ÖNCELİKLERİ ---
+        user_preferences = {
+            "price_weight": 50,
+            "vade_weight": 20,
+            "termin_weight": 20,
+            "risk_weight": 10,
+        }
 
-    if not save_report_to_supabase(report_record):
-        raise HTTPException(status_code=500, detail="Mukayese raporu veritabanına kaydedilemedi.")
+        analyzed = await run_in_threadpool(
+            analyze_groups,
+            groups,
+            exchange_rates,
+            config=decision_config,
+            constraints=user_constraints,
+            preferences=user_preferences,
+        )
 
-    return {
-    "success": True,
-    "reportId": report_id,
-    "reportPath": f"/download-report/{report_name}",
-    "warnings": warnings,
-    "totalRows": len(filtered),
-    "totalGroups": len(analyzed),
-    }
+        logger.debug('ANALİZ EDİLEN GRUP SAYISI: %s', len(analyzed))
+
+        report_name = f"mukayese_raporu_{report_id}.xlsx"
+        report_path = os.path.join(TEMP_DIR, report_name)
+        temp_paths.append(report_path)
+        report_storage_bucket = "request-reports"
+        report_storage_path = f"{user_id}/comparison/{report_name}"
+
+        report_company_info = resolve_company_info(user) or {}
+        report_termin_days = safe_int_form(max_termin_days)
+        report_company_info.update({
+            "annual_interest_rate": max(float(annual_interest_rate or 0), 0.0),
+            "accepted_termin_days": report_termin_days if report_termin_days is not None else 15,
+            "daily_delay_cost_try": max(float(daily_delay_cost or 0), 0.0),
+            "missing_data_policy": user_constraints["missing_data_policy"],
+        })
+        await run_in_threadpool(build_excel_report, analyzed, report_path, report_company_info)
+        upload_private_report(report_path, report_storage_path)
+
+        source_document_ids = {}
+        for source in saved_offer_sources:
+            try:
+                document_id = persist_source_offer_document(
+                    source["file_path"],
+                    source["original_name"],
+                    user_id,
+                    report_id,
+                    source["supplier_name"],
+                    source["currency"],
+                )
+                if document_id:
+                    source_document_ids[source["original_name"]] = document_id
+            except Exception as source_document_error:
+                logger.exception("KAYNAK TEKLIF BELGESI KAYDEDILEMEDI: %s", source_document_error)
+                warnings.append(f"{source['original_name']} kaynak teklif belgesi arşive kaydedilemedi.")
+
+        order_items = []
+        for group in analyzed:
+            best = (
+                group.get("best")
+                or group.get("bestOffer")
+                or group.get("onerilenTeklif")
+                or {}
+            )
+
+            request_item = (
+                group.get("requestItem")
+                or group.get("request")
+                or group.get("talep")
+                or {}
+            )
+
+            order_items.append({
+                "productCode": group.get("urunKodu") or request_item.get("urunKodu") or best.get("urunKodu") or "",
+                "productName": group.get("urunAciklamasi") or request_item.get("urunAciklamasi") or best.get("urunAciklamasi") or "",
+                "quantity": group.get("talepEdilenAdet") or request_item.get("talepEdilenAdet") or best.get("talepEdilenAdet") or 0,
+                "unit": group.get("birim") or request_item.get("birim") or best.get("birim") or "adet",
+                "selectedFirm": best.get("firmaAdi") or best.get("firma") or "",
+                "unitPrice": best.get("birimFiyat") or 0,
+                "discount": best.get("iskonto") or 0,
+                "netUnitPrice": best.get("netBirimFiyat") or 0,
+                "total": best.get("netToplam") or best.get("netToplamTRY") or best.get("toplamTutar") or 0,
+                "paymentTerm": best.get("vade") or "",
+                "deliveryTerm": best.get("termin") or "",
+                "currency": best.get("paraBirimi") or "TRY",
+                "exchangeRate": best.get("kur") or 1,
+                "stockCoverableQuantity": group.get("stockCoverableQuantity") or request_item.get("stockCoverableQuantity") or 0,
+                "purchaseQuantity": group.get("purchaseQuantity") or request_item.get("purchaseQuantity") or group.get("talepEdilenAdet") or 0,
+                "allocations": group.get("allocations") or request_item.get("allocations") or [],
+                "sourceRequestId": request_id or "",
+                "sourceRequestNumber": request_number or "",
+                "sourceRequestTitle": request_title or request_file_name or "",
+                "requestOwner": request_owner or "",
+                "requestDepartment": request_department or "",
+                "sourceOfferDocumentId": source_document_ids.get(
+                    best.get("kaynakDosya") or best.get("dosyaAdi") or ""
+                ),
+            })
+        
+        logger.debug('ORDER ITEMS SAYISI: %s', len(order_items))
+        logger.debug('ORDER ITEMS: %s', order_items)
+
+        report_record = {
+            "id": report_id,
+            "user_id": user_id,
+            "project_id": project_id if project_id else None,
+            "source_request_id": request_id if request_id else None,
+            "source_request_number": request_number or None,
+            "source_request_title": request_title or request_file_name or None,
+            "source_request_owner": request_owner or None,
+            "source_request_department": request_department or None,
+            "ad": request_file_name or "Teklif Mukayese Raporu",
+            "tarih": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "tur": "Mukayese",
+            "durum": "Bekliyor",
+            "onerilenfirma": find_best_supplier(analyzed),
+            "reportpath": f"/download-report/{report_name}",
+            "report_storage_bucket": report_storage_bucket,
+            "report_storage_path": report_storage_path,
+            "totalrows": len(filtered),
+            "totalgroups": len(analyzed),
+            "analysis": analyzed,
+            "items": order_items,
+        }
+
+        offer_groups = {}
+
+        for row in filtered:
+            dosya_adi = row.get("kaynakDosya") or row.get("dosyaAdi") or "Bilinmeyen dosya"
+            firma_adi = row.get("firma") or row.get("firmaAdi") or os.path.splitext(dosya_adi)[0]
+
+            if dosya_adi not in offer_groups:
+                offer_groups[dosya_adi] = {
+                    "firma_adi": firma_adi,
+                    "dosya_adi": dosya_adi,
+                    "toplam_tutar": 0,
+                    "para_birimi": row.get("paraBirimi") or "TRY",
+                    "satir_sayisi": 0,
+                }
+
+            offer_groups[dosya_adi]["satir_sayisi"] += 1
+            offer_groups[dosya_adi]["toplam_tutar"] += safe_float_form(
+                row.get("netToplam") or row.get("toplamTutar") or 0
+            ) or 0
+
+        for offer in offer_groups.values():
+            offer_record = {
+                "user_id": user_id,
+                "request_id": request_id if request_id else None,
+                "project_id": project_id if project_id else None,
+                "firma_adi": offer["firma_adi"],
+                "dosya_adi": offer["dosya_adi"],
+                "para_birimi": offer["para_birimi"],
+                "toplam_tutar": offer["toplam_tutar"],
+                "durum": "Analiz edildi",
+            }
+
+            supabase.table("offers").insert(offer_record).execute()
+
+        if not save_report_to_supabase(report_record):
+            raise HTTPException(status_code=500, detail="Mukayese raporu veritabanına kaydedilemedi.")
+
+        return {
+        "success": True,
+        "reportId": report_id,
+        "reportPath": f"/download-report/{report_name}",
+        "warnings": warnings,
+        "totalRows": len(filtered),
+        "totalGroups": len(analyzed),
+        }
+    finally:
+        remove_temp_files(temp_paths)
+
 
 @app.get("/download-report/{file_name}")
 def download_report(file_name: str, authorization: str = Header(None)):
@@ -2159,7 +2092,7 @@ def download_report(file_name: str, authorization: str = Header(None)):
     except Exception as exc:
         if "report_storage_bucket" not in str(exc) and "report_storage_path" not in str(exc):
             raise
-        logger.debug("REPORT STORAGE COLUMNS MISSING; USING LEGACY LOOKUP:", str(exc))
+        logger.debug('REPORT STORAGE COLUMNS MISSING; USING LEGACY LOOKUP: %s', str(exc))
         response = (
             supabase.table("reports")
             .select("id,reportpath")
@@ -2187,7 +2120,7 @@ def download_report(file_name: str, authorization: str = Header(None)):
                 },
             )
         except Exception as exc:
-            logger.debug("REPORT STORAGE DOWNLOAD ERROR:", str(exc))
+            logger.debug('REPORT STORAGE DOWNLOAD ERROR: %s', str(exc))
 
     file_path = os.path.join(TEMP_DIR, safe_file_name)
 
@@ -2261,7 +2194,7 @@ async def analyze_requests(
     all_rows = []
     warnings = []
 
-    logger.debug("BACKEND GELEN TALEP DOSYALARI:", [upload.filename for upload in files])
+    logger.debug('BACKEND GELEN TALEP DOSYALARI: %s', [upload.filename for upload in files])
 
     if len(files) > MAX_UPLOAD_FILES:
         return {
@@ -2272,215 +2205,223 @@ async def analyze_requests(
             "totalRows": 0
         }
 
-    for upload in files:
-        save_path, original_name, upload_error = await save_upload_file(upload)
-        if upload_error:
-            warnings.append(upload_error)
-            continue
+    temp_paths = []
+    try:
+        for upload in files:
+            save_path, original_name, upload_error = await save_upload_file(upload)
+            if save_path:
+                temp_paths.append(save_path)
+            if upload_error:
+                warnings.append(upload_error)
+                continue
 
-        try:
-            rows = parse_request_file(save_path, original_name)
+            try:
+                rows = await run_in_threadpool(parse_request_file, save_path, original_name)
 
-            logger.debug("OKUNAN TALEP DOSYASI:", upload.filename)
-            logger.debug("OKUNAN TALEP SATIR SAYISI:", len(rows))
-            logger.debug("OKUNAN TALEP SATIRLAR:", rows[:20])
+                logger.debug('OKUNAN TALEP DOSYASI: %s', upload.filename)
+                logger.debug('OKUNAN TALEP SATIR SAYISI: %s', len(rows))
+                logger.debug('OKUNAN TALEP SATIRLAR: %s', rows[:20])
 
-            if not rows:
-                warnings.append(f"Veri okunamadı: {upload.filename}")
+                if not rows:
+                    warnings.append(f"Veri okunamadı: {upload.filename}")
 
-            all_rows.extend(rows)
+                all_rows.extend(rows)
 
-        except Exception as e:
-            logger.debug("TALEP DOSYASI HATASI:", upload.filename, str(e))
-            error_text = str(e)
-            if "tesseract is not installed" in error_text.lower() or "tesseractnotfound" in error_text.lower():
-                warnings.append(
-                    f"Görsel okuma servisi şu anda kullanılamıyor ({upload.filename}). Lütfen kısa süre sonra tekrar deneyin."
-                )
-            else:
-                warnings.append(f"Hata ({upload.filename}): {error_text}")
+            except Exception as e:
+                logger.debug('TALEP DOSYASI HATASI: %s %s', upload.filename, str(e))
+                error_text = str(e)
+                if "tesseract is not installed" in error_text.lower() or "tesseractnotfound" in error_text.lower():
+                    warnings.append(
+                        f"Görsel okuma servisi şu anda kullanılamıyor ({upload.filename}). Lütfen kısa süre sonra tekrar deneyin."
+                    )
+                else:
+                    warnings.append(f"Hata ({upload.filename}): {error_text}")
 
-    if not all_rows:
-        return {
-            "success": False,
-            "warnings": warnings + ["Talep dosyalarından okunabilir ürün bulunamadı."],
-            "rows": [],
-            "reportPath": None,
-            "totalRows": 0
-        }
-
-    merged = {}
-    auto_code_counter = 1
-
-    for row in all_rows:
-        kod = str(row.get("urunKodu", "") or "").strip()
-        aciklama = str(row.get("urunAciklamasi", "") or "").strip()
-        birim = str(row.get("birim", "adet") or "adet").strip().lower()
-        adet_raw = row.get("talepEdilenAdet", 0)
-
-        try:
-            adet = float(str(adet_raw).replace(",", "."))
-        except Exception:
-            adet = 0
-
-        if normalize_text(kod) in ["nan", "none", "null", "-"]:
-            kod = ""
-
-        if normalize_text(aciklama) in ["", "nan", "none", "null", "-"]:
-            continue
-
-        if normalize_text(birim) in ["", "nan", "none", "null", "-"]:
-            birim = "adet"
-
-        if adet <= 0:
-            continue
-
-        kod_key = clean_key(kod)
-        aciklama_key = clean_key(aciklama)
-        birim_key = clean_key(birim)
-
-        merge_key = find_merge_key(
-            merged,
-            kod_key,
-            aciklama_key,
-            birim_key
-        )
-
-        if merge_key is None:
-            if kod_key:
-                merge_key = f"KOD_{kod_key}_{birim_key}"
-            else:
-                merge_key = f"ACIKLAMA_{aciklama_key}_{birim_key}"
-
-            merged[merge_key] = {
-                "urunKodu": kod or "",
-                "urunAciklamasi": aciklama,
-                "talepEdilenAdet": adet,
-                "birim": birim,
-                "marka": row.get("marka", ""),
-                "kaynakDosya": row.get("kaynakDosya", ""),
-                "kaynakTipi": row.get("kaynakTipi", ""),
-                "talepTuru": row.get("talepTuru", ""),
-                "miktarKaynagi": row.get("miktarKaynagi", ""),
-                "_kodKey": kod_key,
-                "_aciklamaKey": aciklama_key,
-                "_birimKey": birim_key,
+        if not all_rows:
+            return {
+                "success": False,
+                "warnings": warnings + ["Talep dosyalarından okunabilir ürün bulunamadı."],
+                "rows": [],
+                "reportPath": None,
+                "totalRows": 0
             }
 
-        else:
-            merged[merge_key]["talepEdilenAdet"] += adet
+        merged = {}
+        auto_code_counter = 1
 
-            if not merged[merge_key]["urunKodu"] and kod:
-                merged[merge_key]["urunKodu"] = kod
-                merged[merge_key]["_kodKey"] = kod_key
+        for row in all_rows:
+            kod = str(row.get("urunKodu", "") or "").strip()
+            aciklama = str(row.get("urunAciklamasi", "") or "").strip()
+            birim = str(row.get("birim", "adet") or "adet").strip().lower()
+            adet_raw = row.get("talepEdilenAdet", 0)
 
-    result_rows = []
+            try:
+                adet = float(str(adet_raw).replace(",", "."))
+            except Exception:
+                adet = 0
 
-    for item in merged.values():
-        if not item["urunKodu"]:
-            item["urunKodu"] = f"PRD-{auto_code_counter:04d}"
-            auto_code_counter += 1
+            if normalize_text(kod) in ["nan", "none", "null", "-"]:
+                kod = ""
 
-        item.pop("_kodKey", None)
-        item.pop("_aciklamaKey", None)
-        item.pop("_birimKey", None)
+            if normalize_text(aciklama) in ["", "nan", "none", "null", "-"]:
+                continue
 
-        result_rows.append(item)
+            if normalize_text(birim) in ["", "nan", "none", "null", "-"]:
+                birim = "adet"
 
-    report_name = f"talep_listesi_{user_id}_{uuid.uuid4()}.xlsx"
-    report_path = os.path.join(TEMP_DIR, report_name)
+            if adet <= 0:
+                continue
 
-    try:
-        report_products = load_user_products_for_report(user_id)
-    except Exception as exc:
-        logger.debug("REQUEST REPORT PRODUCT LOOKUP ERROR:", str(exc))
-        warnings.append("Stok kartları okunamadığı için raporda ürünler eşleşmemiş olarak gösterildi.")
-        report_products = []
+            kod_key = clean_key(kod)
+            aciklama_key = clean_key(aciklama)
+            birim_key = clean_key(birim)
 
-    build_request_excel_report(
-        result_rows,
-        report_path,
-        resolve_company_info(user),
-        report_products,
-    )
+            merge_key = find_merge_key(
+                merged,
+                kod_key,
+                aciklama_key,
+                birim_key
+            )
 
-    with open(report_path, "rb") as f:
-        supabase.storage.from_("request-reports").upload(
-            report_name,
-            f,
-        {
-                "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                "x-upsert": "true"
-        }
-    )
-    is_stock_replenishment = any(
-        item.get("talepTuru") == "stok_yenileme" for item in result_rows
-    )
-    request_items = []
-    for item in result_rows:
-        quantity = item.get("talepEdilenAdet", 0)
-        unit = item.get("birim", "adet") or "adet"
-        request_items.append({
-            **item,
-            "product_code": item.get("urunKodu", ""),
-            "product_name": item.get("urunAciklamasi", ""),
-            "brand": item.get("marka", ""),
-            "quantity": quantity,
-            "purchase_quantity": quantity,
-            "unit": unit,
-            "note": (
-                "Stok yenileme görselinden oluşturuldu"
-                if item.get("talepTuru") == "stok_yenileme"
-                else "Yüklenen dosyadan oluşturuldu"
-            ),
-            "request_meta": {
-                "source": (
-                    "stock_replenishment_image"
+            if merge_key is None:
+                if kod_key:
+                    merge_key = f"KOD_{kod_key}_{birim_key}"
+                else:
+                    merge_key = f"ACIKLAMA_{aciklama_key}_{birim_key}"
+
+                merged[merge_key] = {
+                    "urunKodu": kod or "",
+                    "urunAciklamasi": aciklama,
+                    "talepEdilenAdet": adet,
+                    "birim": birim,
+                    "marka": row.get("marka", ""),
+                    "kaynakDosya": row.get("kaynakDosya", ""),
+                    "kaynakTipi": row.get("kaynakTipi", ""),
+                    "talepTuru": row.get("talepTuru", ""),
+                    "miktarKaynagi": row.get("miktarKaynagi", ""),
+                    "_kodKey": kod_key,
+                    "_aciklamaKey": aciklama_key,
+                    "_birimKey": birim_key,
+                }
+
+            else:
+                merged[merge_key]["talepEdilenAdet"] += adet
+
+                if not merged[merge_key]["urunKodu"] and kod:
+                    merged[merge_key]["urunKodu"] = kod
+                    merged[merge_key]["_kodKey"] = kod_key
+
+        result_rows = []
+
+        for item in merged.values():
+            if not item["urunKodu"]:
+                item["urunKodu"] = f"PRD-{auto_code_counter:04d}"
+                auto_code_counter += 1
+
+            item.pop("_kodKey", None)
+            item.pop("_aciklamaKey", None)
+            item.pop("_birimKey", None)
+
+            result_rows.append(item)
+
+        report_name = f"talep_listesi_{user_id}_{uuid.uuid4()}.xlsx"
+        report_path = os.path.join(TEMP_DIR, report_name)
+        temp_paths.append(report_path)
+
+        try:
+            report_products = load_user_products_for_report(user_id)
+        except Exception as exc:
+            logger.debug('REQUEST REPORT PRODUCT LOOKUP ERROR: %s', str(exc))
+            warnings.append("Stok kartları okunamadığı için raporda ürünler eşleşmemiş olarak gösterildi.")
+            report_products = []
+
+        build_request_excel_report(
+            result_rows,
+            report_path,
+            resolve_company_info(user),
+            report_products,
+        )
+
+        with open(report_path, "rb") as f:
+            supabase.storage.from_("request-reports").upload(
+                report_name,
+                f,
+            {
+                    "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    "x-upsert": "true"
+            }
+        )
+        is_stock_replenishment = any(
+            item.get("talepTuru") == "stok_yenileme" for item in result_rows
+        )
+        request_items = []
+        for item in result_rows:
+            quantity = item.get("talepEdilenAdet", 0)
+            unit = item.get("birim", "adet") or "adet"
+            request_items.append({
+                **item,
+                "product_code": item.get("urunKodu", ""),
+                "product_name": item.get("urunAciklamasi", ""),
+                "brand": item.get("marka", ""),
+                "quantity": quantity,
+                "purchase_quantity": quantity,
+                "unit": unit,
+                "note": (
+                    "Stok yenileme görselinden oluşturuldu"
                     if item.get("talepTuru") == "stok_yenileme"
-                    else "file_upload"
+                    else "Yüklenen dosyadan oluşturuldu"
                 ),
-                "requester": requester,
-                "department": department,
-                "priority": priority,
-                "sourceFile": item.get("kaynakDosya", ""),
-                "sourceType": item.get("kaynakTipi", ""),
-                "quantitySource": item.get("miktarKaynagi", ""),
-            },
-        })
+                "request_meta": {
+                    "source": (
+                        "stock_replenishment_image"
+                        if item.get("talepTuru") == "stok_yenileme"
+                        else "file_upload"
+                    ),
+                    "requester": requester,
+                    "department": department,
+                    "priority": priority,
+                    "sourceFile": item.get("kaynakDosya", ""),
+                    "sourceType": item.get("kaynakTipi", ""),
+                    "quantitySource": item.get("miktarKaynagi", ""),
+                },
+            })
 
-    request_record = {
-        "user_id": user_id,
-        "project_id": None,
-        "ad": (
-            f"Stok Yenileme Talebi - {datetime.now().strftime('%d.%m.%Y')}"
-            if is_stock_replenishment
-            else f"Dosyadan Talep Listesi - {datetime.now().strftime('%d.%m.%Y')}"
-        ),
-        "durum": "Yeni Talep",
-        "filepath": report_name,
-        "totalitems": len(request_items),
-        "items": request_items,
-    }
-    insert_response = supabase.table("requests").insert(request_record).execute()
-    inserted_request = (insert_response.data or [{}])[0]
-    request_id = inserted_request.get("id")
+        request_record = {
+            "user_id": user_id,
+            "project_id": None,
+            "ad": (
+                f"Stok Yenileme Talebi - {datetime.now().strftime('%d.%m.%Y')}"
+                if is_stock_replenishment
+                else f"Dosyadan Talep Listesi - {datetime.now().strftime('%d.%m.%Y')}"
+            ),
+            "durum": "Yeni Talep",
+            "filepath": report_name,
+            "totalitems": len(request_items),
+            "items": request_items,
+        }
+        insert_response = supabase.table("requests").insert(request_record).execute()
+        inserted_request = (insert_response.data or [{}])[0]
+        request_id = inserted_request.get("id")
 
-    if not request_id:
-        raise HTTPException(status_code=500, detail="Talep havuzuna kaydedilemedi.")
+        if not request_id:
+            raise HTTPException(status_code=500, detail="Talep havuzuna kaydedilemedi.")
 
-    signed = supabase.storage.from_("request-reports").create_signed_url(report_name, 3600)
-    public_url = signed.get("signedURL") or signed.get("signedUrl") or signed.get("signed_url")
-    logger.debug(public_url)
+        signed = supabase.storage.from_("request-reports").create_signed_url(report_name, 3600)
+        public_url = signed.get("signedURL") or signed.get("signedUrl") or signed.get("signed_url")
+        logger.debug("%s", public_url)
 
-    return {
-        "success": True,
-        "warnings": warnings,
-        "rows": result_rows,
-        "reportPath": public_url,
-        "totalRows": len(result_rows),
-        "requestCreated": True,
-        "requestId": request_id,
-    }
+        return {
+            "success": True,
+            "warnings": warnings,
+            "rows": result_rows,
+            "reportPath": public_url,
+            "totalRows": len(result_rows),
+            "requestCreated": True,
+            "requestId": request_id,
+        }
+    finally:
+        remove_temp_files(temp_paths)
+
 
 @app.post("/requests/{request_id}/product-match")
 def resolve_request_product_match(
@@ -2615,8 +2556,9 @@ def resolve_request_product_match(
                         "x-upsert": "true",
                     },
                 )
+            remove_temp_files([report_path])
         except Exception as exc:
-            logger.debug("REQUEST PRODUCT MATCH REPORT UPDATE ERROR:", str(exc))
+            logger.debug('REQUEST PRODUCT MATCH REPORT UPDATE ERROR: %s', str(exc))
             report_warning = "Talep güncellendi ancak Excel raporu yenilenemedi."
 
     return {
@@ -2683,174 +2625,6 @@ def get_requests(authorization: str = Header(None)):
     return {
         "success": True,
         "requests": formatted_requests
-    }
-
-@app.get("/reports")
-def list_reports(authorization: str = Header(None)):
-    user = verify_user_token(authorization)
-    return {
-        "success": True,
-        "reports": user_scoped_rows(load_json(REPORTS_FILE), user["id"])
-    }
-
-@app.get("/reports/{report_id}")
-def get_report(report_id: str, authorization: str = Header(None)):
-    user = verify_user_token(authorization)
-    reports = user_scoped_rows(load_json(REPORTS_FILE), user["id"])
-
-    for report in reports:
-        if report["id"] == report_id:
-            return {
-                "success": True,
-                "report": report
-            }
-
-    return {
-        "success": False,
-        "message": "Rapor bulunamadı."
-    }
-
-@app.post("/reports/{report_id}/approve")
-def approve_report(report_id: str, authorization: str = Header(None)):
-    user = verify_user_token(authorization)
-    reports = load_json(REPORTS_FILE)
-
-    for report in reports:
-        if report["id"] == report_id and report.get("user_id") == user["id"]:
-            report["durum"] = "Tamamlandı"
-            save_json(REPORTS_FILE, reports)
-            return {
-                "success": True,
-                "report": report
-            }
-
-    return {
-        "success": False,
-        "message": "Rapor bulunamadı."
-    }
-
-@app.post("/reports/{report_id}/create-order")
-def create_order_from_report(report_id: str, authorization: str = Header(None)):
-    user = verify_user_token(authorization)
-    reports = load_json(REPORTS_FILE)
-    orders = load_json(ORDERS_FILE)
-
-    selected_report = None
-
-    for report in reports:
-        if report["id"] == report_id and report.get("user_id") == user["id"]:
-            selected_report = report
-            break
-
-    if not selected_report:
-        return {
-            "success": False,
-            "message": "Rapor bulunamadı."
-        }
-
-    order = {
-        "id": str(uuid.uuid4()),
-        "user_id": user["id"],
-        "siparisNo": f"SIP-{len(orders) + 1:04d}",
-        "firma": selected_report.get("onerilenFirma", "-"),
-        "urun": selected_report.get("ad", "Mukayese Raporu"),
-        "miktar": "-",
-        "siparisTarihi": datetime.now().strftime("%Y-%m-%d"),
-        "termin": "-",
-        "durum": "Bekliyor",
-        "reportId": report_id,
-    }
-
-    orders.insert(0, order)
-    save_json(ORDERS_FILE, orders)
-
-    selected_report["durum"] = "Tamamlandı"
-    save_json(REPORTS_FILE, reports)
-
-    return {
-        "success": True,
-        "order": order
-    }
-
-@app.get("/orders")
-def list_orders(authorization: str = Header(None)):
-    user = verify_user_token(authorization)
-    return {
-        "success": True,
-        "orders": user_scoped_rows(load_json(ORDERS_FILE), user["id"])
-    }
-
-@app.get("/suppliers")
-def list_suppliers(authorization: str = Header(None)):
-    user = verify_user_token(authorization)
-    return {
-        "success": True,
-        "suppliers": user_scoped_rows(load_json(SUPPLIERS_FILE), user["id"])
-    }
-
-@app.post("/suppliers")
-def create_supplier(payload: dict = Body(...), authorization: str = Header(None)):
-    user = verify_user_token(authorization)
-    supplier = normalize_supplier_payload(payload)
-    supplier["user_id"] = user["id"]
-
-    if not supplier["name"]:
-        raise HTTPException(status_code=400, detail="Tedarikci adi zorunlu")
-
-    suppliers = load_json(SUPPLIERS_FILE)
-    ensure_unique_supplier(user_scoped_rows(suppliers, user["id"]), supplier)
-    suppliers.insert(0, supplier)
-    save_json(SUPPLIERS_FILE, suppliers)
-
-    return {
-        "success": True,
-        "supplier": supplier
-    }
-
-@app.put("/suppliers/{supplier_id}")
-def update_supplier(supplier_id: str, payload: dict = Body(...), authorization: str = Header(None)):
-    user = verify_user_token(authorization)
-    suppliers = load_json(SUPPLIERS_FILE)
-
-    for index, supplier in enumerate(suppliers):
-        if str(supplier.get("id")) == supplier_id and supplier.get("user_id") == user["id"]:
-            updated = normalize_supplier_payload(
-                {**supplier, **payload},
-                supplier_id=supplier_id,
-            )
-            updated["user_id"] = user["id"]
-
-            if not updated["name"]:
-                raise HTTPException(status_code=400, detail="Tedarikci adi zorunlu")
-
-            ensure_unique_supplier(user_scoped_rows(suppliers, user["id"]), updated, supplier_id=supplier_id)
-            suppliers[index] = updated
-            save_json(SUPPLIERS_FILE, suppliers)
-
-            return {
-                "success": True,
-                "supplier": updated
-            }
-
-    raise HTTPException(status_code=404, detail="Tedarikci bulunamadi")
-
-@app.delete("/suppliers/{supplier_id}")
-def delete_supplier(supplier_id: str, authorization: str = Header(None)):
-    user = verify_user_token(authorization)
-    suppliers = load_json(SUPPLIERS_FILE)
-    next_suppliers = [
-        supplier
-        for supplier in suppliers
-        if not (str(supplier.get("id")) == supplier_id and supplier.get("user_id") == user["id"])
-    ]
-
-    if len(next_suppliers) == len(suppliers):
-        raise HTTPException(status_code=404, detail="Tedarikci bulunamadi")
-
-    save_json(SUPPLIERS_FILE, next_suppliers)
-
-    return {
-        "success": True
     }
 
 @app.get("/favicon.ico")

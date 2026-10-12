@@ -1,6 +1,16 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { Resend } from "resend";
+import {
+  REPLY_AUDIENCE,
+  buildSupportEmailHtml,
+  buildSupportReplyAddress,
+  escapeHtml,
+  extractEmailAddress,
+  parseSupportReplyAddress,
+  supportReplySecret,
+  supportTicketLink,
+} from "@/lib/supportEmail";
 
 function inboundConfig() {
   return {
@@ -9,9 +19,7 @@ function inboundConfig() {
     receivingDomain: String(process.env.RESEND_RECEIVING_DOMAIN || "")
       .trim()
       .toLowerCase(),
-    allowedSender: String(process.env.SUPPORT_NOTIFICATION_EMAIL || "")
-      .trim()
-      .toLowerCase(),
+    allowedSender: extractEmailAddress(process.env.SUPPORT_NOTIFICATION_EMAIL),
     adminUserId: String(process.env.SUPPORT_REPLY_ADMIN_USER_ID || "").trim(),
     supabaseUrl: String(process.env.NEXT_PUBLIC_SUPABASE_URL || "").trim(),
     serviceRoleKey: String(process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim(),
@@ -20,22 +28,6 @@ function inboundConfig() {
 
 function isConfigured(config) {
   return Object.values(config).every(Boolean);
-}
-
-function ticketIdFromRecipients(recipients, receivingDomain) {
-  const escapedDomain = receivingDomain.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const pattern = new RegExp(
-    `^support\\+([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})@${escapedDomain}$`,
-    "i",
-  );
-
-  for (const recipient of recipients || []) {
-    const match = String(recipient || "")
-      .trim()
-      .match(pattern);
-    if (match) return match[1];
-  }
-  return null;
 }
 
 function htmlToText(html) {
@@ -63,6 +55,8 @@ function extractNewReply(text, html) {
     if (
       trimmed.startsWith(">") ||
       /^On .+wrote:$/i.test(trimmed) ||
+      /\bwrote:$/i.test(trimmed) ||
+      /^-{2,}\s*(?:Özgün İleti|Orijinal Mesaj)\s*-{2,}$/i.test(trimmed) ||
       /(?:şunları|şunu|bunları)\s+yazdı\b/i.test(trimmed) ||
       /^(?:iPhone[’']?umdan gönderildi|Sent from my iPhone)$/i.test(trimmed) ||
       /^.+(?:şunu yazdı|yazdı):$/i.test(trimmed) ||
@@ -116,19 +110,17 @@ export async function POST(request) {
     return NextResponse.json({ received: true, ignored: true });
   }
 
-  if (
-    String(event.data.from || "")
-      .trim()
-      .toLowerCase() !== config.allowedSender
-  ) {
+  const sender = extractEmailAddress(event.data.from);
+  const target = parseSupportReplyAddress(
+    [...(event.data.to || []), ...(event.data.received_for || [])],
+    { receivingDomain: config.receivingDomain, secret: supportReplySecret() },
+  );
+  if (!target) {
     return NextResponse.json({ received: true, ignored: true });
   }
 
-  const ticketId = ticketIdFromRecipients(
-    event.data.to,
-    config.receivingDomain,
-  );
-  if (!ticketId) {
+  const fromAdmin = target.audience === REPLY_AUDIENCE.admin;
+  if (fromAdmin && sender !== config.allowedSender) {
     return NextResponse.json({ received: true, ignored: true });
   }
 
@@ -149,23 +141,104 @@ export async function POST(request) {
   const supabase = createClient(config.supabaseUrl, config.serviceRoleKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
-  const { data: messageId, error } = await supabase.rpc(
-    "add_support_admin_email_reply",
-    {
-      p_admin_user_id: config.adminUserId,
-      p_message: reply,
-      p_provider_email_id: event.data.email_id,
-      p_ticket_id: ticketId,
-      p_webhook_id: webhookId,
-    },
-  );
+
+  const { data: messageId, error } = fromAdmin
+    ? await supabase.rpc("add_support_admin_email_reply", {
+        p_admin_user_id: config.adminUserId,
+        p_message: reply,
+        p_provider_email_id: event.data.email_id,
+        p_ticket_id: target.ticketId,
+        p_webhook_id: webhookId,
+      })
+    : await supabase.rpc("add_support_customer_email_reply", {
+        p_message: reply,
+        p_provider_email_id: event.data.email_id,
+        p_sender_email: sender,
+        p_ticket_id: target.ticketId,
+        p_webhook_id: webhookId,
+      });
 
   if (error) {
-    return NextResponse.json(
-      { error: "E-posta cevabı destek talebine eklenemedi." },
-      { status: 500 },
-    );
+    // Müşteri adresi eşleşmezse veya talep kapalıysa tekrar denemenin anlamı yok.
+    return NextResponse.json({ received: true, ignored: true });
   }
 
-  return NextResponse.json({ received: true, messageId });
+  const forwarded = await forwardReplyNotification({
+    supabase,
+    config,
+    ticketId: target.ticketId,
+    messageId,
+    reply,
+    fromAdmin,
+    sender,
+  });
+
+  return NextResponse.json({ received: true, messageId, forwarded });
+}
+
+// E-postayla gelen cevabı karşı tarafa iletir: senin cevabın müşteriye,
+// müşterinin cevabı sana. Resend idempotency anahtarı, webhook tekrar
+// denendiğinde aynı e-postanın iki kez gitmesini engeller.
+async function forwardReplyNotification({
+  supabase,
+  config,
+  ticketId,
+  messageId,
+  reply,
+  fromAdmin,
+  sender,
+}) {
+  const sendingKey = String(process.env.RESEND_API_KEY || "").trim();
+  const from = String(process.env.SUPPORT_FROM_EMAIL || "").trim();
+  if (!sendingKey || !from || !messageId) return false;
+
+  const { data: ticket } = await supabase
+    .from("support_tickets")
+    .select("id, subject, category, priority, customer_email")
+    .eq("id", ticketId)
+    .maybeSingle();
+  if (!ticket) return false;
+
+  const recipient = fromAdmin
+    ? String(ticket.customer_email || "").trim()
+    : config.allowedSender;
+  if (!recipient) return false;
+
+  const siteUrl = String(process.env.NEXT_PUBLIC_SITE_URL || "").replace(/\/$/, "");
+  const eventLabel = fromAdmin
+    ? "Destek talebiniz yanıtlandı"
+    : "Destek talebine yeni yanıt";
+  const replyTo = buildSupportReplyAddress({
+    ticketId,
+    audience: fromAdmin ? REPLY_AUDIENCE.customer : REPLY_AUDIENCE.admin,
+    receivingDomain: config.receivingDomain,
+    secret: supportReplySecret(),
+  });
+
+  const resend = new Resend(sendingKey);
+  const { error } = await resend.emails.send(
+    {
+      from,
+      to: [recipient],
+      subject: `[CORVIAN Destek] ${eventLabel}: ${ticket.subject}`,
+      html: buildSupportEmailHtml({
+        eventLabel,
+        ticket,
+        actorLine: fromAdmin
+          ? "<p>Destek ekibimiz talebinize yeni bir yanıt gönderdi.</p>"
+          : `<p><strong>Kullanıcı:</strong> ${escapeHtml(sender)}</p>`,
+        messageLabel: fromAdmin ? "Destek yanıtı" : "Mesaj",
+        message: reply,
+        linkLabel: fromAdmin ? "Yanıtı görüntüle ve cevapla" : "Destek Merkezi'nde aç",
+        link: supportTicketLink(siteUrl, ticketId),
+        replyHint: replyTo
+          ? "Bu e-postayı doğrudan yanıtlayabilirsiniz; cevabınız destek talebine eklenir."
+          : "",
+      }),
+      ...(replyTo ? { replyTo } : {}),
+    },
+    { idempotencyKey: `support-email-reply-${messageId}` },
+  );
+
+  return !error;
 }

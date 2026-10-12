@@ -1,6 +1,16 @@
 import { NextResponse } from "next/server";
 import { Resend } from "resend";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import {
+  REPLY_AUDIENCE,
+  buildSupportEmailHtml,
+  buildSupportReplyAddress,
+  escapeHtml,
+  supportReplySecret,
+  supportTicketLink,
+} from "@/lib/supportEmail";
+
+const NOTIFY_WINDOW_MS = 5 * 60 * 1000;
 
 const allowedEvents = new Set([
   "ticket_created",
@@ -23,15 +33,6 @@ function isConfigured(config) {
 
 function canSend(config) {
   return Boolean(config.apiKey && config.from);
-}
-
-function escapeHtml(value) {
-  return String(value || "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
 }
 
 async function authenticatedClient() {
@@ -87,7 +88,7 @@ export async function POST(request) {
 
   const { data: latestMessage } = await supabase
     .from("support_messages")
-    .select("message, sender_id, sender_role, created_at")
+    .select("id, message, sender_id, sender_role, created_at")
     .eq("ticket_id", ticketId)
     .order("created_at", { ascending: false })
     .limit(1)
@@ -97,6 +98,16 @@ export async function POST(request) {
     return NextResponse.json(
       { error: "Destek mesajı bulunamadı." },
       { status: 404 },
+    );
+  }
+
+  // Bildirim yalnızca yeni yazılmış bir mesaj için gönderilir; aynı uç noktanın
+  // tekrar tekrar çağrılıp e-posta yağdırılması engellenir.
+  const messageAgeMs = Date.now() - Date.parse(latestMessage.created_at || "");
+  if (!Number.isFinite(messageAgeMs) || messageAgeMs > NOTIFY_WINDOW_MS) {
+    return NextResponse.json(
+      { error: "Bu mesaj için bildirim süresi geçti." },
+      { status: 409 },
     );
   }
 
@@ -155,21 +166,28 @@ export async function POST(request) {
     event === "admin_reply"
       ? "<p>Destek ekibimiz talebinize yeni bir yanıt gönderdi.</p>"
       : `<p><strong>Kullanıcı:</strong> ${escapeHtml(user.email || ticket.created_by)}</p>`;
-  const messageLabel = event === "admin_reply" ? "Destek yanıtı" : "Mesaj";
-  const linkLabel =
-    event === "admin_reply"
-      ? "Yanıtı görüntüle ve cevapla"
-      : "Destek Merkezi'nde aç";
-  const html = `
-    <div style="font-family:Arial,sans-serif;color:#0f172a;line-height:1.6">
-      <h2>${escapeHtml(eventLabel)}</h2>
-      <p><strong>Konu:</strong> ${escapeHtml(ticket.subject)}</p>
-      <p><strong>Kategori:</strong> ${escapeHtml(ticket.category)} &nbsp; <strong>Öncelik:</strong> ${escapeHtml(ticket.priority)}</p>
-      ${actorLine}
-      <p><strong>${escapeHtml(messageLabel)}:</strong></p>
-      <div style="white-space:pre-wrap;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:14px">${escapeHtml(latestMessage.message)}</div>
-      <p><a href="${escapeHtml(`${siteUrl}/dashboard/yardim?ticket=${encodeURIComponent(ticket.id)}`)}">${escapeHtml(linkLabel)}</a></p>
-    </div>`;
+  const replyTo = buildSupportReplyAddress({
+    ticketId: ticket.id,
+    audience:
+      event === "admin_reply" ? REPLY_AUDIENCE.customer : REPLY_AUDIENCE.admin,
+    receivingDomain: config.receivingDomain,
+    secret: supportReplySecret(),
+  });
+  const html = buildSupportEmailHtml({
+    eventLabel,
+    ticket,
+    actorLine,
+    messageLabel: event === "admin_reply" ? "Destek yanıtı" : "Mesaj",
+    message: latestMessage.message,
+    linkLabel:
+      event === "admin_reply"
+        ? "Yanıtı görüntüle ve cevapla"
+        : "Destek Merkezi'nde aç",
+    link: supportTicketLink(siteUrl, ticket.id),
+    replyHint: replyTo
+      ? "Bu e-postayı doğrudan yanıtlayabilirsiniz; cevabınız destek talebine eklenir."
+      : "",
+  });
 
   const emailPayload = {
     from: config.from,
@@ -177,12 +195,12 @@ export async function POST(request) {
     subject,
     html,
   };
-  if (event !== "admin_reply" && config.receivingDomain) {
-    emailPayload.replyTo = `support+${ticket.id}@${config.receivingDomain}`;
-  }
+  if (replyTo) emailPayload.replyTo = replyTo;
 
   const resend = new Resend(config.apiKey);
-  const { error: resendError } = await resend.emails.send(emailPayload);
+  const { error: resendError } = await resend.emails.send(emailPayload, {
+    idempotencyKey: `support-${event}-${latestMessage.id}`,
+  });
   if (resendError) {
     return NextResponse.json(
       {

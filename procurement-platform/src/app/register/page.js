@@ -69,7 +69,7 @@ export default function RegisterPage() {
 
     setLoading(true);
 
-    const { error } = await supabase.auth.signUp({
+    const { data: signUpData, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
@@ -92,6 +92,15 @@ export default function RegisterPage() {
         setMessage(`Kayıt hatası: ${error.message}`);
       }
 
+      setLoading(false);
+      return;
+    }
+
+    // Supabase, kayıtlı bir adresle tekrar kayıt olunduğunda hata vermez ve
+    // doğrulama e-postası da göndermez; bunu boş "identities" listesinden anlarız.
+    if (Array.isArray(signUpData?.user?.identities) && signUpData.user.identities.length === 0) {
+      setMessageType("error");
+      setMessage("Bu e-posta adresi zaten kayıtlı. Lütfen giriş yapın.");
       setLoading(false);
       return;
     }
