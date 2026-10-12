@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createDocumentSignedUrl, downloadDocumentFile, isPdfDocument } from "@/lib/documentAccess";
 import { supabase } from "@/lib/supabase";
-import { calculateBaseAmount, currencyOptions, getBaseCurrency, getExchangeRate } from "@/lib/currency";
+import { calculateBaseAmount, currencyOptions, getBaseCurrency, getExchangeRate, isSuspiciousRate } from "@/lib/currency";
 import { findOrCreateBusinessPartner } from "@/lib/businessPartners";
 import { matchProduct } from "@/lib/productMatching";
 import { CORVIAN_PRODUCT_NAME, fetchCompanyBranding } from "@/lib/companyBranding";
@@ -466,6 +466,25 @@ function calculateAutomaticReceiptSuggestions(
 // Ekrandaki normalize edilmiş kalemler alan adlarını değiştirdiği için
 // doğrudan geri yazılırsa kilit tetiklenir; bu yüzden orijinal kaleme yalnız
 // teslim miktarı ve durum işlenir.
+// Teslim alınan kalemin ait olduğu proje malzemesini bulur: önce kalemdeki
+// tek proje dağıtımı, yoksa siparişin projesinde aynı ürün koduna sahip tek
+// proje kalemi. Birden fazla aday varsa kullanıcı seçsin diye boş döner.
+function defaultProjectItemIdFor(item, projectItems, order) {
+  const allocationIds = (Array.isArray(item?.allocations) ? item.allocations : [])
+    .filter((allocation) => allocation?.type === "project" && allocation.projectItemId)
+    .map((allocation) => String(allocation.projectItemId));
+  if (allocationIds.length === 1) return allocationIds[0];
+
+  const code = String(item?.productCode || "").trim().toLocaleUpperCase("tr-TR");
+  if (!code || !order?.project_id) return "";
+  const matches = (projectItems || []).filter(
+    (projectItem) =>
+      String(projectItem.project_id || "") === String(order.project_id)
+      && String(projectItem.product_code || "").trim().toLocaleUpperCase("tr-TR") === code,
+  );
+  return matches.length === 1 ? String(matches[0].id) : "";
+}
+
 function withDeliveryFields(originalItems, displayItems) {
   const source = Array.isArray(originalItems) ? originalItems : [];
   if (source.length !== displayItems.length) return displayItems;
@@ -1297,8 +1316,11 @@ export default function OrderDetailPage() {
     const missingQuantity = Math.max(orderedQuantity - receivedQuantity, 0);
     const excessQuantity = Math.max(receivedQuantity - orderedQuantity, 0);
     const receiptStatus = calculateReceiptStatus(receivedQuantity, orderedQuantity, defectiveQuantity);
+    const effectiveProjectItemId = input.projectItemId !== undefined
+      ? input.projectItemId
+      : defaultProjectItemIdFor(item, projectItems, order);
     const selectedProjectItem =
-      projectItems.find((projectItem) => projectItem.id === input.projectItemId) || null;
+      projectItems.find((projectItem) => String(projectItem.id) === String(effectiveProjectItemId)) || null;
     const parentItemId =
       selectedProjectItem?.parent_item_id || input.parentItemId || null;
 
@@ -1427,7 +1449,7 @@ export default function OrderDetailPage() {
       p_received_by: receiptPayload.received_by,
       p_receipt_date: receiptPayload.receipt_date,
       p_note: receiptPayload.note,
-      p_unit_price: Number(item.unitPrice || 0),
+      p_unit_price: Number(item.netUnitPrice || item.unitPrice || 0),
       p_currency: order.currency || "TRY",
       p_report_id: order.report_id || null,
       p_order_items: withDeliveryFields(order.items, nextItems),
@@ -1704,7 +1726,7 @@ export default function OrderDetailPage() {
         p_received_by: user.email || "Kullanıcı",
         p_receipt_date: getToday(),
         p_note: referenceNote,
-        p_unit_price: Number(candidate.unitPrice || 0),
+        p_unit_price: Number(candidate.netUnitPrice || candidate.unitPrice || 0),
         p_currency: order.currency || "TRY",
         p_report_id: order.report_id || null,
       });
@@ -1828,6 +1850,10 @@ export default function OrderDetailPage() {
 
     const baseCurrency = getBaseCurrency(companySettings);
     const exchangeRate = Number(paymentForm.exchange_rate || getExchangeRate(paymentForm.currency, companySettings));
+    if (isSuspiciousRate(paymentForm.currency, exchangeRate, companySettings)) {
+      setMessage(`${paymentForm.currency} ödemesi için geçerli bir kur girin (şu an ${exchangeRate}).`);
+      return;
+    }
     const baseAmount = calculateBaseAmount(amount, paymentForm.currency, companySettings, exchangeRate);
     const { error } = await supabase.from("order_payments").insert({
       user_id: user.id,
@@ -2631,7 +2657,7 @@ export default function OrderDetailPage() {
         </div>
 
         {message && (
-          <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm font-semibold text-blue-900">
+          <div role="status" aria-live="polite" className="sticky top-3 z-40 shadow-lg rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm font-semibold text-blue-900">
             {message}
           </div>
         )}
@@ -4282,7 +4308,7 @@ function ItemsTable({ items, currency, onExportOrderPdf, onExportExcel, onReceiv
               <th className="p-3">Miktar</th>
               <th className="p-3">Teslim Edilen</th>
               <th className="p-3">Kalan</th>
-              <th className="p-3">Birim Fiyat</th>
+              <th className="p-3">Net Birim Fiyat</th>
               <th className="p-3">Tutar</th>
               <th className="p-3">Durum</th>
             </tr>
@@ -4299,7 +4325,14 @@ function ItemsTable({ items, currency, onExportOrderPdf, onExportExcel, onReceiv
                 <td className="p-3">
                   {Math.max(item.quantity - item.deliveredQuantity, 0)}
                 </td>
-                <td className="p-3">{formatMoney(item.unitPrice, currency)}</td>
+                <td className="p-3">
+                  {formatMoney(item.netUnitPrice || item.unitPrice, currency)}
+                  {Number(item.discount || 0) > 0 && (
+                    <span className="block text-xs text-slate-500">
+                      Liste {formatMoney(item.unitPrice, currency)} · %{Number(item.discount)} iskonto
+                    </span>
+                  )}
+                </td>
                 <td className="p-3 font-bold">
                   {formatMoney(item.total, currency)}
                 </td>
@@ -4530,7 +4563,11 @@ function ReceivingPanel({
                 <label className="block">
                   <span className="mb-1 block text-xs font-bold text-slate-500">Proje malzemesi</span>
                   <select
-                    value={input.projectItemId || ""}
+                    value={
+                      input.projectItemId !== undefined
+                        ? input.projectItemId
+                        : defaultProjectItemIdFor(item, projectItems, order)
+                    }
                     disabled={disabled || projectItems.length === 0}
                     onChange={(event) => onInputChange(index, "projectItemId", event.target.value)}
                     className="w-full rounded-xl border border-slate-300 p-3 text-sm disabled:bg-slate-100"

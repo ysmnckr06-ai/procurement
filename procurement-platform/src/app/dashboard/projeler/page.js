@@ -1506,7 +1506,7 @@ export default function ProjectsPage() {
         </div>
 
         {message && (
-          <div className="rounded-xl border border-yellow-200 bg-yellow-50 p-4 text-sm font-semibold text-yellow-900">
+          <div role="status" aria-live="polite" className="sticky top-3 z-40 shadow-lg rounded-xl border border-yellow-200 bg-yellow-50 p-4 text-sm font-semibold text-yellow-900">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <div>{message}</div>

@@ -31,14 +31,14 @@ function money(value, currency = "TRY") {
 }
 function groupKey(index) { return `group-${index}`; }
 function normalizedCurrency(value) { return String(value || "").trim().toUpperCase(); }
-function projectSummary(group) {
+function projectSummary(group, fallbackProjectLabel = "") {
   const rows = Array.isArray(group?.allocations) ? group.allocations : [];
   const totals = new Map();
   rows.forEach((row) => {
     const key = row.projectCode || row.projectName || row.projectId;
     if (key) totals.set(key, (totals.get(key) || 0) + num(row.quantity));
   });
-  return Array.from(totals.entries()).map(([key, quantity]) => `${key}: ${quantity}`).join(" · ") || "Proje bağı yok";
+  return Array.from(totals.entries()).map(([key, quantity]) => `${key}: ${quantity}`).join(" · ") || fallbackProjectLabel || "Proje bağı yok";
 }
 function comparisonOrderKey(name, currency, exchangeRate) {
   return `${normalize(name)}|${normalizedCurrency(currency)}|${num(exchangeRate).toFixed(6)}`;
@@ -254,6 +254,31 @@ export default function ComparisonPage() {
   const partnerOverridesRef = useRef(new Map());
   const pendingPartnersRef = useRef([]);
   const [report, setReport] = useState(null);
+  const [reportProjectLabel, setReportProjectLabel] = useState("");
+
+  // Kalem bazında proje dağıtımı yoksa (tek projeli talep) raporun projesi gösterilir.
+  useEffect(() => {
+    let active = true;
+    const projectId = report?.project_id;
+    if (!projectId) {
+      setReportProjectLabel("");
+      return () => {
+        active = false;
+      };
+    }
+    supabase
+      .from("projects")
+      .select("project_code, project_name")
+      .eq("id", projectId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (!active || !data) return;
+        setReportProjectLabel([data.project_code, data.project_name].filter(Boolean).join(" · "));
+      });
+    return () => {
+      active = false;
+    };
+  }, [report?.project_id]);
   const [suppliers, setSuppliers] = useState([]);
   const [selectedOffers, setSelectedOffers] = useState({});
   const [message, setMessage] = useState("");
@@ -788,7 +813,7 @@ export default function ComparisonPage() {
         ...(Array.isArray(group.decisionNotes) ? group.decisionNotes : []),
       ].filter(Boolean)));
       return <section key={groupKey(groupIndex)} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b bg-slate-50 p-4"><div className="font-black text-blue-900">{group.urunKodu || "Kodsuz"} · {group.urunAciklamasi}</div><div className="mt-1 flex flex-wrap gap-3 text-xs font-bold text-slate-600"><span>Talep edilen: {group.talepEdilenAdet} {group.birim}</span><span>Teklif sayısı: {offers.length}</span><span>Projeler: {projectSummary(group)}</span></div></div>
+        <div className="border-b bg-slate-50 p-4"><div className="font-black text-blue-900">{group.urunKodu || "Kodsuz"} · {group.urunAciklamasi}</div><div className="mt-1 flex flex-wrap gap-3 text-xs font-bold text-slate-600"><span>Talep edilen: {group.talepEdilenAdet} {group.birim}</span><span>Teklif sayısı: {offers.length}</span><span>Projeler: {projectSummary(group, reportProjectLabel)}</span></div></div>
         {group.decisionStatus === "manual_review" && <div className="border-b border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-950">
           <div className="font-black">Otomatik seçim yapılmadı — kullanıcı kontrolü gerekli.</div>
           {reviewMessages.length > 0 && <div className="mt-1">{reviewMessages.join(" · ")}</div>}

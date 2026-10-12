@@ -1,8 +1,10 @@
+import { cachedLiveRate } from "@/lib/currency";
+
 export const liveCurrencyOptions = ["USD", "EUR", "GBP"];
 
 export function rateFromSettings(currency, settings = {}) {
   if (!currency || currency === "TRY") return 1;
-  return Number(settings[`${String(currency).toLowerCase()}_rate`] || 1);
+  return Number(settings[`${String(currency).toLowerCase()}_rate`] || 0) || cachedLiveRate(currency) || 1;
 }
 
 export async function fetchLiveTryRates() {

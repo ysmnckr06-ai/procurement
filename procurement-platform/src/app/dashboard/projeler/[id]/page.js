@@ -6,7 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import DocumentArchivePanel from "@/components/DocumentArchivePanel";
 import ProductCodeInput from "@/components/ProductCodeInput";
-import { calculateBaseAmount, currencyOptions, getBaseCurrency, getExchangeRate } from "@/lib/currency";
+import { calculateBaseAmount, currencyOptions, getBaseCurrency, getExchangeRate, isSuspiciousRate } from "@/lib/currency";
 import { createDocumentSignedUrl, downloadDocumentFile, isPdfDocument } from "@/lib/documentAccess";
 import { fetchLiveTryRates, liveCurrencyOptions, liveRateFor, rateDiffPercent } from "@/lib/liveCurrency";
 import {
@@ -3928,6 +3928,11 @@ export default function ProjectDetailPage() {
       setMessage("Ödeme tutarı sıfırdan büyük olmalı.");
       return;
     }
+    const paymentRate = Number(paymentForm.exchange_rate || getExchangeRate(paymentForm.currency, companySettings));
+    if (isSuspiciousRate(paymentForm.currency, paymentRate, companySettings)) {
+      setMessage(`${paymentForm.currency} tahsilatı için geçerli bir kur girin (şu an ${paymentRate}).`);
+      return;
+    }
 
     const payload = {
       payment_date: paymentForm.payment_date || new Date().toISOString().slice(0, 10),
@@ -6985,6 +6990,18 @@ export default function ProjectDetailPage() {
       return sum + paymentBase * (linkedOrder ? projectShareForOrder(linkedOrder) : 1);
     }, 0);
     const actualCost = approvedInvoiceTotal + manualExpenses;
+    // Stoktan bu projeye ayrılan malzemenin maliyeti (sipariş/fatura ile gelmez).
+    const stockUsageCost = (items || []).reduce((sum, item) => {
+      const reserved = Number(item.reserved_quantity || 0);
+      if (reserved <= 0) return sum;
+      const unitPrice = Number(item.resolved_unit_price || item.estimated_unit_price || 0);
+      const rate = Number(item.exchange_rate || 0) || getExchangeRate(item.currency || baseCurrency, companySettings);
+      return sum + reserved * unitPrice * (String(item.currency || baseCurrency).toUpperCase() === baseCurrency ? 1 : rate);
+    }, 0);
+    // Fatura girilene kadar verilen siparişler de maliyettir; faturalar siparişleri
+    // karşıladığı için ikisinden büyük olanı alınır (çift sayım olmaz).
+    const expectedCost = Math.max(approvedInvoiceTotal, orderCommitment) + manualExpenses + stockUsageCost;
+    const estimatedGrossProfit = contractAmount - expectedCost;
     const remainingCollection = contractAmount - customerCollections;
     const supplierDebt = approvedInvoiceTotal - supplierPayments;
     const grossProfit = contractAmount - actualCost;
@@ -7041,6 +7058,9 @@ export default function ProjectDetailPage() {
       remainingCollection,
       supplierDebt,
       grossProfit,
+      stockUsageCost,
+      expectedCost,
+      estimatedGrossProfit,
       profitMargin,
       budgetVariance,
       costRealizationRate,
@@ -7056,7 +7076,7 @@ export default function ProjectDetailPage() {
       allocationLinkedOrderCount: allocationLinkedOrders.length,
       allocatedOrders,
     };
-  }, [allOrders, companySettings, expenses, financeLoadWarnings, payments, project, projectDocuments, projectId, projectOrderPayments, projectOrders]);
+  }, [allOrders, companySettings, expenses, financeLoadWarnings, items, payments, project, projectDocuments, projectId, projectOrderPayments, projectOrders]);
 
   const revisionSummary = useMemo(() => {
     const appliedRevisions = revisions.filter((revision) => !["İptal", "Iptal"].includes(revision.status));
@@ -7543,7 +7563,7 @@ export default function ProjectDetailPage() {
         </div>
 
         {message && (
-          <div className="rounded-xl border border-yellow-200 bg-yellow-50 p-4 text-sm font-semibold text-yellow-900">
+          <div role="status" aria-live="polite" className="sticky top-3 z-40 shadow-lg rounded-xl border border-yellow-200 bg-yellow-50 p-4 text-sm font-semibold text-yellow-900">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <span>{message}</span>
               {createdRequestId && (
@@ -8052,7 +8072,17 @@ export default function ProjectDetailPage() {
                   <div className="font-black">Proje finansı ? Baz para birimi: {projectFinanceSummary.baseCurrency}</div>
                   <p className="mt-1 font-semibold text-blue-700">Bu ekran üç net bölümden oluşur: müşteriden gelen ödemeler, projeye düşen tedarikçi/alım maliyeti ve ek giderler.</p>
                 </div>
-                <span className={"w-fit rounded-full px-3 py-1 text-xs font-black " + (projectFinanceSummary.grossProfit >= 0 ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800")}>Brüt sonuç: {formatMoney(projectFinanceSummary.grossProfit, projectFinanceSummary.baseCurrency)}</span>
+                <span
+                  title={`Sipariş, stoktan kullanım ve giderler dahil tahmini maliyet: ${formatMoney(projectFinanceSummary.expectedCost, projectFinanceSummary.baseCurrency)} · Yalnız faturalaşmış maliyete göre: ${formatMoney(projectFinanceSummary.grossProfit, projectFinanceSummary.baseCurrency)}`}
+                  className={"w-fit rounded-full px-3 py-1 text-xs font-black " + (projectFinanceSummary.estimatedGrossProfit >= 0 ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800")}
+                >
+                  Tahmini brüt sonuç: {formatMoney(projectFinanceSummary.estimatedGrossProfit, projectFinanceSummary.baseCurrency)}
+                </span>
+                {projectFinanceSummary.stockUsageCost > 0 && (
+                  <span className="w-fit rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">
+                    Stoktan kullanılan: {formatMoney(projectFinanceSummary.stockUsageCost, projectFinanceSummary.baseCurrency)}
+                  </span>
+                )}
               </div>
             </div>
 

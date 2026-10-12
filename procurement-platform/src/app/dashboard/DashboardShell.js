@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { setLiveRateCache } from "@/lib/currency";
 import { supabase } from "@/lib/supabase";
 
 const appTitle = "CORVIAN Business Suite";
@@ -132,6 +133,28 @@ export default function DashboardShell({
       // Tarayıcı depolaması kapalıysa yine de uyandırmayı dene.
     }
     fetch(`${apiUrl.replace(/\/$/, "")}/`, { method: "GET", cache: "no-store" }).catch(() => {});
+  }, []);
+
+  // Şirket ayarlarında kur yoksa formlar canlı TCMB kurunu kullanabilsin.
+  useEffect(() => {
+    try {
+      const cached = JSON.parse(window.sessionStorage.getItem("corvian_live_rates") || "null");
+      if (cached?.rates) setLiveRateCache(cached.rates);
+    } catch {
+      // Depolama kapalıysa canlı kur yine de çekilir.
+    }
+    fetch("/api/live-rates", { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        if (!data?.rates) return;
+        setLiveRateCache(data.rates);
+        try {
+          window.sessionStorage.setItem("corvian_live_rates", JSON.stringify({ rates: data.rates }));
+        } catch {
+          // Önbellek yazılamazsa sorun değil.
+        }
+      })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
