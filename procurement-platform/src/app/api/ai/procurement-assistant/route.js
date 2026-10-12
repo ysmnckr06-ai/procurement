@@ -28,12 +28,29 @@ const dateValue = (value) => {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 };
 
+const PAGE_SIZE = 1000;
+const MAX_ROWS_PER_TABLE = 20000;
+
+// Supabase tek sorguda en fazla 1000 satır döndürür; büyük hesaplarda sonuçların
+// eksik kalmaması için sayfa sayfa okunur.
 async function rows(supabase, table, userId) {
-  const { data, error } = await supabase.from(table).select("*").eq("user_id", userId);
-  if (!error) return data || [];
-  const message = String(error.message || "");
-  if (message.includes("does not exist") || message.includes("Could not find")) return [];
-  throw new Error(`${table}: ${message}`);
+  const collected = [];
+  for (let offset = 0; offset < MAX_ROWS_PER_TABLE; offset += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from(table)
+      .select("*")
+      .eq("user_id", userId)
+      .range(offset, offset + PAGE_SIZE - 1);
+    if (error) {
+      const message = String(error.message || "");
+      if (message.includes("does not exist") || message.includes("Could not find")) return [];
+      throw new Error(`${table}: ${message}`);
+    }
+    const page = data || [];
+    collected.push(...page);
+    if (page.length < PAGE_SIZE) break;
+  }
+  return collected;
 }
 
 function embeddedItems(records) {
@@ -81,6 +98,11 @@ export async function POST(request) {
     const { data: auth } = await supabase.auth.getUser();
     const user = auth?.user;
     if (!user) return NextResponse.json({ error: "Oturum bulunamadı." }, { status: 401 });
+
+    const { data: licenseActive, error: licenseError } = await supabase.rpc("has_active_license");
+    if (licenseError || licenseActive !== true) {
+      return NextResponse.json({ error: "Demo veya lisans süresi sona erdi." }, { status: 403 });
+    }
 
     const body = await request.json().catch(() => null);
     if (!body) return NextResponse.json({ error: "Geçersiz JSON isteği." }, { status: 400 });
@@ -154,11 +176,32 @@ export async function POST(request) {
     }
 
     if (questionId === "comparison_gaps") {
+      // Teklif kalemleri `offers` tablosunda değil, mukayese raporunun `analysis`
+      // alanında (her talep kalemi için firma teklifleri) saklanır.
+      const identityKey = (value) => productIdentity(value).toLocaleUpperCase("tr-TR");
+      const latestReportByRequest = new Map();
+      reports.forEach((report) => {
+        const requestId = String(report.source_request_id || "");
+        if (!requestId) return;
+        const current = latestReportByRequest.get(requestId);
+        if (!current || String(report.created_at || "") > String(current.created_at || "")) {
+          latestReportByRequest.set(requestId, report);
+        }
+      });
+      const groupsByRequest = new Map();
+      latestReportByRequest.forEach((report, requestId) => {
+        const groups = new Map();
+        (Array.isArray(report.analysis) ? report.analysis : []).forEach((group) => {
+          groups.set(identityKey({ product_code: group.urunKodu, product_name: group.urunAciklamasi }), group);
+        });
+        groupsByRequest.set(requestId, groups);
+      });
       const gaps = reqItems.map((item) => {
-        const required = n(item.quantity || item.requested_quantity || item.miktar);
-        const related = offers.flatMap((offer) => (Array.isArray(offer.items) ? offer.items : []).map((row) => ({ ...row, offer }))).filter((row) => productIdentity(row).toLocaleUpperCase("tr-TR") === productIdentity(item).toLocaleUpperCase("tr-TR"));
-        const maxOffered = Math.max(0, ...related.map((row) => n(row.quantity || row.miktar)));
-        return { code: productIdentity(item), request: text(item.requestNo), required, offered: maxOffered, offerCount: related.length, gap: Math.max(required - maxOffered, 0) };
+        const required = n(item.quantity || item.talepEdilenAdet || item.requested_quantity || item.miktar);
+        const group = groupsByRequest.get(String(item.parent.id))?.get(identityKey(item));
+        const offerRows = Array.isArray(group?.offers) ? group.offers : [];
+        const maxOffered = Math.max(0, ...offerRows.map((row) => n(row.firmaAdedi || row.quantity || row.miktar)));
+        return { code: productIdentity(item), request: text(item.requestNo), required, offered: maxOffered, offerCount: offerRows.length, gap: Math.max(required - maxOffered, 0) };
       }).filter((row) => row.offerCount === 0 || row.gap > 0).slice(0, 50);
       return NextResponse.json(response(questionId, `${gaps.length} kalem inceleme gerektiriyor`, "Talep ve teklif miktarları ürün kodu üzerinden karşılaştırıldı.", [{ label: "Kontrol gereken", value: gaps.length, tone: gaps.length ? "red" : "green" }, { label: "Mukayese raporu", value: reports.length, tone: "blue" }], [{ key: "code", label: "Ürün" }, { key: "request", label: "Talep" }, { key: "required", label: "Talep" }, { key: "offered", label: "En yüksek teklif" }, { key: "gap", label: "Eksik" }, { key: "offerCount", label: "Teklif" }], gaps, gaps.length ? ["Eksik miktarlı teklif otomatik olarak tam teklif kabul edilmemelidir."] : [], ["Eksik kalemleri tamamlatın; şüpheli eşleşmeleri manuel doğrulayın."], "Mukayese açığı bulunmadı."));
     }

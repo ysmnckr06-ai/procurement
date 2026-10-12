@@ -618,7 +618,12 @@ def require_active_license(user_id: str):
 
     license_row = response.data[0] if response.data else None
     if not license_row:
-        return {"plan_type": "active", "license_status": "active", "expires_at": None}
+        # Kayıt olan her kullanıcıya veritabanı tetikleyicisi deneme lisansı açar.
+        # Kaydı olmayan hesaba erişim verilmez (fail-closed).
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "LICENSE_MISSING", "message": "Bu hesap için lisans kaydı bulunamadı."},
+        )
 
     if license_row.get("license_status") != "active":
         raise HTTPException(
