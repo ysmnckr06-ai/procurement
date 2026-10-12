@@ -59,6 +59,8 @@ def parse_currency(value: str) -> str:
         return "USD"
     if "eur" in s or "€" in raw:
         return "EUR"
+    if "gbp" in s or "£" in raw or "sterlin" in s:
+        return "GBP"
     return "TRY"
 
 

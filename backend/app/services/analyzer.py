@@ -113,6 +113,8 @@ def normalize_currency(value):
         return "USD"
     if currency in ["€", "EUR", "EURO"]:
         return "EUR"
+    if currency in ["£", "GBP", "STERLIN", "POUND"]:
+        return "GBP"
 
     return "TRY"
 
