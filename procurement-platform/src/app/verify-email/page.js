@@ -13,6 +13,34 @@ function VerifyEmailContent() {
   const [code, setCode] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const [resending, setResending] = useState(false);
+
+  async function handleResend() {
+    if (resending) return;
+    if (!email.trim()) {
+      setMessage("Kodu tekrar göndermek için e-posta adresinizi girin.");
+      return;
+    }
+
+    setResending(true);
+    setMessage("");
+    const { error } = await supabase.auth.resend({
+      type: "signup",
+      email: email.trim(),
+    });
+    setResending(false);
+
+    if (error) {
+      setMessage(
+        error.status === 429
+          ? "Çok sık kod istendi. Birkaç dakika bekleyip tekrar deneyin."
+          : "Kod gönderilemedi. Hesabınız zaten doğrulanmış olabilir; giriş yapmayı deneyin.",
+      );
+      return;
+    }
+
+    setMessage("Yeni doğrulama kodu e-posta adresinize gönderildi. Spam klasörünü de kontrol edin.");
+  }
 
   async function handleVerify(e) {
     e.preventDefault();
@@ -44,7 +72,7 @@ function VerifyEmailContent() {
     <main className="min-h-screen bg-slate-950 flex items-center justify-center p-6">
       <div className="grid w-full max-w-5xl grid-cols-1 overflow-hidden rounded-3xl bg-white shadow-2xl md:grid-cols-2">
         <section className="hidden bg-slate-900 p-10 text-white md:block">
-          <div className="text-sm font-bold text-blue-300">Nitirio</div>
+          <div className="text-sm font-bold text-blue-300">CORVIAN Business Suite</div>
 
           <h1 className="mt-6 text-4xl font-black leading-tight">
             E-posta doğrulama
@@ -110,6 +138,20 @@ function VerifyEmailContent() {
               {loading ? "Doğrulanıyor..." : "Hesabı Doğrula"}
             </button>
           </form>
+
+          <div className="mt-4 flex items-center justify-between text-sm">
+            <button
+              type="button"
+              onClick={handleResend}
+              disabled={resending}
+              className="font-bold text-blue-600 hover:text-blue-700 disabled:text-slate-400"
+            >
+              {resending ? "Gönderiliyor..." : "Kodu tekrar gönder"}
+            </button>
+            <a href="/login" className="font-semibold text-slate-500 hover:text-slate-700">
+              Zaten hesabım var, giriş yap
+            </a>
+          </div>
 
           {message && (
             <div className="mt-4 rounded-xl bg-slate-100 p-3 text-center text-sm font-semibold text-slate-700">
