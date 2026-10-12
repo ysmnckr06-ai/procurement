@@ -21,10 +21,40 @@ except Exception:
     pdfplumber = None
 
 try:
-    from pdf2image import convert_from_path
+    from pdf2image import convert_from_path, pdfinfo_from_path
 except Exception:
     convert_from_path = None
+    pdfinfo_from_path = None
 
+
+
+OCR_PDF_DPI = int(os.getenv("OCR_PDF_DPI", "300"))
+OCR_PDF_MAX_PAGES = int(os.getenv("OCR_PDF_MAX_PAGES", "30"))
+
+
+def iter_pdf_pages(file_path):
+    """Taranmış PDF sayfalarını tek tek görüntüye çevirir.
+
+    Tüm sayfaları aynı anda belleğe almak düşük bellekli sunucularda
+    çökmeye yol açtığı için her seferinde yalnızca bir sayfa işlenir.
+    """
+    try:
+        page_count = int(pdfinfo_from_path(file_path).get("Pages") or 0)
+    except Exception as error:
+        raise RuntimeError(f"Taranmış PDF görüntüye çevrilemedi: {error}") from error
+
+    for page_number in range(1, min(page_count, OCR_PDF_MAX_PAGES) + 1):
+        try:
+            pages = convert_from_path(
+                file_path,
+                dpi=OCR_PDF_DPI,
+                first_page=page_number,
+                last_page=page_number,
+            )
+        except Exception as error:
+            raise RuntimeError(f"Taranmış PDF görüntüye çevrilemedi: {error}") from error
+        for page in pages:
+            yield page
 
 def clean_text(val):
     if val is None:
@@ -62,12 +92,7 @@ def extract_pdf_ocr_text(file_path):
         raise RuntimeError("Taranmış PDF dönüşümü için pdf2image yüklenemedi")
 
     page_texts = []
-    try:
-        pages = convert_from_path(file_path, dpi=300)
-    except Exception as error:
-        raise RuntimeError(f"Taranmış PDF görüntüye çevrilemedi: {error}") from error
-
-    for page in pages:
+    for page in iter_pdf_pages(file_path):
         rgb_image = np.array(page)
         bgr_image = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR)
         text_value = ocr_image_text(bgr_image)

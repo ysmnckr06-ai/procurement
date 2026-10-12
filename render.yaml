@@ -1,0 +1,21 @@
+# Render Blueprint: CORVIAN Python backend'ini ücretsiz planda çalıştırır.
+# Render panelinde "New > Blueprint" ile bu repo seçildiğinde servis otomatik oluşur.
+# Gizli değerler (sync: false) kurulum sırasında Render panelinden girilir.
+services:
+  - type: web
+    name: corvian-backend
+    runtime: docker
+    plan: free
+    region: frankfurt
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /
+    autoDeploy: true
+    branch: main
+    envVars:
+      - key: SUPABASE_URL
+        value: https://tbyfwnpayppslkcqjwog.supabase.co
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false

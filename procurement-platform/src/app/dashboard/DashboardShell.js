@@ -118,6 +118,22 @@ export default function DashboardShell({
     router.replace("/login");
   }
 
+  // Ücretsiz sunucuda analiz servisi kullanılmadığında uykuya geçer ve
+  // uyanması yaklaşık bir dakika sürer. Panele girildiğinde arka planda bir
+  // kez uyandırılır; kullanıcı teklif yüklediğinde servis hazır olur.
+  useEffect(() => {
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+    if (!apiUrl) return;
+    try {
+      const lastWake = Number(window.sessionStorage.getItem("corvian_api_wake") || 0);
+      if (Date.now() - lastWake < 10 * 60 * 1000) return;
+      window.sessionStorage.setItem("corvian_api_wake", String(Date.now()));
+    } catch {
+      // Tarayıcı depolaması kapalıysa yine de uyandırmayı dene.
+    }
+    fetch(`${apiUrl.replace(/\/$/, "")}/`, { method: "GET", cache: "no-store" }).catch(() => {});
+  }, []);
+
   useEffect(() => {
     let mounted = true;
 
