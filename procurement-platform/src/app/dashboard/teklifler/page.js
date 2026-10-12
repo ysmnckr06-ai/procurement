@@ -37,6 +37,11 @@ const OFFER_FILE_MIME_TYPES = new Set([
   "image/webp",
 ]);
 const OFFER_POOL_STATUSES = [
+  "Yeni Talep",
+  "Proje Talebi",
+  "Bekliyor",
+  "Oluşturuldu",
+  "Teklif Bekliyor",
   "İşleme alındı",
   "İşlemde",
   "Teklif Toplanıyor",
@@ -67,7 +72,8 @@ function requestSequenceLabel(index, total) {
 
 function offerPoolStatusLabel(status) {
   if (["İşleme alındı", "İşlemde"].includes(status)) return "İşlemde";
-  return status || "İşlemde";
+  if (["Yeni Talep", "Proje Talebi", "Bekliyor", "Oluşturuldu", "Teklif Bekliyor"].includes(status)) return "Yeni";
+  return status || "Yeni";
 }
 
 function offerFileExtension(fileName = "") {
@@ -569,6 +575,14 @@ const loadSupplierProfiles = async () => {
       const data = await response.json();
 
       if (data.success) {
+        // Talep ayrıca "işleme al" adımı gerektirmez; analiz yapıldığında durum otomatik ilerler.
+        if (selectedRequestId && selectedRequest && !["Rapor Oluşturuldu", "Siparişe Aktarıldı", "Kapandı"].includes(selectedRequest.durum)) {
+          const { error: statusError } = await supabase
+            .from("requests")
+            .update({ durum: "Rapor Oluşturuldu" })
+            .eq("id", selectedRequestId);
+          if (statusError) console.warn("Talep durumu güncellenemedi:", statusError.message);
+        }
         setReportReady(true);
         setCreatedReportId(data.reportId || null);
         setLastReportTime(new Date().toLocaleString("tr-TR"));

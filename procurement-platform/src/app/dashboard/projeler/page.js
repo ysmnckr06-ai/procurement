@@ -410,23 +410,19 @@ export default function ProjectsPage() {
     const taxDigits = cleanTaxNumber;
 
     if (!cleanName) {
-      setMessage("Firma adi zorunlu.");
+      setMessage("Firma adı zorunlu.");
       return;
     }
-    if (!cleanPhone || phoneDigits.length < 10) {
-      setMessage("Telefon numarasi zorunlu ve en az 10 rakam olmali.");
+    if (cleanPhone && phoneDigits.length < 10) {
+      setMessage("Telefon numarası en az 10 rakam olmalı (boş bırakabilirsiniz).");
       return;
     }
-    if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
-      setMessage("Gecerli bir e-posta adresi zorunlu.");
+    if (cleanEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      setMessage("E-posta adresi geçerli değil (boş bırakabilirsiniz).");
       return;
     }
-    if (!cleanTaxNumber || ![10, 11].includes(taxDigits.length)) {
-      setMessage("Vergi no zorunlu ve 10 ya da 11 rakam olmali.");
-      return;
-    }
-    if (!cleanCity) {
-      setMessage("Sehir zorunlu.");
+    if (cleanTaxNumber && ![10, 11].includes(taxDigits.length)) {
+      setMessage("Vergi no 10 ya da 11 rakam olmalı (boş bırakabilirsiniz).");
       return;
     }
 
@@ -1017,7 +1013,7 @@ export default function ProjectsPage() {
     }
 
     const customerName = form.customer_name.trim();
-    const customerPartner = customerName ? findBusinessPartnerByName(businessPartners, customerName) : null;
+    let customerPartner = customerName ? findBusinessPartnerByName(businessPartners, customerName) : null;
     const requiredProjectFields = [
       ["Proje adı", form.project_name],
       ["Müşteri adı", form.customer_name],
@@ -1040,9 +1036,23 @@ export default function ProjectsPage() {
     }
 
     if (customerName && !customerPartner) {
-      setMessage("Bu firma iş ortakları arasında bulunamadı. Lütfen önce firma bilgisi oluşturun veya mevcut bir firmayı seçin.");
-      setSaving(false);
-      return;
+      // Müşteri kartı yoksa yalnızca firma adıyla otomatik açılır; diğer bilgiler sonra tamamlanabilir.
+      try {
+        const createdPartner = await findOrCreateBusinessPartner(supabase, user.id, {
+          name: customerName,
+          partnerType: "Müşteri",
+          allowCreate: true,
+          allowProbableMatch: true,
+        });
+        if (!createdPartner?.id) throw new Error("Müşteri kartı oluşturulamadı.");
+        customerPartner = createdPartner;
+        setBusinessPartners((current) => [...current.filter((item) => item.id !== createdPartner.id), createdPartner]
+          .sort((left, right) => String(left.name || "").localeCompare(String(right.name || ""), "tr")));
+      } catch (partnerError) {
+        setMessage(partnerError.message || "Müşteri kartı oluşturulamadı.");
+        setSaving(false);
+        return;
+      }
     }
 
     const contractCurrency = form.contract_currency || getBaseCurrency(settings);
@@ -1356,13 +1366,11 @@ export default function ProjectsPage() {
     const phoneDigits = String(customerPartnerDraft.phone || "").replace(/\D/g, "");
     const email = String(customerPartnerDraft.email || "").trim();
     const taxDigits = String(customerPartnerDraft.tax_number || "").replace(/\D/g, "");
-    const city = String(customerPartnerDraft.city || "").trim();
     return Boolean(
       name
-        && phoneDigits.length >= 10
-        && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
-        && [10, 11].includes(taxDigits.length)
-        && city,
+        && (!phoneDigits || phoneDigits.length >= 10)
+        && (!email || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+        && (!taxDigits || [10, 11].includes(taxDigits.length)),
     );
   }, [customerPartnerDraft, form.customer_name]);
   const customerPartnerTaxDuplicate = useMemo(
@@ -1605,7 +1613,7 @@ export default function ProjectsPage() {
                 </div>
                 {customerNameNeedsPartner && (
                   <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-900">
-                    <p>Bu firma iş ortakları arasında bulunamadı. Firma kaydını bu formdan oluşturup projeye devam edebilirsiniz.</p>
+                    <p>Bu firma iş ortaklarında yok. Projeyi kaydettiğinizde yalnızca adıyla otomatik müşteri kartı açılır; isterseniz telefon, vergi no gibi bilgileri şimdi de ekleyebilirsiniz.</p>
                     {!showCustomerPartnerForm ? (
                       <button
                         type="button"
@@ -1615,7 +1623,7 @@ export default function ProjectsPage() {
                         }}
                         className="mt-2 inline-flex rounded-lg bg-amber-100 px-3 py-2 font-black text-amber-900 hover:bg-amber-200"
                       >
-                        Firma bilgisi oluştur
+                        Firma bilgilerini şimdi ekle
                       </button>
                     ) : (
                       <div className="mt-3 space-y-3 rounded-xl border border-amber-200 bg-white p-3">
@@ -1638,9 +1646,8 @@ export default function ProjectsPage() {
                             />
                           </label>
                           <label className="text-xs font-black text-slate-700">
-                            Telefon *
+                            Telefon
                             <input
-                              required
                               type="tel"
                               inputMode="tel"
                               className="mt-1 w-full rounded-lg border border-slate-300 p-2"
@@ -1649,9 +1656,8 @@ export default function ProjectsPage() {
                             />
                           </label>
                           <label className="text-xs font-black text-slate-700">
-                            E-posta *
+                            E-posta
                             <input
-                              required
                               type="email"
                               className="mt-1 w-full rounded-lg border border-slate-300 p-2"
                               value={customerPartnerDraft.email}
@@ -1659,9 +1665,8 @@ export default function ProjectsPage() {
                             />
                           </label>
                           <label className="text-xs font-black text-slate-700">
-                            Vergi no *
+                            Vergi no
                             <input
-                              required
                               inputMode="numeric"
                               pattern="[0-9]{10,11}"
                               className="mt-1 w-full rounded-lg border border-slate-300 p-2"
@@ -1675,9 +1680,8 @@ export default function ProjectsPage() {
                             )}
                           </label>
                           <label className="text-xs font-black text-slate-700">
-                            Şehir *
+                            Şehir
                             <input
-                              required
                               className="mt-1 w-full rounded-lg border border-slate-300 p-2"
                               value={customerPartnerDraft.city}
                               onChange={(event) => updateCustomerPartnerDraft("city", event.target.value)}
@@ -1724,10 +1728,12 @@ export default function ProjectsPage() {
                   {currencyOptions.map((currency) => <option key={currency}>{currency}</option>)}
                 </select>
               </label>
+              {form.contract_currency !== "TRY" ? (
               <label className="text-sm font-bold text-slate-700">
                 Sözleşme Kuru
                 <input type="number" step="0.000001" className="mt-2 w-full rounded-xl border border-slate-300 p-3" value={form.contract_exchange_rate} onChange={(e) => updateForm("contract_exchange_rate", normalizeRateInput(e.target.value))} />
               </label>
+              ) : <div className="hidden md:block" />}
               <label className="text-sm font-bold text-slate-700">
                 Tahmini Bütçe / Maliyet
                 <input type="number" className="mt-2 w-full rounded-xl border border-slate-300 p-3" value={form.estimated_budget} onChange={(e) => updateForm("estimated_budget", e.target.value)} />
@@ -1741,10 +1747,12 @@ export default function ProjectsPage() {
                   {currencyOptions.map((currency) => <option key={currency}>{currency}</option>)}
                 </select>
               </label>
+              {form.estimated_budget_currency !== "TRY" ? (
               <label className="text-sm font-bold text-slate-700">
                 Bütçe Kuru
                 <input type="number" step="0.000001" className="mt-2 w-full rounded-xl border border-slate-300 p-3" value={form.estimated_budget_exchange_rate} onChange={(e) => updateForm("estimated_budget_exchange_rate", normalizeRateInput(e.target.value))} />
               </label>
+              ) : <div className="hidden md:block" />}
               <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4 text-sm md:col-span-3">
                 <div className="font-black text-blue-900">Canlı kur takibi</div>
                 {liveRateWarning && (

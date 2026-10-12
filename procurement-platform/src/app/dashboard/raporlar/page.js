@@ -102,6 +102,19 @@ const getReportFirma = useCallback((rapor) => {
     });
   }, [raporlar, arama, durumFiltre, getReportName, getReportFirma]);
 
+  // Aynı talep için tekrar analiz yapıldığında en yeni rapor geçerlidir; eskiler "eski sürüm" olarak işaretlenir.
+  const eskiSurumIdleri = useMemo(() => {
+    const gorulen = new Set();
+    const eskiler = new Set();
+    raporlar.forEach((rapor) => {
+      const anahtar = rapor.source_request_id || "";
+      if (!anahtar) return;
+      if (gorulen.has(anahtar)) eskiler.add(rapor.id);
+      else gorulen.add(anahtar);
+    });
+    return eskiler;
+  }, [raporlar]);
+
   const durumRenkleri = {
     tamamlandi: { arkaPlan: "#DCFCE7", yazi: "#166534" },
     bekliyor: { arkaPlan: "#FEF3C7", yazi: "#92400E" },
@@ -159,7 +172,7 @@ async function deleteReport(reportId) {
   <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
     <div>
       <div className="mb-3 inline-flex rounded-full bg-white/10 px-4 py-2 text-sm font-semibold text-blue-100">
-        Procurement AI - Rapor Merkezi
+        CORVIAN · Rapor Merkezi
       </div>
 
       <h1 className="text-4xl font-black tracking-tight">
@@ -187,9 +200,6 @@ async function deleteReport(reportId) {
     </div>
   </div>
 </div>
-          <p style={{ marginTop: "8px", color: "#6b7280", fontSize: "15px" }}>
-            Oluşturulan raporları görüntüleyin, filtreleyin ve yönetin.
-          </p>
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "16px", marginBottom: "24px" }}>
@@ -229,6 +239,7 @@ async function deleteReport(reportId) {
 
           {filtreliRaporlar.map((rapor, index) => {
             const renk = getDurumRengi(rapor.durum);
+            const eskiSurum = eskiSurumIdleri.has(rapor.id);
 
             return (
               <div
@@ -236,8 +247,9 @@ async function deleteReport(reportId) {
                 style={{
                   background: "#fff",
                   borderRadius: "18px",
-                  cursor: "pointer",
-                  transition: "0.2s",
+                  padding: "20px",
+                  boxShadow: "0 10px 25px rgba(0,0,0,0.06)",
+                  opacity: eskiSurum ? 0.6 : 1,
                 }}
               >
               
@@ -245,6 +257,11 @@ async function deleteReport(reportId) {
                   <div>
                     <div style={{ fontSize: "20px", fontWeight: "700", color: "#111827", marginBottom: "8px" }}>
                       {index + 1}. {getReportName(rapor)}
+                      {eskiSurum && (
+                        <span title="Bu talep için daha yeni bir rapor var." style={{ marginLeft: "10px", verticalAlign: "middle", background: "#e2e8f0", color: "#475569", padding: "3px 10px", borderRadius: "999px", fontSize: "12px", fontWeight: "700" }}>
+                          Eski sürüm
+                        </span>
+                      )}
                     </div>
 
                     <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", fontSize: "14px", color: "#6b7280" }}>

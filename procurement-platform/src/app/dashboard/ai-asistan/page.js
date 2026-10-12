@@ -48,7 +48,7 @@ function Result({ payload, loading }) {
     <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
       <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <div className="text-xs font-black uppercase tracking-wider text-blue-700">Sistem Destek Yanıtı</div>
+          <div className="text-xs font-black uppercase tracking-wider text-blue-700">Kontrol Sonucu</div>
           <h2 className="mt-1 text-xl font-black text-slate-950">{analysis.headline}</h2>
           <p className="mt-1 text-sm font-semibold text-slate-500">{analysis.summary}</p>
         </div>
@@ -133,7 +133,7 @@ export default function SystemSupportPage() {
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <div className="text-xs font-black uppercase tracking-wider text-blue-700">Operasyon kontrol merkezi</div>
-            <h1 className="mt-1 text-2xl font-black text-slate-950">Sistem Destek Merkezi</h1>
+            <h1 className="mt-1 text-2xl font-black text-slate-950">Kontrol Merkezi</h1>
             <p className="mt-2 max-w-3xl text-sm font-semibold text-slate-500">Proje, stok, talep, teklif, sipariş ve teslimat kayıtlarını 10 sabit kontrolle inceler. Harici yapay zekâ servisi kullanmaz ve hiçbir kaydı değiştirmez.</p>
           </div>
           <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-xs font-black leading-5 text-emerald-800">Ücretsiz kullanım<br />Canlı sistem verisi · Salt okunur</div>
