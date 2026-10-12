@@ -461,6 +461,21 @@ function calculateAutomaticReceiptSuggestions(
     .filter(Boolean);
 }
 
+// Mukayese kaynaklı siparişlerde veritabanı ticari alanları kilitler ve
+// sipariş kalemlerinde yalnız teslimat alanlarının değişmesine izin verir.
+// Ekrandaki normalize edilmiş kalemler alan adlarını değiştirdiği için
+// doğrudan geri yazılırsa kilit tetiklenir; bu yüzden orijinal kaleme yalnız
+// teslim miktarı ve durum işlenir.
+function withDeliveryFields(originalItems, displayItems) {
+  const source = Array.isArray(originalItems) ? originalItems : [];
+  if (source.length !== displayItems.length) return displayItems;
+  return source.map((original, index) => ({
+    ...original,
+    deliveredQuantity: displayItems[index].deliveredQuantity,
+    status: displayItems[index].status,
+  }));
+}
+
 function normalizeItems(items) {
   return (items || []).map((item) => {
     const quantity = Number(item.quantity || 0);
@@ -1198,13 +1213,13 @@ export default function OrderDetailPage() {
     const payload = {
       status: nextStatus,
       delivery_date: deliveryDate,
-      items: completedItems,
+      items: withDeliveryFields(order.items, completedItems),
       status_history: nextHistory,
     };
     const fallbackPayload = {
       status: nextStatus,
       delivery_date: deliveryDate,
-      items: completedItems,
+      items: withDeliveryFields(order.items, completedItems),
     };
 
     const { error } = await updateOrder(payload, fallbackPayload);
@@ -1415,7 +1430,7 @@ export default function OrderDetailPage() {
       p_unit_price: Number(item.unitPrice || 0),
       p_currency: order.currency || "TRY",
       p_report_id: order.report_id || null,
-      p_order_items: nextItems,
+      p_order_items: withDeliveryFields(order.items, nextItems),
       p_order_status: nextStatus,
       p_delivery_date: nextStatus === "Teslim Edildi" ? getToday() : order.delivery_date,
       p_status_history: nextHistory,
@@ -1520,7 +1535,7 @@ export default function OrderDetailPage() {
           supabase
             .from("orders")
             .update({
-              items: nextItems,
+              items: withDeliveryFields(order.items, nextItems),
               status: nextStatus,
               delivery_date: nextStatus === "Teslim Edildi" ? getToday() : order.delivery_date,
               status_history: nextHistory,
