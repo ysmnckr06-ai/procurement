@@ -2775,8 +2775,7 @@ export default function OrderDetailPage() {
             {[
               ["items", "Ürün Kalemleri"],
               ["connections", "Bağlantılar"],
-              ["delivery", "Teslimatlar"],
-              ["receiving", "Depo Teslim Alma"],
+              ["receiving", "Teslim Alma"],
               ["payment", "Ödemeler"],
               ["documents", "Belgeler"],
               ["history", "Tarihçe"],
@@ -2810,14 +2809,7 @@ export default function OrderDetailPage() {
             {activeTab === "connections" && (
               <ConnectionsPanel items={items} projects={linkedProjects} />
             )}
-            {activeTab === "delivery" && (
-              <DeliveryHistoryPanel
-                items={items}
-                receipts={receipts}
-                totals={totals}
-              />
-            )}
-            {activeTab === "receiving" && (
+            {(activeTab === "receiving" || activeTab === "delivery") && (
               <div className="space-y-6">
                 {automaticReceiptPanelOpen && hasReceiptDocument && (
                   <AutomaticReceiptSuggestionsPanel
@@ -2854,6 +2846,14 @@ export default function OrderDetailPage() {
                     setMessage("Otomatik doldurma için irsaliye veya teslim fişi yükleyin.");
                   }}
                 />
+                <div className="border-t border-slate-100 pt-6">
+                  <h3 className="mb-3 text-lg font-black text-slate-900">Teslimat Geçmişi</h3>
+                  <DeliveryHistoryPanel
+                    items={items}
+                    receipts={receipts}
+                    totals={totals}
+                  />
+                </div>
               </div>
             )}
             {activeTab === "payment" && (
@@ -4296,7 +4296,7 @@ function ItemsTable({ items, currency, onExportOrderPdf, onExportExcel, onReceiv
         <div className="flex flex-wrap gap-2">
           <button type="button" onClick={onExportOrderPdf} className="rounded-xl bg-slate-900 px-4 py-3 text-sm font-bold text-white">Sipariş PDF</button>
           <button type="button" onClick={onExportExcel} className="rounded-xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white">Excel İndir</button>
-          <button type="button" onClick={onReceive} className="rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white">Depo Teslim Alma</button>
+          <button type="button" onClick={onReceive} className="rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white">Teslim Al</button>
         </div>
       </div>
 
@@ -4361,7 +4361,7 @@ function DeliveryHistoryPanel({ items, receipts, totals }) {
         <Info label="Kalan" value={totals.remainingQuantity} />
       </div>
       <div className="rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm text-blue-900">
-        Her teslim hareketi tarih, teslim alan kişi ve kalan miktarla birlikte burada izlenir. Yeni giriş için “Depo Teslim Alma” sekmesini kullanın.
+        Her teslim hareketi tarih, teslim alan kişi ve kalan miktarla birlikte burada izlenir. Yeni teslim girişi bu sayfanın üst kısmından yapılır.
       </div>
       {receipts.length > 0 ? (
         <div className="overflow-x-auto rounded-2xl border border-slate-200">

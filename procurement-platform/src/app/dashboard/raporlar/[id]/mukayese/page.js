@@ -22,8 +22,10 @@ function supplierName(offer) { return cleanSupplierName(offer?.firmaAdi || offer
 function taxNumber(value) { return String(value || "").replace(/\D/g, ""); }
 function hasValidTaxNumber(value) { return [10, 11].includes(taxNumber(value).length); }
 function hasFileNameArtifact(value) { return /\.(pdf|xlsx?|xls|png|jpe?g)|\bpdf+f*\b|\b(kopya|copy)\b/i.test(String(value || "")); }
+// Tedarikçi kartı eşleşmeme notu her kalemde tekrar etmesin; raporun üstünde bir kez gösterilir.
+function isSupplierProfileNote(text) { return /tedarikçi kartıyla eşleşmedi/i.test(String(text || "")); }
 function partnerNeedsCompletion(partner) {
-  return !partner || !hasValidTaxNumber(partner.tax_number) || hasFileNameArtifact(partner.name);
+  return !partner || hasFileNameArtifact(partner.name);
 }
 const emptyPartnerForm = { name: "", taxNumber: "", contactPerson: "", email: "", phone: "", city: "", address: "" };
 function money(value, currency = "TRY") {
@@ -160,7 +162,7 @@ function buildDecisionInsight(group) {
   const cautions = [
     ...(Array.isArray(group?.decisionWarnings) ? group.decisionWarnings : []),
     ...(Array.isArray(group?.decisionNotes) ? group.decisionNotes : []),
-  ].filter(Boolean);
+  ].filter((text) => text && !isSupplierProfileNote(text));
 
   if (alternative) {
     const winnerCurrency = normalizedCurrency(winner.paraBirimi) || "TRY";
@@ -613,8 +615,12 @@ export default function ComparisonPage() {
     event.preventDefault();
     if (!partnerPrompt || savingPartner) return;
     const cleanName = cleanSupplierName(partnerForm.name);
-    if (!cleanName || !hasValidTaxNumber(partnerForm.taxNumber)) {
-      setMessage("Firma adı ile 10 haneli VKN veya 11 haneli TCKN zorunludur.");
+    if (!cleanName) {
+      setMessage("Firma adı zorunludur.");
+      return;
+    }
+    if (String(partnerForm.taxNumber || "").trim() && !hasValidTaxNumber(partnerForm.taxNumber)) {
+      setMessage("VKN 10, TCKN 11 haneli olmalı. Bilmiyorsanız alanı boş bırakabilirsiniz.");
       return;
     }
     setSavingPartner(true);
@@ -623,7 +629,7 @@ export default function ComparisonPage() {
     const values = {
       name: cleanName,
       partner_type: "Tedarikçi",
-      tax_number: taxNumber(partnerForm.taxNumber),
+      tax_number: taxNumber(partnerForm.taxNumber) || partnerPrompt.entry.partner?.tax_number || null,
       contact_person: partnerForm.contactPerson.trim() || null,
       email: partnerForm.email.trim() || null,
       phone: partnerForm.phone.trim() || null,
@@ -743,12 +749,12 @@ export default function ComparisonPage() {
     {partnerPrompt && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
       <form onSubmit={savePartnerAndContinue} className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl">
         <div className="flex items-start justify-between gap-4">
-          <div><div className="text-xs font-black uppercase tracking-wider text-blue-700">Tedarikçi bilgisi · {partnerPrompt.index + 1}/{partnerPrompt.total}</div><h2 className="mt-1 text-2xl font-black text-slate-950">Firma bilgilerini tamamlayın</h2><p className="mt-2 text-sm text-slate-600">Teklif dosyasının adı firma kartı olarak kaydedilmez. Sipariş oluşmadan önce gerçek firma bilgileri doğrulanır.</p></div>
+          <div><div className="text-xs font-black uppercase tracking-wider text-blue-700">Tedarikçi bilgisi · {partnerPrompt.index + 1}/{partnerPrompt.total}</div><h2 className="mt-1 text-2xl font-black text-slate-950">Firma bilgilerini tamamlayın</h2><p className="mt-2 text-sm text-slate-600">Teklif dosyasının adı firma kartı olarak kaydedilmez. Siparişten önce firma adını kontrol edin; vergi ve iletişim bilgileri isteğe bağlıdır.</p></div>
           <button type="button" onClick={() => { setPartnerPrompt(null); pendingPartnersRef.current = []; setMessage("Sipariş oluşturma iptal edildi; hiçbir sipariş kaydedilmedi."); }} className="rounded-xl border px-3 py-2 text-sm font-bold">Vazgeç</button>
         </div>
         <div className="mt-5 grid gap-4 md:grid-cols-2">
           <label className="text-sm font-bold">Firma adı *<input value={partnerForm.name} onChange={(e) => setPartnerForm((current) => ({ ...current, name: e.target.value }))} className="mt-1 w-full rounded-xl border p-3" /></label>
-          <label className="text-sm font-bold">VKN / TCKN *<input value={partnerForm.taxNumber} onChange={(e) => setPartnerForm((current) => ({ ...current, taxNumber: e.target.value }))} inputMode="numeric" className="mt-1 w-full rounded-xl border p-3" placeholder="10 haneli VKN veya 11 haneli TCKN" /></label>
+          <label className="text-sm font-bold">VKN / TCKN (isteğe bağlı)<input value={partnerForm.taxNumber} onChange={(e) => setPartnerForm((current) => ({ ...current, taxNumber: e.target.value }))} inputMode="numeric" className="mt-1 w-full rounded-xl border p-3" placeholder="10 haneli VKN veya 11 haneli TCKN" /></label>
           <label className="text-sm font-bold">Yetkili<input value={partnerForm.contactPerson} onChange={(e) => setPartnerForm((current) => ({ ...current, contactPerson: e.target.value }))} className="mt-1 w-full rounded-xl border p-3" /></label>
           <label className="text-sm font-bold">E-posta<input type="email" value={partnerForm.email} onChange={(e) => setPartnerForm((current) => ({ ...current, email: e.target.value }))} className="mt-1 w-full rounded-xl border p-3" /></label>
           <label className="text-sm font-bold">Telefon<input value={partnerForm.phone} onChange={(e) => setPartnerForm((current) => ({ ...current, phone: e.target.value }))} className="mt-1 w-full rounded-xl border p-3" /></label>
@@ -804,6 +810,9 @@ export default function ComparisonPage() {
         </div>
       </div>
     </section>
+    {groups.some((group) => [...(group.decisionWarnings || []), ...(group.decisionNotes || [])].some(isSupplierProfileNote) || group.supplierProfileNote) && <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-950">
+      <span className="font-black">Bilgi:</span> Teklif veren firmaların bir kısmı İş Ortakları&apos;nda kayıtlı değil; bu firmalar için kalite ve güven puanı varsayılan değerle hesaplandı. Sipariş verirken firma kartı kısa bir formla oluşturulur.
+    </div>}
     {groups.map((group, groupIndex) => {
       const offers = Array.isArray(group.offers) ? group.offers : [];
       const bestName = normalize(supplierName(group.bestOffer));
@@ -811,7 +820,7 @@ export default function ComparisonPage() {
       const reviewMessages = Array.from(new Set([
         ...(Array.isArray(group.decisionWarnings) ? group.decisionWarnings : []),
         ...(Array.isArray(group.decisionNotes) ? group.decisionNotes : []),
-      ].filter(Boolean)));
+      ].filter((text) => text && !isSupplierProfileNote(text))));
       return <section key={groupKey(groupIndex)} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="border-b bg-slate-50 p-4"><div className="font-black text-blue-900">{group.urunKodu || "Kodsuz"} · {group.urunAciklamasi}</div><div className="mt-1 flex flex-wrap gap-3 text-xs font-bold text-slate-600"><span>Talep edilen: {group.talepEdilenAdet} {group.birim}</span><span>Teklif sayısı: {offers.length}</span><span>Projeler: {projectSummary(group, reportProjectLabel)}</span></div></div>
         {group.decisionStatus === "manual_review" && <div className="border-b border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-950">

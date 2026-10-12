@@ -911,8 +911,8 @@ export default function OrdersPage() {
 
     if (partner && (![10, 11].includes(String(partner.tax_number || "").replace(/\D/g, "").length) || hasPartnerFileArtifact(partner.name))) {
       const normalizedTaxNumber = String(formData.partnerTaxNumber || "").replace(/\D/g, "");
-      if (![10, 11].includes(normalizedTaxNumber.length)) {
-        setMessage("Bu tedarikçi kartı eksik. Siparişten önce 10 haneli VKN veya 11 haneli TCKN girin.");
+      if (normalizedTaxNumber && ![10, 11].includes(normalizedTaxNumber.length)) {
+        setMessage("VKN 10, TCKN 11 haneli olmalı. Bilmiyorsanız alanı boş bırakabilirsiniz.");
         isSubmittingRef.current = false;
         return;
       }
@@ -920,7 +920,7 @@ export default function OrdersPage() {
         .from("suppliers")
         .update({
           name: cleanPartnerName(formData.company),
-          tax_number: normalizedTaxNumber,
+          tax_number: normalizedTaxNumber || partner.tax_number || null,
           contact_person: formData.partnerContactPerson.trim() || partner.contact_person || null,
           email: formData.partnerEmail.trim() || partner.email || null,
           phone: formData.partnerPhone.trim() || partner.phone || null,
@@ -941,8 +941,8 @@ export default function OrdersPage() {
 
     if (!partner && partnerChoice?.mode === "new") {
       const normalizedTaxNumber = String(formData.partnerTaxNumber || "").replace(/\D/g, "");
-      if (![10, 11].includes(normalizedTaxNumber.length)) {
-        setMessage("Yeni tedarikçi için 10 haneli VKN veya 11 haneli TCKN zorunludur.");
+      if (normalizedTaxNumber && ![10, 11].includes(normalizedTaxNumber.length)) {
+        setMessage("VKN 10, TCKN 11 haneli olmalı. Bilmiyorsanız alanı boş bırakabilirsiniz.");
         isSubmittingRef.current = false;
         return;
       }
@@ -1501,7 +1501,7 @@ function OrderForm({
     ? suppliers.find((supplier) => supplier.id === partnerChoice.partnerId)
     : null;
   const partnerDetailsRequired = partnerChoice?.mode === "new"
-    || (chosenSupplier && (![10, 11].includes(String(chosenSupplier.tax_number || "").replace(/\D/g, "").length) || hasPartnerFileArtifact(chosenSupplier.name)));
+    || (chosenSupplier && hasPartnerFileArtifact(chosenSupplier.name));
   const missingRequiredFields = [
     ["Sipariş No", formData.orderNo],
     ["İş Ortağı", formData.company],
@@ -1552,10 +1552,10 @@ function OrderForm({
           required
         />
         {partnerDetailsRequired && <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 md:col-span-2 xl:col-span-4">
-          <div className="font-black text-amber-950">Tedarikçi firma bilgilerini tamamlayın</div>
-          <p className="mt-1 text-xs font-semibold text-amber-800">Dosya adı firma kartı olarak kullanılmaz. Firma adı ve vergi numarası doğrulanmadan sipariş kaydedilmez.</p>
+          <div className="font-black text-amber-950">Tedarikçi bilgileri (isteğe bağlı)</div>
+          <p className="mt-1 text-xs font-semibold text-amber-800">Firma adını kontrol edin. Vergi numarası ve iletişim bilgilerini şimdi ya da daha sonra İş Ortakları sayfasından ekleyebilirsiniz.</p>
           <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            <Input label="VKN / TCKN" name="partnerTaxNumber" value={formData.partnerTaxNumber} onChange={onChange} required />
+            <Input label="VKN / TCKN" name="partnerTaxNumber" value={formData.partnerTaxNumber} onChange={onChange} />
             <Input label="Yetkili" name="partnerContactPerson" value={formData.partnerContactPerson} onChange={onChange} />
             <Input label="E-posta" name="partnerEmail" type="email" value={formData.partnerEmail} onChange={onChange} />
             <Input label="Telefon" name="partnerPhone" value={formData.partnerPhone} onChange={onChange} />

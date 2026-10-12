@@ -801,6 +801,7 @@ def analyze_groups(groups, exchange_rates, config=None, constraints=None, prefer
             "missing_data_policy",
             DEFAULT_USER_CONSTRAINTS["missing_data_policy"],
         )
+        supplier_profile_note = ""
         unmatched_offers = [offer for offer in offers if not offer.get("supplierProfileMatched")]
         if unmatched_offers:
             if len(unmatched_offers) == len(offers):
@@ -816,7 +817,8 @@ def analyze_groups(groups, exchange_rates, config=None, constraints=None, prefer
             if missing_data_policy == "manual_review":
                 decision_warnings.append(profile_note + "; sipariş öncesi firma doğrulaması gerekli")
             else:
-                decision_notes.append(profile_note)
+                # Not kalem bazında tekrar edilmez; arayüz rapor başında tek bilgi kutusu gösterir.
+                supplier_profile_note = profile_note
 
         if safe_float((config or {}).get("daily_delay_cost", 0), 0) <= 0:
             decision_notes.append(
@@ -890,6 +892,7 @@ def analyze_groups(groups, exchange_rates, config=None, constraints=None, prefer
             "decisionStatus": "manual_review" if manual_review_required else ("automatic" if best_offer else "no_eligible_offer"),
             "decisionWarnings": decision_warnings,
             "decisionNotes": decision_notes,
+            "supplierProfileNote": supplier_profile_note,
             "recommendedAllocation": recommended_allocation,
             "recommendedTotalTRY": round(recommended_total, 4),
             "uncoveredQuantity": uncovered_quantity,

@@ -4549,8 +4549,11 @@ export default function ProjectDetailPage() {
   }
 
   function removePreviewRowsByIds(importedIds) {
+    const remainingCount = previewRows.filter((row) => !importedIds.has(row.preview_id)).length;
     setPreviewRows((prev) => prev.filter((row) => !importedIds.has(row.preview_id)));
     setSelectedPreviewRowIds((prev) => prev.filter((id) => !importedIds.has(id)));
+    // Tüm satırlar aktarıldıysa kullanıcıyı bir sonraki adım olan ihtiyaç analizine götür.
+    if (previewRows.length > 0 && remainingCount === 0) setActiveTab("İhtiyaç Analizi");
   }
 
   async function parseProjectItemFiles(event) {
@@ -8376,7 +8379,7 @@ export default function ProjectDetailPage() {
 
                     {previewLooksLikeFlatMainList && (
                       <div className="mt-4 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm font-bold text-indigo-900">
-                        Bu dosyada alt kalem ilişkisi bulunamadı. Ürünleri bağımsız ana kalem olarak aktarabilirsiniz.
+                        Bu dosyada alt kalem ilişkisi bulunamadı. "Projeye Aktar" ürünleri bağımsız ana kalem olarak ekler.
                       </div>
                     )}
 
@@ -8416,81 +8419,86 @@ export default function ProjectDetailPage() {
                       </button>
                     </div>
 
-                    <div className="mt-4 grid grid-cols-1 gap-3 xl:grid-cols-[1fr_auto_auto_auto_auto_auto] xl:items-center">
-                      <select
-                        className="rounded-xl border border-slate-300 p-3 text-sm"
-                        value={previewParentId}
-                        onChange={(event) => setPreviewParentId(event.target.value)}
-                      >
-                        <option value="">Bağlanacak ana kalemi seç</option>
-                        {parentItems.map((item) => (
-                          <option key={item.id} value={item.id}>{item.product_name}</option>
-                        ))}
-                      </select>
-                      <button
-                        type="button"
-                        disabled={isImportingPreview || selectedPreviewRows.length === 0}
-                        onClick={importSelectedPreviewRowsStandalone}
-                        className="rounded-xl bg-slate-900 px-4 py-3 text-sm font-bold text-white hover:bg-slate-800 disabled:bg-slate-300"
-                      >
-                        Seçilileri Bağımsız Aktar
-                      </button>
+                    <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 md:flex-row md:items-center md:justify-between">
+                      <div className="text-sm text-emerald-900">
+                        <div className="font-black">Hazırsanız tek tıkla aktarın</div>
+                        <p className="mt-1">Seçili satırlar (hiç seçim yoksa tümü) dosyadaki ana kalem / alt kalem düzeniyle projeye eklenir. Ardından ihtiyaç analizine geçilir.</p>
+                      </div>
                       <button
                         type="button"
                         disabled={isImportingPreview || previewRows.length === 0}
-                        onClick={importSelectedPreviewRowsAsMainItems}
-                        className="rounded-xl bg-indigo-600 px-4 py-3 text-sm font-bold text-white hover:bg-indigo-700 disabled:bg-slate-300"
+                        onClick={previewLooksLikeFlatMainList ? importSelectedPreviewRowsAsMainItems : importGroupedPreviewRows}
+                        className="shrink-0 rounded-xl bg-emerald-600 px-6 py-3 text-base font-black text-white shadow-sm hover:bg-emerald-700 disabled:bg-slate-300"
                       >
-                        Bağımsız Ana Kalem Olarak Aktar
-                      </button>
-                      <button
-                        type="button"
-                        disabled={isImportingPreview || selectedPreviewRows.length === 0 || !previewParentId}
-                        onClick={attachSelectedPreviewRowsToParent}
-                        className="rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white hover:bg-blue-700 disabled:bg-slate-300"
-                      >
-                        Seçilileri Ana Kaleme Bağla
-                      </button>
-                      <button
-                        type="button"
-                        disabled={isImportingPreview || selectedPreviewRows.length === 0}
-                        onClick={openCreateParentFromSelectionModal}
-                        className="rounded-xl bg-amber-500 px-4 py-3 text-sm font-bold text-white hover:bg-amber-600 disabled:bg-slate-300"
-                      >
-                        Seçiliden Ana Kalem Oluştur
-                      </button>
-                      <button
-                        type="button"
-                        disabled={isImportingPreview || previewRows.length === 0}
-                        onClick={importGroupedPreviewRows}
-                        className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white hover:bg-emerald-700 disabled:bg-slate-300"
-                      >
-                        {isImportingPreview ? "Aktarılıyor..." : "Hiyerarşik Aktar"}
+                        {isImportingPreview ? "Aktarılıyor..." : "Projeye Aktar"}
                       </button>
                     </div>
 
-                    <div className="mt-3 grid grid-cols-1 gap-2 text-xs text-slate-600 md:grid-cols-2 xl:grid-cols-5">
-                      <div className="rounded-xl bg-slate-50 p-3">
-                        <div className="font-black text-slate-900">Seçilileri Bağımsız Aktar</div>
-                        <p className="mt-1">Seçili satırları hiçbir ana kaleme bağlamadan normal proje kalemi yapar.</p>
+                    <details className="mt-3 rounded-2xl border border-slate-200 bg-white p-4">
+                      <summary className="cursor-pointer text-sm font-black text-slate-700">Gelişmiş aktarım seçenekleri</summary>
+                      <div className="mt-4 grid grid-cols-1 gap-3 xl:grid-cols-[1fr_auto_auto_auto_auto] xl:items-center">
+                        <select
+                          className="rounded-xl border border-slate-300 p-3 text-sm"
+                          value={previewParentId}
+                          onChange={(event) => setPreviewParentId(event.target.value)}
+                        >
+                          <option value="">Bağlanacak ana kalemi seç</option>
+                          {parentItems.map((item) => (
+                            <option key={item.id} value={item.id}>{item.product_name}</option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          disabled={isImportingPreview || selectedPreviewRows.length === 0}
+                          onClick={importSelectedPreviewRowsStandalone}
+                          className="rounded-xl bg-slate-900 px-4 py-3 text-sm font-bold text-white hover:bg-slate-800 disabled:bg-slate-300"
+                        >
+                          Seçilileri Bağımsız Aktar
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isImportingPreview || previewRows.length === 0}
+                          onClick={importSelectedPreviewRowsAsMainItems}
+                          className="rounded-xl bg-indigo-600 px-4 py-3 text-sm font-bold text-white hover:bg-indigo-700 disabled:bg-slate-300"
+                        >
+                          Bağımsız Ana Kalem Olarak Aktar
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isImportingPreview || selectedPreviewRows.length === 0 || !previewParentId}
+                          onClick={attachSelectedPreviewRowsToParent}
+                          className="rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white hover:bg-blue-700 disabled:bg-slate-300"
+                        >
+                          Seçilileri Ana Kaleme Bağla
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isImportingPreview || selectedPreviewRows.length === 0}
+                          onClick={openCreateParentFromSelectionModal}
+                          className="rounded-xl bg-amber-500 px-4 py-3 text-sm font-bold text-white hover:bg-amber-600 disabled:bg-slate-300"
+                        >
+                          Seçiliden Ana Kalem Oluştur
+                        </button>
                       </div>
-                      <div className="rounded-xl bg-indigo-50 p-3">
-                        <div className="font-black text-indigo-900">Bağımsız Ana Kalem</div>
-                        <p className="mt-1">Seçili satırları alt bileşeni olmayan ana kalem olarak aktarır.</p>
+                      <div className="mt-3 grid grid-cols-1 gap-2 text-xs text-slate-600 md:grid-cols-2 xl:grid-cols-4">
+                        <div className="rounded-xl bg-slate-50 p-3">
+                          <div className="font-black text-slate-900">Seçilileri Bağımsız Aktar</div>
+                          <p className="mt-1">Seçili satırları hiçbir ana kaleme bağlamadan normal proje kalemi yapar.</p>
+                        </div>
+                        <div className="rounded-xl bg-indigo-50 p-3">
+                          <div className="font-black text-indigo-900">Bağımsız Ana Kalem</div>
+                          <p className="mt-1">Seçili satırları alt bileşeni olmayan ana kalem olarak aktarır.</p>
+                        </div>
+                        <div className="rounded-xl bg-blue-50 p-3">
+                          <div className="font-black text-blue-900">Ana Kaleme Bağla</div>
+                          <p className="mt-1">Seçili satırları yukarıdan seçilen mevcut ana kalemin alt bileşeni yapar.</p>
+                        </div>
+                        <div className="rounded-xl bg-amber-50 p-3">
+                          <div className="font-black text-amber-900">Seçiliden Ana Kalem</div>
+                          <p className="mt-1">Modal açar; seçili satırlardan birini ana kalem, diğerlerini alt kalem yaparsınız.</p>
+                        </div>
                       </div>
-                      <div className="rounded-xl bg-blue-50 p-3">
-                        <div className="font-black text-blue-900">Ana Kaleme Bağla</div>
-                        <p className="mt-1">Seçili satırları yukarıdan seçilen mevcut ana kalemin alt bileşeni yapar.</p>
-                      </div>
-                      <div className="rounded-xl bg-amber-50 p-3">
-                        <div className="font-black text-amber-900">Seçiliden Ana Kalem</div>
-                        <p className="mt-1">Modal açar; seçili satırlardan birini ana kalem, diğerlerini alt kalem yaparsınız.</p>
-                      </div>
-                      <div className="rounded-xl bg-emerald-50 p-3">
-                        <div className="font-black text-emerald-900">Hiyerarşik Aktar</div>
-                        <p className="mt-1">Dosyada okunan ana kalem ve alt kalem ilişkisini olduğu gibi projeye taşır.</p>
-                      </div>
-                    </div>
+                    </details>
 
                     {createParentModalOpen && (
                       <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4">

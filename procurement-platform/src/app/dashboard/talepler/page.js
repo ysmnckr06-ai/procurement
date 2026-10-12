@@ -113,6 +113,16 @@ function requestProcessInfo(request) {
     .join(" · ");
 }
 
+const emptyManualLine = () => ({ productCode: "", brand: "", productName: "", quantity: "1", unit: "adet" });
+const emptyManualRequest = () => ({
+  subject: "",
+  requester: "",
+  department: "",
+  priority: "Orta",
+  note: "",
+  lines: [emptyManualLine()],
+});
+
 function requestSequenceLabel(index, total) {
   return `TLB-${String(Math.max(total - index, 1)).padStart(5, "0")}`;
 }
@@ -826,7 +836,7 @@ function MergedPurchasePreview({ rows, onTakeIntoProcess }) {
             onClick={onTakeIntoProcess}
             className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700"
           >
-            Seçilenleri İşleme Al
+            Seçilenleri Birleştir
           </button>
         </div>
       </div>
@@ -937,18 +947,7 @@ export default function TaleplerPage() {
     department: "",
     priority: "Normal",
   });
-  const [manualRequest, setManualRequest] = useState({
-    subject: "",
-    requester: "",
-    department: "",
-    priority: "Orta",
-    note: "",
-    productCode: "",
-    brand: "",
-    productName: "",
-    quantity: "1",
-    unit: "adet",
-  });
+  const [manualRequest, setManualRequest] = useState(emptyManualRequest);
   const isAnalyzingRef = useRef(false);
 
   const totalQty = useMemo(() => {
@@ -1138,22 +1137,49 @@ export default function TaleplerPage() {
     ) || null;
   };
 
-  const updateManualProductCode = (value) => {
+  const updateManualLine = (index, field, value) => {
+    setManualRequest((current) => ({
+      ...current,
+      lines: current.lines.map((line, lineIndex) => (lineIndex === index ? { ...line, [field]: value } : line)),
+    }));
+  };
+
+  const updateManualProductCode = (index, value) => {
     const product = findManualProductByCode(value);
     setManualRequest((current) => ({
       ...current,
-      productCode: value,
-      brand: product?.brand || current.brand,
-      productName: product?.product_name || current.productName,
-      unit: product?.unit || current.unit || "adet",
+      lines: current.lines.map((line, lineIndex) => (lineIndex === index
+        ? {
+          ...line,
+          productCode: value,
+          brand: product?.brand || line.brand,
+          productName: product?.product_name || line.productName,
+          unit: product?.unit || line.unit || "adet",
+        }
+        : line)),
+    }));
+  };
+
+  const addManualLine = () => {
+    setManualRequest((current) => ({ ...current, lines: [...current.lines, emptyManualLine()] }));
+  };
+
+  const removeManualLine = (index) => {
+    setManualRequest((current) => ({
+      ...current,
+      lines: current.lines.length > 1 ? current.lines.filter((_, lineIndex) => lineIndex !== index) : current.lines,
     }));
   };
 
   async function createManualRequest() {
-    const productName = manualRequest.productName.trim();
-    const quantity = Number(manualRequest.quantity || 0);
-    if (!productName || quantity <= 0) {
-      setMessage("Manuel talep için ürün açıklaması ve 0'dan büyük miktar girin.");
+    const filledLines = manualRequest.lines.filter((line) => line.productName.trim() || line.productCode.trim());
+    if (filledLines.length === 0) {
+      setMessage("Manuel talep için en az bir kalemin ürün açıklamasını girin.");
+      return;
+    }
+    const invalidLine = filledLines.find((line) => !line.productName.trim() || Number(line.quantity || 0) <= 0);
+    if (invalidLine) {
+      setMessage("Her kalem için ürün açıklaması ve 0'dan büyük miktar girin.");
       return;
     }
 
@@ -1164,36 +1190,44 @@ export default function TaleplerPage() {
       return;
     }
 
-    const subject = manualRequest.subject.trim() || `Manuel Talep - ${productName}`;
-    const item = {
-      urunKodu: manualRequest.productCode.trim(),
-      product_code: manualRequest.productCode.trim(),
-      marka: manualRequest.brand.trim(),
-      brand: manualRequest.brand.trim(),
-      urunAciklamasi: productName,
-      product_name: productName,
-      talepEdilenAdet: quantity,
-      quantity,
-      purchase_quantity: quantity,
-      birim: manualRequest.unit.trim() || "adet",
-      unit: manualRequest.unit.trim() || "adet",
-      note: manualRequest.note.trim(),
-      request_meta: {
-        source: "manual",
-        requester: manualRequest.requester.trim(),
-        department: manualRequest.department.trim(),
-        priority: manualRequest.priority,
-        createdBy: user.email || user.id,
-      },
+    const firstName = filledLines[0].productName.trim();
+    const subject = manualRequest.subject.trim()
+      || (filledLines.length > 1 ? `Manuel Talep - ${firstName} +${filledLines.length - 1}` : `Manuel Talep - ${firstName}`);
+    const requestMeta = {
+      source: "manual",
+      requester: manualRequest.requester.trim(),
+      department: manualRequest.department.trim(),
+      priority: manualRequest.priority,
+      createdBy: user.email || user.id,
     };
+    const items = filledLines.map((line) => {
+      const quantity = Number(line.quantity || 0);
+      const productName = line.productName.trim();
+      const unit = line.unit.trim() || "adet";
+      return {
+        urunKodu: line.productCode.trim(),
+        product_code: line.productCode.trim(),
+        marka: line.brand.trim(),
+        brand: line.brand.trim(),
+        urunAciklamasi: productName,
+        product_name: productName,
+        talepEdilenAdet: quantity,
+        quantity,
+        purchase_quantity: quantity,
+        birim: unit,
+        unit,
+        note: manualRequest.note.trim(),
+        request_meta: requestMeta,
+      };
+    });
 
     const { data, error } = await supabase.from("requests").insert({
       user_id: user.id,
       project_id: null,
       ad: subject,
       durum: "Yeni Talep",
-      totalitems: 1,
-      items: [item],
+      totalitems: items.length,
+      items,
     }).select("id").single();
 
     setCreatingManualRequest(false);
@@ -1202,10 +1236,10 @@ export default function TaleplerPage() {
       return;
     }
 
-    setManualRequest({ subject: "", requester: "", department: "", priority: "Orta", note: "", productCode: "", brand: "", productName: "", quantity: "1", unit: "adet" });
+    setManualRequest(emptyManualRequest());
     setExpandedRequestId(data.id);
     setActiveRequestTab("pool");
-    setMessage("Manuel talep oluşturuldu ve talep havuzuna eklendi.");
+    setMessage(`Manuel talep (${items.length} kalem) oluşturuldu; Teklif Havuzu'nda teklif toplamaya hazır.`);
     await loadRequests();
   }
 
@@ -1219,16 +1253,6 @@ export default function TaleplerPage() {
     }
     setSavedRequests((current) => current.map((item) => item.id === request.id ? { ...item, durum: status } : item));
     setMessage("Talep durumu güncellendi.");
-  }
-
-  function openProcessModal(request) {
-    setProcessModal({
-      request,
-      requests: [request],
-      processor: "",
-      department: "",
-      priority: requestPriority(request),
-    });
   }
 
   function closeProcessModal() {
@@ -1252,8 +1276,8 @@ export default function TaleplerPage() {
         ? [processModal.request]
         : [];
     const processor = processModal.processor.trim();
-    if (requests.length === 0 || !processor) {
-      setMessage("Talebi işleme alan kişi zorunlu.");
+    if (requests.length === 0) {
+      setMessage("Birleştirilecek talep seçin.");
       return;
     }
 
@@ -1292,7 +1316,7 @@ export default function TaleplerPage() {
         item.id === request.id ? { ...item, durum: "İşlemde", items } : item
       )));
       closeProcessModal();
-      setMessage("Talep işleme alındı ve Teklif Havuzu'na aktarıldı.");
+      setMessage("Talep bilgisi kaydedildi.");
       return;
     }
 
@@ -1378,7 +1402,7 @@ export default function TaleplerPage() {
 
     closeProcessModal();
     setSelectedRequestIds([]);
-    setMessage(`${requests.length} talep birleştirildi, İşlemde durumuna alındı ve Teklif Havuzu'na aktarıldı.`);
+    setMessage(`${requests.length} talep tek listede birleştirildi; birleşik talep Teklif Havuzu'nda.`);
     await loadRequests();
   }
 
@@ -1915,17 +1939,26 @@ export default function TaleplerPage() {
               <select value={manualRequest.priority} onChange={(e) => updateManualRequest("priority", e.target.value)} className="rounded-xl border border-slate-300 px-4 py-3 text-sm">
                 <option>Düşük</option><option>Orta</option><option>Yüksek</option><option>Kritik</option>
               </select>
-              <ProductCodeInput
-                products={stockProducts}
-                value={manualRequest.productCode}
-                onChange={updateManualProductCode}
-                placeholder="Ürün kodu (opsiyonel)"
-                className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm"
-              />
-              <input value={manualRequest.brand} onChange={(e) => updateManualRequest("brand", e.target.value)} placeholder="Marka" className="rounded-xl border border-slate-300 px-4 py-3 text-sm" />
-              <input value={manualRequest.productName} onChange={(e) => updateManualRequest("productName", e.target.value)} placeholder="Ürün / hizmet açıklaması" className="rounded-xl border border-slate-300 px-4 py-3 text-sm" />
-              <input type="number" min="0" value={manualRequest.quantity} onChange={(e) => updateManualRequest("quantity", e.target.value)} placeholder="Miktar" className="rounded-xl border border-slate-300 px-4 py-3 text-sm" />
-              <input value={manualRequest.unit} onChange={(e) => updateManualRequest("unit", e.target.value)} placeholder="Birim" className="rounded-xl border border-slate-300 px-4 py-3 text-sm" />
+              <div className="md:col-span-2 space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <div className="text-xs font-black uppercase text-slate-500">Kalemler</div>
+                {manualRequest.lines.map((line, index) => (
+                  <div key={index} className="grid grid-cols-1 gap-2 rounded-lg bg-white p-2 md:grid-cols-[160px_120px_1fr_90px_90px_auto]">
+                    <ProductCodeInput
+                      products={stockProducts}
+                      value={line.productCode}
+                      onChange={(value) => updateManualProductCode(index, value)}
+                      placeholder="Ürün kodu"
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    />
+                    <input value={line.brand} onChange={(e) => updateManualLine(index, "brand", e.target.value)} placeholder="Marka" className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                    <input value={line.productName} onChange={(e) => updateManualLine(index, "productName", e.target.value)} placeholder="Ürün / hizmet açıklaması" className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                    <input type="number" min="0" value={line.quantity} onChange={(e) => updateManualLine(index, "quantity", e.target.value)} placeholder="Miktar" className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                    <input value={line.unit} onChange={(e) => updateManualLine(index, "unit", e.target.value)} placeholder="Birim" className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                    <button type="button" onClick={() => removeManualLine(index)} disabled={manualRequest.lines.length === 1} className="rounded-lg px-3 py-2 text-xs font-bold text-red-600 hover:bg-red-50 disabled:text-slate-300" aria-label="Kalemi sil">Sil</button>
+                  </div>
+                ))}
+                <button type="button" onClick={addManualLine} className="rounded-lg border border-dashed border-slate-400 px-3 py-2 text-xs font-black text-slate-700 hover:bg-white">+ Kalem ekle</button>
+              </div>
               <textarea value={manualRequest.note} onChange={(e) => updateManualRequest("note", e.target.value)} placeholder="Not / açıklama" className="md:col-span-2 min-h-24 rounded-xl border border-slate-300 px-4 py-3 text-sm" />
             </div>
 
@@ -2062,18 +2095,9 @@ export default function TaleplerPage() {
                             İndir
                           </button>
 
-                          {isInProcess ? (
-                            <span className="rounded-md bg-slate-100 px-2.5 py-1.5 text-xs font-black text-slate-600">
-                              İşlemde
-                            </span>
-                          ) : (
-                            <button type="button"
-                              onClick={() => openProcessModal(req)}
-                              className="rounded-md bg-blue-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-blue-700"
-                            >
-                              İşleme Al
-                            </button>
-                          )}
+                          <span className="rounded-md bg-emerald-50 px-2.5 py-1.5 text-xs font-black text-emerald-700" title="Talepler oluşturulduğu anda Teklif Havuzu'nda görünür.">
+                            {isInProcess ? "İşlemde" : "Teklif Havuzunda"}
+                          </span>
                           <button type="button"
                             onClick={() => deleteRequest(req.id)}
                             className="rounded-md bg-red-600 px-2.5 py-1.5 text-xs font-bold text-white"
@@ -2430,8 +2454,8 @@ export default function TaleplerPage() {
               <div>
                 <h2 className="text-xl font-black text-slate-900">
                   {processModal.requests.length > 1
-                    ? `${processModal.requests.length} Talebi Birleştir ve İşleme Al`
-                    : "Talebi İşleme Al"}
+                    ? `${processModal.requests.length} Talebi Birleştir`
+                    : "Talep Bilgisi"}
                 </h2>
                 <p className="mt-1 text-sm font-semibold text-slate-500">
                   {processModal.requests.length > 1
@@ -2450,7 +2474,7 @@ export default function TaleplerPage() {
 
             <div className="mt-5 space-y-4">
               <label className="block text-sm font-black text-slate-700">
-                İşleme alan kişi
+                Sorumlu kişi (isteğe bağlı)
                 <input
                   value={processModal.processor}
                   onChange={(event) => updateProcessModal("processor", event.target.value)}
@@ -2496,11 +2520,10 @@ export default function TaleplerPage() {
               </button>
               <button
                 type="button"
-                disabled={!processModal.processor.trim()}
                 onClick={takeRequestIntoProcess}
                 className="rounded-xl bg-blue-600 px-4 py-3 text-sm font-black text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300"
               >
-                {processModal.requests.length > 1 ? "Birleştir ve İşleme Al" : "İşleme Al"}
+                {processModal.requests.length > 1 ? "Birleştir" : "Kaydet"}
               </button>
             </div>
           </div>
