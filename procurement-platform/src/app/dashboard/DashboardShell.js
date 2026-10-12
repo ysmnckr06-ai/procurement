@@ -75,9 +75,14 @@ function LicenseStatusCard({ license, licenseCheckedAt }) {
             Demo bitiş tarihi: {formatLicenseDate(license.trial_ends_at)}
           </div>
         </div>
-        <span className="w-fit rounded-full bg-amber-100 px-3 py-1 text-xs font-black text-amber-800">
-          {remainingDays} gün kaldı
-        </span>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="w-fit rounded-full bg-amber-100 px-3 py-1 text-xs font-black text-amber-800">
+            {remainingDays} gün kaldı
+          </span>
+          <Link href="/abonelik" className="rounded-full bg-blue-600 px-4 py-1.5 text-xs font-black text-white hover:bg-blue-700">
+            Abone ol
+          </Link>
+        </div>
       </section>
     );
   }
@@ -86,18 +91,25 @@ function LicenseStatusCard({ license, licenseCheckedAt }) {
     return (
       <section className="mb-5 flex flex-col gap-2 rounded-2xl border border-emerald-200 bg-gradient-to-r from-emerald-50 to-white px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <div className="text-sm font-black text-slate-900">Aktif lisans</div>
+          <div className="text-sm font-black text-slate-900">{license.subscription_status ? "Aylık abonelik" : "Aktif lisans"}</div>
           <div className="mt-1 text-xs font-semibold text-slate-500">
             {license.expires_at
-              ? `Bitiş tarihi: ${formatLicenseDate(license.expires_at)}`
+              ? `${license.subscription_status === "ACTIVE" ? "Sonraki yenileme" : "Erişim bitişi"}: ${formatLicenseDate(license.expires_at)}`
               : "Süresiz kullanım"}
           </div>
         </div>
-        <span className="w-fit rounded-full bg-emerald-100 px-3 py-1 text-xs font-black text-emerald-800">
-          {license.expires_at
-            ? formatLicenseDate(license.expires_at)
-            : "Süresiz"}
-        </span>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="w-fit rounded-full bg-emerald-100 px-3 py-1 text-xs font-black text-emerald-800">
+            {license.expires_at
+              ? formatLicenseDate(license.expires_at)
+              : "Süresiz"}
+          </span>
+          {license.subscription_status && (
+            <Link href="/abonelik" className="rounded-full border border-emerald-300 px-4 py-1.5 text-xs font-black text-emerald-800 hover:bg-emerald-100">
+              Aboneliği yönet
+            </Link>
+          )}
+        </div>
       </section>
     );
   }

@@ -21,3 +21,9 @@ export function isLicenseActive(license, now = new Date()) {
 
   return false;
 }
+
+export function isPermanentPlan(planType) {
+  return ["suresiz", "süresiz", "unlimited", "lifetime", "permanent", "enterprise"].includes(
+    String(planType || "").trim().toLowerCase(),
+  );
+}

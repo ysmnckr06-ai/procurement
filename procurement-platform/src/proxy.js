@@ -42,7 +42,7 @@ export async function proxy(request) {
 
   // Lisans okunamazsa veya kayıt yoksa erişim verilmez (fail-closed).
   if (licenseError || !isLicenseActive(license)) {
-    return NextResponse.redirect(new URL("/license-expired", request.url));
+    return NextResponse.redirect(new URL("/abonelik", request.url));
   }
 
   return response;
