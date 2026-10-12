@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { setLiveRateCache } from "@/lib/currency";
 import { supabase } from "@/lib/supabase";
+import OnboardingTour, { TOUR_START_EVENT } from "./OnboardingTour";
 
 const appTitle = "CORVIAN Business Suite";
 
@@ -248,6 +249,7 @@ export default function DashboardShell({
               <Link
                 key={item.name}
                 href={item.href}
+                data-tour={`menu:${item.href}`}
                 className={`flex min-w-0 items-center gap-4 rounded-2xl px-5 py-4 text-base font-bold transition ${
                   active
                     ? "bg-blue-600 text-white shadow-lg shadow-blue-200"
@@ -272,8 +274,17 @@ export default function DashboardShell({
 
         <button
           type="button"
+          onClick={() => window.dispatchEvent(new Event(TOUR_START_EVENT))}
+          className="mt-4 flex w-full shrink-0 items-center gap-4 rounded-2xl border border-blue-100 bg-blue-50 px-5 py-3 text-sm font-black text-blue-700 transition hover:bg-blue-100"
+        >
+          <span className="text-xl">🧭</span>
+          <span>Tanıtım turu</span>
+        </button>
+
+        <button
+          type="button"
           onClick={handleSignOut}
-          className="mt-6 flex w-full shrink-0 items-center gap-4 rounded-2xl border border-red-100 bg-red-50 px-5 py-4 text-base font-black text-red-700 transition hover:bg-red-100"
+          className="mt-3 flex w-full shrink-0 items-center gap-4 rounded-2xl border border-red-100 bg-red-50 px-5 py-4 text-base font-black text-red-700 transition hover:bg-red-100"
         >
           <span className="text-2xl">🚪</span>
           <span>Çıkış Yap</span>
@@ -306,6 +317,7 @@ export default function DashboardShell({
                 <Link
                   key={item.name}
                   href={item.href}
+                  data-tour={`menu:${item.href}`}
                   className={`shrink-0 rounded-full px-4 py-2 text-sm font-bold ${
                     active
                       ? "bg-blue-600 text-white"
@@ -342,6 +354,7 @@ export default function DashboardShell({
           {children}
         </div>
       </main>
+      <OnboardingTour />
     </div>
   );
 }
