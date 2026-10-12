@@ -13,7 +13,7 @@ export default async function DashboardLayout({ children }) {
 
   const { data: license, error: licenseError } = await supabase
     .from("user_licenses")
-    .select("plan_type, license_status, trial_ends_at, expires_at, subscription_status")
+    .select("plan_type, license_status, trial_ends_at, expires_at")
     .eq("user_id", user.id)
     .maybeSingle();
 

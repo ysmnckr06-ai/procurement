@@ -23,13 +23,21 @@ export default async function SubscriptionPage({ searchParams }) {
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const { data: license } = await supabase
+  let { data: license, error: licenseError } = await supabase
     .from("user_licenses")
     .select(
       "plan_type, license_status, trial_ends_at, expires_at, company_name, subscription_status, current_period_end, cancel_at_period_end, last_payment_failed_at",
     )
     .eq("user_id", user.id)
     .maybeSingle();
+  // Abonelik sütunları henüz eklenmemişse temel lisans bilgisiyle devam edilir.
+  if (licenseError) {
+    ({ data: license } = await supabase
+      .from("user_licenses")
+      .select("plan_type, license_status, trial_ends_at, expires_at, company_name")
+      .eq("user_id", user.id)
+      .maybeSingle());
+  }
 
   const params = (await searchParams) || {};
   const result = String(params.sonuc || "");
