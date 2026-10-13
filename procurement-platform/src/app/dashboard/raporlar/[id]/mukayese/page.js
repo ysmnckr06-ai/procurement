@@ -605,6 +605,14 @@ export default function ComparisonPage() {
       }
     }
     await supabase.from("reports").update({ durum: "Tamamlandı" }).eq("id", report.id).eq("user_id", user.id);
+    // Kaynak talep sipariş aşamasına geçer; Talepler ekranında açık süreç olarak kalmaz.
+    if (report.source_request_id) {
+      await supabase
+        .from("requests")
+        .update({ durum: "Siparişe Aktarıldı" })
+        .eq("id", report.source_request_id)
+        .eq("user_id", user.id);
+    }
     setExistingOrders(orders || []);
     localStorage.setItem("lastCreatedComparisonOrders", JSON.stringify(orders || []));
     setMessage(`${orders?.length || 0} tedarikçi siparişi oluşturuldu. Proje dağıtımları ve kaynak teklifler siparişlerde korundu.${documentLinkWarning}`);
