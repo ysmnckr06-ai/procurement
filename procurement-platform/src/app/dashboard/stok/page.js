@@ -15,6 +15,7 @@ import {
 import { analyzeStockFile } from "@/lib/fileAnalyzer";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL;
+const STOCK_IMPORT_CONCURRENCY = 6;
 const PRODUCT_TYPES = {
   MAIN: "main_product",
   COMPONENT: "component",
@@ -342,6 +343,12 @@ function stockCriticalLimit(product) {
     Number(product.critical_stock || 0),
     Number(product.minimum_stock || 0),
   );
+}
+
+function stockImportConflictSummary(rows) {
+  const conflicts = rows.filter((row) => row.decision === "conflict");
+  const labels = conflicts.slice(0, 8).map((row) => `satır ${row.rowNumber} (${row.productCode || row.productName})`);
+  return labels.join(", ") + (conflicts.length > labels.length ? ` ve ${conflicts.length - labels.length} satır daha` : "") + ".";
 }
 
 async function insertProductWithSchemaFallback(payload, select = "") {
@@ -1205,6 +1212,7 @@ export default function StockPage() {
   const [stockImportApplying, setStockImportApplying] = useState(false);
   const [stockImportPreview, setStockImportPreview] = useState(null);
   const [stockImportResult, setStockImportResult] = useState(null);
+  const [stockImportProgress, setStockImportProgress] = useState(null);
   const [activeProductType, setActiveProductType] = useState(PRODUCT_TYPES.COMPONENT);
   const [stockViewFilter, setStockViewFilter] = useState(STOCK_VIEW_FILTERS.ALL);
   const [showArchivedProducts, setShowArchivedProducts] = useState(false);
@@ -1227,6 +1235,17 @@ export default function StockPage() {
   useEffect(() => {
     loadStock();
   }, [showArchivedProducts]);
+
+  // Toplu stok girişi sürerken sekme kapatılırsa yarım yükleme kalmasın diye uyarır.
+  useEffect(() => {
+    if (!stockImportApplying) return undefined;
+    const warn = (event) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [stockImportApplying]);
 
   useEffect(() => {
     setProductPage(1);
@@ -2205,19 +2224,19 @@ export default function StockPage() {
         result.warehouseStockBefore = await readTenantWarehouseStock(user.id);
       }
 
-      for (const row of analysis.rows) {
+      const processRow = async (row) => {
         try {
           if (row.decision === "conflict") {
             result.skippedRows += 1;
             result.rows.push({ ...row, status: "skipped", reason: "Aynı kod/ad için birden fazla eşleşme var; güvenli şekilde uygulanmadı." });
-            continue;
+            return;
           }
 
           if (analysis.importType === PRODUCT_TYPES.MAIN) {
             if (row.matchedProduct) {
               result.processedRows += 1;
               result.rows.push({ ...row, status: "success", reason: "Mevcut ana ürün kartı kullanıldı.", productAction: "existing" });
-              continue;
+              return;
             }
             const normalizedCode = normalizeStockCode(row.productCode);
             const payload = {
@@ -2244,7 +2263,43 @@ export default function StockPage() {
             result.processedRows += 1;
             result.createdProducts += 1;
             result.rows.push({ ...row, status: "success", reason: "Yeni ana ürün kartı oluşturuldu.", productAction: "new" });
-            continue;
+            return;
+          }
+
+          // Stoğu 0 olan satırlar da kart olarak tanımlanır (tükenmiş ürün, kritik
+          // seviye ve fiyat bilgisiyle); stok hareketi oluşmaz.
+          if (!(Number(row.quantity || 0) > 0)) {
+            if (row.matchedProduct) {
+              await updateImportedProductDetails(row.matchedProduct.id, row);
+              result.processedRows += 1;
+              result.updatedProducts += 1;
+              result.rows.push({ ...row, status: "success", reason: "Miktar 0; stok değişmedi, kart bilgileri güncellendi.", productAction: "existing" });
+              return;
+            }
+            const unitPrice = Number(row.unitPrice || 0);
+            const createResult = await insertProductWithSchemaFallback({
+              user_id: user.id,
+              product_code: row.productCode,
+              normalized_product_code: normalizeStockCode(row.productCode) || null,
+              product_name: row.productName,
+              brand: row.brand,
+              unit: row.unit || "adet",
+              product_type: analysis.importType,
+              current_stock: 0,
+              reserved_stock: 0,
+              min_stock: 0,
+              critical_stock: Number(row.criticalStock || 0),
+              last_unit_price: unitPrice,
+              manual_unit_price: unitPrice,
+              last_currency: row.currency || "TRY",
+              source: "Toplu dosya aktarımı",
+              notes: "Toplu stok yüklemesinde stoğu 0 olarak tanımlandı.",
+            }, "id");
+            if (createResult.error) throw createResult.error;
+            result.processedRows += 1;
+            result.createdProducts += 1;
+            result.rows.push({ ...row, status: "success", reason: "Stoğu 0 olan yeni kart açıldı.", productAction: "new" });
+            return;
           }
 
           const applyResult = await supabase.rpc("apply_stock_increment_import", {
@@ -2265,7 +2320,7 @@ export default function StockPage() {
           if (rpcResult.already_applied) {
             result.skippedRows += 1;
             result.rows.push({ ...row, status: "skipped", reason: "Bu önizlemenin aynı satırı daha önce uygulanmış; ikinci kez eklenmedi.", rpcResult });
-            continue;
+            return;
           }
 
           result.processedRows += 1;
@@ -2285,7 +2340,25 @@ export default function StockPage() {
           result.errors += 1;
           result.rows.push({ ...row, status: "failed", reason: rowError?.message || "Satır uygulanamadı." });
         }
-      }
+      };
+
+      // Satırlar birbirinden bağımsız (aynı kod dosyada iki kez geçerse önizleme
+      // zaten durdurur), bu yüzden sınırlı eşzamanlılıkla işlenir.
+      const total = analysis.rows.length;
+      let nextIndex = 0;
+      let done = 0;
+      setStockImportProgress({ done: 0, total });
+      const worker = async () => {
+        while (nextIndex < total) {
+          const row = analysis.rows[nextIndex];
+          nextIndex += 1;
+          await processRow(row);
+          done += 1;
+          if (done === total || done % 5 === 0) setStockImportProgress({ done, total });
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(STOCK_IMPORT_CONCURRENCY, total) }, worker));
+      result.rows.sort((a, b) => Number(a.rowNumber || 0) - Number(b.rowNumber || 0));
 
       const { count: afterCount } = await supabase.from("products").select("id", { count: "exact", head: true }).eq("user_id", user.id);
       result.productCountBefore = beforeCount ?? 0;
@@ -2301,7 +2374,7 @@ export default function StockPage() {
       setStockImportResult(result);
       const resultMessage = (
         result.hasHighRiskDifference
-          ? `HIGH RISK: ${result.expectedIncrease} adet beklenirken ${result.appliedIncrease} adet eklendi. ${result.errors + result.skippedRows} satır uygulanmadı.`
+          ? `Dikkat: ${result.expectedIncrease} adet beklenirken ${result.appliedIncrease} adet eklendi. ${result.errors + result.skippedRows} satır uygulanmadı; ayrıntı için sonuç raporunu indirin.`
           : directTemplateApply
             ? `${result.processedRows} satır standart şablondan otomatik işlendi; depo stokuna toplam ${result.appliedIncrease} adet eklendi.`
             : `${result.processedRows} satır işlendi; depo stokuna toplam ${result.appliedIncrease} adet eklendi.`
@@ -2314,9 +2387,10 @@ export default function StockPage() {
       result.hasHighRiskDifference = true;
       result.rows.push({ status: "failed", rowNumber: "-", productCode: "-", productName: "Toplu işlem", reason: error?.message || "Toplu işlem tamamlanamadı." });
       setStockImportResult(result);
-      setMessage(`HIGH RISK: Toplu stok girişi tamamlanamadı. ${error?.message || "Bilinmeyen hata"}`);
+      setMessage(`Dikkat: Toplu stok girişi tamamlanamadı. ${error?.message || "Bilinmeyen hata"}`);
     } finally {
       setStockImportApplying(false);
+      setStockImportProgress(null);
     }
   }
 
@@ -2756,6 +2830,16 @@ export default function StockPage() {
           {message && (
             <div role="status" aria-live="polite" className="sticky top-3 z-40 shadow-lg rounded-xl border border-yellow-200 bg-yellow-50 p-4 text-sm font-semibold text-yellow-900">
               {message}
+              {stockImportProgress && (
+                <div className="mt-2">
+                  <div className="text-xs font-black">
+                    {stockImportProgress.done} / {stockImportProgress.total} satır işlendi — işlem bitene kadar sayfadan ayrılmayın.
+                  </div>
+                  <div className="mt-1 h-2 overflow-hidden rounded-full bg-yellow-100">
+                    <div className="h-full bg-emerald-500 transition-all" style={{ width: `${Math.round((stockImportProgress.done / Math.max(stockImportProgress.total, 1)) * 100)}%` }} />
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -3866,7 +3950,7 @@ export default function StockPage() {
               <div className="mt-6 space-y-4">
                 {stockImportResult.hasHighRiskDifference && (
                   <div role="alert" className="rounded-xl border-2 border-red-300 bg-red-50 p-4 text-red-950">
-                    <div className="font-black">HIGH RISK — Stok artışı tam mutabık değil</div>
+                    <div className="font-black">Dikkat — stok artışı dosyayla tam uyuşmuyor</div>
                     <p className="mt-1 text-sm font-semibold">Atlanan veya başarısız satırları düzeltmeden işlemi tam başarılı kabul etmeyin.</p>
                   </div>
                 )}
@@ -3989,7 +4073,7 @@ export default function StockPage() {
                 {(stockImportPreview.error || stockImportPreview.missingFields.length > 0 || stockImportPreview.rows.length === 0 || stockImportPreview.counts.conflict > 0) && (
                   <div className="mt-5 rounded-xl bg-amber-50 p-4 font-bold text-amber-900">
                     {stockImportPreview.error || (stockImportPreview.counts.conflict > 0
-                      ? `${stockImportPreview.counts.conflict} satır için kullanıcı kontrolü gerekiyor. Aynı ürün kodu dosyada veya mevcut ürün kartlarında birden fazla kez göründüğü için güvenli şekilde durduruldu.`
+                      ? `${stockImportPreview.counts.conflict} satır için kullanıcı kontrolü gerekiyor. Aynı ürün kodu dosyada veya mevcut ürün kartlarında birden fazla kez göründüğü için güvenli şekilde durduruldu. Dosyada düzeltin ve tekrar yükleyin: ${stockImportConflictSummary(stockImportPreview.rows)}`
                       : stockImportPreview.missingFields.length
                       ? `Eksik zorunlu alanlar: ${stockImportPreview.missingFields.join(", ")}. ${stockImportExpectedColumns(stockImportPreview.importType !== PRODUCT_TYPES.MAIN)}`
                       : "Dosyada okunabilir ürün satırı bulunamadı")}
@@ -4005,13 +4089,13 @@ export default function StockPage() {
                   <div className="mt-5 overflow-x-auto rounded-xl border border-slate-200">
                     <table className="w-full min-w-[980px] text-left text-sm">
                       <thead className="bg-slate-100 text-xs uppercase text-slate-500"><tr><th className="p-3">Satır</th><th className="p-3">Ürün kodu</th><th className="p-3">Ürün adı</th><th className="p-3">Eklenecek miktar</th><th className="p-3">Birim fiyat</th><th className="p-3">Kritik stok</th><th className="p-3">Durum</th></tr></thead>
-                      <tbody>{stockImportPreview.rows.slice(0, 20).map((row, index) => (
+                      <tbody>{[...stockImportPreview.rows].sort((a, b) => (b.decision === "conflict") - (a.decision === "conflict")).slice(0, 20).map((row, index) => (
                         <tr key={`${row.fileName}-${row.rowNumber}-${index}`} className="border-t border-slate-100">
                           <td className="p-3">{row.rowNumber}</td><td className="p-3 font-bold">{row.productCode || "-"}</td><td className="p-3">{row.productName}</td><td className="p-3">{row.quantity} {row.unit}</td><td className="p-3">{row.unitPrice ?? "-"} {row.currency || "TRY"}</td><td className="p-3">{row.criticalStock ?? "-"}</td><td className="p-3"><span className={`rounded-full px-2 py-1 text-xs font-black ${stockImportDecisionTone(row.decision)}`}>{stockImportDecisionText(row.decision)}</span></td>
                         </tr>
                       ))}</tbody>
                     </table>
-                    {stockImportPreview.rows.length > 20 && <div className="border-t p-3 text-xs text-slate-500">İlk 20 satır gösteriliyor.</div>}
+                    {stockImportPreview.rows.length > 20 && <div className="border-t p-3 text-xs text-slate-500">İlk 20 satır gösteriliyor{stockImportPreview.counts.conflict > 0 ? "; kontrol gerektiren satırlar en üstte" : ""}.</div>}
                   </div>
                 )}
                 <div className="mt-6 flex justify-end gap-3">
