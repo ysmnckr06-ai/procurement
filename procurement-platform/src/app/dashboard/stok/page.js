@@ -13,6 +13,7 @@ import {
   stockImportExpectedColumns,
 } from "@/lib/stockImport";
 import { analyzeStockFile } from "@/lib/fileAnalyzer";
+import { fetchAllRows } from "@/lib/fetchAllRows";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL;
 const STOCK_IMPORT_CONCURRENCY = 6;
@@ -1284,15 +1285,16 @@ export default function StockPage() {
       }
 
 
-      let productQuery = supabase
-        .from("products")
-        .select("*", { count: "exact" })
-        .eq("user_id", user.id);
-      productQuery = showArchivedProducts
-        ? productQuery.not("archived_at", "is", null)
-        : productQuery.is("archived_at", null);
-      let { data: productData, error: productError } = await productQuery
-        .order("updated_at", { ascending: false });
+      let { data: productData, error: productError } = await fetchAllRows(() => {
+        let query = supabase
+          .from("products")
+          .select("*")
+          .eq("user_id", user.id);
+        query = showArchivedProducts
+          ? query.not("archived_at", "is", null)
+          : query.is("archived_at", null);
+        return query.order("updated_at", { ascending: false }).order("id", { ascending: true });
+      });
 
       if (productError && !showArchivedProducts) {
         console.error("Aktif ürün sorgusu başarısız, filtresiz tenant sorgusu deneniyor:", productError);
@@ -1305,19 +1307,19 @@ export default function StockPage() {
         productError = fallbackProductResult.error;
       }
 
-      const { data: movementData, error: movementError } = await supabase
+      const { data: movementData, error: movementError } = await fetchAllRows(() => supabase
         .from("stock_movements")
-        .select("*", { count: "exact" })
+        .select("*")
         .eq("user_id", user.id)
         .order("created_at", { ascending: false })
-        .limit(2000);
+        .order("id", { ascending: true }));
 
-      const { data: projectItemData, error: projectItemError } = await supabase
+      const { data: projectItemData, error: projectItemError } = await fetchAllRows(() => supabase
         .from("project_items")
         .select("*")
         .eq("user_id", user.id)
         .order("created_at", { ascending: true })
-        .limit(5000);
+        .order("id", { ascending: true }));
 
       const { data: projectData, error: projectError } = await supabase
         .from("projects")
