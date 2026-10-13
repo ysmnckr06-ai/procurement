@@ -228,10 +228,22 @@
     check("Mukayesede her kalem için grup var", Object.keys(groups).length === requestItems.length, `${Object.keys(groups).length}/${requestItems.length}`);
     await sleep(500);
     window.confirm = () => true;
-    await click("Seçilenlerden Sipariş Oluştur", { after: 500 });
-    const created = await waitFor(() => /tedarikçi siparişi oluşturuldu|firma bilgilerini tamamlayın/i.test(main().innerText), { timeout: 40000 });
+    await click("Seçilenlerden Sipariş Oluştur", { after: 1500 });
+    // İş Ortakları'nda kayıtlı olmayan tedarikçi için kısa firma formu açılır;
+    // gerçek kullanıcı gibi doldurulup devam edilir.
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const saveButton = findButton("Firma Bilgilerini Kaydet ve Devam Et", { root: document });
+      if (!saveButton) break;
+      const form = saveButton.closest("form");
+      const cityInput = field("Şehir", form);
+      if (cityInput && !cityInput.value) setValue(cityInput, "İzmir");
+      await sleep(300);
+      saveButton.click();
+      await sleep(3000);
+    }
+    const created = await waitFor(() => /tedarikçi siparişi oluşturuldu|oluşturulamadı/i.test(main().innerText), { timeout: 60000 });
     check("Siparişler oluşturuldu", created && /siparişi oluşturuldu/.test(main().innerText), (main().innerText.match(/[^\n]*(oluşturuldu|tamamlayın)[^\n]*/) || [""])[0]);
-    const { data: orders } = await S().from("orders").select("*").eq("project_id", projectA);
+    const { data: orders } = await S().from("orders").select("*").eq("project_id", projectA).order("order_no");
     const ordered = {};
     (orders || []).forEach((o) => o.items.forEach((i) => { ordered[i.productCode] = (ordered[i.productCode] || 0) + Number(i.quantity); }));
     check("Sipariş miktarları talep miktarlarıyla aynı", requestItems.every((ri) => ordered[ri.urunKodu] === Number(ri.talepEdilenAdet)));
@@ -239,6 +251,9 @@
     const { data: requestAfter } = await S().from("requests").select("durum").eq("id", request.id).single();
     check("Talep 'Siparişe Aktarıldı' oldu", requestAfter?.durum === "Siparişe Aktarıldı", requestAfter?.durum);
 
+    if (!orders?.length) {
+      return { tag, checks, failed: checks.filter((c) => !c.ok), projectA, projectB };
+    }
     // 7) Teslim alma: aynı kalemde aynı gün iki eşit sevkiyat; projeye rezerve
     const order = orders[0];
     const line = order.items.find((i) => Number(i.quantity) >= 2);
@@ -246,22 +261,27 @@
     const lineIndex = order.items.indexOf(line);
     await go(`/dashboard/siparisler/${order.id}`, () => findButton("Teslim Alma", { exact: true }));
     await click("Teslim Alma", { exact: true, after: 1500 });
-    async function receive(quantity) {
+    async function receive(quantity, note) {
       const button = [...main().querySelectorAll("button")].filter((b) => text(b) === "Teslim Al")[lineIndex];
       const card = button.closest("div.rounded-2xl") || button.parentElement.parentElement.parentElement;
       const input = (label) => [...card.querySelectorAll("label")].find((l) => text(l).startsWith(label))?.querySelector("input");
       setValue(input("Gelen"), quantity);
       setValue(input("Teslim alan"), "E2E Depo");
-      setValue(input("Açıklama"), "Kısmi sevkiyat");
+      setValue(input("Açıklama"), note);
       await sleep(300);
+      const countReceipts = async () => (await S().from("order_receipts").select("id", { count: "exact", head: true }).eq("order_id", order.id)).count || 0;
+      const before = await countReceipts();
       window.confirm = () => true;
       button.click();
-      await waitFor(() => /kaydedildi|hata|aşamaz/i.test(statusText()), { timeout: 30000 });
-      await sleep(2500);
+      // Ekrandaki mesaj önceki kayıttan kalmış olabilir; kaydın veritabanına düşmesi beklenir.
+      await waitFor(async () => (await countReceipts()) > before, { timeout: 30000, step: 1000 });
+      await sleep(3000);
     }
     const stockBefore = (await S().from("products").select("current_stock,reserved_stock").eq("product_code", line.productCode).single()).data;
-    await receive(half);
-    await receive(half);
+    // Gerçek hayatta iki ayrı irsaliye: açıklamalar farklıdır. (Birebir aynı kayıt
+    // 2 dakika içinde gelirse çift tıklama sayılıp tek kayıt tutulur.)
+    await receive(half, "1. sevkiyat");
+    await receive(half, "2. sevkiyat");
     const stockAfter = (await S().from("products").select("current_stock,reserved_stock").eq("product_code", line.productCode).single()).data;
     check("Aynı gün iki eşit sevkiyatın ikisi de stoğa girdi", Number(stockAfter.current_stock) - Number(stockBefore.current_stock) === half * 2, `${stockBefore.current_stock} → ${stockAfter.current_stock}`);
     check("Gelen malzeme projeye rezerve edildi", Number(stockAfter.reserved_stock) - Number(stockBefore.reserved_stock) === half * 2, `${stockBefore.reserved_stock} → ${stockAfter.reserved_stock}`);
