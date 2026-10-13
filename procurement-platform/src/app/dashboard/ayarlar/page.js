@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { fetchLiveTryRates } from "@/lib/liveCurrency";
+import DemoDataPanel from "../DemoDataPanel";
 
 const defaultSettings = {
   company_name: "",
@@ -266,6 +267,8 @@ export default function SettingsPage() {
               {message}
             </div>
           )}
+
+          <DemoDataPanel variant="settings" />
 
           <form
             onSubmit={handleSubmit}
