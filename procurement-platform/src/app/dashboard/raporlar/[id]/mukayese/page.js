@@ -543,6 +543,13 @@ export default function ComparisonPage() {
       const rate = entry.exchangeRate;
       const total = entry.items.reduce((sum, item) => sum + num(item.total), 0);
       const projectIds = Array.from(new Set(entry.items.flatMap((item) => item.allocations.map((allocation) => allocation.projectId)).filter(Boolean)));
+      // Teklifteki termin/vade siparişe taşınır; yoksa sipariş "terminsiz" kalıyor,
+      // gecikme takibi hiç çalışmıyordu.
+      const terminDays = Math.max(0, ...entry.items.map((item) => parseInt(String(item.deliveryTerm ?? ""), 10) || 0));
+      const vadeDays = Math.max(0, ...entry.items.map((item) => parseInt(String(item.paymentTerm ?? ""), 10) || 0));
+      const terminDate = terminDays > 0
+        ? new Date(Date.now() + terminDays * 86400000).toISOString().slice(0, 10)
+        : null;
       return {
         user_id: user.id,
         order_no: `SIP-${new Date().getFullYear()}-${suffix}-${String(index + 1).padStart(2, "0")}`,
@@ -553,6 +560,9 @@ export default function ComparisonPage() {
         product_name: `${entry.items.length} kalem · Mukayese siparişi`,
         quantity: entry.items.reduce((sum, item) => sum + num(item.quantity), 0),
         order_date: today,
+        termin_gun: terminDays || null,
+        termin_date: terminDate,
+        vade_gun: vadeDays || null,
         status: "Sipariş Geçildi",
         project_id: projectIds.length === 1 ? projectIds[0] : projectIds.length === 0 ? report.project_id : null,
         report_id: report.id,
