@@ -647,7 +647,11 @@ function stockBreakdown(product, movements) {
     (sum, movement) => sum + Number(movement.reserved_quantity || 0),
     0,
   );
-  const reserved = Math.max(productReserved, movementReserved);
+  // Kart üzerindeki rezerve, ayırma/teslim/iptal/üretime çıkış fonksiyonlarıyla
+  // güncel tutulur; hareketlerden toplanan değer yalnız eski kayıtlarda yedektir.
+  const reserved = product.reserved_stock === null || product.reserved_stock === undefined
+    ? movementReserved
+    : productReserved;
   const production = matchedMovements.reduce(
     (sum, movement) => sum + Number(movement.issued_to_production_quantity || 0),
     0,
@@ -667,7 +671,9 @@ function stockBreakdown(product, movements) {
     production: inProcess,
     montage: 0,
     shipped,
-    available: Math.max(total - reserved - inProcess, 0),
+    // Üretime çıkan malzeme depodan düşülmüş olduğundan (current_stock) ayrıca
+    // çıkarılmaz; aksi halde kullanılabilir stok iki kez azalıyordu.
+    available: Math.max(total - reserved, 0),
   };
 }
 

@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import DocumentArchivePanel from "@/components/DocumentArchivePanel";
 import ProductCodeInput from "@/components/ProductCodeInput";
+import ProductionIssuePanel from "./ProductionIssuePanel";
 import { calculateBaseAmount, currencyOptions, getBaseCurrency, getExchangeRate, isSuspiciousRate } from "@/lib/currency";
 import { createDocumentSignedUrl, downloadDocumentFile, isPdfDocument } from "@/lib/documentAccess";
 import { fetchLiveTryRates, liveCurrencyOptions, liveRateFor, rateDiffPercent } from "@/lib/liveCurrency";
@@ -8322,6 +8323,7 @@ export default function ProjectDetailPage() {
                 </div>
               </div>
             </div>
+            <ProductionIssuePanel items={items} onMessage={setMessage} onDone={loadProjectData} />
           </section>
         )}
 
