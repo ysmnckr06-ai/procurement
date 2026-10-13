@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { fetchLiveTryRates, liveCurrencyOptions, liveRateFor } from "@/lib/liveCurrency";
+import { fetchAllRows } from "@/lib/fetchAllRows";
 
 function formatMoney(value, currency = "TRY") {
   return `${new Intl.NumberFormat("tr-TR", {
@@ -23,6 +24,27 @@ function normalizeFilter(value) {
     .replaceAll("ö", "o")
     .replaceAll("ç", "c")
     .replace(/\s+/g, " ");
+}
+
+const CANCELLED_PROJECT_STATUSES = new Set(["İptal", "Iptal", "İptal Edildi"]);
+
+function isStockReservationMovement(movement) {
+  return movement.movement_type === "out" && normalizeFilter(movement.source).includes("stoktan karsiland");
+}
+
+// Proje detayındaki "Tahmini brüt sonuç" ile aynı mantık: stoktan projeye ayrılan
+// malzemenin maliyeti, ayırma hareketlerindeki miktar x kalem birim fiyatı.
+function projectStockUsageCost(movements, itemById) {
+  return movements.reduce((sum, movement) => {
+    if (!isStockReservationMovement(movement)) return sum;
+    const quantity = Number(movement.reserved_quantity || 0);
+    const item = itemById.get(String(movement.project_item_id || ""));
+    if (quantity <= 0 || !item) return sum;
+    const unitPrice = Number(item.resolved_unit_price || item.estimated_unit_price || 0);
+    const currency = String(item.currency || "TRY").toUpperCase();
+    const rate = currency === "TRY" ? 1 : Number(item.exchange_rate || 0) || 1;
+    return sum + quantity * unitPrice * rate;
+  }, 0);
 }
 
 function profitLossTotal(rows) {
@@ -78,6 +100,8 @@ export default function FinancePage() {
   const [orders, setOrders] = useState([]);
   const [orderPayments, setOrderPayments] = useState([]);
   const [stockMovements, setStockMovements] = useState([]);
+  const [projectItems, setProjectItems] = useState([]);
+  const [projectExpenses, setProjectExpenses] = useState([]);
   const [settings, setSettings] = useState({ base_currency: "TRY" });
   const [partnerFilter, setPartnerFilter] = useState("");
   const [liveRates, setLiveRates] = useState(null);
@@ -108,14 +132,18 @@ export default function FinancePage() {
       return;
     }
 
-    const [projectRes, projectPaymentRes, orderRes, orderPaymentRes, movementRes, settingsRes] =
+    const all = (table, columns = "*") =>
+      fetchAllRows(() => supabase.from(table).select(columns).eq("user_id", user.id).order("id", { ascending: true }));
+    const [projectRes, projectPaymentRes, orderRes, orderPaymentRes, movementRes, settingsRes, itemRes, expenseRes] =
       await Promise.all([
-        supabase.from("projects").select("*").eq("user_id", user.id),
-        supabase.from("project_payments").select("*").eq("user_id", user.id),
-        supabase.from("orders").select("*").eq("user_id", user.id),
-        supabase.from("order_payments").select("*").eq("user_id", user.id),
-        supabase.from("stock_movements").select("*").eq("user_id", user.id),
+        all("projects"),
+        all("project_payments"),
+        all("orders"),
+        all("order_payments"),
+        all("stock_movements"),
         supabase.from("company_settings").select("*").eq("user_id", user.id).limit(1),
+        all("project_items", "id,project_id,currency,exchange_rate,resolved_unit_price,estimated_unit_price"),
+        all("project_expenses"),
       ]);
 
     if (orderPaymentRes.error) {
@@ -127,6 +155,8 @@ export default function FinancePage() {
     setOrders(orderRes.data || []);
     setOrderPayments(orderPaymentRes.data || []);
     setStockMovements(movementRes.data || []);
+    setProjectItems(itemRes.data || []);
+    setProjectExpenses(expenseRes.error ? [] : expenseRes.data || []);
     if (settingsRes.data?.[0]) setSettings(settingsRes.data[0]);
     setLoading(false);
   }
@@ -135,8 +165,11 @@ export default function FinancePage() {
     const baseCurrency = settings.base_currency || settings.default_currency || "TRY";
     const filterNeedle = normalizeFilter(partnerFilter);
     const matchesFilter = (parts) => normalizeFilter(parts.join(" ")).includes(filterNeedle);
+    // İptal edilen projeler alacak, sözleşme ve kâr tablolarına girmez.
+    const liveProjects = projects.filter((project) => !CANCELLED_PROJECT_STATUSES.has(String(project.status || "")));
+    const itemById = new Map(projectItems.map((item) => [String(item.id), item]));
     const filteredProjects = filterNeedle
-      ? projects.filter((project) =>
+      ? liveProjects.filter((project) =>
           matchesFilter([
             project.customer_name,
             project.customer_partner_name,
@@ -145,7 +178,7 @@ export default function FinancePage() {
             project.description,
           ]),
         )
-      : projects;
+      : liveProjects;
     const filteredProjectIds = new Set(filteredProjects.map((project) => project.id));
     const filteredOrders = filterNeedle
       ? orders.filter(
@@ -220,7 +253,16 @@ export default function FinancePage() {
         0,
       );
       const contractBase = Number(project.contract_base_amount || project.contract_amount || 0);
-      const profitLoss = contractBase - projectOrderTotal;
+      const stockUsageCost = projectStockUsageCost(
+        filteredStockMovements.filter((movement) => movement.project_id === project.id),
+        itemById,
+      );
+      const expenseTotal = projectExpenses
+        .filter((expense) => expense.project_id === project.id)
+        .reduce((sum, expense) => sum + Number(expense.base_amount || expense.amount || 0), 0);
+      // Kâr/zarar = sözleşme − sipariş payı − stoktan kullanılan − ek giderler
+      // (önceden yalnız siparişler düşülüyordu; stoktan karşılanan projeler tam kâr görünüyordu).
+      const profitLoss = contractBase - projectOrderTotal - stockUsageCost - expenseTotal;
 
       return {
         ...project,
@@ -228,6 +270,8 @@ export default function FinancePage() {
         contractBase,
         remainingCollection: Math.max(contractBase - payments, 0),
         orderTotal: projectOrderTotal,
+        stockUsageCost,
+        expenseTotal,
         paidOrders: projectPaidOrders,
         supplierDebt: Math.max(projectOrderTotal - projectPaidOrders, 0),
         profitLoss,
@@ -288,7 +332,7 @@ export default function FinancePage() {
       partnerPerformance,
       baseCurrency,
     };
-  }, [projects, projectPayments, orders, orderPayments, stockMovements, settings, partnerFilter]);
+  }, [projects, projectPayments, orders, orderPayments, stockMovements, settings, partnerFilter, projectItems, projectExpenses]);
 
   return (
     <div className="min-h-screen bg-slate-100 p-6">
@@ -439,6 +483,7 @@ export default function FinancePage() {
                   <th className="p-4">Tahsilat</th>
                   <th className="p-4">Bekleyen</th>
                   <th className="p-4">Sipariş</th>
+                  <th className="p-4">Stoktan / Gider</th>
                   <th className="p-4">İş Ortağı Borcu</th>
                   <th className="p-4">Kâr / Zarar</th>
                 </tr>
@@ -458,6 +503,7 @@ export default function FinancePage() {
                     <td className="p-4 text-emerald-700">{formatMoney(project.payments, report.baseCurrency)}</td>
                     <td className="p-4 text-orange-700">{formatMoney(project.remainingCollection, report.baseCurrency)}</td>
                     <td className="p-4">{formatMoney(project.orderTotal, report.baseCurrency)}</td>
+                    <td className="p-4">{formatMoney(project.stockUsageCost + project.expenseTotal, report.baseCurrency)}</td>
                     <td className="p-4 text-red-700">{formatMoney(project.supplierDebt, report.baseCurrency)}</td>
                     <td className={`p-4 font-black ${project.profitLoss < 0 ? "text-red-700" : "text-emerald-700"}`}>
                       {formatMoney(project.profitLoss, report.baseCurrency)}
@@ -466,7 +512,7 @@ export default function FinancePage() {
                 ))}
                 {!loading && report.projectRows.length === 0 && (
                   <tr>
-                    <td colSpan="7" className="p-8 text-center text-slate-500">
+                    <td colSpan="8" className="p-8 text-center text-slate-500">
                       Henüz proje finans kaydı yok.
                     </td>
                   </tr>

@@ -998,6 +998,25 @@ export default function ProjectsPage() {
     };
   }
 
+  // İptal edilen projenin stoktan ayrılmış malzemeleri kullanıcı onayıyla depoya bırakılır.
+  async function releaseReservationsForCancelledProject(projectId, userId) {
+    const { data: reservedItems, error } = await supabase
+      .from("project_items")
+      .select("id,reserved_quantity")
+      .eq("project_id", projectId)
+      .eq("user_id", userId)
+      .gt("reserved_quantity", 0);
+    if (error || !reservedItems?.length) return "";
+    const totalReserved = reservedItems.reduce((sum, item) => sum + Number(item.reserved_quantity || 0), 0);
+    const approved = window.confirm(
+      `Bu projeye stoktan ayrılmış ${reservedItems.length} kalem (${totalReserved} adet) var. Proje iptal edildiği için depoya geri bırakılsın mı?`,
+    );
+    if (!approved) return " Projeye ayrılan stok bırakılmadı; Stok ekranında rezerve görünmeye devam eder.";
+    const { data: released, error: releaseError } = await supabase.rpc("release_project_reservations", { p_project_id: projectId });
+    if (releaseError) return ` Rezerve stok bırakılamadı: ${releaseError.message}`;
+    return ` ${released?.released_items || 0} kalemde ${released?.released_quantity || 0} adet rezerve stok depoya geri bırakıldı.`;
+  }
+
   async function saveProject(event) {
     event.preventDefault();
     setSaving(true);
@@ -1125,6 +1144,11 @@ export default function ProjectsPage() {
     }
 
     const targetProjectId = editingId || data.id;
+    let releaseMessage = "";
+    const previousStatus = editingId ? projects.find((project) => project.id === editingId)?.status : null;
+    if (editingId && form.status === "İptal" && previousStatus !== "İptal") {
+      releaseMessage = await releaseReservationsForCancelledProject(editingId, user.id);
+    }
     let fileImportMessage = "";
     if (projectFiles.length > 0 && targetProjectId) {
       setMessage("Proje kaydedildi. Seçilen teklif/dosya analiz ediliyor...");
@@ -1157,6 +1181,7 @@ export default function ProjectsPage() {
     setProjectFileSummary("");
     await loadProjects();
     if (fileImportMessage) setMessage(fileImportMessage);
+    else if (releaseMessage) setMessage(`Proje iptal edildi.${releaseMessage}`);
     if (!editingId) router.push(`/dashboard/projeler/${data.id}`);
   }
 

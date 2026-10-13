@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import DemoDataPanel from "./DemoDataPanel";
 
 const closedOrderStatuses = ["Teslim Edildi", "Tam Teslim", "İptal"];
 const activeProjectStatuses = ["Onaylandı", "Devam Ediyor"];
@@ -332,7 +333,10 @@ export default function DashboardPage() {
     const criticalProducts = products.filter((product) => {
       const criticalLimit = productCriticalLimit(product);
       return (
-        criticalLimit > 0 && Number(product.current_stock || 0) <= criticalLimit
+        // Stok ekranı ve Kontrol Merkezi ile aynı ölçüt: projelere ayrılmamış
+        // (kullanılabilir) stok kritik seviyede veya altında.
+        criticalLimit > 0 &&
+        Number(product.current_stock || 0) - Number(product.reserved_stock || 0) <= criticalLimit
       );
     });
     const activeProjects = projects.filter((project) =>
@@ -452,7 +456,7 @@ export default function DashboardPage() {
         title: "Kritik stok",
         subject: product.product_name || "Ürün",
         projectName: "",
-        description: `Mevcut stok ${Number(product.current_stock || 0)} ${product.unit || "adet"}, kritik seviye ${productCriticalLimit(product)}.`,
+        description: `Kullanılabilir stok ${Math.max(Number(product.current_stock || 0) - Number(product.reserved_stock || 0), 0)} ${product.unit || "adet"} (depoda ${Number(product.current_stock || 0)}), kritik seviye ${productCriticalLimit(product)}.`,
         href: "/dashboard/stok",
       })),
       ...weekDeliveries.slice(0, 4).map((order) => ({
@@ -583,6 +587,7 @@ export default function DashboardPage() {
     <div className="flex min-h-screen bg-slate-100">
       <main className="flex-1 p-6">
         <div className="mx-auto max-w-7xl space-y-6">
+          <DemoDataPanel variant="welcome" />
           <section className="rounded-3xl border border-slate-200 bg-white p-8 shadow-sm">
             <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
               <div>
@@ -642,7 +647,7 @@ export default function DashboardPage() {
               icon="📦"
               title="Kritik Stok"
               value={intelligence.criticalProducts.length}
-              text="Minimum altında"
+              text="Kullanılabilir stok kritik seviyede"
               href="/dashboard/stok"
               tone="orange"
             />

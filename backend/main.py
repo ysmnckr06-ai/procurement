@@ -1549,6 +1549,8 @@ async def parse_project_items(
                 "estimated_quantity": quantity,
                 "estimated_unit_price": unit_price,
                 "estimated_total": row_total if row_total > 0 else quantity * unit_price,
+                # Dosyadaki para birimi korunur; aksi halde USD/EUR fiyatlar TL sayılıyordu.
+                "currency": row.get("paraBirimi") or row.get("currency") or "TRY",
                 "status": "Bekliyor",
                 "note": row.get("firmaAdi") or row.get("firma") or "",
                 "source_file": row.get("kaynakDosya") or "",

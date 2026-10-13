@@ -975,12 +975,14 @@ export default function TaleplerPage() {
   }, [savedRequests, selectedRequestIds]);
 
   const requestStats = useMemo(() => {
-    const openStatuses = new Set(["Yeni Talep", "İşleme alındı", "İşlemde", "Teklif Bekliyor", "Teklif Toplanıyor", "Oluşturuldu", "Bekliyor"]);
+    // Siparişe aktarılmamış, kapanmamış her talep açık süreçtir (proje talepleri ve
+    // mukayesesi yapılıp henüz sipariş verilmemiş talepler dahil).
+    const closedStatuses = new Set(["Siparişe Aktarıldı", "Kapandı", "Tamamlandı", "İptal", "İptal Edildi"]);
     return {
       total: savedRequests.length,
       manual: savedRequests.filter((request) => getRequestMeta(request).source === "manual").length,
       project: savedRequests.filter((request) => requestSourceLabel(request) === "Projeden aktarıldı").length,
-      open: savedRequests.filter((request) => openStatuses.has(request.durum || "Bekliyor")).length,
+      open: savedRequests.filter((request) => !closedStatuses.has(request.durum || "Bekliyor")).length,
     };
   }, [savedRequests]);
 
@@ -2096,7 +2098,7 @@ export default function TaleplerPage() {
                           </button>
 
                           <span className="rounded-md bg-emerald-50 px-2.5 py-1.5 text-xs font-black text-emerald-700" title="Talepler oluşturulduğu anda Teklif Havuzu'nda görünür.">
-                            {isInProcess ? "İşlemde" : "Teklif Havuzunda"}
+                            {req.durum === "Siparişe Aktarıldı" ? "Siparişte" : isInProcess ? "İşlemde" : "Teklif Havuzunda"}
                           </span>
                           <button type="button"
                             onClick={() => deleteRequest(req.id)}

@@ -1,0 +1,44 @@
+name: Uçtan uca test robotu
+
+# Canlı (Production) yayın her başarıyla tamamlandığında ve elle tetiklendiğinde
+# çalışır. Test hesabı bilgileri depo sırlarına (E2E_EMAIL, E2E_PASSWORD)
+# eklenmemişse robot kendini atlar.
+on:
+  deployment_status:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "Testin çalışacağı adres"
+        required: false
+        default: "https://procurement-dun.vercel.app"
+
+jobs:
+  e2e:
+    name: Uçtan uca senaryo
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.deployment_status.state == 'success' &&
+       github.event.deployment_status.environment == 'Production')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: procurement-platform/e2e
+    env:
+      E2E_BASE_URL: ${{ github.event.inputs.base_url || 'https://procurement-dun.vercel.app' }}
+      E2E_EMAIL: ${{ secrets.E2E_EMAIL }}
+      E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install --no-audit --no-fund
+      - run: npx playwright install --with-deps chromium
+      - run: npm test
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-hata
+          path: procurement-platform/e2e/e2e-hata.png
+          if-no-files-found: ignore
