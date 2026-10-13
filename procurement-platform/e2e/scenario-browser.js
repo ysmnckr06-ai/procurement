@@ -269,10 +269,13 @@
       setValue(input("Teslim alan"), "E2E Depo");
       setValue(input("Açıklama"), note);
       await sleep(300);
+      const countReceipts = async () => (await S().from("order_receipts").select("id", { count: "exact", head: true }).eq("order_id", order.id)).count || 0;
+      const before = await countReceipts();
       window.confirm = () => true;
       button.click();
-      await waitFor(() => /kaydedildi|hata|aşamaz/i.test(statusText()), { timeout: 30000 });
-      await sleep(2500);
+      // Ekrandaki mesaj önceki kayıttan kalmış olabilir; kaydın veritabanına düşmesi beklenir.
+      await waitFor(async () => (await countReceipts()) > before, { timeout: 30000, step: 1000 });
+      await sleep(3000);
     }
     const stockBefore = (await S().from("products").select("current_stock,reserved_stock").eq("product_code", line.productCode).single()).data;
     // Gerçek hayatta iki ayrı irsaliye: açıklamalar farklıdır. (Birebir aynı kayıt
