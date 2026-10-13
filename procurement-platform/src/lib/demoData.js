@@ -91,7 +91,6 @@ export async function loadDemoData(supabase, userId, { eurRate = 50 } = {}) {
       product_name: name,
       brand,
       unit: name.includes("Kablo") ? "metre" : "adet",
-      product_type: "component",
       category: "Alt Ürün",
       current_stock: stock,
       reserved_stock: 0,
