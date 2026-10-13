@@ -228,8 +228,20 @@
     check("Mukayesede her kalem için grup var", Object.keys(groups).length === requestItems.length, `${Object.keys(groups).length}/${requestItems.length}`);
     await sleep(500);
     window.confirm = () => true;
-    await click("Seçilenlerden Sipariş Oluştur", { after: 500 });
-    const created = await waitFor(() => /tedarikçi siparişi oluşturuldu|firma bilgilerini tamamlayın/i.test(main().innerText), { timeout: 40000 });
+    await click("Seçilenlerden Sipariş Oluştur", { after: 1500 });
+    // İş Ortakları'nda kayıtlı olmayan tedarikçi için kısa firma formu açılır;
+    // gerçek kullanıcı gibi doldurulup devam edilir.
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const saveButton = findButton("Firma Bilgilerini Kaydet ve Devam Et", { root: document });
+      if (!saveButton) break;
+      const form = saveButton.closest("form");
+      const cityInput = field("Şehir", form);
+      if (cityInput && !cityInput.value) setValue(cityInput, "İzmir");
+      await sleep(300);
+      saveButton.click();
+      await sleep(3000);
+    }
+    const created = await waitFor(() => /tedarikçi siparişi oluşturuldu|oluşturulamadı/i.test(main().innerText), { timeout: 60000 });
     check("Siparişler oluşturuldu", created && /siparişi oluşturuldu/.test(main().innerText), (main().innerText.match(/[^\n]*(oluşturuldu|tamamlayın)[^\n]*/) || [""])[0]);
     const { data: orders } = await S().from("orders").select("*").eq("project_id", projectA);
     const ordered = {};
@@ -239,6 +251,9 @@
     const { data: requestAfter } = await S().from("requests").select("durum").eq("id", request.id).single();
     check("Talep 'Siparişe Aktarıldı' oldu", requestAfter?.durum === "Siparişe Aktarıldı", requestAfter?.durum);
 
+    if (!orders?.length) {
+      return { tag, checks, failed: checks.filter((c) => !c.ok), projectA, projectB };
+    }
     // 7) Teslim alma: aynı kalemde aynı gün iki eşit sevkiyat; projeye rezerve
     const order = orders[0];
     const line = order.items.find((i) => Number(i.quantity) >= 2);

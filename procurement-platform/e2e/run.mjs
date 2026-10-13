@@ -2,7 +2,7 @@
 // Ortam değişkenleri: E2E_BASE_URL (ör. Vercel önizleme adresi), E2E_EMAIL, E2E_PASSWORD
 // (yalnız test için açılmış ayrı bir hesap). Senaryo her çalıştırmada benzersiz
 // bir etiketle (E2E-<zaman>) kendi kayıtlarını oluşturur ve bunları doğrular.
-import { readFile } from "node:fs/promises";
+import { appendFile, readFile } from "node:fs/promises";
 import { chromium } from "playwright";
 
 const baseUrl = (process.env.E2E_BASE_URL || "https://procurement-dun.vercel.app").replace(/\/$/, "");
@@ -49,7 +49,19 @@ try {
     tag,
   );
 
-  console.log(`\n${report.checks.length - report.failed.length}/${report.checks.length} kontrol geçti (${tag}).`);
+  const passed = report.checks.length - report.failed.length;
+  console.log(`\n${passed}/${report.checks.length} kontrol geçti (${tag}).`);
+  // GitHub'da çalışırken sonuç özet sayfasına ve uyarı satırlarına da yazılır.
+  if (process.env.GITHUB_ACTIONS) {
+    for (const check of report.checks) {
+      const line = `${check.name}${check.detail ? ` — ${check.detail}` : ""}`.replace(/\r?\n/g, " ");
+      console.log(`${check.ok ? "::notice title=Geçti::" : "::error title=Başarısız::"}${line}`);
+    }
+    if (process.env.GITHUB_STEP_SUMMARY) {
+      const rows = report.checks.map((check) => `| ${check.ok ? "✅" : "❌"} | ${check.name} | ${String(check.detail || "").replace(/\|/g, "/")} |`);
+      await appendFile(process.env.GITHUB_STEP_SUMMARY, `## Uçtan uca senaryo (${tag})\n\n${passed}/${report.checks.length} kontrol geçti.\n\n| | Kontrol | Ayrıntı |\n|---|---|---|\n${rows.join("\n")}\n`);
+    }
+  }
   if (pageErrors.length) console.log(`Sayfa hataları:\n- ${pageErrors.slice(0, 10).join("\n- ")}`);
   if (report.failed.length) {
     for (const failure of report.failed) console.log(`BAŞARISIZ: ${failure.name} — ${failure.detail}`);
@@ -57,6 +69,7 @@ try {
   }
 } catch (error) {
   console.error("Senaryo yarıda kaldı:", error);
+  if (process.env.GITHUB_ACTIONS) console.log(`::error title=Senaryo yarıda kaldı::${String(error?.message || error).replace(/\r?\n/g, " ")}`);
   await page.screenshot({ path: "e2e-hata.png", fullPage: true }).catch(() => {});
   process.exitCode = 1;
 } finally {
