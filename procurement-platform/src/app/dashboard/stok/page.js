@@ -2458,6 +2458,14 @@ export default function StockPage() {
     const projectMainProducts = projectMainItemsAsProducts(projectItems, products);
     return mergeProductGroups([...products, ...projectMainProducts]);
   }, [products, projectItems, showArchivedProducts]);
+  // Her ürünün stok kırılımı (hareket eşleştirmesi pahalı) veri değişince bir kez
+  // hesaplanır; form yazarken her tuşta yüzlerce ürün x hareket taranmaz.
+  const stockBreakdownByProduct = useMemo(() => {
+    const map = new Map();
+    for (const product of productGroups) map.set(product, stockBreakdown(product, movements));
+    return map;
+  }, [productGroups, movements]);
+  const breakdownOf = (product) => stockBreakdownByProduct.get(product) || stockBreakdown(product, movements);
   const productTypeCounts = useMemo(() => ({
     main: productGroups.filter(isMainProduct).length,
     component: productGroups.filter((product) => !isMainProduct(product)).length,
@@ -2470,7 +2478,7 @@ export default function StockPage() {
       .filter((product) => {
         if (activeProductType === PRODUCT_TYPES.MAIN) return true;
 
-        const breakdown = stockBreakdown(product, movements);
+        const breakdown = breakdownOf(product);
         const criticalLimit = stockCriticalLimit(product);
 
         if (stockViewFilter === STOCK_VIEW_FILTERS.DEPOT) return breakdown.total > 0;
@@ -2491,7 +2499,7 @@ export default function StockPage() {
         product.category,
       ].join(" ")).includes(needle),
     );
-  }, [productGroups, movements, search, activeProductType, stockViewFilter]);
+  }, [productGroups, stockBreakdownByProduct, search, activeProductType, stockViewFilter]);
 
   const [productPage, setProductPage] = useState(1);
   const productsPerPage = 25;
@@ -2502,6 +2510,27 @@ export default function StockPage() {
   }, [filteredProducts, productPage]);
 
   const totalProductPages = Math.max(1, Math.ceil(filteredProducts.length / productsPerPage));
+
+  // Sayfadaki kartların proje/satınalma özetleri yalnız veri değişince hesaplanır.
+  const pagedProductDetails = useMemo(() => {
+    const map = new Map();
+    for (const product of pagedProducts) {
+      const allocation = productProjectAllocations(product, projectItems, projects, movements);
+      const mainProduct = isMainProduct(product);
+      map.set(product, {
+        breakdown: breakdownOf(product),
+        allocation,
+        mainStats: mainProductProjectStats(product, projectItems, movements),
+        mainProduct,
+        lifecycle: mainProduct
+          ? null
+          : procurementLifecycle(product, allocation.missingTotal, requests, offers, orders, orderReceipts),
+      });
+    }
+    return map;
+    // breakdownOf, stockBreakdownByProduct üzerinden güncel kalır.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pagedProducts, stockBreakdownByProduct, projectItems, projects, movements, requests, offers, orders, orderReceipts]);
 
   const selectedMovements = useMemo(() => {
     if (!selectedProduct) return [];
@@ -2671,7 +2700,7 @@ export default function StockPage() {
   const componentProductGroups = productGroups.filter((product) => !isMainProduct(product));
   const stockTotals = componentProductGroups.reduce(
     (totals, product) => {
-      const breakdown = stockBreakdown(product, movements);
+      const breakdown = breakdownOf(product);
       return {
         total: totals.total + breakdown.total,
         available: totals.available + breakdown.available,
@@ -2686,7 +2715,7 @@ export default function StockPage() {
   const lowStockCount = componentProductGroups.filter(
     (product) => {
       const criticalLimit = stockCriticalLimit(product);
-      return criticalLimit > 0 && stockBreakdown(product, movements).available <= criticalLimit;
+      return criticalLimit > 0 && breakdownOf(product).available <= criticalLimit;
     },
   ).length;
 
@@ -2940,13 +2969,7 @@ export default function StockPage() {
               </div>
               <div className="space-y-3 p-4">
                 {pagedProducts.map((product) => {
-                  const breakdown = stockBreakdown(product, movements);
-                  const allocation = productProjectAllocations(product, projectItems, projects, movements);
-                  const mainStats = mainProductProjectStats(product, projectItems, movements);
-                  const mainProduct = isMainProduct(product);
-                  const lifecycle = mainProduct
-                    ? null
-                    : procurementLifecycle(product, allocation.missingTotal, requests, offers, orders, orderReceipts);
+                  const { breakdown, allocation, mainStats, mainProduct, lifecycle } = pagedProductDetails.get(product);
                   const stockRisk = mainProduct ? null : stockRiskStatus(product, breakdown, lifecycle);
                   const cardRiskClass = stockRisk?.level === "critical"
                     ? "border-red-300 bg-red-50/60 hover:border-red-400 hover:bg-red-50"
