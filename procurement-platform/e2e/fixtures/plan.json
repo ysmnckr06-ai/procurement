@@ -1,0 +1,2897 @@
+[
+ {
+  "no": 1,
+  "name": "TST-01 Kartal Metal Pano",
+  "customer": "TST Akdeniz Otel A.Ş.",
+  "stage": "Yeni açıldı",
+  "level": 1,
+  "currency": "TRY",
+  "budget": 141100.0,
+  "contract": 186000.0,
+  "bom": [
+   {
+    "code": "SGR-125A-NH00-ADET",
+    "brand": "Eaton",
+    "desc": "NH Bıçaklı Sigorta 125A NH00",
+    "qty": 15,
+    "unit": "adet",
+    "price": 4.12,
+    "cur": "USD"
+   },
+   {
+    "code": "YDK-0308",
+    "brand": "Schneider",
+    "desc": "Yedek Parça Kalem 308",
+    "qty": 15,
+    "unit": "adet",
+    "price": 258.25,
+    "cur": "TRY"
+   },
+   {
+    "code": "KCB-25A-300MA-4K",
+    "brand": "Legrand",
+    "desc": "Kaçak Akım Rölesi 25A 300mA 4K",
+    "qty": 4,
+    "unit": "adet",
+    "price": 1774.05,
+    "cur": "TRY"
+   },
+   {
+    "code": "KNT-65A-220V-3P",
+    "brand": "ABB",
+    "desc": "Kontaktör 65A 220V 3P",
+    "qty": 9,
+    "unit": "adet",
+    "price": 2497.47,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0424",
+    "brand": "Eaton",
+    "desc": "Yedek Parça Kalem 424",
+    "qty": 4,
+    "unit": "adet",
+    "price": 312.49,
+    "cur": "TRY"
+   },
+   {
+    "code": "KLM-6MM-GRI-ADET",
+    "brand": "Entes",
+    "desc": "Ray Klemens 6mm Gri",
+    "qty": 19,
+    "unit": "adet",
+    "price": 38.17,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0265",
+    "brand": "Eaton",
+    "desc": "Yedek Parça Kalem 265",
+    "qty": 15,
+    "unit": "adet",
+    "price": 130.77,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0380",
+    "brand": "ABB",
+    "desc": "Yedek Parça Kalem 380",
+    "qty": 3,
+    "unit": "adet",
+    "price": 801.59,
+    "cur": "TRY"
+   },
+   {
+    "code": "KCB-40A-30MA-4K",
+    "brand": "Tibcon",
+    "desc": "Kaçak Akım Rölesi 40A 30mA 4K",
+    "qty": 28,
+    "unit": "adet",
+    "price": 1023.67,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0406",
+    "brand": "Entes",
+    "desc": "Yedek Parça Kalem 406",
+    "qty": 20,
+    "unit": "adet",
+    "price": 126.6,
+    "cur": "TRY"
+   },
+   {
+    "code": "KMP-10KVAR-440V-ADET",
+    "brand": "Schneider",
+    "desc": "Kompanzasyon Kondansatörü 10kVAr 440V",
+    "qty": 5,
+    "unit": "adet",
+    "price": 3771.41,
+    "cur": "TRY"
+   },
+   {
+    "code": "SLT-25A-C-3K",
+    "brand": "Eaton",
+    "desc": "Otomatik Şalter 25A C 3K",
+    "qty": 9,
+    "unit": "adet",
+    "price": 127.16,
+    "cur": "TRY"
+   },
+   {
+    "code": "KNT-18A-24V-3P",
+    "brand": "Tibcon",
+    "desc": "Kontaktör 18A 24V 3P",
+    "qty": 22,
+    "unit": "adet",
+    "price": 1554.63,
+    "cur": "TRY"
+   }
+  ]
+ },
+ {
+  "no": 2,
+  "name": "TST-02 Delta Lojistik Pano",
+  "customer": "TST Yıldız AVM A.Ş.",
+  "stage": "Yeni açıldı",
+  "level": 1,
+  "currency": "TRY",
+  "budget": 492700.0,
+  "contract": 649000.0,
+  "bom": [
+   {
+    "code": "YDK-0458",
+    "brand": "ABB",
+    "desc": "Yedek Parça Kalem 458",
+    "qty": 20,
+    "unit": "adet",
+    "price": 298.69,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0309",
+    "brand": "Tibcon",
+    "desc": "Yedek Parça Kalem 309",
+    "qty": 20,
+    "unit": "adet",
+    "price": 227.04,
+    "cur": "TRY"
+   },
+   {
+    "code": "KCB-40A-300MA-2K",
+    "brand": "Tibcon",
+    "desc": "Kaçak Akım Rölesi 40A 300mA 2K",
+    "qty": 22,
+    "unit": "adet",
+    "price": 657.16,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0172",
+    "brand": "Legrand",
+    "desc": "Yedek Parça Kalem 172",
+    "qty": 8,
+    "unit": "adet",
+    "price": 779.5,
+    "cur": "TRY"
+   },
+   {
+    "code": "KCB-25A-300MA-2K",
+    "brand": "Eaton",
+    "desc": "Kaçak Akım Rölesi 25A 300mA 2K",
+    "qty": 13,
+    "unit": "adet",
+    "price": 838.22,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0439",
+    "brand": "ABB",
+    "desc": "Yedek Parça Kalem 439",
+    "qty": 5,
+    "unit": "adet",
+    "price": 122.36,
+    "cur": "TRY"
+   },
+   {
+    "code": "SGR-16A-NH1-ADET",
+    "brand": "ABB",
+    "desc": "NH Bıçaklı Sigorta 16A NH1",
+    "qty": 19,
+    "unit": "adet",
+    "price": 162.84,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0223",
+    "brand": "Legrand",
+    "desc": "Yedek Parça Kalem 223",
+    "qty": 24,
+    "unit": "adet",
+    "price": 141.34,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0298",
+    "brand": "Schneider",
+    "desc": "Yedek Parça Kalem 298",
+    "qty": 4,
+    "unit": "adet",
+    "price": 395.84,
+    "cur": "TRY"
+   },
+   {
+    "code": "KMP-25KVAR-400V-ADET",
+    "brand": "Viko",
+    "desc": "Kompanzasyon Kondansatörü 2.5kVAr 400V",
+    "qty": 20,
+    "unit": "adet",
+    "price": 2273.15,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0371",
+    "brand": "Entes",
+    "desc": "Yedek Parça Kalem 371",
+    "qty": 3,
+    "unit": "adet",
+    "price": 210.08,
+    "cur": "TRY"
+   },
+   {
+    "code": "PNO-100X200-IP65-ADET",
+    "brand": "Entes",
+    "desc": "Pano Gövdesi 100x200 IP65",
+    "qty": 21,
+    "unit": "adet",
+    "price": 4934.67,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0444",
+    "brand": "Siemens",
+    "desc": "Yedek Parça Kalem 444",
+    "qty": 8,
+    "unit": "adet",
+    "price": 76.6,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0221",
+    "brand": "Legrand",
+    "desc": "Yedek Parça Kalem 221",
+    "qty": 17,
+    "unit": "adet",
+    "price": 649.33,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0434",
+    "brand": "Legrand",
+    "desc": "Yedek Parça Kalem 434",
+    "qty": 23,
+    "unit": "adet",
+    "price": 771.85,
+    "cur": "TRY"
+   },
+   {
+    "code": "PNO-40X60-IP65-ADET",
+    "brand": "Tibcon",
+    "desc": "Pano Gövdesi 40x60 IP65",
+    "qty": 19,
+    "unit": "adet",
+    "price": 4892.23,
+    "cur": "TRY"
+   },
+   {
+    "code": "KBL-4X6-CU-METRE",
+    "brand": "Entes",
+    "desc": "NYY Enerji Kablosu 4x6 Cu",
+    "qty": 487,
+    "unit": "metre",
+    "price": 256.72,
+    "cur": "TRY"
+   }
+  ]
+ },
+ {
+  "no": 3,
+  "name": "TST-03 Delta Lojistik Pano",
+  "customer": "TST Delta Lojistik A.Ş.",
+  "stage": "Malzeme listesi yüklendi",
+  "level": 2,
+  "currency": "TRY",
+  "budget": 408000.0,
+  "contract": 538000.0,
+  "bom": [
+   {
+    "code": "YDK-0355",
+    "brand": "Eaton",
+    "desc": "Yedek Parça Kalem 355",
+    "qty": 18,
+    "unit": "adet",
+    "price": 410.96,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0280",
+    "brand": "Schneider",
+    "desc": "Yedek Parça Kalem 280",
+    "qty": 15,
+    "unit": "adet",
+    "price": 511.93,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0231",
+    "brand": "Entes",
+    "desc": "Yedek Parça Kalem 231",
+    "qty": 7,
+    "unit": "adet",
+    "price": 9.78,
+    "cur": "EUR"
+   },
+   {
+    "code": "YDK-0191",
+    "brand": "Eaton",
+    "desc": "Yedek Parça Kalem 191",
+    "qty": 26,
+    "unit": "adet",
+    "price": 317.66,
+    "cur": "TRY"
+   },
+   {
+    "code": "KMP-10KVAR-400V-ADET",
+    "brand": "Siemens",
+    "desc": "Kompanzasyon Kondansatörü 10kVAr 400V",
+    "qty": 12,
+    "unit": "adet",
+    "price": 3963.07,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0187",
+    "brand": "Entes",
+    "desc": "Yedek Parça Kalem 187",
+    "qty": 6,
+    "unit": "adet",
+    "price": 304.72,
+    "cur": "TRY"
+   },
+   {
+    "code": "KBL-4X4-CU-METRE",
+    "brand": "Viko",
+    "desc": "NYY Enerji Kablosu 4x4 Cu",
+    "qty": 550,
+    "unit": "metre",
+    "price": 347.93,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0450",
+    "brand": "Tibcon",
+    "desc": "Yedek Parça Kalem 450",
+    "qty": 15,
+    "unit": "adet",
+    "price": 786.42,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0238",
+    "brand": "Viko",
+    "desc": "Yedek Parça Kalem 238",
+    "qty": 3,
+    "unit": "adet",
+    "price": 691.57,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0359",
+    "brand": "Schneider",
+    "desc": "Yedek Parça Kalem 359",
+    "qty": 23,
+    "unit": "adet",
+    "price": 853.36,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0330",
+    "brand": "Legrand",
+    "desc": "Yedek Parça Kalem 330",
+    "qty": 4,
+    "unit": "adet",
+    "price": 290.84,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0254",
+    "brand": "Eaton",
+    "desc": "Yedek Parça Kalem 254",
+    "qty": 26,
+    "unit": "adet",
+    "price": 769.57,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0362",
+    "brand": "Siemens",
+    "desc": "Yedek Parça Kalem 362",
+    "qty": 19,
+    "unit": "adet",
+    "price": 223.48,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0181",
+    "brand": "Tibcon",
+    "desc": "Yedek Parça Kalem 181",
+    "qty": 20,
+    "unit": "adet",
+    "price": 321.2,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0465",
+    "brand": "Legrand",
+    "desc": "Yedek Parça Kalem 465",
+    "qty": 27,
+    "unit": "adet",
+    "price": 452.92,
+    "cur": "TRY"
+   },
+   {
+    "code": "KCB-40A-300MA-4K",
+    "brand": "Siemens",
+    "desc": "Kaçak Akım Rölesi 40A 300mA 4K",
+    "qty": 30,
+    "unit": "adet",
+    "price": 807.61,
+    "cur": "TRY"
+   },
+   {
+    "code": "KLM-25MM-MAVI-ADET",
+    "brand": "Schneider",
+    "desc": "Ray Klemens 2.5mm Mavi",
+    "qty": 28,
+    "unit": "adet",
+    "price": 45.02,
+    "cur": "TRY"
+   }
+  ]
+ },
+ {
+  "no": 4,
+  "name": "TST-04 Toros Çimento Pano",
+  "customer": "TST Bora Plastik A.Ş.",
+  "stage": "Malzeme listesi yüklendi",
+  "level": 2,
+  "currency": "TRY",
+  "budget": 128400.0,
+  "contract": 169000.0,
+  "bom": [
+   {
+    "code": "YDK-0273",
+    "brand": "Entes",
+    "desc": "Yedek Parça Kalem 273",
+    "qty": 2,
+    "unit": "adet",
+    "price": 56.36,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0464",
+    "brand": "Eaton",
+    "desc": "Yedek Parça Kalem 464",
+    "qty": 16,
+    "unit": "adet",
+    "price": 561.54,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0391",
+    "brand": "Klemsan",
+    "desc": "Yedek Parça Kalem 391",
+    "qty": 13,
+    "unit": "adet",
+    "price": 6.01,
+    "cur": "USD"
+   },
+   {
+    "code": "YDK-0454",
+    "brand": "Schneider",
+    "desc": "Yedek Parça Kalem 454",
+    "qty": 7,
+    "unit": "adet",
+    "price": 396.23,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0356",
+    "brand": "Tibcon",
+    "desc": "Yedek Parça Kalem 356",
+    "qty": 21,
+    "unit": "adet",
+    "price": 274.64,
+    "cur": "TRY"
+   },
+   {
+    "code": "KNT-40A-220V-3P",
+    "brand": "Klemsan",
+    "desc": "Kontaktör 40A 220V 3P",
+    "qty": 5,
+    "unit": "adet",
+    "price": 627.65,
+    "cur": "TRY"
+   },
+   {
+    "code": "KLM-4MM-SARI-YEŞIL-ADET",
+    "brand": "Tibcon",
+    "desc": "Ray Klemens 4mm Sarı-Yeşil",
+    "qty": 17,
+    "unit": "adet",
+    "price": 40.27,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0209",
+    "brand": "Legrand",
+    "desc": "Yedek Parça Kalem 209",
+    "qty": 3,
+    "unit": "adet",
+    "price": 392.6,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0369",
+    "brand": "Legrand",
+    "desc": "Yedek Parça Kalem 369",
+    "qty": 8,
+    "unit": "adet",
+    "price": 832.28,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0484",
+    "brand": "Legrand",
+    "desc": "Yedek Parça Kalem 484",
+    "qty": 26,
+    "unit": "adet",
+    "price": 550.29,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0477",
+    "brand": "Eaton",
+    "desc": "Yedek Parça Kalem 477",
+    "qty": 11,
+    "unit": "adet",
+    "price": 519.01,
+    "cur": "TRY"
+   },
+   {
+    "code": "KCB-63A-300MA-2K",
+    "brand": "Eaton",
+    "desc": "Kaçak Akım Rölesi 63A 300mA 2K",
+    "qty": 6,
+    "unit": "adet",
+    "price": 974.89,
+    "cur": "TRY"
+   },
+   {
+    "code": "KCB-40A-30MA-4K",
+    "brand": "Tibcon",
+    "desc": "Kaçak Akım Rölesi 40A 30mA 4K",
+    "qty": 25,
+    "unit": "adet",
+    "price": 1023.67,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0221",
+    "brand": "Legrand",
+    "desc": "Yedek Parça Kalem 221",
+    "qty": 9,
+    "unit": "adet",
+    "price": 649.33,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0444",
+    "brand": "Siemens",
+    "desc": "Yedek Parça Kalem 444",
+    "qty": 14,
+    "unit": "adet",
+    "price": 76.6,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0362",
+    "brand": "Siemens",
+    "desc": "Yedek Parça Kalem 362",
+    "qty": 14,
+    "unit": "adet",
+    "price": 223.48,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0181",
+    "brand": "Tibcon",
+    "desc": "Yedek Parça Kalem 181",
+    "qty": 29,
+    "unit": "adet",
+    "price": 321.2,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0319",
+    "brand": "Eaton",
+    "desc": "Yedek Parça Kalem 319",
+    "qty": 17,
+    "unit": "adet",
+    "price": 444.83,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0266",
+    "brand": "Tibcon",
+    "desc": "Yedek Parça Kalem 266",
+    "qty": 4,
+    "unit": "adet",
+    "price": 171.74,
+    "cur": "TRY"
+   },
+   {
+    "code": "",
+    "brand": "",
+    "desc": "Özel imalat bara seti P4",
+    "qty": 1,
+    "unit": "adet",
+    "price": 4497.3,
+    "cur": "TRY"
+   }
+  ]
+ },
+ {
+  "no": 5,
+  "name": "TST-05 Kuzey İnşaat Pano",
+  "customer": "TST Toros Çimento A.Ş.",
+  "stage": "Stoktan karşılandı",
+  "level": 3,
+  "currency": "TRY",
+  "budget": 88600.0,
+  "contract": 117000.0,
+  "bom": [
+   {
+    "code": "SGR-25A-NH1-ADET",
+    "brand": "Klemsan",
+    "desc": "NH Bıçaklı Sigorta 25A NH1",
+    "qty": 6,
+    "unit": "adet",
+    "price": 185.1,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0339",
+    "brand": "ABB",
+    "desc": "Yedek Parça Kalem 339",
+    "qty": 9,
+    "unit": "adet",
+    "price": 877.12,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0435",
+    "brand": "Eaton",
+    "desc": "Yedek Parça Kalem 435",
+    "qty": 23,
+    "unit": "adet",
+    "price": 48.85,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0213",
+    "brand": "Siemens",
+    "desc": "Yedek Parça Kalem 213",
+    "qty": 9,
+    "unit": "adet",
+    "price": 596.38,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0328",
+    "brand": "Tibcon",
+    "desc": "Yedek Parça Kalem 328",
+    "qty": 2,
+    "unit": "adet",
+    "price": 251.12,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0278",
+    "brand": "ABB",
+    "desc": "Yedek Parça Kalem 278",
+    "qty": 17,
+    "unit": "adet",
+    "price": 562.99,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0482",
+    "brand": "Tibcon",
+    "desc": "Yedek Parça Kalem 482",
+    "qty": 28,
+    "unit": "adet",
+    "price": 751.23,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0271",
+    "brand": "Eaton",
+    "desc": "Yedek Parça Kalem 271",
+    "qty": 20,
+    "unit": "adet",
+    "price": 234.52,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0202",
+    "brand": "Eaton",
+    "desc": "Yedek Parça Kalem 202",
+    "qty": 7,
+    "unit": "adet",
+    "price": 300.3,
+    "cur": "TRY"
+   },
+   {
+    "code": "AKT-200_5-KL1-ADET",
+    "brand": "ABB",
+    "desc": "Akım Trafosu 200/5 Kl1",
+    "qty": 10,
+    "unit": "adet",
+    "price": 433.39,
+    "cur": "TRY"
+   },
+   {
+    "code": "KNT-9A-220V-3P",
+    "brand": "Schneider",
+    "desc": "Kontaktör 9A 220V 3P",
+    "qty": 11,
+    "unit": "adet",
+    "price": 2057.84,
+    "cur": "TRY"
+   },
+   {
+    "code": "SGR-160A-NH1-ADET",
+    "brand": "Tibcon",
+    "desc": "NH Bıçaklı Sigorta 160A NH1",
+    "qty": 2,
+    "unit": "adet",
+    "price": 94.92,
+    "cur": "TRY"
+   }
+  ]
+ },
+ {
+  "no": 6,
+  "name": "TST-06 Ege Tekstil Pano",
+  "customer": "TST Delta Lojistik A.Ş.",
+  "stage": "Talep açıldı",
+  "level": 4,
+  "currency": "TRY",
+  "budget": 134300.0,
+  "contract": 177000.0,
+  "bom": [
+   {
+    "code": "YDK-0286",
+    "brand": "Schneider",
+    "desc": "Yedek Parça Kalem 286",
+    "qty": 22,
+    "unit": "adet",
+    "price": 525.03,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0478",
+    "brand": "Viko",
+    "desc": "Yedek Parça Kalem 478",
+    "qty": 14,
+    "unit": "adet",
+    "price": 893.5,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0445",
+    "brand": "Viko",
+    "desc": "Yedek Parça Kalem 445",
+    "qty": 3,
+    "unit": "adet",
+    "price": 6.33,
+    "cur": "USD"
+   },
+   {
+    "code": "YDK-0245",
+    "brand": "Legrand",
+    "desc": "Yedek Parça Kalem 245",
+    "qty": 8,
+    "unit": "adet",
+    "price": 350.9,
+    "cur": "TRY"
+   },
+   {
+    "code": "AKT-600_5-KL1-ADET",
+    "brand": "Tibcon",
+    "desc": "Akım Trafosu 600/5 Kl1",
+    "qty": 4,
+    "unit": "adet",
+    "price": 821.02,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0402",
+    "brand": "ABB",
+    "desc": "Yedek Parça Kalem 402",
+    "qty": 8,
+    "unit": "adet",
+    "price": 176.95,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0489",
+    "brand": "Tibcon",
+    "desc": "Yedek Parça Kalem 489",
+    "qty": 16,
+    "unit": "adet",
+    "price": 39.69,
+    "cur": "TRY"
+   },
+   {
+    "code": "KCB-63A-30MA-4K",
+    "brand": "Eaton",
+    "desc": "Kaçak Akım Rölesi 63A 30mA 4K",
+    "qty": 7,
+    "unit": "adet",
+    "price": 1751.84,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0312",
+    "brand": "Tibcon",
+    "desc": "Yedek Parça Kalem 312",
+    "qty": 5,
+    "unit": "adet",
+    "price": 767.35,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0482",
+    "brand": "Tibcon",
+    "desc": "Yedek Parça Kalem 482",
+    "qty": 12,
+    "unit": "adet",
+    "price": 751.23,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0373",
+    "brand": "Siemens",
+    "desc": "Yedek Parça Kalem 373",
+    "qty": 21,
+    "unit": "adet",
+    "price": 73.55,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0284",
+    "brand": "Schneider",
+    "desc": "Yedek Parça Kalem 284",
+    "qty": 3,
+    "unit": "adet",
+    "price": 702.23,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0323",
+    "brand": "Legrand",
+    "desc": "Yedek Parça Kalem 323",
+    "qty": 5,
+    "unit": "adet",
+    "price": 369.92,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0325",
+    "brand": "Klemsan",
+    "desc": "Yedek Parça Kalem 325",
+    "qty": 2,
+    "unit": "adet",
+    "price": 431.2,
+    "cur": "TRY"
+   },
+   {
+    "code": "KBL-4X6-CU-METRE",
+    "brand": "Entes",
+    "desc": "NYY Enerji Kablosu 4x6 Cu",
+    "qty": 204,
+    "unit": "metre",
+    "price": 256.72,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0394",
+    "brand": "Tibcon",
+    "desc": "Yedek Parça Kalem 394",
+    "qty": 19,
+    "unit": "adet",
+    "price": 266.51,
+    "cur": "TRY"
+   }
+  ]
+ },
+ {
+  "no": 7,
+  "name": "TST-07 Bora Plastik Pano",
+  "customer": "TST Akdeniz Otel A.Ş.",
+  "stage": "Talep açıldı",
+  "level": 4,
+  "currency": "TRY",
+  "budget": 198100.0,
+  "contract": 261000.0,
+  "bom": [
+   {
+    "code": "SLT-40A-B-3K",
+    "brand": "Schneider",
+    "desc": "Otomatik Şalter 40A B 3K",
+    "qty": 4,
+    "unit": "adet",
+    "price": 288.37,
+    "cur": "TRY"
+   },
+   {
+    "code": "KNT-40A-24V-3P",
+    "brand": "Eaton",
+    "desc": "Kontaktör 40A 24V 3P",
+    "qty": 6,
+    "unit": "adet",
+    "price": 731.11,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0162",
+    "brand": "Siemens",
+    "desc": "Yedek Parça Kalem 162",
+    "qty": 5,
+    "unit": "adet",
+    "price": 495.58,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0481",
+    "brand": "ABB",
+    "desc": "Yedek Parça Kalem 481",
+    "qty": 25,
+    "unit": "adet",
+    "price": 820.45,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0291",
+    "brand": "Viko",
+    "desc": "Yedek Parça Kalem 291",
+    "qty": 12,
+    "unit": "adet",
+    "price": 766.76,
+    "cur": "TRY"
+   },
+   {
+    "code": "SGR-80A-NH1-ADET",
+    "brand": "Schneider",
+    "desc": "NH Bıçaklı Sigorta 80A NH1",
+    "qty": 25,
+    "unit": "adet",
+    "price": 207.11,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0194",
+    "brand": "Legrand",
+    "desc": "Yedek Parça Kalem 194",
+    "qty": 10,
+    "unit": "adet",
+    "price": 236.7,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0269",
+    "brand": "Klemsan",
+    "desc": "Yedek Parça Kalem 269",
+    "qty": 17,
+    "unit": "adet",
+    "price": 687.49,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0407",
+    "brand": "Viko",
+    "desc": "Yedek Parça Kalem 407",
+    "qty": 28,
+    "unit": "adet",
+    "price": 399.92,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0265",
+    "brand": "Eaton",
+    "desc": "Yedek Parça Kalem 265",
+    "qty": 24,
+    "unit": "adet",
+    "price": 130.77,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0314",
+    "brand": "Klemsan",
+    "desc": "Yedek Parça Kalem 314",
+    "qty": 7,
+    "unit": "adet",
+    "price": 720.07,
+    "cur": "TRY"
+   },
+   {
+    "code": "PNO-100X200-IP65-ADET",
+    "brand": "Entes",
+    "desc": "Pano Gövdesi 100x200 IP65",
+    "qty": 18,
+    "unit": "adet",
+    "price": 4934.67,
+    "cur": "TRY"
+   },
+   {
+    "code": "KLM-25MM-GRI-ADET",
+    "brand": "Klemsan",
+    "desc": "Ray Klemens 2.5mm Gri",
+    "qty": 2,
+    "unit": "adet",
+    "price": 26.52,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0395",
+    "brand": "Eaton",
+    "desc": "Yedek Parça Kalem 395",
+    "qty": 8,
+    "unit": "adet",
+    "price": 734.07,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0382",
+    "brand": "ABB",
+    "desc": "Yedek Parça Kalem 382",
+    "qty": 18,
+    "unit": "adet",
+    "price": 91.28,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0394",
+    "brand": "Tibcon",
+    "desc": "Yedek Parça Kalem 394",
+    "qty": 13,
+    "unit": "adet",
+    "price": 266.51,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0221",
+    "brand": "Legrand",
+    "desc": "Yedek Parça Kalem 221",
+    "qty": 6,
+    "unit": "adet",
+    "price": 649.33,
+    "cur": "TRY"
+   }
+  ]
+ },
+ {
+  "no": 8,
+  "name": "TST-08 Ege Tekstil Pano",
+  "customer": "TST Marmara Gıda A.Ş.",
+  "stage": "Teklif mukayesesi yapıldı",
+  "level": 5,
+  "currency": "TRY",
+  "budget": 118300.0,
+  "contract": 156000.0,
+  "bom": [
+   {
+    "code": "YDK-0414",
+    "brand": "Schneider",
+    "desc": "Yedek Parça Kalem 414",
+    "qty": 8,
+    "unit": "adet",
+    "price": 586.46,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0228",
+    "brand": "Entes",
+    "desc": "Yedek Parça Kalem 228",
+    "qty": 18,
+    "unit": "adet",
+    "price": 231.79,
+    "cur": "TRY"
+   },
+   {
+    "code": "KLM-4MM-MAVI-ADET",
+    "brand": "Schneider",
+    "desc": "Ray Klemens 4mm Mavi",
+    "qty": 17,
+    "unit": "adet",
+    "price": 9.6,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0199",
+    "brand": "Klemsan",
+    "desc": "Yedek Parça Kalem 199",
+    "qty": 13,
+    "unit": "adet",
+    "price": 564.61,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0408",
+    "brand": "Tibcon",
+    "desc": "Yedek Parça Kalem 408",
+    "qty": 25,
+    "unit": "adet",
+    "price": 118.07,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0283",
+    "brand": "Siemens",
+    "desc": "Yedek Parça Kalem 283",
+    "qty": 2,
+    "unit": "adet",
+    "price": 549.24,
+    "cur": "TRY"
+   },
+   {
+    "code": "RLE-GERILIM-DIN-ADET",
+    "brand": "Siemens",
+    "desc": "Koruma Rölesi Gerilim DIN",
+    "qty": 2,
+    "unit": "adet",
+    "price": 648.82,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0277",
+    "brand": "Legrand",
+    "desc": "Yedek Parça Kalem 277",
+    "qty": 27,
+    "unit": "adet",
+    "price": 187.43,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0173",
+    "brand": "Siemens",
+    "desc": "Yedek Parça Kalem 173",
+    "qty": 10,
+    "unit": "adet",
+    "price": 794.46,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0417",
+    "brand": "Viko",
+    "desc": "Yedek Parça Kalem 417",
+    "qty": 17,
+    "unit": "adet",
+    "price": 6.88,
+    "cur": "EUR"
+   },
+   {
+    "code": "YDK-0371",
+    "brand": "Entes",
+    "desc": "Yedek Parça Kalem 371",
+    "qty": 10,
+    "unit": "adet",
+    "price": 210.08,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0341",
+    "brand": "Siemens",
+    "desc": "Yedek Parça Kalem 341",
+    "qty": 8,
+    "unit": "adet",
+    "price": 577.7,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0252",
+    "brand": "Eaton",
+    "desc": "Yedek Parça Kalem 252",
+    "qty": 24,
+    "unit": "adet",
+    "price": 434.51,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0423",
+    "brand": "Viko",
+    "desc": "Yedek Parça Kalem 423",
+    "qty": 21,
+    "unit": "adet",
+    "price": 697.68,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0201",
+    "brand": "Viko",
+    "desc": "Yedek Parça Kalem 201",
+    "qty": 13,
+    "unit": "adet",
+    "price": 461.34,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0468",
+    "brand": "ABB",
+    "desc": "Yedek Parça Kalem 468",
+    "qty": 16,
+    "unit": "adet",
+    "price": 810.03,
+    "cur": "TRY"
+   },
+   {
+    "code": "SNY-YEŞIL-22MM-24V",
+    "brand": "Viko",
+    "desc": "Sinyal Lambası Yeşil 22mm 24V",
+    "qty": 27,
+    "unit": "adet",
+    "price": 47.26,
+    "cur": "TRY"
+   },
+   {
+    "code": "BUT-ACILSTOP-22MM-NC",
+    "brand": "Legrand",
+    "desc": "Buton Acil Stop 22mm NC",
+    "qty": 25,
+    "unit": "adet",
+    "price": 122.72,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0325",
+    "brand": "Klemsan",
+    "desc": "Yedek Parça Kalem 325",
+    "qty": 13,
+    "unit": "adet",
+    "price": 431.2,
+    "cur": "TRY"
+   },
+   {
+    "code": "BUT-START-22MM-NC",
+    "brand": "Schneider",
+    "desc": "Buton Start 22mm NC",
+    "qty": 13,
+    "unit": "adet",
+    "price": 151.94,
+    "cur": "TRY"
+   },
+   {
+    "code": "",
+    "brand": "",
+    "desc": "Özel imalat bara seti P8",
+    "qty": 1,
+    "unit": "adet",
+    "price": 3724.84,
+    "cur": "TRY"
+   }
+  ]
+ },
+ {
+  "no": 9,
+  "name": "TST-09 Kuzey İnşaat Pano",
+  "customer": "TST Kuzey İnşaat A.Ş.",
+  "stage": "Teklif mukayesesi yapıldı",
+  "level": 5,
+  "currency": "TRY",
+  "budget": 139100.0,
+  "contract": 183000.0,
+  "bom": [
+   {
+    "code": "YDK-0153",
+    "brand": "Viko",
+    "desc": "Yedek Parça Kalem 153",
+    "qty": 30,
+    "unit": "adet",
+    "price": 815.75,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0258",
+    "brand": "Viko",
+    "desc": "Yedek Parça Kalem 258",
+    "qty": 7,
+    "unit": "adet",
+    "price": 7.21,
+    "cur": "EUR"
+   },
+   {
+    "code": "YDK-0158",
+    "brand": "Viko",
+    "desc": "Yedek Parça Kalem 158",
+    "qty": 15,
+    "unit": "adet",
+    "price": 153.81,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0381",
+    "brand": "Klemsan",
+    "desc": "Yedek Parça Kalem 381",
+    "qty": 27,
+    "unit": "adet",
+    "price": 547.31,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0493",
+    "brand": "Siemens",
+    "desc": "Yedek Parça Kalem 493",
+    "qty": 22,
+    "unit": "adet",
+    "price": 188.71,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0478",
+    "brand": "Viko",
+    "desc": "Yedek Parça Kalem 478",
+    "qty": 12,
+    "unit": "adet",
+    "price": 893.5,
+    "cur": "TRY"
+   },
+   {
+    "code": "SLT-6A-B-3K",
+    "brand": "Viko",
+    "desc": "Otomatik Şalter 6A B 3K",
+    "qty": 4,
+    "unit": "adet",
+    "price": 216.02,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0318",
+    "brand": "Schneider",
+    "desc": "Yedek Parça Kalem 318",
+    "qty": 27,
+    "unit": "adet",
+    "price": 224.81,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0470",
+    "brand": "Entes",
+    "desc": "Yedek Parça Kalem 470",
+    "qty": 25,
+    "unit": "adet",
+    "price": 150.6,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0259",
+    "brand": "ABB",
+    "desc": "Yedek Parça Kalem 259",
+    "qty": 14,
+    "unit": "adet",
+    "price": 356.08,
+    "cur": "TRY"
+   },
+   {
+    "code": "KNT-9A-220V-3P",
+    "brand": "Schneider",
+    "desc": "Kontaktör 9A 220V 3P",
+    "qty": 16,
+    "unit": "adet",
+    "price": 2057.84,
+    "cur": "TRY"
+   },
+   {
+    "code": "KLM-25MM-MAVI-ADET",
+    "brand": "Schneider",
+    "desc": "Ray Klemens 2.5mm Mavi",
+    "qty": 14,
+    "unit": "adet",
+    "price": 45.02,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0319",
+    "brand": "Eaton",
+    "desc": "Yedek Parça Kalem 319",
+    "qty": 25,
+    "unit": "adet",
+    "price": 444.83,
+    "cur": "TRY"
+   },
+   {
+    "code": "SNY-MAVI-22MM-24V",
+    "brand": "Eaton",
+    "desc": "Sinyal Lambası Mavi 22mm 24V",
+    "qty": 4,
+    "unit": "adet",
+    "price": 42.85,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0394",
+    "brand": "Tibcon",
+    "desc": "Yedek Parça Kalem 394",
+    "qty": 25,
+    "unit": "adet",
+    "price": 266.51,
+    "cur": "TRY"
+   }
+  ]
+ },
+ {
+  "no": 10,
+  "name": "TST-10 Kuzey İnşaat Pano",
+  "customer": "TST Toros Çimento A.Ş.",
+  "stage": "Sipariş verildi",
+  "level": 6,
+  "currency": "TRY",
+  "budget": 71700.0,
+  "contract": 94000.0,
+  "bom": [
+   {
+    "code": "SLT-40A-C-1K",
+    "brand": "Tibcon",
+    "desc": "Otomatik Şalter 40A C 1K",
+    "qty": 19,
+    "unit": "adet",
+    "price": 425.09,
+    "cur": "TRY"
+   },
+   {
+    "code": "SGR-125A-NH00-ADET",
+    "brand": "Eaton",
+    "desc": "NH Bıçaklı Sigorta 125A NH00",
+    "qty": 19,
+    "unit": "adet",
+    "price": 4.12,
+    "cur": "USD"
+   },
+   {
+    "code": "YDK-0462",
+    "brand": "Siemens",
+    "desc": "Yedek Parça Kalem 462",
+    "qty": 6,
+    "unit": "adet",
+    "price": 161.29,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0365",
+    "brand": "Tibcon",
+    "desc": "Yedek Parça Kalem 365",
+    "qty": 2,
+    "unit": "adet",
+    "price": 269.22,
+    "cur": "TRY"
+   },
+   {
+    "code": "SGR-63A-NH1-ADET",
+    "brand": "Entes",
+    "desc": "NH Bıçaklı Sigorta 63A NH1",
+    "qty": 2,
+    "unit": "adet",
+    "price": 1.26,
+    "cur": "USD"
+   },
+   {
+    "code": "YDK-0409",
+    "brand": "Legrand",
+    "desc": "Yedek Parça Kalem 409",
+    "qty": 27,
+    "unit": "adet",
+    "price": 641.71,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0403",
+    "brand": "Klemsan",
+    "desc": "Yedek Parça Kalem 403",
+    "qty": 25,
+    "unit": "adet",
+    "price": 564.14,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0384",
+    "brand": "Viko",
+    "desc": "Yedek Parça Kalem 384",
+    "qty": 22,
+    "unit": "adet",
+    "price": 522.86,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0266",
+    "brand": "Tibcon",
+    "desc": "Yedek Parça Kalem 266",
+    "qty": 5,
+    "unit": "adet",
+    "price": 171.74,
+    "cur": "TRY"
+   },
+   {
+    "code": "AKT-200_5-KL1-ADET",
+    "brand": "ABB",
+    "desc": "Akım Trafosu 200/5 Kl1",
+    "qty": 18,
+    "unit": "adet",
+    "price": 433.39,
+    "cur": "TRY"
+   }
+  ]
+ },
+ {
+  "no": 11,
+  "name": "TST-11 Bora Plastik Pano",
+  "customer": "TST Akdeniz Otel A.Ş.",
+  "stage": "Sipariş verildi",
+  "level": 6,
+  "currency": "TRY",
+  "budget": 167700.0,
+  "contract": 221000.0,
+  "bom": [
+   {
+    "code": "BUT-ACILSTOP-22MM-NO",
+    "brand": "Siemens",
+    "desc": "Buton Acil Stop 22mm NO",
+    "qty": 6,
+    "unit": "adet",
+    "price": 63.95,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0164",
+    "brand": "Siemens",
+    "desc": "Yedek Parça Kalem 164",
+    "qty": 19,
+    "unit": "adet",
+    "price": 392.51,
+    "cur": "TRY"
+   },
+   {
+    "code": "SLT-40A-C-1K",
+    "brand": "Tibcon",
+    "desc": "Otomatik Şalter 40A C 1K",
+    "qty": 6,
+    "unit": "adet",
+    "price": 425.09,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0192",
+    "brand": "Klemsan",
+    "desc": "Yedek Parça Kalem 192",
+    "qty": 18,
+    "unit": "adet",
+    "price": 8.1,
+    "cur": "USD"
+   },
+   {
+    "code": "YDK-0225",
+    "brand": "Schneider",
+    "desc": "Yedek Parça Kalem 225",
+    "qty": 18,
+    "unit": "adet",
+    "price": 702.79,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0393",
+    "brand": "Klemsan",
+    "desc": "Yedek Parça Kalem 393",
+    "qty": 2,
+    "unit": "adet",
+    "price": 376.36,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0186",
+    "brand": "Entes",
+    "desc": "Yedek Parça Kalem 186",
+    "qty": 29,
+    "unit": "adet",
+    "price": 365.71,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0459",
+    "brand": "ABB",
+    "desc": "Yedek Parça Kalem 459",
+    "qty": 16,
+    "unit": "adet",
+    "price": 271.1,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0248",
+    "brand": "Klemsan",
+    "desc": "Yedek Parça Kalem 248",
+    "qty": 26,
+    "unit": "adet",
+    "price": 492.92,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0198",
+    "brand": "Schneider",
+    "desc": "Yedek Parça Kalem 198",
+    "qty": 7,
+    "unit": "adet",
+    "price": 854.5,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0371",
+    "brand": "Entes",
+    "desc": "Yedek Parça Kalem 371",
+    "qty": 21,
+    "unit": "adet",
+    "price": 210.08,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0298",
+    "brand": "Schneider",
+    "desc": "Yedek Parça Kalem 298",
+    "qty": 2,
+    "unit": "adet",
+    "price": 395.84,
+    "cur": "TRY"
+   },
+   {
+    "code": "SNY-SARI-22MM-220V",
+    "brand": "ABB",
+    "desc": "Sinyal Lambası Sarı 22mm 220V",
+    "qty": 26,
+    "unit": "adet",
+    "price": 72.16,
+    "cur": "TRY"
+   },
+   {
+    "code": "KCB-40A-30MA-4K",
+    "brand": "Tibcon",
+    "desc": "Kaçak Akım Rölesi 40A 30mA 4K",
+    "qty": 27,
+    "unit": "adet",
+    "price": 1023.67,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0494",
+    "brand": "Entes",
+    "desc": "Yedek Parça Kalem 494",
+    "qty": 6,
+    "unit": "adet",
+    "price": 790.05,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0276",
+    "brand": "ABB",
+    "desc": "Yedek Parça Kalem 276",
+    "qty": 7,
+    "unit": "adet",
+    "price": 681.27,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0376",
+    "brand": "Tibcon",
+    "desc": "Yedek Parça Kalem 376",
+    "qty": 6,
+    "unit": "adet",
+    "price": 622.92,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0453",
+    "brand": "Viko",
+    "desc": "Yedek Parça Kalem 453",
+    "qty": 17,
+    "unit": "adet",
+    "price": 897.71,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0418",
+    "brand": "Tibcon",
+    "desc": "Yedek Parça Kalem 418",
+    "qty": 21,
+    "unit": "adet",
+    "price": 882.42,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0329",
+    "brand": "Viko",
+    "desc": "Yedek Parça Kalem 329",
+    "qty": 25,
+    "unit": "adet",
+    "price": 215.18,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0406",
+    "brand": "Entes",
+    "desc": "Yedek Parça Kalem 406",
+    "qty": 5,
+    "unit": "adet",
+    "price": 126.6,
+    "cur": "TRY"
+   }
+  ]
+ },
+ {
+  "no": 12,
+  "name": "TST-12 Yıldız AVM Pano",
+  "customer": "TST Bora Plastik A.Ş.",
+  "stage": "Malzemenin bir kısmı geldi",
+  "level": 7,
+  "currency": "TRY",
+  "budget": 140100.0,
+  "contract": 185000.0,
+  "bom": [
+   {
+    "code": "YDK-0408",
+    "brand": "Tibcon",
+    "desc": "Yedek Parça Kalem 408",
+    "qty": 16,
+    "unit": "adet",
+    "price": 118.07,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0416",
+    "brand": "Viko",
+    "desc": "Yedek Parça Kalem 416",
+    "qty": 19,
+    "unit": "adet",
+    "price": 8.39,
+    "cur": "EUR"
+   },
+   {
+    "code": "YDK-0438",
+    "brand": "Siemens",
+    "desc": "Yedek Parça Kalem 438",
+    "qty": 2,
+    "unit": "adet",
+    "price": 450.84,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0381",
+    "brand": "Klemsan",
+    "desc": "Yedek Parça Kalem 381",
+    "qty": 26,
+    "unit": "adet",
+    "price": 547.31,
+    "cur": "TRY"
+   },
+   {
+    "code": "KLM-16MM-MAVI-ADET",
+    "brand": "Eaton",
+    "desc": "Ray Klemens 16mm Mavi",
+    "qty": 30,
+    "unit": "adet",
+    "price": 47.8,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0441",
+    "brand": "Tibcon",
+    "desc": "Yedek Parça Kalem 441",
+    "qty": 4,
+    "unit": "adet",
+    "price": 98.74,
+    "cur": "TRY"
+   },
+   {
+    "code": "KCB-40A-30MA-4K",
+    "brand": "Tibcon",
+    "desc": "Kaçak Akım Rölesi 40A 30mA 4K",
+    "qty": 16,
+    "unit": "adet",
+    "price": 1023.67,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0207",
+    "brand": "Viko",
+    "desc": "Yedek Parça Kalem 207",
+    "qty": 12,
+    "unit": "adet",
+    "price": 371.41,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0175",
+    "brand": "Klemsan",
+    "desc": "Yedek Parça Kalem 175",
+    "qty": 21,
+    "unit": "adet",
+    "price": 706.32,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0168",
+    "brand": "Schneider",
+    "desc": "Yedek Parça Kalem 168",
+    "qty": 18,
+    "unit": "adet",
+    "price": 324.77,
+    "cur": "TRY"
+   },
+   {
+    "code": "SLT-32A-B-1K",
+    "brand": "Viko",
+    "desc": "Otomatik Şalter 32A B 1K",
+    "qty": 21,
+    "unit": "adet",
+    "price": 528.73,
+    "cur": "TRY"
+   },
+   {
+    "code": "KNT-32A-24V-3P",
+    "brand": "Entes",
+    "desc": "Kontaktör 32A 24V 3P",
+    "qty": 18,
+    "unit": "adet",
+    "price": 2046.95,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0406",
+    "brand": "Entes",
+    "desc": "Yedek Parça Kalem 406",
+    "qty": 8,
+    "unit": "adet",
+    "price": 126.6,
+    "cur": "TRY"
+   },
+   {
+    "code": "",
+    "brand": "",
+    "desc": "Özel imalat bara seti P12",
+    "qty": 1,
+    "unit": "adet",
+    "price": 9234.58,
+    "cur": "TRY"
+   }
+  ]
+ },
+ {
+  "no": 13,
+  "name": "TST-13 Kuzey İnşaat Pano",
+  "customer": "TST Yıldız AVM A.Ş.",
+  "stage": "Malzemenin bir kısmı geldi",
+  "level": 7,
+  "currency": "TRY",
+  "budget": 219000.0,
+  "contract": 289000.0,
+  "bom": [
+   {
+    "code": "YDK-0374",
+    "brand": "Siemens",
+    "desc": "Yedek Parça Kalem 374",
+    "qty": 15,
+    "unit": "adet",
+    "price": 715.44,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0398",
+    "brand": "Klemsan",
+    "desc": "Yedek Parça Kalem 398",
+    "qty": 4,
+    "unit": "adet",
+    "price": 113.17,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0190",
+    "brand": "Viko",
+    "desc": "Yedek Parça Kalem 190",
+    "qty": 8,
+    "unit": "adet",
+    "price": 44.05,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0411",
+    "brand": "Entes",
+    "desc": "Yedek Parça Kalem 411",
+    "qty": 23,
+    "unit": "adet",
+    "price": 373.11,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0198",
+    "brand": "Schneider",
+    "desc": "Yedek Parça Kalem 198",
+    "qty": 11,
+    "unit": "adet",
+    "price": 854.5,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0441",
+    "brand": "Tibcon",
+    "desc": "Yedek Parça Kalem 441",
+    "qty": 27,
+    "unit": "adet",
+    "price": 98.74,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0157",
+    "brand": "Siemens",
+    "desc": "Yedek Parça Kalem 157",
+    "qty": 5,
+    "unit": "adet",
+    "price": 577.03,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0352",
+    "brand": "Legrand",
+    "desc": "Yedek Parça Kalem 352",
+    "qty": 30,
+    "unit": "adet",
+    "price": 115.42,
+    "cur": "TRY"
+   },
+   {
+    "code": "SNY-SARI-22MM-24V",
+    "brand": "Eaton",
+    "desc": "Sinyal Lambası Sarı 22mm 24V",
+    "qty": 26,
+    "unit": "adet",
+    "price": 74.44,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0298",
+    "brand": "Schneider",
+    "desc": "Yedek Parça Kalem 298",
+    "qty": 6,
+    "unit": "adet",
+    "price": 395.84,
+    "cur": "TRY"
+   },
+   {
+    "code": "PNO-100X200-IP65-ADET",
+    "brand": "Entes",
+    "desc": "Pano Gövdesi 100x200 IP65",
+    "qty": 24,
+    "unit": "adet",
+    "price": 4934.67,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0284",
+    "brand": "Schneider",
+    "desc": "Yedek Parça Kalem 284",
+    "qty": 22,
+    "unit": "adet",
+    "price": 702.23,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0357",
+    "brand": "Eaton",
+    "desc": "Yedek Parça Kalem 357",
+    "qty": 23,
+    "unit": "adet",
+    "price": 281.79,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0237",
+    "brand": "Legrand",
+    "desc": "Yedek Parça Kalem 237",
+    "qty": 13,
+    "unit": "adet",
+    "price": 757.48,
+    "cur": "TRY"
+   },
+   {
+    "code": "KCB-40A-300MA-4K",
+    "brand": "Siemens",
+    "desc": "Kaçak Akım Rölesi 40A 300mA 4K",
+    "qty": 6,
+    "unit": "adet",
+    "price": 807.61,
+    "cur": "TRY"
+   },
+   {
+    "code": "BUT-ACILSTOP-22MM-NC",
+    "brand": "Legrand",
+    "desc": "Buton Acil Stop 22mm NC",
+    "qty": 10,
+    "unit": "adet",
+    "price": 122.72,
+    "cur": "TRY"
+   }
+  ]
+ },
+ {
+  "no": 14,
+  "name": "TST-14 Yıldız AVM Pano",
+  "customer": "TST Akdeniz Otel A.Ş.",
+  "stage": "Eksik/hatalı teslimat",
+  "level": 7,
+  "currency": "TRY",
+  "budget": 173100.0,
+  "contract": 228000.0,
+  "bom": [
+   {
+    "code": "KLM-6MM-GRI-ADET",
+    "brand": "Entes",
+    "desc": "Ray Klemens 6mm Gri",
+    "qty": 15,
+    "unit": "adet",
+    "price": 38.17,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0309",
+    "brand": "Tibcon",
+    "desc": "Yedek Parça Kalem 309",
+    "qty": 8,
+    "unit": "adet",
+    "price": 227.04,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0385",
+    "brand": "Siemens",
+    "desc": "Yedek Parça Kalem 385",
+    "qty": 13,
+    "unit": "adet",
+    "price": 428.75,
+    "cur": "TRY"
+   },
+   {
+    "code": "PNO-100X200-IP54-ADET",
+    "brand": "Tibcon",
+    "desc": "Pano Gövdesi 100x200 IP54",
+    "qty": 12,
+    "unit": "adet",
+    "price": 10495.89,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0173",
+    "brand": "Siemens",
+    "desc": "Yedek Parça Kalem 173",
+    "qty": 4,
+    "unit": "adet",
+    "price": 794.46,
+    "cur": "TRY"
+   },
+   {
+    "code": "BUT-KALICI-22MM-NC",
+    "brand": "Viko",
+    "desc": "Buton Kalıcı 22mm NC",
+    "qty": 25,
+    "unit": "adet",
+    "price": 94.71,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0485",
+    "brand": "Klemsan",
+    "desc": "Yedek Parça Kalem 485",
+    "qty": 13,
+    "unit": "adet",
+    "price": 204.91,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0347",
+    "brand": "Tibcon",
+    "desc": "Yedek Parça Kalem 347",
+    "qty": 2,
+    "unit": "adet",
+    "price": 111.54,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0415",
+    "brand": "Siemens",
+    "desc": "Yedek Parça Kalem 415",
+    "qty": 12,
+    "unit": "adet",
+    "price": 453.55,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0325",
+    "brand": "Klemsan",
+    "desc": "Yedek Parça Kalem 325",
+    "qty": 19,
+    "unit": "adet",
+    "price": 431.2,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0264",
+    "brand": "ABB",
+    "desc": "Yedek Parça Kalem 264",
+    "qty": 16,
+    "unit": "adet",
+    "price": 84.71,
+    "cur": "TRY"
+   }
+  ]
+ },
+ {
+  "no": 15,
+  "name": "TST-15 Yıldız AVM Pano",
+  "customer": "TST Delta Lojistik A.Ş.",
+  "stage": "Yarım montaj (üretime çıkış)",
+  "level": 8,
+  "currency": "TRY",
+  "budget": 223200.0,
+  "contract": 294000.0,
+  "bom": [
+   {
+    "code": "YDK-0255",
+    "brand": "Eaton",
+    "desc": "Yedek Parça Kalem 255",
+    "qty": 10,
+    "unit": "adet",
+    "price": 489.02,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0405",
+    "brand": "ABB",
+    "desc": "Yedek Parça Kalem 405",
+    "qty": 26,
+    "unit": "adet",
+    "price": 191.17,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0493",
+    "brand": "Siemens",
+    "desc": "Yedek Parça Kalem 493",
+    "qty": 6,
+    "unit": "adet",
+    "price": 188.71,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0227",
+    "brand": "Entes",
+    "desc": "Yedek Parça Kalem 227",
+    "qty": 28,
+    "unit": "adet",
+    "price": 423.45,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0401",
+    "brand": "Entes",
+    "desc": "Yedek Parça Kalem 401",
+    "qty": 15,
+    "unit": "adet",
+    "price": 7.63,
+    "cur": "EUR"
+   },
+   {
+    "code": "KNT-18A-220V-3P",
+    "brand": "Eaton",
+    "desc": "Kontaktör 18A 220V 3P",
+    "qty": 29,
+    "unit": "adet",
+    "price": 1227.19,
+    "cur": "TRY"
+   },
+   {
+    "code": "AKT-150_5-KL05-ADET",
+    "brand": "Klemsan",
+    "desc": "Akım Trafosu 150/5 Kl0.5",
+    "qty": 23,
+    "unit": "adet",
+    "price": 294.09,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0202",
+    "brand": "Eaton",
+    "desc": "Yedek Parça Kalem 202",
+    "qty": 28,
+    "unit": "adet",
+    "price": 300.3,
+    "cur": "TRY"
+   },
+   {
+    "code": "SGR-125A-NH1-ADET",
+    "brand": "Siemens",
+    "desc": "NH Bıçaklı Sigorta 125A NH1",
+    "qty": 10,
+    "unit": "adet",
+    "price": 111.32,
+    "cur": "TRY"
+   },
+   {
+    "code": "AKT-150_5-KL1-ADET",
+    "brand": "Entes",
+    "desc": "Akım Trafosu 150/5 Kl1",
+    "qty": 14,
+    "unit": "adet",
+    "price": 434.18,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0160",
+    "brand": "Eaton",
+    "desc": "Yedek Parça Kalem 160",
+    "qty": 6,
+    "unit": "adet",
+    "price": 509.21,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0165",
+    "brand": "ABB",
+    "desc": "Yedek Parça Kalem 165",
+    "qty": 19,
+    "unit": "adet",
+    "price": 284.35,
+    "cur": "TRY"
+   },
+   {
+    "code": "SLT-32A-B-1K",
+    "brand": "Viko",
+    "desc": "Otomatik Şalter 32A B 1K",
+    "qty": 18,
+    "unit": "adet",
+    "price": 528.73,
+    "cur": "TRY"
+   },
+   {
+    "code": "PNO-40X60-IP65-ADET",
+    "brand": "Tibcon",
+    "desc": "Pano Gövdesi 40x60 IP65",
+    "qty": 20,
+    "unit": "adet",
+    "price": 4892.23,
+    "cur": "TRY"
+   }
+  ]
+ },
+ {
+  "no": 16,
+  "name": "TST-16 Bora Plastik Pano",
+  "customer": "TST Toros Çimento A.Ş.",
+  "stage": "Üretimde",
+  "level": 8,
+  "currency": "TRY",
+  "budget": 123200.0,
+  "contract": 162000.0,
+  "bom": [
+   {
+    "code": "YDK-0213",
+    "brand": "Siemens",
+    "desc": "Yedek Parça Kalem 213",
+    "qty": 4,
+    "unit": "adet",
+    "price": 596.38,
+    "cur": "TRY"
+   },
+   {
+    "code": "KNT-9A-24V-3P",
+    "brand": "Schneider",
+    "desc": "Kontaktör 9A 24V 3P",
+    "qty": 21,
+    "unit": "adet",
+    "price": 719.31,
+    "cur": "TRY"
+   },
+   {
+    "code": "KMP-15KVAR-400V-ADET",
+    "brand": "Klemsan",
+    "desc": "Kompanzasyon Kondansatörü 15kVAr 400V",
+    "qty": 29,
+    "unit": "adet",
+    "price": 1661.71,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0336",
+    "brand": "Viko",
+    "desc": "Yedek Parça Kalem 336",
+    "qty": 9,
+    "unit": "adet",
+    "price": 4.32,
+    "cur": "USD"
+   },
+   {
+    "code": "KNT-32A-220V-3P",
+    "brand": "Schneider",
+    "desc": "Kontaktör 32A 220V 3P",
+    "qty": 4,
+    "unit": "adet",
+    "price": 1893.4,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0222",
+    "brand": "Eaton",
+    "desc": "Yedek Parça Kalem 222",
+    "qty": 10,
+    "unit": "adet",
+    "price": 450.0,
+    "cur": "TRY"
+   },
+   {
+    "code": "SLT-16A-C-3K",
+    "brand": "Siemens",
+    "desc": "Otomatik Şalter 16A C 3K",
+    "qty": 29,
+    "unit": "adet",
+    "price": 458.5,
+    "cur": "TRY"
+   },
+   {
+    "code": "KNT-18A-24V-3P",
+    "brand": "Tibcon",
+    "desc": "Kontaktör 18A 24V 3P",
+    "qty": 5,
+    "unit": "adet",
+    "price": 1554.63,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0160",
+    "brand": "Eaton",
+    "desc": "Yedek Parça Kalem 160",
+    "qty": 16,
+    "unit": "adet",
+    "price": 509.21,
+    "cur": "TRY"
+   },
+   {
+    "code": "",
+    "brand": "",
+    "desc": "Özel imalat bara seti P16",
+    "qty": 1,
+    "unit": "adet",
+    "price": 3103.92,
+    "cur": "TRY"
+   }
+  ]
+ },
+ {
+  "no": 17,
+  "name": "TST-17 Toros Çimento Pano",
+  "customer": "TST Bora Plastik A.Ş.",
+  "stage": "Teslim edildi, tahsilat bekliyor",
+  "level": 9,
+  "currency": "TRY",
+  "budget": 250500.0,
+  "contract": 330000.0,
+  "bom": [
+   {
+    "code": "YDK-0208",
+    "brand": "ABB",
+    "desc": "Yedek Parça Kalem 208",
+    "qty": 27,
+    "unit": "adet",
+    "price": 280.45,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0492",
+    "brand": "Klemsan",
+    "desc": "Yedek Parça Kalem 492",
+    "qty": 2,
+    "unit": "adet",
+    "price": 675.26,
+    "cur": "TRY"
+   },
+   {
+    "code": "AKT-1000_5-KL1-ADET",
+    "brand": "Eaton",
+    "desc": "Akım Trafosu 1000/5 Kl1",
+    "qty": 10,
+    "unit": "adet",
+    "price": 10.52,
+    "cur": "USD"
+   },
+   {
+    "code": "KCB-25A-30MA-4K",
+    "brand": "ABB",
+    "desc": "Kaçak Akım Rölesi 25A 30mA 4K",
+    "qty": 3,
+    "unit": "adet",
+    "price": 32.87,
+    "cur": "USD"
+   },
+   {
+    "code": "YDK-0413",
+    "brand": "Schneider",
+    "desc": "Yedek Parça Kalem 413",
+    "qty": 2,
+    "unit": "adet",
+    "price": 7.62,
+    "cur": "EUR"
+   },
+   {
+    "code": "YDK-0185",
+    "brand": "Viko",
+    "desc": "Yedek Parça Kalem 185",
+    "qty": 2,
+    "unit": "adet",
+    "price": 322.52,
+    "cur": "TRY"
+   },
+   {
+    "code": "AKT-100_5-KL05-ADET",
+    "brand": "Entes",
+    "desc": "Akım Trafosu 100/5 Kl0.5",
+    "qty": 25,
+    "unit": "adet",
+    "price": 582.5,
+    "cur": "TRY"
+   },
+   {
+    "code": "PNO-80X100-IP65-ADET",
+    "brand": "Klemsan",
+    "desc": "Pano Gövdesi 80x100 IP65",
+    "qty": 18,
+    "unit": "adet",
+    "price": 3320.36,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0200",
+    "brand": "Schneider",
+    "desc": "Yedek Parça Kalem 200",
+    "qty": 19,
+    "unit": "adet",
+    "price": 650.58,
+    "cur": "TRY"
+   },
+   {
+    "code": "KCB-40A-300MA-2K",
+    "brand": "Tibcon",
+    "desc": "Kaçak Akım Rölesi 40A 300mA 2K",
+    "qty": 8,
+    "unit": "adet",
+    "price": 657.16,
+    "cur": "TRY"
+   },
+   {
+    "code": "KMP-10KVAR-400V-ADET",
+    "brand": "Siemens",
+    "desc": "Kompanzasyon Kondansatörü 10kVAr 400V",
+    "qty": 18,
+    "unit": "adet",
+    "price": 3963.07,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0177",
+    "brand": "Legrand",
+    "desc": "Yedek Parça Kalem 177",
+    "qty": 17,
+    "unit": "adet",
+    "price": 247.46,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0241",
+    "brand": "Schneider",
+    "desc": "Yedek Parça Kalem 241",
+    "qty": 9,
+    "unit": "adet",
+    "price": 645.05,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0420",
+    "brand": "Siemens",
+    "desc": "Yedek Parça Kalem 420",
+    "qty": 16,
+    "unit": "adet",
+    "price": 351.39,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0359",
+    "brand": "Schneider",
+    "desc": "Yedek Parça Kalem 359",
+    "qty": 5,
+    "unit": "adet",
+    "price": 853.36,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0189",
+    "brand": "Viko",
+    "desc": "Yedek Parça Kalem 189",
+    "qty": 23,
+    "unit": "adet",
+    "price": 168.93,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0193",
+    "brand": "Entes",
+    "desc": "Yedek Parça Kalem 193",
+    "qty": 28,
+    "unit": "adet",
+    "price": 112.92,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0362",
+    "brand": "Siemens",
+    "desc": "Yedek Parça Kalem 362",
+    "qty": 22,
+    "unit": "adet",
+    "price": 223.48,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0406",
+    "brand": "Entes",
+    "desc": "Yedek Parça Kalem 406",
+    "qty": 15,
+    "unit": "adet",
+    "price": 126.6,
+    "cur": "TRY"
+   },
+   {
+    "code": "SGR-160A-NH1-ADET",
+    "brand": "Tibcon",
+    "desc": "NH Bıçaklı Sigorta 160A NH1",
+    "qty": 23,
+    "unit": "adet",
+    "price": 94.92,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0165",
+    "brand": "ABB",
+    "desc": "Yedek Parça Kalem 165",
+    "qty": 17,
+    "unit": "adet",
+    "price": 284.35,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0266",
+    "brand": "Tibcon",
+    "desc": "Yedek Parça Kalem 266",
+    "qty": 19,
+    "unit": "adet",
+    "price": 171.74,
+    "cur": "TRY"
+   }
+  ]
+ },
+ {
+  "no": 18,
+  "name": "TST-18 Marmara Gıda Pano",
+  "customer": "TST Anka Hastane A.Ş.",
+  "stage": "Teslim edildi, tahsilat tamam",
+  "level": 9,
+  "currency": "TRY",
+  "budget": 101000.0,
+  "contract": 133000.0,
+  "bom": [
+   {
+    "code": "YDK-0169",
+    "brand": "Entes",
+    "desc": "Yedek Parça Kalem 169",
+    "qty": 15,
+    "unit": "adet",
+    "price": 14.44,
+    "cur": "EUR"
+   },
+   {
+    "code": "YDK-0179",
+    "brand": "ABB",
+    "desc": "Yedek Parça Kalem 179",
+    "qty": 7,
+    "unit": "adet",
+    "price": 774.15,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0267",
+    "brand": "Viko",
+    "desc": "Yedek Parça Kalem 267",
+    "qty": 3,
+    "unit": "adet",
+    "price": 347.4,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0155",
+    "brand": "Eaton",
+    "desc": "Yedek Parça Kalem 155",
+    "qty": 4,
+    "unit": "adet",
+    "price": 748.12,
+    "cur": "TRY"
+   },
+   {
+    "code": "SGR-35A-NH00-ADET",
+    "brand": "Schneider",
+    "desc": "NH Bıçaklı Sigorta 35A NH00",
+    "qty": 23,
+    "unit": "adet",
+    "price": 88.51,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0317",
+    "brand": "Entes",
+    "desc": "Yedek Parça Kalem 317",
+    "qty": 28,
+    "unit": "adet",
+    "price": 853.78,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0259",
+    "brand": "ABB",
+    "desc": "Yedek Parça Kalem 259",
+    "qty": 14,
+    "unit": "adet",
+    "price": 356.08,
+    "cur": "TRY"
+   },
+   {
+    "code": "KCB-25A-30MA-2K",
+    "brand": "ABB",
+    "desc": "Kaçak Akım Rölesi 25A 30mA 2K",
+    "qty": 29,
+    "unit": "adet",
+    "price": 782.12,
+    "cur": "TRY"
+   },
+   {
+    "code": "SNY-SARI-22MM-220V",
+    "brand": "ABB",
+    "desc": "Sinyal Lambası Sarı 22mm 220V",
+    "qty": 18,
+    "unit": "adet",
+    "price": 72.16,
+    "cur": "TRY"
+   },
+   {
+    "code": "SLT-10A-B-3K",
+    "brand": "Schneider",
+    "desc": "Otomatik Şalter 10A B 3K",
+    "qty": 23,
+    "unit": "adet",
+    "price": 201.97,
+    "cur": "TRY"
+   },
+   {
+    "code": "KCB-40A-300MA-4K",
+    "brand": "Siemens",
+    "desc": "Kaçak Akım Rölesi 40A 300mA 4K",
+    "qty": 11,
+    "unit": "adet",
+    "price": 807.61,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0154",
+    "brand": "ABB",
+    "desc": "Yedek Parça Kalem 154",
+    "qty": 21,
+    "unit": "adet",
+    "price": 92.15,
+    "cur": "TRY"
+   }
+  ]
+ },
+ {
+  "no": 19,
+  "name": "TST-19 Delta Lojistik Pano",
+  "customer": "TST Kuzey İnşaat A.Ş.",
+  "stage": "İptal edildi",
+  "level": 10,
+  "currency": "TRY",
+  "budget": 180100.0,
+  "contract": 237000.0,
+  "bom": [
+   {
+    "code": "YDK-0360",
+    "brand": "Legrand",
+    "desc": "Yedek Parça Kalem 360",
+    "qty": 12,
+    "unit": "adet",
+    "price": 566.71,
+    "cur": "TRY"
+   },
+   {
+    "code": "KMP-15KVAR-440V-ADET",
+    "brand": "Tibcon",
+    "desc": "Kompanzasyon Kondansatörü 15kVAr 440V",
+    "qty": 19,
+    "unit": "adet",
+    "price": 3609.79,
+    "cur": "TRY"
+   },
+   {
+    "code": "PNO-60X80-IP54-ADET",
+    "brand": "Viko",
+    "desc": "Pano Gövdesi 60x80 IP54",
+    "qty": 12,
+    "unit": "adet",
+    "price": 5904.98,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0208",
+    "brand": "ABB",
+    "desc": "Yedek Parça Kalem 208",
+    "qty": 9,
+    "unit": "adet",
+    "price": 280.45,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0307",
+    "brand": "Legrand",
+    "desc": "Yedek Parça Kalem 307",
+    "qty": 3,
+    "unit": "adet",
+    "price": 749.35,
+    "cur": "TRY"
+   },
+   {
+    "code": "SLT-6A-B-1K",
+    "brand": "Schneider",
+    "desc": "Otomatik Şalter 6A B 1K",
+    "qty": 30,
+    "unit": "adet",
+    "price": 98.38,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0160",
+    "brand": "Eaton",
+    "desc": "Yedek Parça Kalem 160",
+    "qty": 11,
+    "unit": "adet",
+    "price": 509.21,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0287",
+    "brand": "Viko",
+    "desc": "Yedek Parça Kalem 287",
+    "qty": 8,
+    "unit": "adet",
+    "price": 522.46,
+    "cur": "TRY"
+   }
+  ]
+ },
+ {
+  "no": 20,
+  "name": "TST-20 Akdeniz Otel Pano",
+  "customer": "TST Toros Çimento A.Ş.",
+  "stage": "Dövizli proje (EUR), siparişte",
+  "level": 6,
+  "currency": "EUR",
+  "budget": 1010.0,
+  "contract": 1340.0,
+  "bom": [
+   {
+    "code": "YDK-0257",
+    "brand": "Legrand",
+    "desc": "Yedek Parça Kalem 257",
+    "qty": 18,
+    "unit": "adet",
+    "price": 444.52,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0296",
+    "brand": "Klemsan",
+    "desc": "Yedek Parça Kalem 296",
+    "qty": 26,
+    "unit": "adet",
+    "price": 0.39,
+    "cur": "EUR"
+   },
+   {
+    "code": "KBL-4X10-CU-METRE",
+    "brand": "Siemens",
+    "desc": "NYY Enerji Kablosu 4x10 Cu",
+    "qty": 55,
+    "unit": "metre",
+    "price": 164.57,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0370",
+    "brand": "Legrand",
+    "desc": "Yedek Parça Kalem 370",
+    "qty": 4,
+    "unit": "adet",
+    "price": 388.37,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0224",
+    "brand": "ABB",
+    "desc": "Yedek Parça Kalem 224",
+    "qty": 10,
+    "unit": "adet",
+    "price": 804.47,
+    "cur": "TRY"
+   },
+   {
+    "code": "YDK-0341",
+    "brand": "Siemens",
+    "desc": "Yedek Parça Kalem 341",
+    "qty": 28,
+    "unit": "adet",
+    "price": 577.7,
+    "cur": "TRY"
+   },
+   {
+    "code": "SNY-MAVI-22MM-24V",
+    "brand": "Eaton",
+    "desc": "Sinyal Lambası Mavi 22mm 24V",
+    "qty": 4,
+    "unit": "adet",
+    "price": 42.85,
+    "cur": "TRY"
+   },
+   {
+    "code": "BUT-KALICI-22MM-NO",
+    "brand": "Legrand",
+    "desc": "Buton Kalıcı 22mm NO",
+    "qty": 6,
+    "unit": "adet",
+    "price": 118.75,
+    "cur": "TRY"
+   },
+   {
+    "code": "",
+    "brand": "",
+    "desc": "Özel imalat bara seti P20",
+    "qty": 1,
+    "unit": "adet",
+    "price": 6595.6,
+    "cur": "TRY"
+   }
+  ]
+ }
+]
