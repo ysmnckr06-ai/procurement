@@ -243,7 +243,7 @@
     }
     const created = await waitFor(() => /tedarikçi siparişi oluşturuldu|oluşturulamadı/i.test(main().innerText), { timeout: 60000 });
     check("Siparişler oluşturuldu", created && /siparişi oluşturuldu/.test(main().innerText), (main().innerText.match(/[^\n]*(oluşturuldu|tamamlayın)[^\n]*/) || [""])[0]);
-    const { data: orders } = await S().from("orders").select("*").eq("project_id", projectA);
+    const { data: orders } = await S().from("orders").select("*").eq("project_id", projectA).order("order_no");
     const ordered = {};
     (orders || []).forEach((o) => o.items.forEach((i) => { ordered[i.productCode] = (ordered[i.productCode] || 0) + Number(i.quantity); }));
     check("Sipariş miktarları talep miktarlarıyla aynı", requestItems.every((ri) => ordered[ri.urunKodu] === Number(ri.talepEdilenAdet)));
@@ -261,13 +261,13 @@
     const lineIndex = order.items.indexOf(line);
     await go(`/dashboard/siparisler/${order.id}`, () => findButton("Teslim Alma", { exact: true }));
     await click("Teslim Alma", { exact: true, after: 1500 });
-    async function receive(quantity) {
+    async function receive(quantity, note) {
       const button = [...main().querySelectorAll("button")].filter((b) => text(b) === "Teslim Al")[lineIndex];
       const card = button.closest("div.rounded-2xl") || button.parentElement.parentElement.parentElement;
       const input = (label) => [...card.querySelectorAll("label")].find((l) => text(l).startsWith(label))?.querySelector("input");
       setValue(input("Gelen"), quantity);
       setValue(input("Teslim alan"), "E2E Depo");
-      setValue(input("Açıklama"), "Kısmi sevkiyat");
+      setValue(input("Açıklama"), note);
       await sleep(300);
       window.confirm = () => true;
       button.click();
@@ -275,8 +275,10 @@
       await sleep(2500);
     }
     const stockBefore = (await S().from("products").select("current_stock,reserved_stock").eq("product_code", line.productCode).single()).data;
-    await receive(half);
-    await receive(half);
+    // Gerçek hayatta iki ayrı irsaliye: açıklamalar farklıdır. (Birebir aynı kayıt
+    // 2 dakika içinde gelirse çift tıklama sayılıp tek kayıt tutulur.)
+    await receive(half, "1. sevkiyat");
+    await receive(half, "2. sevkiyat");
     const stockAfter = (await S().from("products").select("current_stock,reserved_stock").eq("product_code", line.productCode).single()).data;
     check("Aynı gün iki eşit sevkiyatın ikisi de stoğa girdi", Number(stockAfter.current_stock) - Number(stockBefore.current_stock) === half * 2, `${stockBefore.current_stock} → ${stockAfter.current_stock}`);
     check("Gelen malzeme projeye rezerve edildi", Number(stockAfter.reserved_stock) - Number(stockBefore.reserved_stock) === half * 2, `${stockBefore.reserved_stock} → ${stockAfter.reserved_stock}`);
