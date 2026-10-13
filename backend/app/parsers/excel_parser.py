@@ -998,6 +998,10 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
         code = clean_text(r.get(code_col)) if code_col is not None else ""
         brand = clean_text(r.get(brand_col)) if brand_col is not None else ""
         desc = clean_text(r.get(desc_col)) if desc_col is not None else ""
+        # Ana kalem (pano) satırı kontrolü dosyadaki ham değerlerle yapılır:
+        # "ANA DAĞITIM PANOSU" gibi büyük harfli adların ilk kelimesi marka sanılıp
+        # satır alt malzemeye dönüşüyordu.
+        file_brand, file_desc = brand, desc
         brand, desc = split_brand_from_description(brand, desc)
         cells = [clean_text(x) for x in r.values]
         joined = " ".join(cells)
@@ -1054,7 +1058,7 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
         row_termin = clean_text(r.get(delivery_col)) if delivery_col is not None else footer.get("termin", "")
         row_warnings = []
 
-        if looks_like_section_row(cells, code, brand, desc, qty, price, net_price_from_file, row_total_from_file):
+        if looks_like_section_row(cells, code, file_brand, file_desc or desc, qty, price, net_price_from_file, row_total_from_file):
             section_total = choose_section_total(row_total_from_file, numbers)
             display_section_name = section_name_from_cells(cells) or f"BÖLÜM-{len(sections) + 1}"
             section = {
