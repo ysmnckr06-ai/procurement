@@ -2,6 +2,8 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse } from "next/server";
 import { isLicenseActive } from "@/lib/license";
 
+const LICENSE_HEADER = "x-corvian-verified-license";
+
 export async function proxy(request) {
   let response = NextResponse.next({ request });
 
@@ -45,7 +47,14 @@ export async function proxy(request) {
     return NextResponse.redirect(new URL("/abonelik", request.url));
   }
 
-  return response;
+  // Doğrulanan lisans panel düzenine istek başlığıyla aktarılır; düzen aynı
+  // kontrolü (oturum + lisans, veritabanına 2 gidiş) ikinci kez yapmaz.
+  // Başlık burada her istekte üzerine yazıldığı için dışarıdan taklit edilemez.
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set(LICENSE_HEADER, encodeURIComponent(JSON.stringify(license)));
+  const forwarded = NextResponse.next({ request: { headers: requestHeaders } });
+  response.cookies.getAll().forEach((cookie) => forwarded.cookies.set(cookie));
+  return forwarded;
 }
 
 export const config = {
