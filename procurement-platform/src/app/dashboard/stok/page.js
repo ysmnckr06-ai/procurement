@@ -640,6 +640,43 @@ function movementFlowInfo(movement, project = null, projectItems = []) {
   };
 }
 
+// Hareketleri ürün kimliği ve koda göre bir kez gruplar; her ürün için tüm
+// hareketleri taramak (ürün x hareket) büyük hesaplarda sayfayı saniyelerce
+// kilitliyordu. Kodsuz ürünlerde eski tam tarama korunur.
+function buildMovementIndex(movements) {
+  const byProductId = new Map();
+  const byCode = new Map();
+  const withoutCode = [];
+  for (const movement of movements || []) {
+    if (movement.product_id) {
+      if (!byProductId.has(movement.product_id)) byProductId.set(movement.product_id, []);
+      byProductId.get(movement.product_id).push(movement);
+    }
+    const code = normalizeStockCode(movement.product_code);
+    if (code) {
+      if (!byCode.has(code)) byCode.set(code, []);
+      byCode.get(code).push(movement);
+    } else {
+      withoutCode.push(movement);
+    }
+  }
+  return { all: movements || [], byProductId, byCode, withoutCode };
+}
+
+function movementsForProduct(product, index, { keepOrder = false } = {}) {
+  if (!product || !index) return [];
+  const productCode = normalizeStockCode(product.product_code);
+  if (!productCode) return index.all.filter((movement) => movementMatchesProduct(movement, product));
+  const candidates = new Set();
+  for (const id of product.duplicateIds || [product.id]) {
+    for (const movement of index.byProductId.get(id) || []) candidates.add(movement);
+  }
+  for (const movement of index.byCode.get(productCode) || []) candidates.add(movement);
+  if (isAutoStockCode(productCode)) for (const movement of index.withoutCode) candidates.add(movement);
+  if (keepOrder) return index.all.filter((movement) => candidates.has(movement) && movementMatchesProduct(movement, product));
+  return [...candidates].filter((movement) => movementMatchesProduct(movement, product));
+}
+
 function stockBreakdown(product, movements) {
   const matchedMovements = movements.filter((movement) => movementMatchesProduct(movement, product));
   const productReserved = Number(product.reserved_stock || 0);
@@ -2451,11 +2488,12 @@ export default function StockPage() {
   }, [products, projectItems, showArchivedProducts]);
   // Her ürünün stok kırılımı (hareket eşleştirmesi pahalı) veri değişince bir kez
   // hesaplanır; form yazarken her tuşta yüzlerce ürün x hareket taranmaz.
+  const movementIndex = useMemo(() => buildMovementIndex(movements), [movements]);
   const stockBreakdownByProduct = useMemo(() => {
     const map = new Map();
-    for (const product of productGroups) map.set(product, stockBreakdown(product, movements));
+    for (const product of productGroups) map.set(product, stockBreakdown(product, movementsForProduct(product, movementIndex)));
     return map;
-  }, [productGroups, movements]);
+  }, [productGroups, movementIndex]);
   const breakdownOf = (product) => stockBreakdownByProduct.get(product) || stockBreakdown(product, movements);
   const productTypeCounts = useMemo(() => ({
     main: productGroups.filter(isMainProduct).length,
@@ -2525,8 +2563,8 @@ export default function StockPage() {
 
   const selectedMovements = useMemo(() => {
     if (!selectedProduct) return [];
-    return movements.filter((movement) => movementMatchesProduct(movement, selectedProduct));
-  }, [movements, selectedProduct]);
+    return movementsForProduct(selectedProduct, movementIndex, { keepOrder: true });
+  }, [movementIndex, selectedProduct]);
 
   const selectedLinkedProjectItems = useMemo(() => {
     if (!selectedProduct) return [];
