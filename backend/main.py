@@ -889,7 +889,10 @@ def validate_offer_upload_metadata(upload: UploadFile, contents: bytes) -> None:
             detail=f"{original_name} desteklenmiyor. Excel, PDF veya görsel teklif dosyası yükleyin.",
         )
 
-    if content_type and content_type not in OFFER_UPLOAD_MIME_TYPES:
+    # Office yüklü olmayan bilgisayarlarda tarayıcı .xlsx için türü
+    # "application/octet-stream" veya zip olarak gönderir; uzantı uygunsa kabul edilir.
+    generic_types = {"application/octet-stream", "application/zip", "application/x-zip-compressed", "binary/octet-stream"}
+    if content_type and content_type not in OFFER_UPLOAD_MIME_TYPES and content_type not in generic_types:
         raise HTTPException(
             status_code=400,
             detail=f"{original_name} dosya türü geçersiz. Excel, PDF veya görsel teklif dosyası yükleyin.",

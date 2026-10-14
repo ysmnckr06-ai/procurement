@@ -21,6 +21,7 @@ const n = (value) => {
   return Number.isFinite(number) ? number : 0;
 };
 const text = (value, fallback = "-") => String(value || "").trim() || fallback;
+const trLower = (value) => String(value || "").toLocaleLowerCase("tr-TR");
 const money = (value, currency = "TRY") => `${n(value).toLocaleString("tr-TR", { maximumFractionDigits: 2 })} ${currency}`;
 const dateValue = (value) => {
   if (!value) return null;
@@ -127,8 +128,10 @@ export async function POST(request) {
     if (questionId === "system_overview") {
       const openRequests = requests.filter((item) => !/tamam|kapal|sipariş/i.test(text(item.status || item.durum, ""))).length;
       // İptal edilen ve kapanan projeler aktif proje sayısına girmez.
-      const activeProjectCount = projects.filter((item) => !/iptal|tamamland|kapand|arşiv|arsiv/i.test(text(item.status, ""))).length;
-      const openOrders = orders.filter((item) => !/^(teslim edildi|tam teslim|tamamland|iptal)/i.test(text(item.status || item.durum, ""))).length;
+      // Not: /iptal/i "İptal" ile eşleşmez (büyük İ); durumlar açıkça sayılır.
+      const closedProjectStatuses = new Set(["İptal", "Iptal", "İptal Edildi", "Tamamlandı", "Kapandı", "Arşivlendi"]);
+      const activeProjectCount = projects.filter((item) => !closedProjectStatuses.has(text(item.status, "").trim())).length;
+      const openOrders = orders.filter((item) => !/^(teslim edildi|tam teslim|tamamland|iptal)/.test(trLower(text(item.status || item.durum, "")))).length;
       const riskyProducts = products.filter((p) => n(p.current_stock) - n(p.reserved_stock) <= n(p.critical_stock || p.min_stock)).length;
       return NextResponse.json(response(questionId, "Operasyon özeti hazır", "Sistem kayıtları salt okunur olarak kontrol edildi.", [
         { label: "Aktif proje", value: activeProjectCount, tone: "blue" }, { label: "Açık talep", value: openRequests, tone: "amber" },
@@ -214,7 +217,7 @@ export async function POST(request) {
         const delivered = n(o.received_total || o.delivered_quantity);
         const ordered = n(o.total_quantity || o.quantity) || (Array.isArray(o.items) ? o.items.reduce((s, i) => s + n(i.quantity), 0) : 0);
         return { no: text(o.order_no || o.order_number || o.id), supplier: text(o.supplier_name || o.partner_name), status: text(o.status || o.durum, "Açık"), termin: termin ? termin.toLocaleDateString("tr-TR") : "Belirtilmedi", remaining: Math.max(ordered - delivered, 0), overdue: termin && termin < today && delivered < ordered ? "Gecikmiş" : "-" };
-      }).filter((o) => !/^(teslim edildi|tam teslim|tamamland|iptal)/i.test(o.status));
+      }).filter((o) => !/^(teslim edildi|tam teslim|tamamland|iptal)/.test(trLower(o.status)));
       const overdue = open.filter((o) => o.overdue === "Gecikmiş").length;
       return NextResponse.json(response(questionId, `${open.length} açık sipariş`, "Sipariş durumu, termin ve kalan miktar birlikte kontrol edildi.", [{ label: "Açık", value: open.length, tone: "amber" }, { label: "Gecikmiş", value: overdue, tone: overdue ? "red" : "green" }], [{ key: "no", label: "Sipariş no" }, { key: "supplier", label: "Tedarikçi" }, { key: "status", label: "Durum" }, { key: "termin", label: "Termin" }, { key: "remaining", label: "Kalan" }, { key: "overdue", label: "Uyarı" }], open, overdue ? [`${overdue} sipariş termin tarihini aşmış görünüyor.`] : [], ["Geciken siparişlerde tedarikçi teyidi ve yeni termin kaydı oluşturun."], "Açık sipariş yok."));
     }
