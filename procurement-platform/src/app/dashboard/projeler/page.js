@@ -1225,6 +1225,16 @@ export default function ProjectsPage() {
       !["Tam Teslim", "Teslim Edildi", "İptal"].includes(order.status),
     ).length;
     const totalOrders = orders.length;
+    // Malzeme hazırlığı miktar bazında: projeye ayrılan + teslim alınan / ihtiyaç.
+    // Önceden yalnız durumu "Depoda/Tamamlandı" olan kalem sayılıyordu; stoktan
+    // ayrılmış malzemesi olan proje %0 görünüyordu.
+    const materialNeed = trackedItems.reduce((sum, item) => sum + Math.max(Number(item.estimated_quantity || 0), 0), 0);
+    const materialReady = trackedItems.reduce((sum, item) => {
+      const need = Math.max(Number(item.estimated_quantity || 0), 0);
+      const ready = Number(item.reserved_quantity || 0) + Number(item.received_quantity || 0);
+      return sum + Math.min(ready, need);
+    }, 0);
+    const materialCompletion = materialNeed > 0 ? Math.min(100, Math.round((materialReady / materialNeed) * 100)) : 0;
     const productStatus =
       trackedItems.length === 0
         ? { label: "Malzeme yok", tone: "slate" }
@@ -1266,7 +1276,7 @@ export default function ProjectsPage() {
       Object.values(dependencyDetails).reduce((sum, count) => sum + count, 0);
 
     return {
-      completion: items.length > 0 ? Math.round((completedItems / items.length) * 100) : 0,
+      completion: materialCompletion,
       stockCoveredItems: stockCoveredQuantity,
       requestedItems,
       orderedItems,
@@ -1940,7 +1950,7 @@ export default function ProjectsPage() {
                   <th className="w-[20%] p-2">Proje</th>
                   <th className="w-[16%] p-2">Müşteri</th>
                   <th className="w-[15%] p-2">Sipariş durumu</th>
-                  <th className="w-[12%] p-2">Tamamlanma</th>
+                  <th className="w-[12%] p-2" title="Projeye ayrılan ve teslim alınan malzemenin ihtiyaca oranı">Malzeme hazırlığı</th>
                   <th className="w-[13%] p-2">Tarih</th>
                   <th className="w-[9%] p-2">Durum</th>
                   <th className="w-[11%] p-2">İşlem</th>

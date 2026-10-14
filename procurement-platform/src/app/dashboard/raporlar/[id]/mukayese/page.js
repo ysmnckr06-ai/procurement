@@ -24,6 +24,13 @@ function hasValidTaxNumber(value) { return [10, 11].includes(taxNumber(value).le
 function hasFileNameArtifact(value) { return /\.(pdf|xlsx?|xls|png|jpe?g)|\bpdf+f*\b|\b(kopya|copy)\b/i.test(String(value || "")); }
 // Tedarikçi kartı eşleşmeme notu her kalemde tekrar etmesin; raporun üstünde bir kez gösterilir.
 function isSupplierProfileNote(text) { return /tedarikçi kartıyla eşleşmedi/i.test(String(text || "")); }
+// Tek engel tedarikçinin İş Ortakları'nda kayıtlı olmaması ise en uygun teklif ön
+// seçilir; sipariş verilirken firma bilgileri zaten kısa formla istenir.
+// (Önceden yeni kullanıcıda hiçbir kalem seçilmiyor, hepsi elle seçiliyordu.)
+function onlySupplierProfileBlocks(group) {
+  const warnings = Array.isArray(group?.decisionWarnings) ? group.decisionWarnings : [];
+  return group?.decisionStatus === "manual_review" && warnings.length > 0 && warnings.every(isSupplierProfileNote);
+}
 function partnerNeedsCompletion(partner) {
   return !partner || hasFileNameArtifact(partner.name);
 }
@@ -317,7 +324,10 @@ export default function ComparisonPage() {
       const defaults = {};
       (Array.isArray(reportResult.data.analysis) ? reportResult.data.analysis : []).forEach((group, index) => {
         const offers = Array.isArray(group.offers) ? group.offers : [];
-        const bestIndex = offers.findIndex((offer) => normalize(supplierName(offer)) === normalize(supplierName(group.bestOffer)));
+        const recommended = group.bestOffer || (onlySupplierProfileBlocks(group) ? group.provisionalBestOffer : null);
+        const bestIndex = recommended
+          ? offers.findIndex((offer) => normalize(supplierName(offer)) === normalize(supplierName(recommended)))
+          : -1;
         if (bestIndex >= 0) defaults[groupKey(index)] = bestIndex;
       });
       setSelectedOffers(defaults);
@@ -841,7 +851,11 @@ export default function ComparisonPage() {
       ].filter((text) => text && !isSupplierProfileNote(text))));
       return <section key={groupKey(groupIndex)} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="border-b bg-slate-50 p-4"><div className="font-black text-blue-900">{group.urunKodu || "Kodsuz"} · {group.urunAciklamasi}</div><div className="mt-1 flex flex-wrap gap-3 text-xs font-bold text-slate-600"><span>Talep edilen: {group.talepEdilenAdet} {group.birim}</span><span>Teklif sayısı: {offers.length}</span><span>Projeler: {projectSummary(group, reportProjectLabel)}</span></div></div>
-        {group.decisionStatus === "manual_review" && <div className="border-b border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-950">
+        {group.decisionStatus === "manual_review" && onlySupplierProfileBlocks(group) && group.provisionalBestOffer && <div className="border-b border-sky-200 bg-sky-50 px-4 py-3 text-xs font-semibold text-sky-950">
+          <div className="font-black">En uygun teklif ön seçildi — tedarikçi İş Ortakları&apos;nda kayıtlı değil.</div>
+          <div className="mt-1">Sipariş verirken firma bilgileri kısa bir formla istenir; seçimi değiştirebilirsiniz.</div>
+        </div>}
+        {group.decisionStatus === "manual_review" && !(onlySupplierProfileBlocks(group) && group.provisionalBestOffer) && <div className="border-b border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-950">
           <div className="font-black">Otomatik seçim yapılmadı — kullanıcı kontrolü gerekli.</div>
           {reviewMessages.length > 0 && <div className="mt-1">{reviewMessages.join(" · ")}</div>}
         </div>}
