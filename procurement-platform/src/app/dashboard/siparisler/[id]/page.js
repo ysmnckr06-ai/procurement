@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createDocumentSignedUrl, downloadDocumentFile, isPdfDocument } from "@/lib/documentAccess";
 import { supabase } from "@/lib/supabase";
+import { fetchAllRows } from "@/lib/fetchAllRows";
 import { calculateBaseAmount, currencyOptions, getBaseCurrency, getExchangeRate, isSuspiciousRate } from "@/lib/currency";
 import { findOrCreateBusinessPartner } from "@/lib/businessPartners";
 import { matchProduct } from "@/lib/productMatching";
@@ -1132,12 +1133,12 @@ export default function OrderDetailPage() {
     const productCode = String(item.productCode || "").trim().toUpperCase();
     const receiptProductKey = String(item.id || item.orderItemId || productCode || productName);
 
-    const { data: tenantProducts, error } = await supabase
+    const { data: tenantProducts, error } = await fetchAllRows(() => supabase
       .from("products")
       .select("*")
       .eq("user_id", userId)
       .is("archived_at", null)
-      .limit(5000);
+      .order("id", { ascending: true }));
     if (error) {
       setMessage("Ürün kartları kontrol edilemedi; teslim alma güvenli şekilde durduruldu.");
       return null;

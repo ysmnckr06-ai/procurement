@@ -307,6 +307,22 @@
     const rowA = [...main().querySelectorAll("tr")].find((row) => row.innerText.includes(`${tag} Proje A`));
     check("Finans tablosunda stok/gider maliyeti gösteriliyor", rowA && rowA.querySelectorAll("td").length >= 8);
 
+    // 10) Temizlik: robotun proje A'sı da iptal edilir; rezervi depoya döner,
+    // test hesabının finans ve proje ekranlarını kirletmez.
+    try {
+      await go("/dashboard/projeler", () => [...main().querySelectorAll("tr")].some((row) => row.innerText.includes(`${tag} Proje A`)));
+      const rowA2 = [...main().querySelectorAll("tr")].find((row) => row.innerText.includes(`${tag} Proje A`));
+      [...rowA2.querySelectorAll("button")].find((b) => text(b) === "Düzenle").click();
+      await sleep(1200);
+      setValue(field("Durum"), "İptal");
+      window.confirm = () => true;
+      document.querySelector("form button[type=submit]").click();
+      await waitFor(() => /iptal edildi/i.test(statusText()), { timeout: 30000 });
+      log("Temizlik: robot projeleri iptal edildi.");
+    } catch (cleanupError) {
+      log(`Temizlik yapılamadı: ${cleanupError.message}`);
+    }
+
     const failed = checks.filter((c) => !c.ok);
     return { tag, checks, failed, projectA, projectB };
   }

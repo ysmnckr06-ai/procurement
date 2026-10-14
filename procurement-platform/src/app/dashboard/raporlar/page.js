@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { fetchAllRows } from "@/lib/fetchAllRows";
 
 
 export default function RaporlarPage() {
@@ -24,11 +25,12 @@ useEffect(() => {
         return;
       }
 
-      const { data, error } = await supabase
+      const { data, error } = await fetchAllRows(() => supabase
         .from("reports")
         .select("*")
         .eq("user_id", user.id)
-        .order("created_at", { ascending: false });
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true }));
 
       if (error) {
         console.error(error);

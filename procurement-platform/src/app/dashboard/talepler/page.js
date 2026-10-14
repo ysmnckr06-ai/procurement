@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { fetchAllRows } from "@/lib/fetchAllRows";
 import { CORVIAN_PRODUCT_NAME, fetchCompanyBranding } from "@/lib/companyBranding";
 import { matchProduct } from "@/lib/productMatching";
 import ProductCodeInput from "@/components/ProductCodeInput";
@@ -1013,11 +1014,12 @@ export default function TaleplerPage() {
         return;
       }
 
-      const { data, error } = await supabase
+      const { data, error } = await fetchAllRows(() => supabase
         .from("requests")
         .select("*")
         .eq("user_id", user.id)
-        .order("created_at", { ascending: false });
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true }));
 
       if (error) {
         console.error(error);

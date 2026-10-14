@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { fetchAllRows } from "@/lib/fetchAllRows";
 import {
   duplicateTaxNumberMessage,
   findOrCreateBusinessPartner,
@@ -272,11 +273,12 @@ export default function ProjectsPage() {
         return;
       }
 
-      const { data, error } = await supabase
+      const { data, error } = await fetchAllRows(() => supabase
         .from("projects")
         .select("*")
         .eq("user_id", user.id)
-        .order("created_at", { ascending: false });
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true }));
 
       if (error) {
         console.error("Projeler listelenemedi:", error);
@@ -291,22 +293,23 @@ export default function ProjectsPage() {
         project_code: prev.project_code || nextProjectCode(data || []),
       }));
 
-    const { data: partnerData } = await supabase
+    const { data: partnerData } = await fetchAllRows(() => supabase
       .from("suppliers")
       .select("id,name,partner_type,status")
       .eq("user_id", user.id)
       .in("partner_type", ["Müşteri", "Diğer"])
-      .order("name", { ascending: true });
+      .order("name", { ascending: true })
+      .order("id", { ascending: true }));
 
     const [itemRes, requestRes, reportRes, offerRes, orderRes, movementRes, paymentRes, revisionRes] = await Promise.all([
-      supabase.from("project_items").select("*").eq("user_id", user.id),
-      supabase.from("requests").select("id,project_id").eq("user_id", user.id),
-      supabase.from("reports").select("id,project_id").eq("user_id", user.id),
-      supabase.from("offers").select("id,project_id").eq("user_id", user.id),
-      supabase.from("orders").select("*").eq("user_id", user.id),
-      supabase.from("stock_movements").select("id,project_id,project_item_id,reserved_quantity,quantity,movement_type,source").eq("user_id", user.id),
-      supabase.from("project_payments").select("id,project_id").eq("user_id", user.id),
-      supabase.from("project_revisions").select("id,project_id").eq("user_id", user.id),
+      fetchAllRows(() => supabase.from("project_items").select("*").eq("user_id", user.id).order("id", { ascending: true })),
+      fetchAllRows(() => supabase.from("requests").select("id,project_id").eq("user_id", user.id).order("id", { ascending: true })),
+      fetchAllRows(() => supabase.from("reports").select("id,project_id").eq("user_id", user.id).order("id", { ascending: true })),
+      fetchAllRows(() => supabase.from("offers").select("id,project_id").eq("user_id", user.id).order("id", { ascending: true })),
+      fetchAllRows(() => supabase.from("orders").select("*").eq("user_id", user.id).order("id", { ascending: true })),
+      fetchAllRows(() => supabase.from("stock_movements").select("id,project_id,project_item_id,reserved_quantity,quantity,movement_type,source").eq("user_id", user.id).order("id", { ascending: true })),
+      fetchAllRows(() => supabase.from("project_payments").select("id,project_id").eq("user_id", user.id).order("id", { ascending: true })),
+      fetchAllRows(() => supabase.from("project_revisions").select("id,project_id").eq("user_id", user.id).order("id", { ascending: true })),
     ]);
 
     const { data: settingsData } = await supabase
@@ -484,10 +487,11 @@ export default function ProjectsPage() {
   }
 
   async function fetchProjectCodes(userId) {
-    const { data, error } = await supabase
+    const { data, error } = await fetchAllRows(() => supabase
       .from("projects")
       .select("id,project_code")
-      .eq("user_id", userId);
+      .eq("user_id", userId)
+      .order("id", { ascending: true }));
 
     if (error) throw error;
     return data || [];
@@ -861,11 +865,12 @@ export default function ProjectsPage() {
       body: formData,
     });
     const data = await response.json();
-    const { data: productRows } = await supabase
+    const { data: productRows } = await fetchAllRows(() => supabase
       .from("products")
       .select("id,product_code,product_name,brand,unit,category")
       .eq("user_id", userId)
-      .is("archived_at", null);
+      .is("archived_at", null)
+      .order("id", { ascending: true }));
     const productByCode = new Map(
       (productRows || [])
         .filter((product) => product.product_code)
@@ -1220,6 +1225,16 @@ export default function ProjectsPage() {
       !["Tam Teslim", "Teslim Edildi", "İptal"].includes(order.status),
     ).length;
     const totalOrders = orders.length;
+    // Malzeme hazırlığı miktar bazında: projeye ayrılan + teslim alınan / ihtiyaç.
+    // Önceden yalnız durumu "Depoda/Tamamlandı" olan kalem sayılıyordu; stoktan
+    // ayrılmış malzemesi olan proje %0 görünüyordu.
+    const materialNeed = trackedItems.reduce((sum, item) => sum + Math.max(Number(item.estimated_quantity || 0), 0), 0);
+    const materialReady = trackedItems.reduce((sum, item) => {
+      const need = Math.max(Number(item.estimated_quantity || 0), 0);
+      const ready = Number(item.reserved_quantity || 0) + Number(item.received_quantity || 0);
+      return sum + Math.min(ready, need);
+    }, 0);
+    const materialCompletion = materialNeed > 0 ? Math.min(100, Math.round((materialReady / materialNeed) * 100)) : 0;
     const productStatus =
       trackedItems.length === 0
         ? { label: "Malzeme yok", tone: "slate" }
@@ -1261,7 +1276,7 @@ export default function ProjectsPage() {
       Object.values(dependencyDetails).reduce((sum, count) => sum + count, 0);
 
     return {
-      completion: items.length > 0 ? Math.round((completedItems / items.length) * 100) : 0,
+      completion: materialCompletion,
       stockCoveredItems: stockCoveredQuantity,
       requestedItems,
       orderedItems,
@@ -1935,7 +1950,7 @@ export default function ProjectsPage() {
                   <th className="w-[20%] p-2">Proje</th>
                   <th className="w-[16%] p-2">Müşteri</th>
                   <th className="w-[15%] p-2">Sipariş durumu</th>
-                  <th className="w-[12%] p-2">Tamamlanma</th>
+                  <th className="w-[12%] p-2" title="Projeye ayrılan ve teslim alınan malzemenin ihtiyaca oranı">Malzeme hazırlığı</th>
                   <th className="w-[13%] p-2">Tarih</th>
                   <th className="w-[9%] p-2">Durum</th>
                   <th className="w-[11%] p-2">İşlem</th>

@@ -126,13 +126,15 @@ export async function POST(request) {
 
     if (questionId === "system_overview") {
       const openRequests = requests.filter((item) => !/tamam|kapal|sipariş/i.test(text(item.status || item.durum, ""))).length;
+      // İptal edilen ve kapanan projeler aktif proje sayısına girmez.
+      const activeProjectCount = projects.filter((item) => !/iptal|tamamland|kapand|arşiv|arsiv/i.test(text(item.status, ""))).length;
       const openOrders = orders.filter((item) => !/^(teslim edildi|tam teslim|tamamland|iptal)/i.test(text(item.status || item.durum, ""))).length;
       const riskyProducts = products.filter((p) => n(p.current_stock) - n(p.reserved_stock) <= n(p.critical_stock || p.min_stock)).length;
       return NextResponse.json(response(questionId, "Operasyon özeti hazır", "Sistem kayıtları salt okunur olarak kontrol edildi.", [
-        { label: "Proje", value: projects.length, tone: "blue" }, { label: "Açık talep", value: openRequests, tone: "amber" },
+        { label: "Aktif proje", value: activeProjectCount, tone: "blue" }, { label: "Açık talep", value: openRequests, tone: "amber" },
         { label: "Açık sipariş", value: openOrders, tone: "indigo" }, { label: "Riskli stok", value: riskyProducts, tone: riskyProducts ? "red" : "green" },
       ], [{ key: "area", label: "Alan" }, { key: "status", label: "Durum" }, { key: "note", label: "Açıklama" }], [
-        { area: "Projeler", status: `${projects.length} kayıt`, note: `${projectItems.length} proje kalemi izleniyor.` },
+        { area: "Projeler", status: `${activeProjectCount} aktif`, note: `${projects.length} kayıt (iptal ve kapananlar dahil), ${projectItems.length} proje kalemi izleniyor.` },
         { area: "Talepler", status: `${openRequests} açık`, note: `${offers.length} teklif kaydı bulunuyor.` },
         { area: "Siparişler", status: `${openOrders} açık`, note: `${orders.length} toplam sipariş bulunuyor.` },
       ], riskyProducts ? [`${riskyProducts} stok kartı kritik seviyede veya altında.`] : ["Kritik stok sinyali bulunmadı."], ["Önce kırmızı ve gecikmiş kayıtları inceleyin.", "Eksik veri kontrolünü düzenli çalıştırın."], "Henüz operasyon kaydı yok."));
