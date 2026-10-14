@@ -20,7 +20,7 @@ export function normalizeProductCode(value) {
 }
 
 function isProjectSeriesCode(value) {
-  return /^PRJ-\d{3,}$/i.test(String(value || "").trim());
+  return /^(PRJ|KODSUZ)-\d{3,}$/i.test(String(value || "").trim());
 }
 
 function normalizeMatchProductCode(value) {

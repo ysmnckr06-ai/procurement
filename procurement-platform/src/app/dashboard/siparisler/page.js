@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import ProductCodeInput from "@/components/ProductCodeInput";
 import { supabase } from "@/lib/supabase";
+import { fetchAllRows } from "@/lib/fetchAllRows";
 import { calculateBaseAmount, currencyOptions, getBaseCurrency, getExchangeRate } from "@/lib/currency";
 import { fetchLiveTryRates, liveCurrencyOptions, liveRateFor, rateDiffPercent } from "@/lib/liveCurrency";
 import { findOrCreateBusinessPartner, findPartnerMatches } from "@/lib/businessPartners";
@@ -382,11 +383,12 @@ export default function OrdersPage() {
       return;
     }
 
-    const { data, error } = await supabase
+    const { data, error } = await fetchAllRows(() => supabase
       .from("orders")
       .select("*")
       .eq("user_id", user.id)
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: true }));
 
     if (error) {
       console.error(error);
@@ -394,18 +396,20 @@ export default function OrdersPage() {
       return;
     }
 
-    const { data: supplierData } = await supabase
+    const { data: supplierData } = await fetchAllRows(() => supabase
       .from("suppliers")
       .select("id,name,status,partner_type,tax_number,contact_person,email,phone,city,address")
       .eq("user_id", user.id)
       .in("partner_type", ["Tedarikçi", "Taşeron", "Nakliye", "Hizmet Sağlayıcı", "Diğer"])
-      .order("name", { ascending: true });
+      .order("name", { ascending: true })
+      .order("id", { ascending: true }));
 
-    const { data: projectData } = await supabase
+    const { data: projectData } = await fetchAllRows(() => supabase
       .from("projects")
       .select("id,project_code,project_name,status,customer_name,contract_currency,estimated_budget_currency")
       .eq("user_id", user.id)
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: true }));
 
     const { data: settingsData } = await supabase
       .from("company_settings")
@@ -413,13 +417,13 @@ export default function OrdersPage() {
       .eq("user_id", user.id)
       .limit(1);
 
-    const { data: stockProductData } = await supabase
+    const { data: stockProductData } = await fetchAllRows(() => supabase
       .from("products")
       .select("id,product_code,normalized_product_code,product_name,brand,unit,current_stock,reserved_stock")
       .eq("user_id", user.id)
       .is("archived_at", null)
       .order("product_code", { ascending: true })
-      .limit(5000);
+      .order("id", { ascending: true }));
 
     setOrders(data || []);
     setSuppliers(supplierData || []);
@@ -733,12 +737,12 @@ export default function OrdersPage() {
       .eq("project_id", projectId)
       .order("created_at", { ascending: true });
 
-    const { data: productData, error: productError } = await supabase
+    const { data: productData, error: productError } = await fetchAllRows(() => supabase
       .from("products")
       .select("id,product_code,normalized_product_code,product_name,brand,current_stock,reserved_stock,unit")
       .eq("user_id", user.id)
       .is("archived_at", null)
-      .limit(5000);
+      .order("id", { ascending: true }));
 
     if (itemError) {
       setProjectItemsMessage(itemError.message || "Proje malzemeleri getirilemedi.");

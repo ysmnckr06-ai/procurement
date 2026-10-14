@@ -15,6 +15,7 @@ import {
   partnerTypes,
 } from "@/lib/businessPartners";
 import { supabase } from "@/lib/supabase";
+import { fetchAllRows } from "@/lib/fetchAllRows";
 
 const emptyForm = {
   name: "",
@@ -385,11 +386,12 @@ export default function BusinessPartnersPage() {
     }
 
     try {
-    const partnerRes = await supabase
+    const partnerRes = await fetchAllRows(() => supabase
         .from("suppliers")
         .select("*")
         .eq("user_id", user.id)
-        .order("name", { ascending: true });
+        .order("name", { ascending: true })
+        .order("id", { ascending: true }));
 
     if (partnerRes.error) {
       console.error("İş ortakları listelenemedi:", partnerRes.error);
@@ -404,22 +406,26 @@ export default function BusinessPartnersPage() {
     setPartners(basePartners);
 
     const relatedResults = await Promise.allSettled([
-      supabase
+      fetchAllRows(() => supabase
         .from("projects")
         .select("*")
-        .eq("user_id", user.id),
-      supabase
+        .eq("user_id", user.id)
+        .order("id", { ascending: true })),
+      fetchAllRows(() => supabase
         .from("orders")
         .select("*")
-        .eq("user_id", user.id),
-      supabase
+        .eq("user_id", user.id)
+        .order("id", { ascending: true })),
+      fetchAllRows(() => supabase
         .from("project_payments")
         .select("*")
-        .eq("user_id", user.id),
-      supabase
+        .eq("user_id", user.id)
+        .order("id", { ascending: true })),
+      fetchAllRows(() => supabase
         .from("order_payments")
         .select("*")
-        .eq("user_id", user.id),
+        .eq("user_id", user.id)
+        .order("id", { ascending: true })),
       supabase
         .from("stock_movements")
         .select("*")
@@ -450,11 +456,12 @@ export default function BusinessPartnersPage() {
           projectRes.data || [],
           partnerRes.data || [],
         );
-        const { data: partnerRowsAfterBackfill } = await supabase
+        const { data: partnerRowsAfterBackfill } = await fetchAllRows(() => supabase
         .from("suppliers")
         .select("*")
         .eq("user_id", user.id)
-        .order("name", { ascending: true });
+        .order("name", { ascending: true })
+        .order("id", { ascending: true }));
         partnersAfterBackfill = partnerRowsAfterBackfill || partnerRes.data || [];
         dedupeSummary = await deduplicateBusinessPartners(
           supabase,

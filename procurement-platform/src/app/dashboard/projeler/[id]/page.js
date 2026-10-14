@@ -289,6 +289,17 @@ function compactMoneyGroups(rows, amountFn, currencyFn) {
     .sort(([left], [right]) => left.localeCompare(right));
 }
 
+// Talep adı proje kodu + proje adı + müşteriyle oluşur; yalnız "PRJ-00008"
+// teklif havuzunda hangi işe ait olduğunu anlatmıyordu.
+function projectRequestLabel(project) {
+  const parts = [
+    project?.project_code || "PRJ",
+    project?.project_name && project.project_name !== project.project_code ? project.project_name : "",
+    project?.customer_name || "",
+  ].map((part) => String(part || "").trim()).filter(Boolean);
+  return parts.join(" · ").slice(0, 120);
+}
+
 function normalizeText(value) {
   return String(value || "")
     .trim()
@@ -2151,7 +2162,7 @@ export default function ProjectDetailPage() {
   }
 
   function isProjectSeriesCode(code) {
-    return /^PRJ-\d{3,}$/i.test(String(code || "").trim());
+    return /^(PRJ|KODSUZ)-\d{3,}$/i.test(String(code || "").trim());
   }
 
   function isAutoStockCode(code) {
@@ -6377,8 +6388,8 @@ export default function ProjectDetailPage() {
       request_meta: requestMeta,
     })));
     const title = purchaseRequestModal.selectedOnly
-      ? `${project.project_code || "PRJ"} - Satınalma Talebi`
-      : `${project.project_code || "PRJ"} - Satınalma Gerekenler`;
+      ? `${projectRequestLabel(project)} - Satınalma Talebi`
+      : `${projectRequestLabel(project)} - Satınalma Gerekenler`;
     const fullPayload = {
       user_id: user.id,
       project_id: projectId,
@@ -6528,7 +6539,7 @@ export default function ProjectDetailPage() {
     }
 
     const requestItems = summarizeRequestItems(neededItems.map(({ item, stock }) => mapItemToRequestLine(item, stock.requiredQuantity)));
-    const title = `${project.project_code || "PRJ"} - Satınalma Gerekenler`;
+    const title = `${projectRequestLabel(project)} - Satınalma Gerekenler`;
     const fullPayload = {
       user_id: user.id,
       project_id: projectId,

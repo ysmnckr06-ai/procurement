@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { fetchAllRows } from "@/lib/fetchAllRows";
 import DemoDataPanel from "./DemoDataPanel";
 
 const closedOrderStatuses = ["Teslim Edildi", "Tam Teslim", "İptal"];
@@ -262,14 +263,14 @@ export default function DashboardPage() {
         projectItemsRes,
         suppliersRes,
       ] = await Promise.all([
-        supabase.from("requests").select("*").eq("user_id", user.id),
-        supabase.from("reports").select("*").eq("user_id", user.id),
-        supabase.from("orders").select("*").eq("user_id", user.id),
-        supabase.from("products").select("*").eq("user_id", user.id).is("archived_at", null),
-        supabase.from("projects").select("*").eq("user_id", user.id),
-        supabase.from("project_payments").select("*").eq("user_id", user.id),
-        supabase.from("project_items").select("*").eq("user_id", user.id),
-        supabase.from("suppliers").select("*").eq("user_id", user.id),
+        fetchAllRows(() => supabase.from("requests").select("*").eq("user_id", user.id).order("id", { ascending: true })),
+        fetchAllRows(() => supabase.from("reports").select("*").eq("user_id", user.id).order("id", { ascending: true })),
+        fetchAllRows(() => supabase.from("orders").select("*").eq("user_id", user.id).order("id", { ascending: true })),
+        fetchAllRows(() => supabase.from("products").select("*").eq("user_id", user.id).is("archived_at", null).order("id", { ascending: true })),
+        fetchAllRows(() => supabase.from("projects").select("*").eq("user_id", user.id).order("id", { ascending: true })),
+        fetchAllRows(() => supabase.from("project_payments").select("*").eq("user_id", user.id).order("id", { ascending: true })),
+        fetchAllRows(() => supabase.from("project_items").select("*").eq("user_id", user.id).order("id", { ascending: true })),
+        fetchAllRows(() => supabase.from("suppliers").select("*").eq("user_id", user.id).order("id", { ascending: true })),
       ]);
 
       setDashboardData({

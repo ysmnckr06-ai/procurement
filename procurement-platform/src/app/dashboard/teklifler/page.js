@@ -4,6 +4,7 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import { fetchAllRows } from "@/lib/fetchAllRows";
 import { canonicalPartnerName } from "@/lib/businessPartners";
 import { formatMoney } from "@/lib/currency";
 import { fetchLiveTryRates, liveCurrencyOptions, liveRateFor } from "@/lib/liveCurrency";
@@ -208,11 +209,12 @@ const loadRequests = async () => {
       return;
     }
 
-    const { data, error } = await supabase
+    const { data, error } = await fetchAllRows(() => supabase
       .from("requests")
       .select("*")
       .eq("user_id", user.id)
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: true }));
 
     if (error) {
       console.error(error);
@@ -305,10 +307,11 @@ const loadSupplierProfiles = async () => {
     } = await supabase.auth.getUser();
     if (!user) return;
 
-    const { data, error } = await supabase
+    const { data, error } = await fetchAllRows(() => supabase
       .from("suppliers")
       .select("*")
-      .eq("user_id", user.id);
+      .eq("user_id", user.id)
+      .order("id", { ascending: true }));
 
     if (error) {
       console.error("Tedarikçi değerlendirmeleri yüklenemedi:", error);

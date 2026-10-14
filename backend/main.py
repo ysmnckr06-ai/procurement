@@ -1538,7 +1538,7 @@ async def parse_project_items(
                 continue
 
             if not code:
-                code = f"PRJ-{auto_code_counter:04d}"
+                code = f"KODSUZ-{auto_code_counter:04d}"
                 auto_code_counter += 1
 
             result_rows.append({
