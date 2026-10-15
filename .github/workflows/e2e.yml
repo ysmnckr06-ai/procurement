@@ -12,6 +12,12 @@ on:
         required: false
         default: "https://procurement-dun.vercel.app"
 
+# Aynı test hesabını paylaştıkları için robotlar sırayla çalışır; birden çok
+# yayın arka arkaya gelirse yalnız sonuncusu test edilir.
+concurrency:
+  group: e2e-test-account
+  cancel-in-progress: true
+
 jobs:
   e2e:
     name: Uçtan uca senaryo
