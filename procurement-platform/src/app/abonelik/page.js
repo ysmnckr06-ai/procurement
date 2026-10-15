@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { isLicenseActive, isPermanentPlan } from "@/lib/license";
+import { SUBSCRIPTION_GRACE_DAYS } from "@/lib/iyzico";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import SubscriptionPanel, { SignOutButton } from "./SubscriptionPanel";
 
@@ -9,6 +10,14 @@ export const metadata = {
 };
 
 export const dynamic = "force-dynamic";
+
+// Erişim bitişi, ödeme tekrar denemeleri için birkaç gün tolerans içerir;
+// iyzico'nun bir sonraki çekim günü bu toleranstan önceki tarihtir.
+function renewalDate(value) {
+  const time = Date.parse(value || "");
+  if (!Number.isFinite(time)) return value;
+  return new Date(time - SUBSCRIPTION_GRACE_DAYS * 86_400_000).toISOString();
+}
 
 function formatDate(value) {
   const time = Date.parse(value || "");
@@ -87,11 +96,21 @@ export default async function SubscriptionPage({ searchParams }) {
               <h2 className="text-xl font-black text-slate-900">Süresiz lisans</h2>
               <p className="mt-2 text-sm text-slate-600">Hesabınızda süresiz lisans tanımlı; abonelik gerekmez.</p>
             </div>
+          ) : active && !hasSubscription && license?.plan_type !== "demo" ? (
+            <div>
+              <h2 className="text-xl font-black text-slate-900">Lisansınız aktif</h2>
+              <p className="mt-2 text-sm text-slate-600">
+                {license?.expires_at
+                  ? `Lisansınız ${formatDate(license.expires_at)} tarihine kadar geçerli.`
+                  : "Hesabınızda aktif lisans tanımlı; ayrıca abonelik gerekmez."}
+              </p>
+            </div>
           ) : hasSubscription && active ? (
             <SubscriptionPanel
               mode="manage"
               status={subscriptionStatus}
               periodEnd={formatDate(license?.current_period_end || license?.expires_at)}
+              renewalDate={formatDate(renewalDate(license?.current_period_end || license?.expires_at))}
               cancelAtPeriodEnd={Boolean(license?.cancel_at_period_end)}
               paymentFailed={subscriptionStatus === "UNPAID"}
               priceLabel={priceLabel}
