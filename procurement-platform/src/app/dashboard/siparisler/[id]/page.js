@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createDocumentSignedUrl, downloadDocumentFile, isPdfDocument } from "@/lib/documentAccess";
 import { supabase } from "@/lib/supabase";
+import AgreedRateField, { RATE_BASIS_LABELS } from "./AgreedRateField";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { calculateBaseAmount, currencyOptions, getBaseCurrency, getExchangeRate, isSuspiciousRate } from "@/lib/currency";
 import { findOrCreateBusinessPartner } from "@/lib/businessPartners";
@@ -209,7 +210,8 @@ function matchOrderItem(sourceItem, orderItems = []) {
   };
 }
 
-function calculateItemPriceCheck(orderItem, documentItem) {
+// conversionRate: 1 sipariş para birimi = X belge para birimi (anlaşılan kur).
+function calculateItemPriceCheck(orderItem, documentItem, conversionRate = 1) {
   if (!orderItem) {
     return {
       orderUnitPrice: null,
@@ -221,7 +223,9 @@ function calculateItemPriceCheck(orderItem, documentItem) {
   }
 
   const orderUnitPrice = Number(orderItem.unitPrice ?? orderItem.unit_price ?? 0);
-  const documentUnitPrice = Number(documentItem?.unit_price ?? 0);
+  const rawDocumentUnitPrice = Number(documentItem?.unit_price ?? 0);
+  const rate = Number(conversionRate) > 0 ? Number(conversionRate) : 1;
+  const documentUnitPrice = rawDocumentUnitPrice / rate;
   const priceDifference = documentUnitPrice - orderUnitPrice;
   const priceDifferencePercent = orderUnitPrice !== 0
     ? (priceDifference / orderUnitPrice) * 100
@@ -707,6 +711,9 @@ export default function OrderDetailPage() {
     tax_amount: "",
     payable_amount: "",
     currency: "TRY",
+    exchange_rate: "",
+    exchange_rate_date: "",
+    exchange_rate_basis: "",
     file: null,
   });
   const [paymentForm, setPaymentForm] = useState({
@@ -2024,6 +2031,13 @@ export default function OrderDetailPage() {
         tax_amount: documentForm.tax_amount === "" ? null : Number(documentForm.tax_amount),
         payable_amount: documentForm.payable_amount === "" ? null : Number(documentForm.payable_amount),
         currency: documentForm.currency || "TRY",
+        ...(Number(documentForm.exchange_rate) > 0 && String(documentForm.currency || "TRY").toUpperCase() !== String(order.currency || "TRY").toUpperCase()
+          ? {
+              exchange_rate: Number(documentForm.exchange_rate),
+              exchange_rate_date: documentForm.exchange_rate_date || null,
+              exchange_rate_basis: documentForm.exchange_rate_basis || null,
+            }
+          : {}),
       })
       .select("*")
       .single();
@@ -2066,6 +2080,9 @@ export default function OrderDetailPage() {
       tax_amount: "",
       payable_amount: "",
       currency: "TRY",
+      exchange_rate: "",
+      exchange_rate_date: "",
+      exchange_rate_basis: "",
       file: null,
     });
     setDocumentUploadOpen(false);
@@ -3394,6 +3411,17 @@ function calculateInvoiceOrderCheck(order, documents, companySettings) {
   let pendingInvoiceBaseTotal = 0;
   let hasMissingInvoiceData = false;
   let hasCurrencyMismatch = false;
+  const agreedRateNotes = [];
+  const orderBaseTotal = Number(
+    order.order_total_base
+      || order.base_amount
+      || calculateBaseAmount(
+        order.total_amount,
+        order.currency,
+        companySettings,
+        order.exchange_rate,
+      ),
+  );
 
   invoices.forEach((invoice) => {
     const hasTotal = invoice.invoice_total !== null
@@ -3407,13 +3435,31 @@ function calculateInvoiceOrderCheck(order, documents, companySettings) {
     }
 
     const invoiceTotal = Number(invoice.invoice_total || 0);
-    const invoiceBaseAmount = calculateBaseAmount(
+    const orderCurrency = String(order.currency || "").toUpperCase();
+    const agreedRate = Number(invoice.exchange_rate || 0);
+    let invoiceBaseAmount = calculateBaseAmount(
       invoiceTotal,
       invoiceCurrency,
       companySettings,
     );
-    if (invoiceCurrency !== String(order.currency || "").toUpperCase()) {
-      hasCurrencyMismatch = true;
+    if (invoiceCurrency !== orderCurrency) {
+      if (agreedRate > 0 && Number(order.total_amount || 0) > 0) {
+        // Anlaşılan kurla sipariş para birimine çevrilir, sonra siparişin baz
+        // kuruyla karşılaştırılır: kur hareketi fatura farkı sayılmaz.
+        const invoiceInOrderCurrency = invoiceTotal / agreedRate;
+        invoiceBaseAmount = invoiceInOrderCurrency * (orderBaseTotal / Number(order.total_amount));
+        agreedRateNotes.push({
+          invoice: invoice.document_number || invoice.original_file_name || "Fatura",
+          basis: invoice.exchange_rate_basis,
+          rate: agreedRate,
+          rateDate: invoice.exchange_rate_date,
+          orderCurrency,
+          invoiceCurrency,
+          invoiceInOrderCurrency,
+        });
+      } else {
+        hasCurrencyMismatch = true;
+      }
     }
 
     const approvalStatus = String(invoice.approval_status || "").trim().toLowerCase();
@@ -3431,16 +3477,6 @@ function calculateInvoiceOrderCheck(order, documents, companySettings) {
     invoiceBaseTotal += invoiceBaseAmount;
   });
 
-  const orderBaseTotal = Number(
-    order.order_total_base
-      || order.base_amount
-      || calculateBaseAmount(
-        order.total_amount,
-        order.currency,
-        companySettings,
-        order.exchange_rate,
-      ),
-  );
   const difference = invoiceBaseTotal - orderBaseTotal;
   const remainingInvoiceAmount = Math.max(orderBaseTotal - invoiceBaseTotal, 0);
   const excessInvoiceAmount = Math.max(invoiceBaseTotal - orderBaseTotal, 0);
@@ -3471,6 +3507,7 @@ function calculateInvoiceOrderCheck(order, documents, companySettings) {
     billingStatus,
     hasMissingInvoiceData,
     hasCurrencyMismatch,
+    agreedRateNotes,
   };
 }
 
@@ -3577,9 +3614,15 @@ function InvoiceCheckPanel({ order, documents, companySettings }) {
       )}
       {check.hasCurrencyMismatch && (
         <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-800">
-          Fatura ve sipariş para birimi farklı. Kur kontrolü manuel doğrulanmalıdır.
+          Fatura ve sipariş para birimi farklı ve faturada anlaşılan kur girilmemiş. Faturayı yeniden yüklerken &quot;hangi günün kuru&quot; alanını doldurun.
         </div>
       )}
+      {check.agreedRateNotes.map((note) => (
+        <div key={`${note.invoice}-${note.rate}`} className="mt-3 rounded-xl border border-blue-200 bg-white p-3 text-sm font-semibold text-slate-700">
+          {note.invoice}: {RATE_BASIS_LABELS[note.basis] || "Anlaşılan kur"} 1 {note.orderCurrency} = {Number(note.rate).toLocaleString("tr-TR", { maximumFractionDigits: 6 })} {note.invoiceCurrency}
+          {note.rateDate ? ` (${note.rateDate})` : ""} · sipariş para biriminde {formatMoney(note.invoiceInOrderCurrency, note.orderCurrency)}
+        </div>
+      ))}
       {check.hasMissingInvoiceData && (
         <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-800">
           Fatura tutarı/para birimi eksik
@@ -3663,9 +3706,13 @@ function DocumentItemsPanel({
                 const matchConfidence = Number(item.match_confidence || 0);
                 const matchReason = item.match_reason || "unmatched";
                 const manualReviewRequired = Boolean(item.manual_review_required);
+                const documentConversionRate = String(currency).toUpperCase() !== String(order?.currency || "TRY").toUpperCase()
+                  ? Number(document.exchange_rate || 0)
+                  : 1;
                 const priceCheck = calculateItemPriceCheck(
                   matchStatus === "matched" ? matchedOrderItem : null,
                   item,
+                  documentConversionRate,
                 );
                 const priceStatusDetails = {
                   exact: { label: "Tam Uyum", className: "bg-emerald-100 text-emerald-700" },
@@ -3930,6 +3977,7 @@ function DocumentsPanel({
                 ))}
               </select>
             </label>
+            <AgreedRateField order={order} form={form} onFormChange={onFormChange} />
             <label className="block md:col-span-2 xl:col-span-3">
               <span className="mb-1 block text-xs font-bold text-slate-600">Dosya</span>
               <input
