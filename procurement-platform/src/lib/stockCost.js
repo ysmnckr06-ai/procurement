@@ -13,12 +13,15 @@ function normalize(value) {
 }
 
 export function isStockReservationMovement(movement) {
-  return movement?.movement_type === "out" && normalize(movement.source).includes("stoktan karsiland");
+  const source = normalize(movement?.source);
+  // Projeler arası aktarımda veren kaleme eksi, alana artı rezerv yazılır; maliyet
+  // böylece malzemeyle birlikte projeden projeye taşınır.
+  return movement?.movement_type === "out" && (source.includes("stoktan karsiland") || source.includes("projeler arasi aktarim"));
 }
 
 export function stockReservationCost(movement, { item, product, toBase }) {
   const quantity = Number(movement?.reserved_quantity || 0);
-  if (quantity <= 0) return { amount: 0, basis: "none" };
+  if (quantity === 0) return { amount: 0, basis: "none" };
 
   const movementPrice = Number(movement?.unit_price || 0);
   if (movementPrice > 0) {
