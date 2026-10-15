@@ -7,6 +7,7 @@ import * as XLSX from "xlsx";
 import DocumentArchivePanel from "@/components/DocumentArchivePanel";
 import ProductCodeInput from "@/components/ProductCodeInput";
 import ProductionIssuePanel from "./ProductionIssuePanel";
+import ProjectMaterialMoves from "./ProjectMaterialMoves";
 import ProjectDocumentUpload from "./ProjectDocumentUpload";
 import { calculateBaseAmount, currencyOptions, getBaseCurrency, getExchangeRate, isSuspiciousRate } from "@/lib/currency";
 import { createDocumentSignedUrl, downloadDocumentFile, isPdfDocument } from "@/lib/documentAccess";
@@ -8344,6 +8345,7 @@ export default function ProjectDetailPage() {
               </div>
             </div>
             <ProductionIssuePanel items={items} onMessage={setMessage} onDone={loadProjectData} />
+            <ProjectMaterialMoves projectId={projectId} items={items} onMessage={setMessage} onDone={loadProjectData} />
           </section>
         )}
 
