@@ -8,7 +8,10 @@ const documentTypeLabels = {
   teslim_fisi: "Teslim Fişi",
   teklif: "Teklif",
   siparis_formu: "Sipariş Formu",
-  odeme: "Ödeme Belgesi",
+  odeme: "Ödeme Belgesi / Makbuz",
+  cizim: "Çizim",
+  malzeme_listesi: "Malzeme Listesi",
+  sozlesme: "Sözleşme",
   diger: "Diğer",
 };
 
@@ -76,7 +79,7 @@ export default function DocumentArchivePanel({
     groups[type].push(document);
     return groups;
   }, {});
-  const orderedTypes = ["proje", "fatura", "irsaliye", "depo_giris", "teslim_fisi", "teklif", "siparis_formu", "diger", "odeme"];
+  const orderedTypes = ["proje", "malzeme_listesi", "cizim", "teklif", "sozlesme", "fatura", "irsaliye", "depo_giris", "teslim_fisi", "siparis_formu", "odeme", "diger"];
   const visibleTypes = [
     ...orderedTypes.filter((type) => groupedDocuments[type]?.length),
     ...Object.keys(groupedDocuments).filter((type) => !orderedTypes.includes(type)),
