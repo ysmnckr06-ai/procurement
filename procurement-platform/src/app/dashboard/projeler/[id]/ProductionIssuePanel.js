@@ -172,7 +172,7 @@ export default function ProductionIssuePanel({ items, onDone, onMessage }) {
       </div>
       {mainRows.length > 0 && (
         <div className="mt-5 rounded-xl border border-violet-100 bg-violet-50/40 p-4">
-          <div className="text-sm font-black text-slate-900">Ana kalemler (pano)</div>
+          <div className="text-sm font-black text-slate-900">Ana ürünler (tamamlanan adet)</div>
           <p className="mt-1 text-xs font-semibold text-slate-500">
             Tamamlanan adedi girin; o adede düşen alt malzeme henüz çıkmadıysa üretime çıkarılır.
           </p>

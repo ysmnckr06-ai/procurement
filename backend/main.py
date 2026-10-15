@@ -33,6 +33,7 @@ from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.concurrency import run_in_threadpool
 
+from app.parsers.consistency import check_item_consistency
 from app.parsers.excel_parser import parse_excel, parse_excel_with_audit
 from app.parsers.pdf_parser import parse_pdf, parse_pdf_with_audit, extract_pdf_ocr_result
 from app.parsers.image_parser import (
@@ -1565,6 +1566,9 @@ async def parse_project_items(
             })
 
         sections = normalize_project_sections(sections)
+        # Dosya içi tutarlılık: aynı kod farklı açıklama, aynı açıklama farklı kod, kodsuz kalemler.
+        consistency = check_item_consistency(result_rows)
+        warnings = warnings + consistency["warnings"]
 
         if not result_rows:
             return {
@@ -1574,6 +1578,7 @@ async def parse_project_items(
                 "raw_items": raw_items,
                 "rawItems": raw_items,
                 "sections": sections,
+                "consistency": consistency,
                 "debug": parser_debug,
                 "totalRows": 0,
             }
@@ -1581,11 +1586,12 @@ async def parse_project_items(
         if blocking_errors:
             return {
                 "success": False,
-                "warnings": ["Dosya aktarima kilitlendi."] + blocking_errors,
+                "warnings": ["Dosya aktarima kilitlendi."] + blocking_errors + consistency["warnings"],
                 "rows": result_rows,
                 "raw_items": raw_items,
                 "rawItems": raw_items,
                 "sections": sections,
+                "consistency": consistency,
                 "debug": parser_debug,
                 "totalRows": len(result_rows),
             }
@@ -1597,6 +1603,7 @@ async def parse_project_items(
             "raw_items": raw_items,
             "rawItems": raw_items,
             "sections": sections,
+            "consistency": consistency,
             "debug": parser_debug,
             "totalRows": len(result_rows),
         }

@@ -1915,7 +1915,7 @@ function OrdersTable({ orders, liveRates, onView, onEdit, onDelete }) {
             <tr>
               <th className="p-4">Sipariş No</th>
               <th className="p-4">Proje</th>
-              <th className="p-4">Ana ürün / pano</th>
+              <th className="p-4">Ana ürün</th>
               <th className="p-4">İş Ortağı</th>
               <th className="p-4">Sipariş Tarihi</th>
               <th className="p-4">Termin</th>

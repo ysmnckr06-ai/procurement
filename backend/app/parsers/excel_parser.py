@@ -789,6 +789,23 @@ def parse_excel_offer_table_fallback(raw_df, firma, footer, default_currency, fi
     return rows
 
 
+
+MAIN_LEVEL_WORDS = {"ana", "ana urun", "ana kalem", "mamul", "urun", "main", "parent", "1", "seviye 1", "level 1", "a"}
+CHILD_LEVEL_WORDS = {"alt", "alt urun", "alt kalem", "bilesen", "hammadde", "malzeme", "component", "child", "2", "seviye 2", "level 2", "b"}
+
+
+def classify_level(value):
+    """Seviye sütunundaki değeri 'main' / 'child' / '' olarak sınıflar (sektörden bağımsız)."""
+    text = normalize_col(clean_text(value))
+    if not text:
+        return ""
+    if text in MAIN_LEVEL_WORDS or text.startswith("ana"):
+        return "main"
+    if text in CHILD_LEVEL_WORDS or text.startswith("alt"):
+        return "child"
+    return ""
+
+
 def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
     raw_df, selected_sheet_name = read_best_excel_sheet(file_path)
 
@@ -934,6 +951,19 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
         "payment",
     ])
 
+    # Ana ürün üstte, bileşenleri altında olan reçete düzeni (tekstil, mobilya,
+    # gıda...): "Seviye" sütunu varsa "ana" satırlar ana kalem olur, altındaki
+    # satırlar ona bağlanır. "Birim başı / sarfiyat" sütunu varsa miktar ana
+    # kalem adediyle çarpılır.
+    level_col = find_col_exact_or_contains(df.columns, [
+        "seviye", "level", "kalem tipi", "ana/alt", "ana alt", "hiyerarsi", "hiyerarşi",
+    ])
+    consumption_col = find_col_exact_or_contains(df.columns, [
+        "birim basi", "birim başı", "adet basi", "adet başı", "sarfiyat", "per unit", "recete miktari", "reçete miktarı",
+    ])
+    header_section = None
+    header_sections = []
+
     rows = []
     sections = []
     errors = []
@@ -1058,6 +1088,29 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
         row_termin = clean_text(r.get(delivery_col)) if delivery_col is not None else footer.get("termin", "")
         row_warnings = []
 
+        row_level = classify_level(r.get(level_col)) if level_col is not None else ""
+        if row_level == "main" and desc:
+            main_quantity = qty if qty > 0 else 1
+            main_total = row_total_from_file if row_total_from_file > 0 else (price * main_quantity if price > 0 else 0)
+            header_section = {
+                "section_name": desc,
+                "section_total": main_total,
+                "section_quantity": main_quantity,
+                "product_code": code,
+                "unit": unit or "adet",
+                "currency": row_currency,
+                "children": [],
+            }
+            if qty <= 0:
+                warnings.append(f"{desc} ana kalem miktarı kontrol gerekli.")
+            sections.append(header_section)
+            header_sections.append(header_section)
+            continue
+        if level_col is not None and header_section is not None and row_level in ("child", ""):
+            consumption = clean_number(r.get(consumption_col)) if consumption_col is not None else 0.0
+            if consumption > 0:
+                qty = consumption * (header_section.get("section_quantity") or 1)
+
         if looks_like_section_row(cells, code, file_brand, file_desc or desc, qty, price, net_price_from_file, row_total_from_file):
             section_total = choose_section_total(row_total_from_file, numbers)
             display_section_name = section_name_from_cells(cells) or f"BÖLÜM-{len(sections) + 1}"
@@ -1161,9 +1214,34 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
             "section_quantity": 0,
             "price_status": price_status,
         })
+        if level_col is not None and header_section is not None and row_level in ("child", ""):
+            header_section["children"].append(rows[-1])
+            rows[-1]["section_name"] = header_section["section_name"]
+            rows[-1]["section_quantity"] = header_section.get("section_quantity") or 0
+            continue
         pending_rows.append(rows[-1])
 
-    if sections and pending_rows:
+    for header in header_sections:
+        children = header.pop("children", [])
+        children_total = sum(float(child.get("satirToplamDosyadan") or 0) for child in children)
+        if (header.get("section_total") or 0) <= 0:
+            header["section_total"] = children_total
+        for child in children:
+            child["section_total"] = header["section_total"]
+            child["birimFiyat"] = 0
+            child["netBirimFiyat"] = 0
+            child["netToplam"] = 0
+            child["netBirimFiyatDosyadan"] = 0
+            child["satirToplamDosyadan"] = 0
+            child["price_status"] = "section_total_only"
+        if not children:
+            warnings.append(f"{header['section_name']} ana kalem olarak işaretli ama altında malzeme yok.")
+        else:
+            warnings.append(
+                f"{header['section_name']}: {len(children)} alt malzeme bağlandı (ana kalem üstte düzeni)."
+            )
+
+    if sections and pending_rows and not header_sections:
         for row in pending_rows:
             row["birimFiyat"] = 0
             row["netBirimFiyat"] = 0
@@ -1183,6 +1261,7 @@ def parse_excel_with_audit(file_path, firma_adi="", file_name=""):
 
     checked_total = footer.get("dipToplam") or footer.get("genelToplam") or 0
     product_total = sum(float(row.get("satirToplamDosyadan") or 0) for row in rows)
+    product_total += sum(float(header.get("section_total") or 0) for header in header_sections)
 
     if checked_total > 0 and product_total > 0 and not money_equals(product_total, checked_total, 0.50):
         errors.append(
