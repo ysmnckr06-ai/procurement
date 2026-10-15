@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createDocumentSignedUrl, downloadDocumentFile, isPdfDocument } from "@/lib/documentAccess";
 import { supabase } from "@/lib/supabase";
 import AgreedRateField, { RATE_BASIS_LABELS } from "./AgreedRateField";
+import OpenNeedsDistributor from "@/components/OpenNeedsDistributor";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { calculateBaseAmount, currencyOptions, getBaseCurrency, getExchangeRate, isSuspiciousRate } from "@/lib/currency";
 import { findOrCreateBusinessPartner } from "@/lib/businessPartners";
@@ -2829,6 +2830,12 @@ export default function OrderDetailPage() {
             )}
             {(activeTab === "receiving" || activeTab === "delivery") && (
               <div className="space-y-6">
+                {receipts.length > 0 && (
+                  <OpenNeedsDistributor
+                    lines={items.map((item) => ({ product_code: item.productCode, product_name: item.productName }))}
+                    onDone={loadOrder}
+                  />
+                )}
                 {automaticReceiptPanelOpen && hasReceiptDocument && (
                   <AutomaticReceiptSuggestionsPanel
                     order={order}
