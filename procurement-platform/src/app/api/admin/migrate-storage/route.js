@@ -13,21 +13,6 @@ export const maxDuration = 60;
 // Her çağrı en fazla `limit` dosya kopyalar; zaten var olan dosyalar atlanır.
 const BUCKETS = ["order-documents", "request-reports"];
 
-async function listAll(client, bucket, prefix = "") {
-  const files = [];
-  for (let offset = 0; ; offset += 1000) {
-    const { data, error } = await client.storage.from(bucket).list(prefix, { limit: 1000, offset });
-    if (error) throw new Error(`${bucket}/${prefix}: ${error.message}`);
-    for (const entry of data || []) {
-      const path = prefix ? `${prefix}/${entry.name}` : entry.name;
-      if (entry.id === null) files.push(...(await listAll(client, bucket, path)));
-      else files.push({ path, size: entry.metadata?.size || 0, mimetype: entry.metadata?.mimetype });
-    }
-    if (!data || data.length < 1000) break;
-  }
-  return files;
-}
-
 export async function POST(request) {
   const supabase = await createServerSupabaseClient();
   const {
@@ -49,32 +34,30 @@ export async function POST(request) {
   const source = createClient(oldUrl, oldKey, { auth: { autoRefreshToken: false, persistSession: false } });
 
   const body = await request.json().catch(() => ({}));
-  const limit = Math.min(Math.max(Number(body.limit) || 40, 1), 200);
   const deadline = Date.now() + 50_000;
-  const summary = { copied: 0, skipped: 0, failed: [], remaining: 0, buckets: {} };
+  const summary = { copied: 0, skipped: 0, failed: [], remaining: 0 };
 
-  for (const bucket of BUCKETS) {
-    const [sourceFiles, targetFiles] = await Promise.all([listAll(source, bucket), listAll(target, bucket)]);
-    const existing = new Set(targetFiles.map((file) => file.path));
-    const todo = sourceFiles.filter((file) => !existing.has(file.path));
-    summary.buckets[bucket] = { source: sourceFiles.length, target: targetFiles.length };
-    summary.skipped += sourceFiles.length - todo.length;
-    for (const file of todo) {
-      if (summary.copied >= limit || Date.now() > deadline) {
-        summary.remaining += 1;
-        continue;
-      }
-      const { data: blob, error: downloadError } = await source.storage.from(bucket).download(file.path);
-      if (downloadError) {
-        summary.failed.push({ bucket, path: file.path, error: downloadError.message });
-        continue;
-      }
-      const { error: uploadError } = await target.storage
-        .from(bucket)
-        .upload(file.path, blob, { contentType: file.mimetype || blob.type || "application/octet-stream", upsert: false });
-      if (uploadError) summary.failed.push({ bucket, path: file.path, error: uploadError.message });
-      else summary.copied += 1;
+  // Dosya listesi çağıran tarafından verilir (eski veritabanındaki storage.objects);
+  // klasör klasör listelemek uzak bölgede çok yavaş.
+  const files = (Array.isArray(body.files) ? body.files : [])
+    .filter((file) => BUCKETS.includes(file?.bucket) && typeof file?.path === "string" && file.path)
+    .slice(0, 200);
+  for (const file of files) {
+    if (Date.now() > deadline) {
+      summary.remaining += 1;
+      continue;
     }
+    const { data: blob, error: downloadError } = await source.storage.from(file.bucket).download(file.path);
+    if (downloadError) {
+      summary.failed.push({ ...file, error: downloadError.message });
+      continue;
+    }
+    const { error: uploadError } = await target.storage
+      .from(file.bucket)
+      .upload(file.path, blob, { contentType: file.mimetype || blob.type || "application/octet-stream", upsert: false });
+    if (uploadError && /exists|duplicate/i.test(uploadError.message)) summary.skipped += 1;
+    else if (uploadError) summary.failed.push({ ...file, error: uploadError.message });
+    else summary.copied += 1;
   }
   return NextResponse.json(summary);
 }
