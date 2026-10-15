@@ -109,7 +109,7 @@ function CheckoutForm({ defaultCompanyName, email }) {
   );
 }
 
-function ManagePanel({ status, periodEnd, cancelAtPeriodEnd, paymentFailed, priceLabel }) {
+function ManagePanel({ status, periodEnd, renewalDate, cancelAtPeriodEnd, paymentFailed, priceLabel }) {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [canceled, setCanceled] = useState(cancelAtPeriodEnd || status === "CANCELED");
@@ -148,7 +148,7 @@ function ManagePanel({ status, periodEnd, cancelAtPeriodEnd, paymentFailed, pric
           ? `Erişiminiz ${periodEnd} tarihine kadar sürer. Sonrasında verileriniz korunur; dilediğiniz zaman yeniden abone olabilirsiniz.`
           : paymentFailed
             ? `iyzico kartınızdan çekim yapamadı ve tekrar deneyecek. Erişiminiz ${periodEnd} tarihine kadar açık.`
-            : `${priceLabel}. Sonraki yenileme: ${periodEnd}.`}
+            : `${priceLabel}. Sonraki ödeme: ${renewalDate || periodEnd}.`}
       </p>
       {message && <div className="mt-4 rounded-xl bg-slate-100 p-3 text-sm font-semibold text-slate-700">{message}</div>}
       <div className="mt-6 flex flex-wrap gap-3">
