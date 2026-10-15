@@ -20,6 +20,7 @@ import {
   parentProcessInfo,
 } from "@/lib/projectHierarchy";
 import { supabase } from "@/lib/supabase";
+import { fetchAllRows } from "@/lib/fetchAllRows";
 import { CORVIAN_PRODUCT_NAME, fetchCompanyBranding } from "@/lib/companyBranding";
 import { findProductMatches, matchProduct } from "@/lib/productMatching";
 import { parseStockNumber } from "@/lib/stockImport";
@@ -1255,16 +1256,19 @@ export default function ProjectDetailPage() {
         .eq("project_id", projectId)
         .eq("user_id", user.id)
         .order("revision_date", { ascending: false }),
-      supabase
+      // 1000 satır sınırı: stok kartları ve talepler sayfalanarak tamamı okunur.
+      fetchAllRows(() => supabase
         .from("products")
-        .select("*", { count: "exact" })
+        .select("*")
         .eq("user_id", user.id)
-        .is("archived_at", null),
-      supabase
+        .is("archived_at", null)
+        .order("id", { ascending: true })),
+      fetchAllRows(() => supabase
         .from("requests")
         .select("*")
         .eq("user_id", user.id)
-        .order("created_at", { ascending: false }),
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })),
       supabase
         .from("reports")
         .select("*")
@@ -1283,11 +1287,12 @@ export default function ProjectDetailPage() {
         .eq("project_id", projectId)
         .eq("user_id", user.id)
         .order("created_at", { ascending: false }),
-      supabase
+      fetchAllRows(() => supabase
         .from("orders")
         .select("*")
         .eq("user_id", user.id)
-        .order("created_at", { ascending: false }),
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })),
       supabase
         .from("stock_movements")
         .select("*")

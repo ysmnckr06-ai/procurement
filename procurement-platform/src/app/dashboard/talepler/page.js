@@ -295,6 +295,7 @@ async function fetchTenantStockProducts(userId) {
       .select("id,product_code,product_name,brand,unit,current_stock,reserved_stock")
       .eq("user_id", userId)
       .is("archived_at", null)
+      .order("id", { ascending: true })
       .range(from, from + 999);
 
     if (error) throw error;
