@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { fetchAllRows } from "@/lib/fetchAllRows";
 import { CORVIAN_PRODUCT_NAME, fetchCompanyBranding } from "@/lib/companyBranding";
 
 const summaryModes = {
@@ -543,10 +544,10 @@ export default function ProcurementSummaryPage() {
     const [projectResult, itemResult, productResult, orderResult, movementResult, requestResult] = await Promise.all([
       supabase.from("projects").select("id,project_code,project_name,status").eq("user_id", user.id).in("id", selectedIds).order("project_code", { ascending: true }),
       supabase.from("project_items").select("*").eq("user_id", user.id).in("project_id", selectedIds).order("created_at", { ascending: true }),
-      supabase.from("products").select("id,product_code,normalized_product_code,product_name,brand,unit,current_stock,reserved_stock").eq("user_id", user.id).is("archived_at", null),
-      supabase.from("orders").select("id,status,items").eq("user_id", user.id),
-      supabase.from("stock_movements").select("id,project_item_id,product_id,product_code,product_name,unit,reserved_quantity").eq("user_id", user.id),
-      supabase.from("requests").select("id,project_id,durum,items").eq("user_id", user.id),
+      fetchAllRows(() => supabase.from("products").select("id,product_code,normalized_product_code,product_name,brand,unit,current_stock,reserved_stock").eq("user_id", user.id).is("archived_at", null).order("id", { ascending: true })),
+      fetchAllRows(() => supabase.from("orders").select("id,status,items").eq("user_id", user.id).order("id", { ascending: true })),
+      fetchAllRows(() => supabase.from("stock_movements").select("id,project_item_id,product_id,product_code,product_name,unit,reserved_quantity").eq("user_id", user.id).order("id", { ascending: true })),
+      fetchAllRows(() => supabase.from("requests").select("id,project_id,durum,items").eq("user_id", user.id).order("id", { ascending: true })),
     ]);
     const error = projectResult.error || itemResult.error || productResult.error || orderResult.error || movementResult.error || requestResult.error;
     if (error) {
