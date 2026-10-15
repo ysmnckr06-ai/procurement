@@ -76,8 +76,48 @@ async function fetchText(url) {
   return response.text();
 }
 
-export async function GET() {
+function tcmbArchiveUrl(isoDate) {
+  const [year, month, day] = isoDate.split("-");
+  return `https://www.tcmb.gov.tr/kurlar/${year}${month}/${day}${month}${year}.xml`;
+}
+
+// Geçmiş tarih: TCMB o gün kur yayımlamadıysa (hafta sonu/tatil) en fazla 7 gün
+// geriye gidilir; dönen "date" kullanılan yayın tarihidir.
+async function historicalRates(isoDate) {
   const errors = [];
+  const start = new Date(`${isoDate}T12:00:00Z`);
+  for (let back = 0; back <= 7; back += 1) {
+    const day = new Date(start.getTime() - back * 86_400_000).toISOString().slice(0, 10);
+    try {
+      const response = await fetch(tcmbArchiveUrl(day), { cache: "force-cache" });
+      if (!response.ok) continue;
+      const result = normalizeRatesFromTcmb(await response.text());
+      if (TARGETS.every((currency) => Number(result.rates[currency] || 0) > 0)) {
+        return NextResponse.json({ ...result, requestedDate: isoDate, date: day });
+      }
+    } catch (error) {
+      errors.push(error?.message || "TCMB arşivi alınamadı.");
+      break;
+    }
+  }
+  try {
+    const data = await fetchJson(`https://api.frankfurter.app/${isoDate}?from=TRY&to=USD,EUR,GBP`);
+    const result = normalizeRatesFromFrankfurter(data);
+    if (TARGETS.every((currency) => Number(result.rates[currency] || 0) > 0)) {
+      return NextResponse.json({ ...result, requestedDate: isoDate });
+    }
+  } catch (error) {
+    errors.push(error?.message || "Frankfurter alınamadı.");
+  }
+  return NextResponse.json({ requestedDate: isoDate, source: "unavailable", rates: { TRY: 1 }, errors }, { status: 503 });
+}
+
+export async function GET(request) {
+  const errors = [];
+  const requestedDate = new URL(request.url).searchParams.get("date");
+  if (requestedDate && /^\d{4}-\d{2}-\d{2}$/.test(requestedDate) && requestedDate < new Date().toISOString().slice(0, 10)) {
+    return historicalRates(requestedDate);
+  }
 
   try {
     const data = await fetchText("https://www.tcmb.gov.tr/kurlar/today.xml");
