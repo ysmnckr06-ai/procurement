@@ -13,7 +13,8 @@ if (!email || !password) {
   process.exit(0);
 }
 
-const tag = `E2E-${new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "")}`;
+// Saniye + rastgele ek: aynı dakikada başlayan iki çalışma aynı kartları paylaşmasın.
+const tag = `E2E-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "")}${Math.random().toString(36).slice(2, 4).toUpperCase()}`;
 const browser = await chromium.launch();
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "tr-TR" });
 if (process.env.VERCEL_AUTOMATION_BYPASS_SECRET) {
