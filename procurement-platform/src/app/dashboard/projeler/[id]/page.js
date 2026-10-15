@@ -22,6 +22,7 @@ import {
 } from "@/lib/projectHierarchy";
 import { supabase } from "@/lib/supabase";
 import { fetchAllRows } from "@/lib/fetchAllRows";
+import { projectStockUsage } from "@/lib/stockCost";
 import { CORVIAN_PRODUCT_NAME, fetchCompanyBranding } from "@/lib/companyBranding";
 import { findProductMatches, matchProduct } from "@/lib/productMatching";
 import { parseStockNumber } from "@/lib/stockImport";
@@ -7016,16 +7017,16 @@ export default function ProjectDetailPage() {
     // esas alınır: siparişle gelip projeye ayrılan malzeme (sipariş maliyetinde zaten
     // var) ikinci kez sayılmaz, üretime çıkınca rezerve düşse de maliyet kaybolmaz.
     const itemById = new Map((items || []).map((item) => [String(item.id), item]));
-    const stockUsageCost = (stockMovements || []).reduce((sum, movement) => {
-      const source = normalizeText(`${movement.source || ""}`);
-      if (movement.movement_type !== "out" || !source.includes("stoktan karsiland")) return sum;
-      const quantity = Number(movement.reserved_quantity || 0);
-      const item = itemById.get(String(movement.project_item_id || ""));
-      if (quantity <= 0 || !item) return sum;
-      const unitPrice = Number(item.resolved_unit_price || item.estimated_unit_price || 0);
-      const rate = Number(item.exchange_rate || 0) || getExchangeRate(item.currency || baseCurrency, companySettings);
-      return sum + quantity * unitPrice * (String(item.currency || baseCurrency).toUpperCase() === baseCurrency ? 1 : rate);
-    }, 0);
+    // Değer: ayırma anındaki alış fiyatı → ürünün son alış fiyatı → son çare teklif/BOM fiyatı.
+    const productById = new Map((products || []).map((product) => [String(product.id), product]));
+    const stockUsage = projectStockUsage(stockMovements, {
+      itemById,
+      productById,
+      toBase: (amount, currency) => (String(currency || baseCurrency).toUpperCase() === baseCurrency
+        ? Number(amount || 0)
+        : Number(amount || 0) * getExchangeRate(String(currency).toUpperCase(), companySettings)),
+    });
+    const stockUsageCost = stockUsage.total;
     // Fatura girilene kadar verilen siparişler de maliyettir; faturalar siparişleri
     // karşıladığı için ikisinden büyük olanı alınır (çift sayım olmaz).
     const expectedCost = Math.max(approvedInvoiceTotal, orderCommitment) + manualExpenses + stockUsageCost;
@@ -7087,6 +7088,7 @@ export default function ProjectDetailPage() {
       supplierDebt,
       grossProfit,
       stockUsageCost,
+      stockUsageEstimated: stockUsage.estimated,
       expectedCost,
       estimatedGrossProfit,
       profitMargin,
@@ -7104,7 +7106,7 @@ export default function ProjectDetailPage() {
       allocationLinkedOrderCount: allocationLinkedOrders.length,
       allocatedOrders,
     };
-  }, [allOrders, companySettings, expenses, financeLoadWarnings, items, payments, project, projectDocuments, projectId, projectOrderPayments, projectOrders, stockMovements]);
+  }, [allOrders, companySettings, expenses, financeLoadWarnings, items, payments, project, projectDocuments, projectId, projectOrderPayments, projectOrders, stockMovements, products]);
 
   const revisionSummary = useMemo(() => {
     const appliedRevisions = revisions.filter((revision) => !["İptal", "Iptal"].includes(revision.status));
@@ -8109,6 +8111,7 @@ export default function ProjectDetailPage() {
                 {projectFinanceSummary.stockUsageCost > 0 && (
                   <span className="w-fit rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">
                     Stoktan kullanılan: {formatMoney(projectFinanceSummary.stockUsageCost, projectFinanceSummary.baseCurrency)}
+                    {projectFinanceSummary.stockUsageEstimated > 0 && ` (${formatMoney(projectFinanceSummary.stockUsageEstimated, projectFinanceSummary.baseCurrency)} alış fiyatı bilinmediği için teklif fiyatıyla)`}
                   </span>
                 )}
               </div>
