@@ -4,6 +4,8 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
+const PRODUCT_NAME = "CORVIAN Business Suite";
+
 // Tek seferlik kurulum: iyzico'da abonelik ürünü ve aylık ödeme planı oluşturur,
 // plan referans kodunu döndürür. Bu kod Vercel'de
 // IYZICO_PRICING_PLAN_REFERENCE_CODE olarak kaydedilir. Yalnız destek
@@ -48,19 +50,28 @@ export async function POST(request) {
   }
 
   try {
-    const product = await iyzicoRequest(
-      "POST",
-      "/v2/subscription/products",
-      { locale: "tr", name: "CORVIAN Business Suite", description: "CORVIAN aylık abonelik" },
-      config,
-    );
-    const productReferenceCode = product.data?.referenceCode;
+    // Ürün bir kez oluşturulur; fiyat değişince aynı ürüne yeni plan eklenir.
+    let productReferenceCode = String(body.productReferenceCode || "").trim();
+    if (!productReferenceCode) {
+      const list = await iyzicoRequest("GET", "/v2/subscription/products?page=1&count=100", undefined, config);
+      const existing = (list.data?.items || []).find((item) => item.name === PRODUCT_NAME);
+      productReferenceCode = existing?.referenceCode || "";
+    }
+    if (!productReferenceCode) {
+      const product = await iyzicoRequest(
+        "POST",
+        "/v2/subscription/products",
+        { locale: "tr", name: PRODUCT_NAME, description: "CORVIAN aylık abonelik" },
+        config,
+      );
+      productReferenceCode = product.data?.referenceCode;
+    }
     const plan = await iyzicoRequest(
       "POST",
       `/v2/subscription/products/${encodeURIComponent(productReferenceCode)}/pricing-plans`,
       {
         locale: "tr",
-        name: "Aylık",
+        name: `Aylık ${price.toFixed(2)} TL`,
         price,
         currencyCode: "TRY",
         paymentInterval: "MONTHLY",
