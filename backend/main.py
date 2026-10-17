@@ -857,29 +857,42 @@ def extract_order_document_metadata(ocr_text: str):
     invoice_total = None
     currency = "TRY"
 
-    number_match = re.search(
-        r"(?:fatura|irsaliye|belge|invoice|document|seri)\s*"
-        r"(?:no|numarasi|numarası|number|#)?\s*[:\-]?\s*"
+    # GİB belge numarası: 3 karakter seri + yıl + 9 haneli sıra (EAR2026000004817).
+    gib_number = re.search(r"\b([A-Z0-9]{3}20\d{11})\b", text_value)
+    labeled_number = re.search(
+        r"(?:fatura|irsaliye|belge|seri\s*s[ıi]ra|invoice|document)\s*"
+        r"(?:no|numaras[ıi]|number|#)\s*[:\-]?\s*[|İI:]?\s*"
         r"([A-Z0-9][A-Z0-9./\-_]{2,})",
         text_value,
         re.IGNORECASE,
     )
-    if number_match:
-        document_number = number_match.group(1).strip()
+    if gib_number:
+        document_number = gib_number.group(1)
+    elif labeled_number and any(ch.isdigit() for ch in labeled_number.group(1)):
+        document_number = labeled_number.group(1).strip()
 
+    date_pattern = r"(\d{1,2}[./-]\d{1,2}[./-]\d{4}|\d{4}-\d{1,2}-\d{1,2})"
     date_match = re.search(
-        r"(?:tarih|date)\s*[:\-]?\s*"
-        r"(\d{1,2}[./-]\d{1,2}[./-]\d{4}|\d{4}-\d{1,2}-\d{1,2})",
+        rf"(?:fatura|irsaliye|d[üu]zenleme|belge|sevk)\s*tarihi\s*[:\-]?\s*[|İI:]?\s*{date_pattern}",
         text_value,
         re.IGNORECASE,
     )
     if not date_match:
-        date_match = re.search(
-            r"\b(\d{1,2}[./-]\d{1,2}[./-]\d{4}|\d{4}-\d{1,2}-\d{1,2})\b",
-            text_value,
-        )
+        date_match = re.search(rf"(?:tarih|date)\s*[:\-]?\s*{date_pattern}", text_value, re.IGNORECASE)
+    if not date_match:
+        date_match = re.search(rf"\b{date_pattern}\b", text_value)
     if date_match:
         document_date = parse_ocr_date(date_match.group(1))
+
+    # Satıcının VKN/TCKN'si: "SAYIN" (alıcı) bölümünden önceki ilk numara.
+    tax_pattern = re.compile(
+        r"(?:VKN|V\.K\.N\.?|TCKN|Vergi\s*(?:Kimlik\s*)?(?:No|Numaras[ıi])|T\.?C\.?\s*Kimlik\s*No)\s*[:\-]?\s*(\d{10,11})\b",
+        re.IGNORECASE,
+    )
+    buyer_at = re.search(r"\bSAYIN\b", text_value)
+    seller_part = text_value[: buyer_at.start()] if buyer_at else text_value
+    tax_match = tax_pattern.search(seller_part) or tax_pattern.search(text_value)
+    supplier_tax_number = tax_match.group(1) if tax_match else None
 
     total_matches = list(re.finditer(
         r"(?:genel\s+toplam|ödenecek\s+tutar|odenecek\s+tutar|"
@@ -905,7 +918,7 @@ def extract_order_document_metadata(ocr_text: str):
         "document_number": document_number,
         "document_date": document_date,
         "supplier_name": None,
-        "supplier_tax_number": None,
+        "supplier_tax_number": supplier_tax_number,
         "invoice_total": invoice_total,
         "currency": currency,
     }
