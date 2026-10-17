@@ -53,9 +53,16 @@ jobs:
         run: |
           mkdir -p yedek
           PG=/usr/lib/postgresql/17/bin
+          # Kopyalarken gelen boşluk/satır sonu temizlenir.
+          SUPABASE_DB_URL=$(printf '%s' "$SUPABASE_DB_URL" | tr -d '\r\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
           case "$SUPABASE_DB_URL" in
             postgresql://*|postgres://*) ;;
-            *) echo "::error title=Adres biçimi::SUPABASE_DB_URL 'postgresql://' ile başlamalı."; exit 1 ;;
+            *)
+              # Değer gösterilmeden ipucu verilir.
+              hint="uzunluk ${#SUPABASE_DB_URL}"
+              case "$SUPABASE_DB_URL" in *@*) hint="$hint, @ var" ;; *) hint="$hint, @ yok" ;; esac
+              case "$SUPABASE_DB_URL" in *pooler.supabase.com*) hint="$hint, pooler adresi var" ;; *) hint="$hint, pooler adresi yok (yalnız şifre girilmiş olabilir)" ;; esac
+              echo "::error title=Adres biçimi::SUPABASE_DB_URL 'postgresql://' ile başlamalı ($hint)."; exit 1 ;;
           esac
           case "$SUPABASE_DB_URL" in
             *"[YOUR-PASSWORD]"*|*"YOUR-PASSWORD"*) echo "::error title=Adres biçimi::SUPABASE_DB_URL içinde hâlâ [YOUR-PASSWORD] yazıyor; yerine şifre yazılmalı."; exit 1 ;;
