@@ -678,6 +678,7 @@ export default function OrderDetailPage() {
   const [receiptInputs, setReceiptInputs] = useState({});
   const [receiptWaybill, setReceiptWaybill] = useState({ number: "", date: "" });
   const receiptSavingRef = useRef(new Set());
+  const receiptDocumentQueueRef = useRef(Promise.resolve());
   const [receipts, setReceipts] = useState([]);
   const [automaticReceiptApplying, setAutomaticReceiptApplying] = useState(false);
   const [automaticReceiptResult, setAutomaticReceiptResult] = useState(null);
@@ -1462,6 +1463,18 @@ export default function OrderDetailPage() {
     }
   }
 
+  // İrsaliye PDF'i teslim kaydını bekletmez: kayıt biter bitmez sıradaki sevkiyat
+  // alınabilir. Belgeler sırayla işlenir ki aynı irsaliye iki kez açılmasın.
+  function queueReceiptDocument(user, receiptPayload) {
+    receiptDocumentQueueRef.current = receiptDocumentQueueRef.current
+      .catch(() => {})
+      .then(async () => {
+        const suffix = await archiveReceiptDocument(user, receiptPayload);
+        if (suffix) setMessage(`Depo teslim alma kaydedildi ve stok girişine işlendi.${suffix}`);
+        await loadOrderDocuments(order.id, user.id);
+      });
+  }
+
   async function saveReceipt(index) {
     if (receiptSavingRef.current.has(index)) return;
     receiptSavingRef.current.add(index);
@@ -1761,8 +1774,9 @@ export default function OrderDetailPage() {
         }
 
         setReceiptInputs((prev) => ({ ...prev, [index]: {} }));
-        setMessage(`Depo teslim alma kaydedildi ve stok girişine işlendi.${await archiveReceiptDocument(user, receiptPayload)}`);
+        setMessage("Depo teslim alma kaydedildi ve stok girişine işlendi.");
         await loadOrder();
+        queueReceiptDocument(user, receiptPayload);
         return;
       }
       setMessage(receiptError.message || "Teslim alma işlemi atomik olarak tamamlanamadı; hiçbir kayıt değiştirilmedi.");
@@ -1770,8 +1784,9 @@ export default function OrderDetailPage() {
     }
 
     setReceiptInputs((prev) => ({ ...prev, [index]: {} }));
-    setMessage(`Depo teslim alma kaydedildi ve stok girişine işlendi.${await archiveReceiptDocument(user, receiptPayload)}`);
+    setMessage("Depo teslim alma kaydedildi ve stok girişine işlendi.");
     await loadOrder();
+    queueReceiptDocument(user, receiptPayload);
   }
 
   async function applyAutomaticReceiptSuggestions() {
