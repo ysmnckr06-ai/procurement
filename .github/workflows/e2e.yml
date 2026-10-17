@@ -14,8 +14,10 @@ on:
 
 # Aynı test hesabını paylaştıkları için robotlar sırayla çalışır; birden çok
 # yayın arka arkaya gelirse yalnız sonuncusu test edilir.
+# Yalnız gerçekten çalışacak robotlar aynı sıraya girer; önizleme yayınlarının
+# atlanan işleri çalışan robotu iptal etmesin.
 concurrency:
-  group: e2e-test-account
+  group: ${{ (github.event_name == 'workflow_dispatch' || (github.event.deployment_status.state == 'success' && github.event.deployment_status.environment == 'Production')) && 'e2e-test-account' || format('e2e-atla-{0}', github.run_id) }}
   cancel-in-progress: true
 
 jobs:
