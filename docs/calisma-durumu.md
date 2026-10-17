@@ -21,18 +21,27 @@ Kaldığımız yer. Ayrıntılı rapor: "CORVIAN Uçtan Uca Test Raporu" belgesi
 
 Canlıya elle uygulanan migrationlar: 0042, 0043, 0044, 0045 (+ eskiden eksik kalan 0020, 0030, 0031).
 
+## 17 Ekim öğleden sonra tamamlananlar (hepsi canlıda, robot 31/31)
+
+| İş | PR | Not |
+|---|---|---|
+| Teklif belgesi projeye bağlanır | #33 | Mevcut 72 teklif belgesi SQL ile geriye dönük bağlandı. |
+| Teslim almada irsaliye / teslim fişi PDF'i | #34, #39 | İrsaliye no ile tek belgede toplanır; sipariş ve projeye bağlı; teslim kilidini bekletmez. |
+| Proje rakamları tutarlı | #35 | `lib/projectFinance.js`: proje detayı, Finans, Kontrol Merkezi aynı kâr/maliyet tanımı. |
+| Robota yeni akışlar | #36, #37 | Ödünç/iade, belge ekleme, geçmiş kur, teklif bağı, irsaliye, kâr eşitliği. |
+| Her türlü belge yüklenebilir | #37, #38 | Word/DWG/XML/metin genel ikili türle yüklenir (`lib/storageContentType.js`). |
+
 ## Sıradaki işler
 
-1. Siparişe dönüşmeyen teklifleri projeye bağlamak (backend `persist_source_offer_document` belgeyi bağlamıyor).
-2. Teslim almada irsaliyenin belge olarak otomatik oluşması.
-3. Test planı madde 2: proje raporları ↔ proje sayfası ↔ finans tutarlılık kontrolü.
-4. Yeni akışları test robotuna eklemek: belge ekleme, kur sorusu, açık ihtiyaçlara dağıtım, ödünç/iade, reçete okuma.
-5. Bir hafta sonra: eski Sidney projesini (`tbyfwnpayppslkcqjwog`) ve Render'daki kullanılmayan Oregon "procurement" servisini kapatmak.
-6. Robotun test hesabında bıraktığı E2E- kartlarını temizlemek.
+1. Robota eklenmeyenler: açık ihtiyaçlara dağıtım (senaryo kurulumu zor) ve reçete okuma (şimdilik yalnız sunucu birim testleri).
+2. Bir hafta sonra: eski Sidney projesini (`tbyfwnpayppslkcqjwog`) ve Render'daki kullanılmayan Oregon "procurement" servisini kapatmak.
+3. Robotun test hesabında bıraktığı E2E- kartlarını temizlemek.
+4. `deneme-birlesik` dalı artık gereksiz; silinebilir.
 
 ## Çalışma notları
 
 - Canlı DB'de SQL: Supabase SQL Editor (corvian-eu). Monaco'ya metin `window.monaco.editor.getModels()[0].setValue(...)` ile konur.
 - Silme/`drop` içeren sorgularda Supabase onay penceresi çıkar; onayı kullanıcı verir.
 - Canlı fonksiyonlar repo dosyalarından farklı olabilir (ör. reserve_project_items_from_stock); değiştirmeden önce `pg_get_functiondef` ile kontrol, gerekirse yerinde yama.
-- Robot: `.github/workflows/e2e.yml`, sonuç annotation'larda (log indirme engelli).
+- Robot: `.github/workflows/e2e.yml`, sonuç annotation'larda (log indirme engelli). GitHub en fazla 10 annotation gösterir; robot özet + başarısızları yazar.
+- Dal push'u önizleme yayını tetikler ve aynı `concurrency` grubundaki elle başlatılmış robotu iptal eder; önizleme bitince yeniden başlat.
