@@ -1515,7 +1515,28 @@ export default function OrderDetailPage() {
       return;
     }
 
-    const item = items[index];
+    // Aynı siparişte başka bir kullanıcı (veya sekme) az önce teslim almış olabilir:
+    // teslim edilen miktarlar ekrandaki eski kopyadan değil, veritabanındaki güncel
+    // siparişten hesaplanır. Aksi hâlde son kaydeden öncekinin teslimini siler.
+    const { data: freshOrder, error: freshOrderError } = await supabase
+      .from("orders")
+      .select("items, defective_total, status, status_history, delivery_date")
+      .eq("id", order.id)
+      .eq("user_id", user.id)
+      .single();
+    if (freshOrderError || !freshOrder) {
+      setMessage("Sipariş güncel hâli okunamadı; teslim alma yapılmadı. Sayfayı yenileyip tekrar deneyin.");
+      return;
+    }
+    const freshItems = normalizeItems(freshOrder.items);
+    const currentItems = freshItems.length === items.length ? freshItems : items;
+    const currentOrder = { ...order, ...freshOrder };
+    if (Number(currentItems[index]?.deliveredQuantity || 0) !== Number(items[index]?.deliveredQuantity || 0)) {
+      await loadOrder();
+      setMessage("Bu kalem siz ekrandayken başka bir kullanıcı tarafından teslim alındı. Güncel miktarlar yüklendi; kontrol edip tekrar kaydedin.");
+      return;
+    }
+    const item = currentItems[index];
     const partner = await findOrCreateBusinessPartner(supabase, user.id, {
       name: order.partner_name || order.supplier_name,
       allowCreate: false,
@@ -1582,7 +1603,7 @@ export default function OrderDetailPage() {
       note: withWaybillNote(input.note, receiptWaybill.number),
     };
 
-    const nextItems = items.map((row, rowIndex) => {
+    const nextItems = currentItems.map((row, rowIndex) => {
       if (rowIndex !== index) return row;
       const deliveredQuantity = Math.min(
         Number(row.quantity || 0),
@@ -1628,8 +1649,8 @@ export default function OrderDetailPage() {
         ? "Teslim Edildi"
         : nextDeliveredQuantity > 0
           ? "Kısmi Teslim"
-          : order.status;
-    const nextHistory = buildStatusHistory(order, {
+          : currentOrder.status;
+    const nextHistory = buildStatusHistory(currentOrder, {
       type: "warehouse-receipt",
       title: `${item.productName} teslim alındı: ${receivedQuantity} ${item.unit || "adet"} (${receiptStatus}).`,
       actor: receiptPayload.received_by || "Depo",
@@ -1666,13 +1687,13 @@ export default function OrderDetailPage() {
       p_unit_price: Number(item.netUnitPrice || item.unitPrice || 0),
       p_currency: order.currency || "TRY",
       p_report_id: order.report_id || null,
-      p_order_items: withDeliveryFields(order.items, nextItems),
+      p_order_items: withDeliveryFields(currentOrder.items, nextItems),
       p_order_status: nextStatus,
-      p_delivery_date: nextStatus === "Teslim Edildi" ? getToday() : order.delivery_date,
+      p_delivery_date: nextStatus === "Teslim Edildi" ? getToday() : currentOrder.delivery_date,
       p_status_history: nextHistory,
       p_order_receipt_status: nextStatus === "Teslim Edildi" ? "Depoda" : nextItemReceiptStatus,
       p_received_total: nextDeliveredQuantity,
-      p_defective_total: Number(order.defective_total || 0) + defectiveQuantity,
+      p_defective_total: Number(currentOrder.defective_total || 0) + defectiveQuantity,
     });
 
     if (receiptError) {
@@ -1771,13 +1792,13 @@ export default function OrderDetailPage() {
           supabase
             .from("orders")
             .update({
-              items: withDeliveryFields(order.items, nextItems),
+              items: withDeliveryFields(currentOrder.items, nextItems),
               status: nextStatus,
-              delivery_date: nextStatus === "Teslim Edildi" ? getToday() : order.delivery_date,
+              delivery_date: nextStatus === "Teslim Edildi" ? getToday() : currentOrder.delivery_date,
               status_history: nextHistory,
               receipt_status: nextStatus === "Teslim Edildi" ? "Depoda" : nextItemReceiptStatus,
               received_total: nextDeliveredQuantity,
-              defective_total: Number(order.defective_total || 0) + defectiveQuantity,
+              defective_total: Number(currentOrder.defective_total || 0) + defectiveQuantity,
             })
             .eq("id", order.id)
             .eq("user_id", user.id),

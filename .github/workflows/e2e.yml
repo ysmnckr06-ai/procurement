@@ -42,6 +42,9 @@ jobs:
       - run: npm install --no-audit --no-fund
       - run: npx playwright install --with-deps chromium
       - run: npm test
+      - name: Ekran taraması
+        if: always()
+        run: node screens.mjs
       - if: failure()
         uses: actions/upload-artifact@v4
         with:
