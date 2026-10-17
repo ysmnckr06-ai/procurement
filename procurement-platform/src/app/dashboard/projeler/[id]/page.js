@@ -24,6 +24,7 @@ import {
 import { supabase } from "@/lib/supabase";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { projectStockUsage } from "@/lib/stockCost";
+import { isCancelledOrder, projectProfitSummary } from "@/lib/projectFinance";
 import { CORVIAN_PRODUCT_NAME, fetchCompanyBranding } from "@/lib/companyBranding";
 import { findProductMatches, matchProduct } from "@/lib/productMatching";
 import { parseStockNumber } from "@/lib/stockImport";
@@ -6931,7 +6932,7 @@ export default function ProjectDetailPage() {
         )
       );
     });
-    const allFinanceOrders = [...projectOrders, ...allocationLinkedOrders];
+    const allFinanceOrders = [...projectOrders, ...allocationLinkedOrders].filter((order) => !isCancelledOrder(order));
     const financeOrderById = new Map(allFinanceOrders.map((order) => [String(order.id), order]));
     const allocatedOrderBase = (order) => {
       if (directOrderIds.has(String(order.id))) {
@@ -7012,7 +7013,6 @@ export default function ProjectDetailPage() {
       const linkedOrder = financeOrderById.get(String(payment.order_id || ""));
       return sum + paymentBase * (linkedOrder ? projectShareForOrder(linkedOrder) : 1);
     }, 0);
-    const actualCost = approvedInvoiceTotal + manualExpenses;
     // Stoktan bu projeye ayrılan malzemenin maliyeti (sipariş/fatura ile gelmez).
     // Kalemin anlık rezerve miktarı değil "Projeye stoktan karşılandı" hareketleri
     // esas alınır: siparişle gelip projeye ayrılan malzeme (sipariş maliyetinde zaten
@@ -7030,14 +7030,21 @@ export default function ProjectDetailPage() {
     const stockUsageCost = stockUsage.total;
     // Fatura girilene kadar verilen siparişler de maliyettir; faturalar siparişleri
     // karşıladığı için ikisinden büyük olanı alınır (çift sayım olmaz).
-    const expectedCost = Math.max(approvedInvoiceTotal, orderCommitment) + manualExpenses + stockUsageCost;
-    const estimatedGrossProfit = contractAmount - expectedCost;
+    // Kâr/zarar tanımı Finans raporu ve Kontrol Merkezi ile ortak (lib/projectFinance).
+    const profit = projectProfitSummary({
+      contractAmount,
+      estimatedBudget,
+      orderCommitment,
+      invoiceTotal: approvedInvoiceTotal,
+      manualExpenses,
+      stockUsageCost,
+    });
+    const { actualCost, expectedCost, profitMargin, budgetVariance, costRealizationRate, budgetExceeded } = profit;
+    const grossProfit = profit.profitLoss;
+    const estimatedGrossProfit = profit.profitLoss;
+    const invoicedGrossProfit = contractAmount - actualCost;
     const remainingCollection = contractAmount - customerCollections;
     const supplierDebt = approvedInvoiceTotal - supplierPayments;
-    const grossProfit = contractAmount - actualCost;
-    const profitMargin = contractAmount > 0 ? (grossProfit / contractAmount) * 100 : 0;
-    const budgetVariance = estimatedBudget - actualCost;
-    const costRealizationRate = estimatedBudget > 0 ? (actualCost / estimatedBudget) * 100 : null;
     const profitabilityStatus = contractAmount <= 0
       ? "Hesaplanamıyor"
       : profitMargin >= 20
@@ -7045,7 +7052,6 @@ export default function ProjectDetailPage() {
         : profitMargin >= 0
           ? "Kar düşük"
           : "Zararda";
-    const budgetExceeded = estimatedBudget > 0 && actualCost > estimatedBudget;
     const profitabilityWarnings = [];
     if (contractAmount <= 0) profitabilityWarnings.push("Sözleşme bedeli yoksa kar marjı hesaplanamaz.");
     if (estimatedBudget <= 0) profitabilityWarnings.push("Tahmini bütçe yoksa bütçe sapması hesaplanamaz.");
@@ -7088,6 +7094,7 @@ export default function ProjectDetailPage() {
       remainingCollection,
       supplierDebt,
       grossProfit,
+      invoicedGrossProfit,
       stockUsageCost,
       stockUsageEstimated: stockUsage.estimated,
       expectedCost,
@@ -7150,7 +7157,9 @@ export default function ProjectDetailPage() {
     const completion =
       items.length > 0 ? Math.round((completedItems / items.length) * 100) : 0;
     const collection =
-      totals.contract > 0 ? Math.round((totals.paidTotal / totals.contract) * 100) : 0;
+      projectFinanceSummary.contractAmount > 0
+        ? Math.round((projectFinanceSummary.customerCollections / projectFinanceSummary.contractAmount) * 100)
+        : 0;
     const profitLoss = projectFinanceSummary.grossProfit;
     const mainStatusCounts = countByStatus(mainItems, mainItemStatuses);
     const mainStatusSummary = mainItemStatuses
@@ -7188,7 +7197,7 @@ export default function ProjectDetailPage() {
       receivedComponents: childItems.filter((item) => ["Depoda", "Kısmi geldi", "Projeye rezerve edildi", "Kullanıldı", "Tamamlandı"].includes(item.status)).length,
       actualCost: projectFinanceSummary.actualCost,
       profitLoss,
-      budgetVariance: projectFinanceSummary.actualCost - projectFinanceSummary.estimatedBudget,
+      budgetVariance: projectFinanceSummary.budgetVariance,
     };
   }, [items, projectOrders, projectFinanceSummary, totals]);
 
@@ -7211,7 +7220,7 @@ export default function ProjectDetailPage() {
       warnings.push({ tone: "orange", text: `${criticalStockItems.length} kalemde kritik stok uyarısı var.` });
     }
     if (projectFinanceSummary.budgetExceeded) {
-      warnings.push({ tone: "amber", text: `${formatMoney(projectFinanceSummary.actualCost - projectFinanceSummary.estimatedBudget, projectCurrencyForDisplay())} bütçe aşımı riski tespit edildi.` });
+      warnings.push({ tone: "amber", text: `${formatMoney(projectFinanceSummary.expectedCost - projectFinanceSummary.estimatedBudget, projectFinanceSummary.baseCurrency)} bütçe aşımı riski tespit edildi.` });
     }
 
     const delayedOrders = projectOrders.filter((order) => {
@@ -8104,10 +8113,12 @@ export default function ProjectDetailPage() {
                   <p className="mt-1 font-semibold text-blue-700">Bu ekran üç net bölümden oluşur: müşteriden gelen ödemeler, projeye düşen tedarikçi/alım maliyeti ve ek giderler.</p>
                 </div>
                 <span
-                  title={`Sipariş, stoktan kullanım ve giderler dahil tahmini maliyet: ${formatMoney(projectFinanceSummary.expectedCost, projectFinanceSummary.baseCurrency)} · Yalnız faturalaşmış maliyete göre: ${formatMoney(projectFinanceSummary.grossProfit, projectFinanceSummary.baseCurrency)}`}
+                  title={`Sipariş, stoktan kullanım ve giderler dahil tahmini maliyet: ${formatMoney(projectFinanceSummary.expectedCost, projectFinanceSummary.baseCurrency)} · Yalnız faturalaşmış maliyete göre: ${formatMoney(projectFinanceSummary.invoicedGrossProfit, projectFinanceSummary.baseCurrency)}`}
+                  data-testid="project-profit"
+                  data-value={Math.round(projectFinanceSummary.estimatedGrossProfit * 100) / 100}
                   className={"w-fit rounded-full px-3 py-1 text-xs font-black " + (projectFinanceSummary.estimatedGrossProfit >= 0 ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800")}
                 >
-                  Tahmini brüt sonuç: {formatMoney(projectFinanceSummary.estimatedGrossProfit, projectFinanceSummary.baseCurrency)}
+                  Brüt kar / zarar: {formatMoney(projectFinanceSummary.estimatedGrossProfit, projectFinanceSummary.baseCurrency)}
                 </span>
                 {projectFinanceSummary.stockUsageCost > 0 && (
                   <span className="w-fit rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">
