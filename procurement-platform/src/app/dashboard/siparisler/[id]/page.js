@@ -12,6 +12,15 @@ import { calculateBaseAmount, currencyOptions, getBaseCurrency, getExchangeRate,
 import { findOrCreateBusinessPartner } from "@/lib/businessPartners";
 import { matchProduct } from "@/lib/productMatching";
 import { CORVIAN_PRODUCT_NAME, fetchCompanyBranding } from "@/lib/companyBranding";
+import {
+  GENERATED_RECEIPT_PROVIDER,
+  isGeneratedReceiptDocument,
+  receiptDocumentIdentity,
+  receiptDocumentProjectIds,
+  receiptsForDocument,
+  visibleReceiptNote,
+  withWaybillNote,
+} from "@/lib/receiptDocument";
 
 function normalizeOrderStatus(status) {
   const value = String(status || "").trim();
@@ -666,6 +675,7 @@ export default function OrderDetailPage() {
   const [activeTab, setActiveTab] = useState("items");
   const [message, setMessage] = useState("");
   const [receiptInputs, setReceiptInputs] = useState({});
+  const [receiptWaybill, setReceiptWaybill] = useState({ number: "", date: "" });
   const receiptSavingRef = useRef(new Set());
   const [receipts, setReceipts] = useState([]);
   const [automaticReceiptApplying, setAutomaticReceiptApplying] = useState(false);
@@ -1288,6 +1298,169 @@ export default function OrderDetailPage() {
     );
   }
 
+  // Teslim alma sonrası irsaliye kaydını (numara girildiyse) ya da günlük teslim
+  // fişini PDF olarak oluşturur/günceller; siparişe ve teslimin gittiği projelere
+  // bağlar. Belge oluşturulamazsa teslim kaydı geri alınmaz, sadece uyarı döner.
+  async function archiveReceiptDocument(user, receiptPayload) {
+    const waybillNo = receiptWaybill.number.trim();
+    const receiptDate = receiptPayload.receipt_date;
+    const { documentType, documentNumber } = receiptDocumentIdentity({
+      waybillNo,
+      orderNo: order.order_no || order.id,
+      receiptDate,
+    });
+    const label = documentType === "irsaliye" ? `${documentNumber} numaralı irsaliye` : "Teslim fişi";
+
+    try {
+      const { data: receiptRows, error: receiptReadError } = await supabase
+        .from("order_receipts")
+        .select("*")
+        .eq("order_id", order.id)
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: true });
+      if (receiptReadError) throw receiptReadError;
+      const lines = receiptsForDocument(receiptRows, { waybillNo, receiptDate });
+      if (lines.length === 0) return "";
+
+      const acceptedTotal = lines.reduce((sum, row) => sum + Number(row.accepted_quantity || 0), 0);
+      const blob = await createOrderDocumentPdf({
+        title: documentType === "irsaliye" ? "İrsaliye Kaydı" : "Teslim Fişi",
+        subtitle: documentType === "irsaliye"
+          ? "Tedarikçi irsaliyesiyle teslim alınan kalemler"
+          : `${receiptDate} tarihli depo teslim alma`,
+        fileSuffix: documentType === "irsaliye" ? "irsaliye" : "teslim-fisi",
+        documentNo: documentNumber,
+        columns: ["Tarih", "Kod", "Ürün", "Birim", "Gelen", "Kabul", "Hatalı", "Durum", "Teslim Alan", "Not"],
+        rows: lines.map((row) => [
+          row.receipt_date || "-",
+          row.product_code || "-",
+          row.product_name || "-",
+          row.unit || "adet",
+          Number(row.received_quantity || 0),
+          Number(row.accepted_quantity || 0),
+          Number(row.defective_quantity || 0),
+          row.receipt_status || "-",
+          row.received_by || "-",
+          visibleReceiptNote(row.note) || "-",
+        ]),
+        totalLabel: "Toplam kabul",
+        totalValue: `${acceptedTotal} (${lines.length} satır)`,
+        output: "blob",
+      });
+      if (!blob) return "";
+
+      const { data: linkRows, error: linkReadError } = await supabase
+        .from("document_links")
+        .select("document_id, order_id, project_id")
+        .eq("user_id", user.id)
+        .eq("order_id", order.id);
+      if (linkReadError) throw linkReadError;
+      const linkedIds = [...new Set((linkRows || []).map((link) => link.document_id).filter(Boolean))];
+      let existing = null;
+      if (linkedIds.length > 0) {
+        const { data: existingRows, error: existingError } = await supabase
+          .from("documents")
+          .select("id, storage_path, immutable_at")
+          .in("id", linkedIds)
+          .eq("user_id", user.id)
+          .eq("document_type", documentType)
+          .eq("document_number", documentNumber)
+          .eq("ocr_provider", GENERATED_RECEIPT_PROVIDER)
+          .limit(1);
+        if (existingError) throw existingError;
+        existing = existingRows?.[0] || null;
+      }
+      if (existing?.immutable_at) return ` ${label} onaylı olduğu için yeniden oluşturulmadı.`;
+
+      const safeName = `${String(order.order_no || "siparis")}-${documentNumber}`
+        .replace(/[^a-zA-Z0-9._-]/g, "-")
+        .replace(/-+/g, "-");
+      const file = new File([blob], `${safeName}.pdf`, { type: "application/pdf" });
+      const contentSha256 = await fileSha256(file);
+      const fileId = typeof crypto !== "undefined" && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const storagePath = `${user.id}/${order.id}/${fileId}-${safeName}.pdf`;
+      const { error: uploadError } = await supabase.storage
+        .from("order-documents")
+        .upload(storagePath, file, { contentType: "application/pdf", upsert: false });
+      if (uploadError) throw uploadError;
+
+      const fileFields = {
+        original_file_name: file.name,
+        storage_path: storagePath,
+        mime_type: "application/pdf",
+        file_size: file.size,
+        content_sha256: contentSha256,
+        document_date: receiptWaybill.date || receiptDate || null,
+        supplier_name: order.partner_name || order.supplier_name || null,
+        currency: order.currency || "TRY",
+      };
+
+      let documentId = existing?.id || null;
+      if (existing) {
+        const { error: updateError } = await supabase
+          .from("documents")
+          .update(fileFields)
+          .eq("id", existing.id)
+          .eq("user_id", user.id);
+        if (updateError) {
+          await supabase.storage.from("order-documents").remove([storagePath]);
+          throw updateError;
+        }
+        if (existing.storage_path && existing.storage_path !== storagePath) {
+          await supabase.storage.from("order-documents").remove([existing.storage_path]);
+        }
+      } else {
+        const { data: inserted, error: insertError } = await supabase
+          .from("documents")
+          .insert({
+            ...fileFields,
+            user_id: user.id,
+            document_type: documentType,
+            document_number: documentNumber,
+            storage_bucket: "order-documents",
+            ocr_provider: GENERATED_RECEIPT_PROVIDER,
+          })
+          .select("id")
+          .single();
+        if (insertError) {
+          await supabase.storage.from("order-documents").remove([storagePath]);
+          throw insertError;
+        }
+        documentId = inserted.id;
+        const { error: orderLinkError } = await supabase
+          .from("document_links")
+          .insert({ user_id: user.id, document_id: documentId, order_id: order.id });
+        if (orderLinkError) throw orderLinkError;
+      }
+
+      const projectIds = receiptDocumentProjectIds(lines, order.project_id);
+      if (projectIds.length > 0) {
+        const { data: projectLinks, error: projectLinkReadError } = await supabase
+          .from("document_links")
+          .select("project_id")
+          .eq("user_id", user.id)
+          .eq("document_id", documentId)
+          .in("project_id", projectIds);
+        if (projectLinkReadError) throw projectLinkReadError;
+        const alreadyLinked = new Set((projectLinks || []).map((link) => String(link.project_id)));
+        const missing = projectIds.filter((projectId) => !alreadyLinked.has(projectId));
+        if (missing.length > 0) {
+          const { error: projectLinkError } = await supabase
+            .from("document_links")
+            .insert(missing.map((projectId) => ({ user_id: user.id, document_id: documentId, project_id: projectId })));
+          if (projectLinkError) throw projectLinkError;
+        }
+      }
+
+      return ` ${label} belgelere ${existing ? "güncellendi" : "eklendi"}.`;
+    } catch (error) {
+      console.error("Teslim belgesi oluşturulamadı:", error);
+      return ` ${label} belge olarak kaydedilemedi; Belgeler sekmesinden elle yükleyebilirsiniz.`;
+    }
+  }
+
   async function saveReceipt(index) {
     if (receiptSavingRef.current.has(index)) return;
     receiptSavingRef.current.add(index);
@@ -1374,7 +1547,7 @@ export default function OrderDetailPage() {
       receipt_status: receiptStatus,
       received_by: input.receivedBy || "",
       receipt_date: input.receiptDate || getToday(),
-      note: input.note || "",
+      note: withWaybillNote(input.note, receiptWaybill.number),
     };
 
     const nextItems = items.map((row, rowIndex) => {
@@ -1587,7 +1760,7 @@ export default function OrderDetailPage() {
         }
 
         setReceiptInputs((prev) => ({ ...prev, [index]: {} }));
-        setMessage("Depo teslim alma kaydedildi ve stok girişine işlendi.");
+        setMessage(`Depo teslim alma kaydedildi ve stok girişine işlendi.${await archiveReceiptDocument(user, receiptPayload)}`);
         await loadOrder();
         return;
       }
@@ -1596,7 +1769,7 @@ export default function OrderDetailPage() {
     }
 
     setReceiptInputs((prev) => ({ ...prev, [index]: {} }));
-    setMessage("Depo teslim alma kaydedildi ve stok girişine işlendi.");
+    setMessage(`Depo teslim alma kaydedildi ve stok girişine işlendi.${await archiveReceiptDocument(user, receiptPayload)}`);
     await loadOrder();
   }
 
@@ -2464,7 +2637,7 @@ export default function OrderDetailPage() {
     return `${String(order?.order_no || "siparis").replace(/[^a-zA-Z0-9_-]/g, "-")}-${suffix}.pdf`;
   }
 
-  async function createOrderDocumentPdf({ title, subtitle, fileSuffix, documentNo, columns, rows, totalLabel, totalValue }) {
+  async function createOrderDocumentPdf({ title, subtitle, fileSuffix, documentNo, columns, rows, totalLabel, totalValue, output }) {
     if (!order) return;
     const { companyName, taxNo } = await fetchCompanyBranding(supabase);
     const [{ jsPDF }, autoTableModule] = await Promise.all([import("jspdf"), import("jspdf-autotable")]);
@@ -2554,6 +2727,7 @@ export default function OrderDetailPage() {
     doc.setTextColor(100);
     doc.text(`${companyName} | ${CORVIAN_PRODUCT_NAME}`, 40, 570);
     doc.text("Bu çıktı Corvian ERP tarafından oluşturulmuştur.", 802, 570, { align: "right" });
+    if (output === "blob") return doc.output("blob");
     doc.save(orderOutputFileName(fileSuffix));
   }
 
@@ -2650,7 +2824,8 @@ export default function OrderDetailPage() {
   const currentStep = getCurrentStep(order.status);
   const hasReceiptDocument = documents.some(
     (document) => ["irsaliye", "depo_giris"].includes(document.document_type)
-      && document.approval_status !== "reddedildi",
+      && document.approval_status !== "reddedildi"
+      && !isGeneratedReceiptDocument(document),
   );
 
   return (
@@ -2859,6 +3034,8 @@ export default function OrderDetailPage() {
                   disabled={order.status === "İptal"}
                   onInputChange={updateReceiptInput}
                   onSave={saveReceipt}
+                  waybill={receiptWaybill}
+                  onWaybillChange={(field, value) => setReceiptWaybill((prev) => ({ ...prev, [field]: value }))}
                   hasReceiptDocument={hasReceiptDocument}
                   onAutomaticReceipt={() => {
                     if (hasReceiptDocument) {
@@ -4476,6 +4653,8 @@ function ReceivingPanel({
   disabled,
   onInputChange,
   onSave,
+  waybill,
+  onWaybillChange,
   hasReceiptDocument,
   onAutomaticReceipt,
 }) {
@@ -4521,6 +4700,34 @@ function ReceivingPanel({
             <div className="text-xs font-bold text-slate-500">İş Ortağı</div>
             <div className="mt-1 font-black text-slate-900">{order.partner_name || order.supplier_name || "-"}</div>
           </div>
+        </div>
+        <div className="mt-3 grid grid-cols-1 gap-3 rounded-lg bg-white p-3 md:grid-cols-[1fr_1fr_2fr] md:items-end">
+          <label className="block">
+            <span className="mb-1 block text-xs font-bold text-slate-500">İrsaliye no</span>
+            <input
+              value={waybill?.number || ""}
+              disabled={disabled}
+              onChange={(event) => onWaybillChange("number", event.target.value)}
+              className="w-full rounded-xl border border-slate-300 p-3 text-sm disabled:bg-slate-100"
+              placeholder="Tedarikçi irsaliye numarası"
+              data-testid="receipt-waybill-number"
+            />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs font-bold text-slate-500">İrsaliye tarihi</span>
+            <input
+              type="date"
+              value={waybill?.date || ""}
+              disabled={disabled}
+              onChange={(event) => onWaybillChange("date", event.target.value)}
+              className="w-full rounded-xl border border-slate-300 p-3 text-sm disabled:bg-slate-100"
+            />
+          </label>
+          <p className="text-xs text-slate-600">
+            Teslim aldığınızda belge otomatik oluşur ve siparişe, projeye bağlanır. İrsaliye
+            numarası yazarsanız aynı numarayla alınan kalemler tek irsaliye kaydında toplanır;
+            boş bırakırsanız o günün teslim fişi oluşur.
+          </p>
         </div>
       </div>
 
