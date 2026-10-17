@@ -22,7 +22,7 @@ import {
   parentProcessInfo,
 } from "@/lib/projectHierarchy";
 import { supabase } from "@/lib/supabase";
-import { storageContentType } from "@/lib/storageContentType";
+import { storageContentType, storageFile } from "@/lib/storageContentType";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { projectStockUsage } from "@/lib/stockCost";
 import { isCancelledOrder, projectProfitSummary } from "@/lib/projectFinance";
@@ -955,7 +955,7 @@ export default function ProjectDetailPage() {
         const storagePath = `${userId}/projects/${projectId}/${fileId}-${safeUploadName}`;
         const { error: uploadError } = await supabase.storage
           .from("order-documents")
-          .upload(storagePath, file, {
+          .upload(storagePath, storageFile(file), {
             cacheControl: "3600",
             contentType: storageContentType(file),
             upsert: false,

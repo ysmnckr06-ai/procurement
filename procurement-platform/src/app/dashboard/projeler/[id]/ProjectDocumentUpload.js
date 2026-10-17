@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { supabase } from "@/lib/supabase";
-import { storageContentType } from "@/lib/storageContentType";
+import { storageContentType, storageFile } from "@/lib/storageContentType";
 
 // Projeye her türlü belgeyi (fatura, irsaliye, çizim, teklif, sözleşme...)
 // ekler. Malzeme listesi gibi okunması gereken dosyalar için üstteki
@@ -76,7 +76,7 @@ export default function ProjectDocumentUpload({ projectId, onDone, onMessage }) 
         const storagePath = `${user.id}/projects/${projectId}/${fileId}-${safeName(file.name)}`;
         const { error: uploadError } = await supabase.storage
           .from("order-documents")
-          .upload(storagePath, file, { contentType: storageContentType(file), upsert: false });
+          .upload(storagePath, storageFile(file), { contentType: storageContentType(file), upsert: false });
         if (uploadError) {
           failed.push(`${file.name} (${uploadError.message})`);
           continue;
