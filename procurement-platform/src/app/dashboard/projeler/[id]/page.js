@@ -8143,8 +8143,8 @@ export default function ProjectDetailPage() {
                 <form onSubmit={savePayment} className="mt-5 space-y-3 rounded-xl border border-emerald-100 bg-emerald-50 p-3">
                   <div className="flex items-center justify-between gap-3"><h3 className="text-sm font-black text-emerald-950">{editingPaymentId ? "Ödeme Düzenle" : "Ödeme Ekle"}</h3>{editingPaymentId && <button type="button" onClick={cancelPaymentEdit} className="rounded-lg bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100">Vazgeç</button>}</div>
                   <input type="date" className="w-full rounded-xl border border-emerald-200 bg-white p-3 text-sm font-semibold" value={paymentForm.payment_date} onChange={(e) => updatePaymentForm("payment_date", e.target.value)} />
-                  <input type="number" className="w-full rounded-xl border border-emerald-200 bg-white p-3 text-sm font-semibold" placeholder="Ödeme tutarı" value={paymentForm.amount} onChange={(e) => updatePaymentForm("amount", e.target.value)} />
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><select className="rounded-xl border border-emerald-200 bg-white p-3 text-sm font-semibold" value={paymentForm.currency} onChange={(e) => { updatePaymentForm("currency", e.target.value); updatePaymentForm("exchange_rate", getExchangeRate(e.target.value, companySettings)); }}>{currencyOptions.map((currency) => <option key={currency}>{currency}</option>)}</select><input type="number" className="rounded-xl border border-emerald-200 bg-white p-3 text-sm font-semibold" placeholder="Kur" value={paymentForm.exchange_rate} onChange={(e) => updatePaymentForm("exchange_rate", e.target.value)} /></div>
+                  <input type="number" step="any" className="w-full rounded-xl border border-emerald-200 bg-white p-3 text-sm font-semibold" placeholder="Ödeme tutarı" value={paymentForm.amount} onChange={(e) => updatePaymentForm("amount", e.target.value)} />
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><select className="rounded-xl border border-emerald-200 bg-white p-3 text-sm font-semibold" value={paymentForm.currency} onChange={(e) => { updatePaymentForm("currency", e.target.value); updatePaymentForm("exchange_rate", getExchangeRate(e.target.value, companySettings)); }}>{currencyOptions.map((currency) => <option key={currency}>{currency}</option>)}</select><input type="number" step="any" className="rounded-xl border border-emerald-200 bg-white p-3 text-sm font-semibold" placeholder="Kur" value={paymentForm.exchange_rate} onChange={(e) => updatePaymentForm("exchange_rate", e.target.value)} /></div>
                   <select className="w-full rounded-xl border border-emerald-200 bg-white p-3 text-sm font-semibold" value={paymentForm.payment_type} onChange={(e) => updatePaymentForm("payment_type", e.target.value)}>{paymentTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select>
                   <textarea className="w-full rounded-xl border border-emerald-200 bg-white p-3 text-sm font-semibold" rows={3} placeholder="Açıklama" value={paymentForm.description} onChange={(e) => updatePaymentForm("description", e.target.value)} />
                   <button type="submit" className="w-full rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white hover:bg-emerald-700">{editingPaymentId ? "Değişiklikleri Kaydet" : "Ödemeyi Kaydet"}</button>
@@ -8696,13 +8696,13 @@ export default function ProjectDetailPage() {
                                     )}
                                   </div>
                                   <div className="grid grid-cols-2 gap-2 text-xs md:w-44">
-                                    <input type="number" disabled={!isEditing} className="rounded-lg border border-slate-200 p-2 disabled:bg-transparent" value={row.estimated_quantity || ""} onChange={(event) => updatePreviewRow(row.preview_id, "estimated_quantity", event.target.value)} />
+                                    <input type="number" step="any" disabled={!isEditing} className="rounded-lg border border-slate-200 p-2 disabled:bg-transparent" value={row.estimated_quantity || ""} onChange={(event) => updatePreviewRow(row.preview_id, "estimated_quantity", event.target.value)} />
                                     <input disabled={!isEditing} className="rounded-lg border border-slate-200 p-2 disabled:bg-transparent" value={row.unit || "adet"} onChange={(event) => updatePreviewRow(row.preview_id, "unit", event.target.value)} />
                                   </div>
                                   <div className="text-xs font-bold text-slate-700 md:w-32">
                                     {isEditing ? (
                                       <input
-                                        type="number"
+                                        type="number" step="any"
                                         className="mb-2 w-full rounded-lg border border-slate-200 p-2"
                                         value={row.estimated_unit_price || ""}
                                         onChange={(event) => updatePreviewRow(row.preview_id, "estimated_unit_price", event.target.value)}
@@ -9224,14 +9224,14 @@ export default function ProjectDetailPage() {
                       onChange={(event) => updateItemForm("unit", event.target.value)}
                     />
                     <input
-                      type="number"
+                      type="number" step="any"
                       className="rounded-xl border border-slate-300 p-3"
                       placeholder="Miktar"
                       value={itemForm.estimated_quantity}
                       onChange={(event) => updateItemForm("estimated_quantity", event.target.value)}
                     />
                     <input
-                      type="number"
+                      type="number" step="any"
                       className="rounded-xl border border-slate-300 p-3"
                       placeholder="Birim fiyat"
                       value={itemForm.estimated_unit_price}
@@ -9423,8 +9423,8 @@ export default function ProjectDetailPage() {
                             <ProductCodeInput products={products} value={itemForm.product_code} onChange={updateItemProductCode} className="w-full rounded-xl border border-slate-300 p-3" />
                             <input className="rounded-xl border border-slate-300 p-3" placeholder="Ürün adı" value={itemForm.product_name} onChange={(e) => updateItemForm("product_name", e.target.value)} />
                             <input className="rounded-xl border border-slate-300 p-3" placeholder="Birim" value={itemForm.unit} onChange={(e) => updateItemForm("unit", e.target.value)} />
-                            <input type="number" className="rounded-xl border border-slate-300 p-3" placeholder="Miktar" value={itemForm.estimated_quantity} onChange={(e) => updateItemForm("estimated_quantity", e.target.value)} />
-                            <input type="number" className="rounded-xl border border-slate-300 p-3" placeholder="Birim fiyat" value={itemForm.estimated_unit_price} onChange={(e) => updateItemForm("estimated_unit_price", e.target.value)} />
+                            <input type="number" step="any" className="rounded-xl border border-slate-300 p-3" placeholder="Miktar" value={itemForm.estimated_quantity} onChange={(e) => updateItemForm("estimated_quantity", e.target.value)} />
+                            <input type="number" step="any" className="rounded-xl border border-slate-300 p-3" placeholder="Birim fiyat" value={itemForm.estimated_unit_price} onChange={(e) => updateItemForm("estimated_unit_price", e.target.value)} />
                             <select className="rounded-xl border border-slate-300 p-3" value={itemForm.status} onChange={(e) => updateItemForm("status", e.target.value)}>
                               {componentItemStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
                             </select>
@@ -9569,7 +9569,7 @@ export default function ProjectDetailPage() {
               </div>
               <div className="mt-5 space-y-4">
                 <input type="date" className="w-full rounded-xl border border-slate-300 p-3" value={paymentForm.payment_date} onChange={(e) => updatePaymentForm("payment_date", e.target.value)} />
-                <input type="number" className="w-full rounded-xl border border-slate-300 p-3" placeholder="Ödeme tutarı" value={paymentForm.amount} onChange={(e) => updatePaymentForm("amount", e.target.value)} />
+                <input type="number" step="any" className="w-full rounded-xl border border-slate-300 p-3" placeholder="Ödeme tutarı" value={paymentForm.amount} onChange={(e) => updatePaymentForm("amount", e.target.value)} />
                 <select className="w-full rounded-xl border border-slate-300 p-3" value={paymentForm.currency} onChange={(e) => {
                   updatePaymentForm("currency", e.target.value);
                   updatePaymentForm("exchange_rate", getExchangeRate(e.target.value, companySettings));
@@ -9579,7 +9579,7 @@ export default function ProjectDetailPage() {
                 <div className="rounded-xl border border-blue-100 bg-blue-50 p-3 text-xs font-semibold text-blue-800">
                   Ödeme TL yapılacaksa para birimini TRY seçin; döviz ödeme yapılacaksa ilgili dövizi seçin. Kur alanı ödeme günündeki TL karşılığını ve kur farkı takibini hesaplamak için saklanır.
                 </div>
-                <input type="number" className="w-full rounded-xl border border-slate-300 p-3" placeholder="Kur" value={paymentForm.exchange_rate} onChange={(e) => updatePaymentForm("exchange_rate", e.target.value)} />
+                <input type="number" step="any" className="w-full rounded-xl border border-slate-300 p-3" placeholder="Kur" value={paymentForm.exchange_rate} onChange={(e) => updatePaymentForm("exchange_rate", e.target.value)} />
                 <select className="w-full rounded-xl border border-slate-300 p-3" value={paymentForm.payment_type} onChange={(e) => updatePaymentForm("payment_type", e.target.value)}>
                   {paymentTypes.map((type) => <option key={type} value={type}>{type}</option>)}
                 </select>

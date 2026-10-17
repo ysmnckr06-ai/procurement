@@ -1759,7 +1759,7 @@ export default function ProjectsPage() {
               </label>
               <label className="text-sm font-bold text-slate-700">
                 Sözleşme Bedeli
-                <input type="number" className="mt-2 w-full rounded-xl border border-slate-300 p-3" value={form.contract_amount} onChange={(e) => updateForm("contract_amount", e.target.value)} />
+                <input type="number" step="any" className="mt-2 w-full rounded-xl border border-slate-300 p-3" value={form.contract_amount} onChange={(e) => updateForm("contract_amount", e.target.value)} />
               </label>
               <label className="text-sm font-bold text-slate-700">
                 Sözleşme Para Birimi
@@ -1778,7 +1778,7 @@ export default function ProjectsPage() {
               ) : <div className="hidden md:block" />}
               <label className="text-sm font-bold text-slate-700">
                 Tahmini Bütçe / Maliyet
-                <input type="number" className="mt-2 w-full rounded-xl border border-slate-300 p-3" value={form.estimated_budget} onChange={(e) => updateForm("estimated_budget", e.target.value)} />
+                <input type="number" step="any" className="mt-2 w-full rounded-xl border border-slate-300 p-3" value={form.estimated_budget} onChange={(e) => updateForm("estimated_budget", e.target.value)} />
               </label>
               <label className="text-sm font-bold text-slate-700">
                 Bütçe Para Birimi
