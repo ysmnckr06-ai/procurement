@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createDocumentSignedUrl, downloadDocumentFile, isPdfDocument } from "@/lib/documentAccess";
 import { supabase } from "@/lib/supabase";
-import { storageContentType } from "@/lib/storageContentType";
+import { storageContentType, storageFile } from "@/lib/storageContentType";
 import AgreedRateField, { RATE_BASIS_LABELS } from "./AgreedRateField";
 import OpenNeedsDistributor from "@/components/OpenNeedsDistributor";
 import { fetchAllRows } from "@/lib/fetchAllRows";
@@ -2169,7 +2169,7 @@ export default function OrderDetailPage() {
     const storagePath = `${user.id}/${order.id}/${fileId}-${safeFileName}`;
     const { error: uploadError } = await supabase.storage
       .from("order-documents")
-      .upload(storagePath, file, {
+      .upload(storagePath, storageFile(file), {
         cacheControl: "3600",
         contentType: storageContentType(file),
         upsert: false,
