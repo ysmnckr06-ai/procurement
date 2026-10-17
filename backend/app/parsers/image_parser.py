@@ -28,35 +28,74 @@ def read_image_unicode(image_path):
     return cv2.imdecode(data, cv2.IMREAD_COLOR)
 
 
+def _tesseract(image, config):
+    try:
+        return pytesseract.image_to_string(image, lang="tur", config=config)
+    except Exception:
+        try:
+            return pytesseract.image_to_string(image, lang="eng", config=config)
+        except Exception:
+            return ""
+
+
+def _looks_complete(text_value):
+    """Belge metni yeterince okunduysa daha yavaş denemelere gerek yoktur."""
+    text_value = str(text_value or "")
+    digits = sum(ch.isdigit() for ch in text_value)
+    letters = sum(ch.isalpha() for ch in text_value)
+    return len(text_value) >= 400 and digits >= 30 and letters >= 150
+
+
+def remove_table_lines(gray):
+    """Tablo çizgilerini siler: GİB fatura/irsaliye tablolarında ızgara çizgileri
+    Tesseract'ın satırları okumasını engelliyor, çizgisiz görüntüde kalemler okunuyor."""
+    binary = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 25, 15)
+    horizontal = cv2.morphologyEx(
+        binary, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (max(40, gray.shape[1] // 30), 1))
+    )
+    vertical = cv2.morphologyEx(
+        binary, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(40, gray.shape[0] // 40)))
+    )
+    lines = cv2.dilate(cv2.bitwise_or(horizontal, vertical), np.ones((3, 3), np.uint8))
+    cleaned = gray.copy()
+    cleaned[lines > 0] = 255
+    return cleaned
+
+
 def ocr_image_text(img):
+    """Hızlıdan yavaşa sıralı OCR denemeleri; yeterli metin çıkınca durur.
+
+    Önceden görüntü 2 kat büyütülüp 6 deneme (3 ön işleme x psm 6/11) hep
+    birlikte çalışıyordu; taranmış A4 bir faturada psm 11 denemeleri tek başına
+    dakikalar sürüyor, küçük sunucuda istek zaman aşımına düşüyordu.
+    """
     if img is None:
         return ""
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if len(img.shape) == 3 else img
-    gray = cv2.resize(gray, None, fx=2, fy=2)
-    gray = cv2.GaussianBlur(gray, (3, 3), 0)
-    _, threshold = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    adaptive = cv2.adaptiveThreshold(
-        gray,
-        255,
-        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY,
-        31,
-        2,
-    )
-    candidates = []
+    # Yalnız küçük görüntüler büyütülür (telefon fotoğrafı, düşük çözünürlüklü tarama).
+    if gray.shape[1] < 1400:
+        gray = cv2.resize(gray, None, fx=1.6, fy=1.6, interpolation=cv2.INTER_CUBIC)
+    smooth = cv2.GaussianBlur(gray, (3, 3), 0)
+    _, threshold = cv2.threshold(smooth, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
-    for image in [gray, threshold, adaptive]:
-        for config in ["--psm 6", "--psm 11"]:
-            try:
-                text_value = pytesseract.image_to_string(image, lang="tur", config=config)
-            except Exception:
-                try:
-                    text_value = pytesseract.image_to_string(image, lang="eng", config=config)
-                except Exception:
-                    text_value = ""
-            if text_value.strip():
-                candidates.append(text_value.strip())
+    def adaptive():
+        return cv2.adaptiveThreshold(smooth, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 2)
+
+    attempts = [
+        (lambda: remove_table_lines(gray), "--psm 6"),
+        (lambda: gray, "--psm 6"),
+        (lambda: threshold, "--psm 6"),
+        (adaptive, "--psm 6"),
+        (lambda: threshold, "--psm 11"),
+    ]
+    candidates = []
+    for make_image, config in attempts:
+        text_value = _tesseract(make_image(), config).strip()
+        if text_value:
+            candidates.append(text_value)
+            if _looks_complete(text_value):
+                return text_value
 
     return max(candidates, key=len) if candidates else ""
 
@@ -152,8 +191,75 @@ def build_document_item(product_code, product_name, quantity, unit, unit_price, 
     }
 
 
+CURRENCY_TOKEN = r"(?:TRY|TL|USD|EUR|GBP|[$€£₺])"
+
+
+def split_code_and_name(description):
+    """'KNT-25 Kontaktör 25A' → ('KNT-25', 'Kontaktör 25A'). GİB belgelerinde kod
+    çoğunlukla 'Mal Hizmet' sütununda adın başında yazılır."""
+    text = clean_text(description)
+    first, _, rest = text.partition(" ")
+    looks_like_code = (
+        rest
+        and 2 <= len(first) <= 30
+        and re.fullmatch(r"[A-Z0-9][A-Z0-9._/-]*", first)
+        and (any(ch.isdigit() for ch in first) or any(ch in "._/-" for ch in first))
+    )
+    return (first, rest.strip()) if looks_like_code else (None, text)
+
+
+def extract_gib_document_items(ocr_text):
+    """GİB e-Fatura / e-Arşiv / e-İrsaliye satırları:
+    '1 KNT-25 Kontaktör 25A 12 Adet 845,50 TL %0,00 %20,00 2.029,20 TL 10.146,00 TL'
+    '1 KNT-25 Kontaktör 25A 12 Adet'  (irsaliye: fiyat yok)
+    Satır başındaki sıra numarası zorunludur; yanlış eşleşmeyi önler."""
+    unit_pattern = "|".join(sorted(DOCUMENT_ITEM_UNITS, key=len, reverse=True))
+    number = r"\d[\d.,]*"
+    priced = re.compile(
+        rf"^(?:(?P<seq>\d{{1,3}})|[A-Za-zİıI|!]{{1,2}})\s+(?P<desc>.+?)\s+(?P<qty>{number})\s*(?P<unit>{unit_pattern})(?=\s|$)\s+"
+        rf"(?P<price>{number})\s*{CURRENCY_TOKEN}?(?P<rest>.*)$",
+        re.IGNORECASE,
+    )
+    delivery = re.compile(
+        rf"^(?:(?P<seq>\d{{1,3}})|[A-Za-zİıI|!]{{1,2}})\s+(?P<desc>.+?)\s+(?P<qty>{number})\s*(?P<unit>{unit_pattern})\s*$",
+        re.IGNORECASE,
+    )
+    items = []
+    seen = set()
+    for raw_line in str(ocr_text or "").splitlines():
+        line = clean_text(raw_line.replace("|", " "))
+        if not line:
+            continue
+        # PDF metni aynı satırı hem sayfa metninde hem tablo satırında verir;
+        # sıra numarası aynı olan satır ikinci kez sayılmaz.
+        seq = re.match(r"^(\d{1,3})\s", line)
+        if seq and seq.group(1) in seen:
+            continue
+        match = priced.match(line)
+        if match:
+            rest = re.sub(r"%\s*\d[\d.,]*", " ", match.group("rest"))
+            amounts = re.findall(rf"({number})\s*{CURRENCY_TOKEN}?", rest)
+            total = amounts[-1] if amounts else None
+            code, name = split_code_and_name(match.group("desc"))
+            item = build_document_item(code, name, match.group("qty"), match.group("unit"), match.group("price"), total, 88 if code else 80)
+        else:
+            match = delivery.match(line)
+            if not match:
+                continue
+            code, name = split_code_and_name(match.group("desc"))
+            item = build_document_item(code, name, match.group("qty"), match.group("unit"), "0", "0", 85 if code else 78)
+        if item:
+            items.append(item)
+            if match.group("seq"):
+                seen.add(match.group("seq"))
+    return items
+
+
 def extract_document_items_from_text(ocr_text):
     """Best-effort invoice/delivery-note row extraction from plain OCR text."""
+    gib_items = extract_gib_document_items(ocr_text)
+    if gib_items:
+        return gib_items
     items = []
     unit_pattern = "|".join(sorted(DOCUMENT_ITEM_UNITS, key=len, reverse=True))
     number_pattern = r"[-+]?\d[\d.,]*"

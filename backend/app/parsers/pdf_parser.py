@@ -11,6 +11,7 @@ import numpy as np
 from app.parsers.image_parser import (
     build_document_item,
     extract_document_items_from_text,
+    split_code_and_name,
     normalize_document_item_unit,
     ocr_image_text,
 )
@@ -108,13 +109,15 @@ def _normalized_header(value):
 
 def extract_document_items_from_tables(tables):
     aliases = {
-        "product_code": ("urun_kodu", "malzeme_kodu", "stok_kodu", "kod", "code"),
-        "product_name": ("urun_adi", "malzeme_adi", "aciklama", "description"),
+        "product_code": ("urun_kodu", "malzeme_kodu", "stok_kodu", "mal_hizmet_kodu", "kod", "code"),
+        "product_name": ("urun_adi", "malzeme_adi", "mal_hizmet", "mal_hizmet_adi", "urun_hizmet", "aciklama", "description"),
         "quantity": ("miktar", "adet", "quantity", "qty"),
         "unit": ("birim", "unit"),
-        "unit_price": ("birim_fiyat", "fiyat", "unit_price"),
-        "total": ("satir_toplami", "tutar", "toplam", "total"),
+        "unit_price": ("birim_fiyat", "birim_fiyati", "fiyat", "unit_price"),
+        "total": ("mal_hizmet_tutari", "satir_toplami", "satir_tutari", "tutar", "toplam", "total"),
     }
+    # KDV ve iskonto sütunları satır tutarı / birim fiyat sanılmamalı.
+    excluded_partial = ("kdv", "iskonto", "vergi", "oran")
     items = []
 
     for table in tables or []:
@@ -123,36 +126,56 @@ def extract_document_items_from_tables(tables):
             continue
         headers = [_normalized_header(cell) for cell in rows[0]]
         mapping = {}
-        for field, names in aliases.items():
+        used = set()
+        # Birim sütunu yalnız tam adıyla eşleşir: "Birim Fiyat" birim sanılmasın.
+        for field in ("product_code", "product_name", "quantity", "unit_price", "total", "unit"):
+            names = aliases[field]
             exact_index = next(
-                (index for index, header in enumerate(headers) if header in names), None
+                (index for index, header in enumerate(headers) if header in names and index not in used), None
             )
             if exact_index is not None:
                 mapping[field] = exact_index
+                used.add(exact_index)
+                continue
+            if field == "unit":
                 continue
             partial_index = next(
                 (
                     index
                     for index, header in enumerate(headers)
-                    if any(len(name) > 3 and name in header for name in names)
+                    if index not in used
+                    and not any(word in header for word in excluded_partial)
+                    and any(len(name) > 3 and name in header for name in names)
                 ),
                 None,
             )
             if partial_index is not None:
                 mapping[field] = partial_index
-        required = {"product_name", "quantity", "unit", "unit_price", "total"}
-        if not required.issubset(mapping):
+                used.add(partial_index)
+        if not {"product_name", "quantity"}.issubset(mapping):
             continue
+        has_prices = "unit_price" in mapping or "total" in mapping
 
         for row in rows[1:]:
             def cell(field):
                 index = mapping.get(field)
                 return row[index] if index is not None and index < len(row) else None
 
-            confidence = 95 if normalize_document_item_unit(cell("unit")) else 70
+            quantity_cell = clean_text(cell("quantity"))
+            unit_cell = cell("unit")
+            # GİB biçimi: miktar ve birim aynı hücrede ("12 Adet").
+            combined = re.match(r"^(\d[\d.,]*)\s*([^\d\s].*)$", quantity_cell)
+            if combined and not unit_cell:
+                quantity_cell, unit_cell = combined.group(1), combined.group(2)
+            code, name = cell("product_code"), cell("product_name")
+            if not clean_text(code):
+                code, name = split_code_and_name(name)
+            confidence = 95 if normalize_document_item_unit(unit_cell) else 70
             item = build_document_item(
-                cell("product_code"), cell("product_name"), cell("quantity"),
-                cell("unit"), cell("unit_price"), cell("total"), confidence,
+                code, name, quantity_cell, unit_cell,
+                cell("unit_price") if has_prices else "0",
+                cell("total") if has_prices else "0",
+                confidence,
             )
             if item:
                 items.append(item)
