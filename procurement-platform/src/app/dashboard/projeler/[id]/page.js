@@ -22,6 +22,7 @@ import {
   parentProcessInfo,
 } from "@/lib/projectHierarchy";
 import { supabase } from "@/lib/supabase";
+import { storageContentType } from "@/lib/storageContentType";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { projectStockUsage } from "@/lib/stockCost";
 import { isCancelledOrder, projectProfitSummary } from "@/lib/projectFinance";
@@ -956,7 +957,7 @@ export default function ProjectDetailPage() {
           .from("order-documents")
           .upload(storagePath, file, {
             cacheControl: "3600",
-            contentType: file.type || undefined,
+            contentType: storageContentType(file),
             upsert: false,
           });
 

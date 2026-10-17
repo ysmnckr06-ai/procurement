@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createDocumentSignedUrl, downloadDocumentFile, isPdfDocument } from "@/lib/documentAccess";
 import { supabase } from "@/lib/supabase";
+import { storageContentType } from "@/lib/storageContentType";
 import AgreedRateField, { RATE_BASIS_LABELS } from "./AgreedRateField";
 import OpenNeedsDistributor from "@/components/OpenNeedsDistributor";
 import { fetchAllRows } from "@/lib/fetchAllRows";
@@ -2170,7 +2171,7 @@ export default function OrderDetailPage() {
       .from("order-documents")
       .upload(storagePath, file, {
         cacheControl: "3600",
-        contentType: file.type || undefined,
+        contentType: storageContentType(file),
         upsert: false,
       });
 
