@@ -463,6 +463,18 @@ def link_document_to_project(document_id: str, project_id: str, user_id: str) ->
     dönmese de projenin Belgeler sekmesinde görünür."""
     if not document_id or not project_id:
         return False
+    # Sunucu yetkili anahtarla yazdığı için proje sahipliği burada doğrulanır:
+    # istemcinin gönderdiği project_id başka bir firmaya ait olabilir.
+    owned = (
+        supabase.table("projects")
+        .select("id")
+        .eq("id", project_id)
+        .eq("user_id", user_id)
+        .limit(1)
+        .execute()
+    )
+    if not owned.data:
+        return False
     existing = (
         supabase.table("document_links")
         .select("id")
