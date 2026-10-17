@@ -1461,7 +1461,7 @@ function ProjectOrderLinkPanel({
                             <td className="p-3 font-bold text-slate-700">{row.stockQuantity || 0}</td>
                             <td className="p-3">
                               <input
-                                type="number"
+                                type="number" step="any"
                                 min="0"
                                 value={quantityValue}
                                 onChange={(event) => onQuantityChange(row.id, event.target.value)}
@@ -1749,7 +1749,7 @@ function OrderForm({
                   </td>
                   <td className="p-3">
                     <input
-                      type="number"
+                      type="number" step="any"
                       value={item.quantity}
                       onFocus={() => {
                         if (Number(item.quantity || 0) === 0) {
@@ -1765,7 +1765,7 @@ function OrderForm({
                   <td className="p-3">
                     <div className="flex items-center gap-2">
                       <input
-                        type="number"
+                        type="number" step="any"
                         min="0"
                         max={item.quantity}
                         value={item.deliveredQuantity}
@@ -1808,7 +1808,7 @@ function OrderForm({
                   <td className="p-3">
                     <div>
                       <input
-                        type="number"
+                        type="number" step="any"
                         value={item.unitPrice}
                         onFocus={() => {
                           if (Number(item.unitPrice || 0) === 0) {
@@ -1827,7 +1827,7 @@ function OrderForm({
                   </td>
                   <td className="p-3">
                     <input
-                      type="number"
+                      type="number" step="any"
                       value={item.discount}
                       onFocus={() => {
                         if (Number(item.discount || 0) === 0) {

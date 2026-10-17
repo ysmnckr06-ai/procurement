@@ -4940,7 +4940,7 @@ function NumberInput({ label, value, disabled, onChange }) {
     <label className="block">
       <span className="mb-1 block text-xs font-bold text-slate-500">{label}</span>
       <input
-        type="number"
+        type="number" step="any"
         min="0"
         value={value}
         disabled={disabled}
@@ -4960,7 +4960,7 @@ function PaymentPanel({ order, payments, totals, form, onFormChange, onSave }) {
           <label className="block">
             <span className="mb-1 block text-xs font-bold text-slate-500">Ödeme tutarı</span>
             <input
-              type="number"
+              type="number" step="any"
               min="0"
               value={form.amount}
               onChange={(event) => onFormChange((prev) => ({ ...prev, amount: event.target.value }))}
@@ -4991,7 +4991,7 @@ function PaymentPanel({ order, payments, totals, form, onFormChange, onSave }) {
             <label className="block">
               <span className="mb-1 block text-xs font-bold text-slate-500">Kur</span>
               <input
-                type="number"
+                type="number" step="any"
                 min="0"
                 value={form.exchange_rate}
                 onChange={(event) => onFormChange((prev) => ({ ...prev, exchange_rate: event.target.value }))}

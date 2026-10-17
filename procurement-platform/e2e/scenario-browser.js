@@ -411,7 +411,7 @@
         paymentCount === 1 && paidOrder?.payment_status === "Kısmi ödendi"
           && Math.abs(Number(paidOrder.paid_amount) - payAmount) < 0.01
           && Math.abs(Number(paidOrder.remaining_amount) - (Number(paidOrder.total_amount) - payAmount)) < 0.01,
-        `${paymentCount} ödeme · ${paidOrder?.payment_status} · ödenen ${paidOrder?.paid_amount} · kalan ${paidOrder?.remaining_amount}`);
+        `${paymentCount} ödeme · ${paidOrder?.payment_status} · ödenen ${paidOrder?.paid_amount} · kalan ${paidOrder?.remaining_amount} · ekran: ${statusText().slice(0, 80)}`);
     } else {
       check("Sipariş ödeme formu görünüyor", false);
     }

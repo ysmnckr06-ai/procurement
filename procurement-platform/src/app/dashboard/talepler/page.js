@@ -1957,7 +1957,7 @@ export default function TaleplerPage() {
                     />
                     <input value={line.brand} onChange={(e) => updateManualLine(index, "brand", e.target.value)} placeholder="Marka" className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
                     <input value={line.productName} onChange={(e) => updateManualLine(index, "productName", e.target.value)} placeholder="Ürün / hizmet açıklaması" className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
-                    <input type="number" min="0" value={line.quantity} onChange={(e) => updateManualLine(index, "quantity", e.target.value)} placeholder="Miktar" className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                    <input type="number" step="any" min="0" value={line.quantity} onChange={(e) => updateManualLine(index, "quantity", e.target.value)} placeholder="Miktar" className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
                     <input value={line.unit} onChange={(e) => updateManualLine(index, "unit", e.target.value)} placeholder="Birim" className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
                     <button type="button" onClick={() => removeManualLine(index)} disabled={manualRequest.lines.length === 1} className="rounded-lg px-3 py-2 text-xs font-bold text-red-600 hover:bg-red-50 disabled:text-slate-300" aria-label="Kalemi sil">Sil</button>
                   </div>

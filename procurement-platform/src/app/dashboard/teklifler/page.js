@@ -861,7 +861,7 @@ const loadSupplierProfiles = async () => {
                     Maksimum Bütçe
                   </label>
                   <input
-                    type="number"
+                    type="number" step="any"
                     placeholder="Örn: 50000"
                     value={maxBudget}
                     onChange={(e) => setMaxBudget(e.target.value)}
@@ -874,7 +874,7 @@ const loadSupplierProfiles = async () => {
                     Minimum Vade
                   </label>
                   <input
-                    type="number"
+                    type="number" step="any"
                     placeholder="Örn: 60 gün"
                     value={minVadeDays}
                     onChange={(e) => setMinVadeDays(e.target.value)}
@@ -887,7 +887,7 @@ const loadSupplierProfiles = async () => {
                     Maksimum Termin
                   </label>
                   <input
-                    type="number"
+                    type="number" step="any"
                     placeholder="Örn: 6 gün"
                     value={maxTerminDays}
                     onChange={(e) => setMaxTerminDays(e.target.value)}
