@@ -70,6 +70,24 @@ function formatDateTime(value) {
   }).format(date);
 }
 
+// Ödeme sipariş para birimine çevrilir: 1.000 EUR'luk siparişe TL ile yapılan
+// ödeme, TL tutarı olduğu gibi EUR'ya eklenmesin.
+function orderBaseRate(order) {
+  const total = Number(order?.total_amount || 0);
+  const base = Number(order?.order_total_base || order?.base_amount || 0);
+  if (total > 0 && base > 0) return base / total;
+  return Number(order?.exchange_rate || 1) || 1;
+}
+
+function paymentInOrderCurrency(payment, order) {
+  const orderCurrency = String(order?.currency || "TRY").toUpperCase();
+  const paymentCurrency = String(payment?.currency || orderCurrency).toUpperCase();
+  const amount = Number(payment?.amount || 0);
+  if (paymentCurrency === orderCurrency) return amount;
+  const baseAmount = Number(payment?.base_amount || 0);
+  return baseAmount > 0 ? baseAmount / orderBaseRate(order) : amount;
+}
+
 async function fileSha256(file) {
   const bytes = await file.arrayBuffer();
   const digest = await crypto.subtle.digest("SHA-256", bytes);
@@ -1104,7 +1122,7 @@ export default function OrderDetailPage() {
   }, [items]);
   const paymentTotals = useMemo(() => {
     const paidAmount =
-      payments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0) ||
+      payments.reduce((sum, payment) => sum + paymentInOrderCurrency(payment, order), 0) ||
       Number(order?.paid_amount || 0);
     const orderTotal = Number(order?.total_amount || 0);
 
@@ -2078,7 +2096,12 @@ export default function OrderDetailPage() {
       return;
     }
 
-    const nextPaidAmount = paymentTotals.paidAmount + amount;
+    const nextPaidAmount = paymentTotals.paidAmount + paymentInOrderCurrency({
+      amount,
+      currency: paymentForm.currency || order.currency || baseCurrency,
+      base_amount: baseAmount,
+    }, order);
+    const overpaid = nextPaidAmount - Number(order.total_amount || 0);
     const nextPaymentStatus =
       nextPaidAmount >= Number(order.total_amount || 0) && Number(order.total_amount || 0) > 0
         ? "Ödendi"
@@ -2099,7 +2122,9 @@ export default function OrderDetailPage() {
       .eq("user_id", user.id);
 
     setPaymentForm({ amount: "", currency: order.currency || "TRY", exchange_rate: Number(order.exchange_rate || 1), payment_date: getToday(), description: "" });
-    setMessage("Sipariş ödemesi kaydedildi.");
+    setMessage(overpaid > 0.01
+      ? `Sipariş ödemesi kaydedildi. Dikkat: toplam ödeme sipariş tutarını ${formatMoney(overpaid, order.currency || "TRY")} aşıyor.`
+      : "Sipariş ödemesi kaydedildi.");
     await loadOrder();
   }
 
