@@ -124,13 +124,13 @@
     }
 
     // 3) İki proje: A (TRY, malzeme listesi), B (iptal edilecek)
+    const bomRow = (i) => {
+      const e = expectedStock[code(i)];
+      return [code(i), "TestMarka", `${tag} Malzeme ${i}`, e.qty > 0 ? e.qty + 4 : 3, "adet", e.price, e.currency];
+    };
     const bom = (from, to, extra = []) => [
       ["Ürün Kodu", "Marka", "Ürün Açıklaması", "Miktar", "Birim", "Birim Fiyat", "Para Birimi"],
-      ...Array.from({ length: to - from + 1 }, (_, k) => {
-        const i = from + k;
-        const e = expectedStock[code(i)];
-        return [code(i), "TestMarka", `${tag} Malzeme ${i}`, e.qty > 0 ? e.qty + 4 : 3, "adet", e.price, e.currency];
-      }),
+      ...Array.from({ length: to - from + 1 }, (_, k) => bomRow(from + k)),
       ...extra,
     ];
     async function createProject(name, rows) {
@@ -152,7 +152,8 @@
       return location.pathname.split("/").pop();
     }
     const projectA = await createProject(`${tag} Proje A`, bom(1, 12));
-    const projectB = await createProject(`${tag} Proje B`, bom(13, 18));
+    const sharedCode = code(7);
+    const projectB = await createProject(`${tag} Proje B`, bom(13, 18, [bomRow(7)]));
     const itemsOf = async (id) => (await S().from("project_items").select("*").eq("project_id", id)).data || [];
     const itemsA = await itemsOf(projectA);
     check("Proje A malzeme listesi 12 kalem", itemsA.length === 12, itemsA.length);
@@ -185,6 +186,82 @@
     }
     const bad1 = await invariant();
     check("Kart rezervi = projelerdeki rezerve toplamı", bad1.length === 0, bad1.join(", "));
+
+    // 4b) Projeler arası ödünç: A depodaki malzemeyi B'ye verir, B geri verir.
+    const sharedItem = async (projectId) => (await itemsOf(projectId)).find((i) => i.product_code === sharedCode);
+    const beforeA = await sharedItem(projectA);
+    const beforeB = await sharedItem(projectB);
+    const lendQty = Math.min(2, Number(beforeA?.reserved_quantity || 0));
+    if (lendQty > 0 && beforeB) {
+      await go(`/dashboard/projeler/${projectA}`, () => findButton("İhtiyaç Analizi", { exact: true }));
+      await click("İhtiyaç Analizi", { exact: true, after: 2500 });
+      const moveRow = await waitFor(() => [...main().querySelectorAll("div")].find((d) =>
+        d.querySelector(":scope > div > div.truncate")?.innerText === `${tag} Malzeme 7` && findButton("Başka projeye ver", { root: d })), { timeout: 20000 });
+      if (moveRow) {
+        findButton("Başka projeye ver", { root: moveRow }).click();
+        await sleep(600);
+        const panel = [...main().querySelectorAll("div")].reverse().find((d) => /^Başka projeye ver:/.test(text(d).split("\n")[0] || "") && d.querySelector("input[type=number]"));
+        setValue(panel.querySelector("input[type=number]"), lendQty);
+        await sleep(300);
+        [...panel.querySelectorAll("button")].find((b) => text(b) === "Onayla").click();
+        await waitFor(() => /ödünç kaydı açıldı|yapılamadı/.test(statusText()), { timeout: 30000 });
+        const lentA = await sharedItem(projectA);
+        const lentB = await sharedItem(projectB);
+        check("Ödünç: veren projenin rezervi azaldı, alanınki arttı",
+          Number(beforeA.reserved_quantity) - Number(lentA.reserved_quantity) === lendQty
+            && Number(lentB.reserved_quantity) - Number(beforeB.reserved_quantity || 0) === lendQty,
+          `A ${beforeA.reserved_quantity}→${lentA.reserved_quantity}, B ${beforeB.reserved_quantity || 0}→${lentB.reserved_quantity}`);
+        const badLend = await invariant();
+        check("Ödünç sonrası kart rezervi tutarlı", badLend.length === 0, badLend.join(", "));
+
+        await go(`/dashboard/projeler/${projectB}`, () => findButton("İhtiyaç Analizi", { exact: true }));
+        await click("İhtiyaç Analizi", { exact: true, after: 2500 });
+        await click("Geri ver", { exact: true, after: 600 });
+        const backPanel = [...main().querySelectorAll("div")].reverse().find((d) => /^Ödüncü geri ver/.test(text(d)) && d.querySelector("input[type=number]"));
+        [...backPanel.querySelectorAll("button")].find((b) => text(b) === "Onayla").click();
+        await waitFor(() => /geri verildi|yapılamadı/.test(statusText()), { timeout: 30000 });
+        const backA = await sharedItem(projectA);
+        const backB = await sharedItem(projectB);
+        const { data: transfers } = await S().from("project_item_transfers").select("status").eq("from_item_id", beforeA.id);
+        check("Ödünç geri verildi, miktarlar ilk hâline döndü",
+          Number(backA.reserved_quantity) === Number(beforeA.reserved_quantity)
+            && Number(backB.reserved_quantity || 0) === Number(beforeB.reserved_quantity || 0)
+            && (transfers || []).length > 0 && transfers.every((t) => t.status !== "açık"),
+          `A ${backA.reserved_quantity}, B ${backB.reserved_quantity || 0}, kayıt ${(transfers || []).map((t) => t.status).join(",")}`);
+      } else {
+        check("Ödünç: 'Başka projeye ver' satırı görünüyor", false, sharedCode);
+      }
+    } else {
+      check("Ödünç senaryosu kuruldu (ortak kalem rezerve)", false, `A rezerv ${beforeA?.reserved_quantity}, B kalem ${Boolean(beforeB)}`);
+    }
+
+    // 4c) Projeye belge (çizim) ekleme
+    await go(`/dashboard/projeler/${projectA}`, () => findButton("Belgeler", { exact: true }));
+    await click("Belgeler", { exact: true, after: 2000 });
+    const uploadLabel = await waitFor(() => [...main().querySelectorAll("label")].find((l) => text(l).startsWith("Belge Seç")));
+    if (uploadLabel) {
+      const typeSelect = [...main().querySelectorAll("select")].find((x) => x.getAttribute("aria-label") === "Belge türü");
+      setValue(typeSelect, "cizim");
+      await sleep(300);
+      const drawing = new File([`${tag} çizim ${Date.now()}`], `${tag}-cizim.txt`, { type: "text/plain" });
+      attachFiles(uploadLabel.querySelector("input[type=file]"), [drawing]);
+      await waitFor(() => /belge projeye eklendi/.test(statusText()), { timeout: 30000 });
+      const { data: drawingDocs } = await S().from("documents").select("id,document_type").eq("original_file_name", drawing.name);
+      const drawingLinks = drawingDocs?.length
+        ? (await S().from("document_links").select("id").eq("document_id", drawingDocs[0].id).eq("project_id", projectA)).data || []
+        : [];
+      check("Projeye çizim belgesi eklendi ve bağlandı", drawingDocs?.[0]?.document_type === "cizim" && drawingLinks.length === 1, statusText().slice(0, 120));
+    } else {
+      check("Proje belge ekleme alanı görünüyor", false);
+    }
+
+    // 4d) Geçmiş tarihli kur (belgedeki kur sorusu bu servisi kullanır)
+    try {
+      const rates = await (await fetch("/api/live-rates?date=2026-10-01", { cache: "no-store" })).json();
+      check("1 Ekim 2026 TCMB kuru alınabiliyor", Number(rates?.rates?.EUR) > 1 && String(rates?.date || "").startsWith("2026-"), `EUR ${rates?.rates?.EUR} (${rates?.date})`);
+    } catch (rateError) {
+      check("1 Ekim 2026 TCMB kuru alınabiliyor", false, rateError.message);
+    }
 
     // 5) Talep (A)
     await go(`/dashboard/projeler/${projectA}`, () => findButton("İhtiyaç Analizi", { exact: true }));
@@ -221,6 +298,17 @@
     await click("Teklifleri Analiz Et");
     const reportOpened = await waitFor(() => /\/raporlar\/.+\/mukayese/.test(location.pathname), { timeout: 150000, step: 1000 });
     check("Mukayese raporu oluştu", reportOpened);
+    if (reportOpened) {
+      // Teklif belgesi sipariş oluşmasa da projenin belgelerine bağlanır.
+      const reportId = location.pathname.split("/")[3];
+      const offerLinked = await waitFor(async () => {
+        const { data: offerDocs } = await S().from("documents").select("id").eq("document_number", `MUK-${reportId}`);
+        if (!offerDocs?.length) return null;
+        const { data: links } = await S().from("document_links").select("id").in("document_id", offerDocs.map((d) => d.id)).eq("project_id", projectA);
+        return (links || []).length > 0;
+      }, { timeout: 20000, step: 2000 });
+      check("Teklif belgesi projeye bağlandı", offerLinked, `MUK-${reportId}`);
+    }
     await sleep(3000);
     const groups = {};
     document.querySelectorAll("main input[type=radio]").forEach((x) => { (groups[x.name] = groups[x.name] || []).push(x); });
@@ -261,6 +349,10 @@
     const lineIndex = order.items.indexOf(line);
     await go(`/dashboard/siparisler/${order.id}`, () => findButton("Teslim Alma", { exact: true }));
     await click("Teslim Alma", { exact: true, after: 1500 });
+    const waybillNo = `${tag}-IRS1`;
+    const waybillInput = await waitFor(() => main().querySelector("[data-testid=receipt-waybill-number]"));
+    if (waybillInput) setValue(waybillInput, waybillNo);
+    await sleep(300);
     async function receive(quantity, note) {
       const button = [...main().querySelectorAll("button")].filter((b) => text(b) === "Teslim Al")[lineIndex];
       const card = button.closest("div.rounded-2xl") || button.parentElement.parentElement.parentElement;
@@ -286,6 +378,20 @@
     check("Aynı gün iki eşit sevkiyatın ikisi de stoğa girdi", Number(stockAfter.current_stock) - Number(stockBefore.current_stock) === half * 2, `${stockBefore.current_stock} → ${stockAfter.current_stock}`);
     check("Gelen malzeme projeye rezerve edildi", Number(stockAfter.reserved_stock) - Number(stockBefore.reserved_stock) === half * 2, `${stockBefore.reserved_stock} → ${stockAfter.reserved_stock}`);
 
+    // 7b) Teslim almada irsaliye belgesi: iki sevkiyat aynı irsaliyede → tek belge,
+    // siparişe ve projeye bağlı.
+    const waybillDocs = await waitFor(async () => {
+      const { data } = await S().from("documents").select("id,document_type,storage_path").eq("document_number", waybillNo);
+      return data?.length ? data : null;
+    }, { timeout: 20000, step: 2000 });
+    const waybillLinks = waybillDocs?.length === 1
+      ? (await S().from("document_links").select("order_id,project_id").eq("document_id", waybillDocs[0].id)).data || []
+      : [];
+    check("Teslim almada irsaliye belgesi oluştu (tek belge)", waybillInput && waybillDocs?.length === 1 && waybillDocs[0].document_type === "irsaliye", `${waybillDocs?.length || 0} belge`);
+    check("İrsaliye siparişe ve projeye bağlandı",
+      waybillLinks.some((l) => l.order_id === order.id) && waybillLinks.some((l) => l.project_id === projectA),
+      waybillLinks.map((l) => (l.order_id ? "sipariş" : "proje")).join(","));
+
     // 8) Proje B iptal → rezerve stoğa döner
     await go("/dashboard/projeler", () => [...main().querySelectorAll("tr")].some((row) => row.innerText.includes(`${tag} Proje B`)));
     const rowB = [...main().querySelectorAll("tr")].find((row) => row.innerText.includes(`${tag} Proje B`));
@@ -300,12 +406,21 @@
     const bad2 = await invariant();
     check("İptal sonrası kart rezervleri tutarlı", bad2.length === 0, bad2.join(", "));
 
-    // 9) Finans: iptal proje alacakta yok, A projesinde stok maliyeti düşülüyor
+    // 9) Finans: iptal proje alacakta yok, A projesinde stok maliyeti düşülüyor;
+    // proje detayındaki kâr ile Finans raporundaki kâr aynı.
+    await go(`/dashboard/projeler/${projectA}`, () => findButton("Finans Özeti", { exact: true }));
+    await click("Finans Özeti", { exact: true, after: 2500 });
+    const projectProfitEl = await waitFor(() => main().querySelector("[data-testid=project-profit]"), { timeout: 20000 });
+    const projectProfit = Number(projectProfitEl?.dataset.value);
     await go("/dashboard/finans", () => /Proje Bazlı Kâr/.test(main().innerText));
     await waitFor(() => main().innerText.includes(`${tag} Proje A`), { timeout: 20000 });
     check("Finans tablosunda iptal proje yok", !main().innerText.includes(`${tag} Proje B`));
     const rowA = [...main().querySelectorAll("tr")].find((row) => row.innerText.includes(`${tag} Proje A`));
     check("Finans tablosunda stok/gider maliyeti gösteriliyor", rowA && rowA.querySelectorAll("td").length >= 8);
+    const financeProfit = Number(main().querySelector(`[data-testid=finance-project-profit][data-project-id="${projectA}"]`)?.dataset.value);
+    check("Proje detayı ve Finans raporu aynı kâr/zararı gösteriyor",
+      Number.isFinite(projectProfit) && Number.isFinite(financeProfit) && Math.abs(projectProfit - financeProfit) < 0.05,
+      `proje ${projectProfit} · finans ${financeProfit}`);
 
     // 10) Temizlik: robotun proje A'sı da iptal edilir; rezervi depoya döner,
     // test hesabının finans ve proje ekranlarını kirletmez.
