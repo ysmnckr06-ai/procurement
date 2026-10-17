@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import { storageContentType } from "@/lib/storageContentType";
+import { storageContentType, storageFile } from "@/lib/storageContentType";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import {
   duplicateTaxNumberMessage,
@@ -776,7 +776,7 @@ export default function ProjectsPage() {
         const storagePath = `${userId}/projects/${projectId}/${fileId}-${safeFileName}`;
         const { error: uploadError } = await supabase.storage
           .from("order-documents")
-          .upload(storagePath, file, {
+          .upload(storagePath, storageFile(file), {
             cacheControl: "3600",
             contentType: storageContentType(file),
             upsert: false,

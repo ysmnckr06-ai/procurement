@@ -17,3 +17,12 @@ const STORAGE_MIME_TYPES = new Set([
 export function storageContentType(file) {
   return STORAGE_MIME_TYPES.has(file.type) ? file.type : "application/octet-stream";
 }
+
+// Supabase istemcisi File/Blob yüklerken türü dosyanın kendisinden okur, verilen
+// contentType seçeneğine bakmaz. Bu yüzden desteklenmeyen türdeki dosya aynı
+// içerik ve adla, kabul edilen türde yeniden sarılır.
+export function storageFile(file) {
+  const type = storageContentType(file);
+  if (file.type === type) return file;
+  return new File([file], file.name || "belge", { type, lastModified: file.lastModified });
+}
