@@ -70,6 +70,11 @@ try {
   }
 } catch (error) {
   console.error("Senaryo yarıda kaldı:", error);
+  const partial = await page.evaluate(() => window.CorvianE2E?.lastChecks || []).catch(() => []);
+  for (const check of partial) {
+    const line = `${check.name}${check.detail ? ` — ${check.detail}` : ""}`.replace(/\r?\n/g, " ");
+    console.log(process.env.GITHUB_ACTIONS ? `${check.ok ? "::notice title=Geçti::" : "::error title=Başarısız::"}${line}` : `${check.ok ? "✓" : "✗"} ${line}`);
+  }
   if (process.env.GITHUB_ACTIONS) console.log(`::error title=Senaryo yarıda kaldı::${String(error?.message || error).replace(/\r?\n/g, " ")}`);
   await page.screenshot({ path: "e2e-hata.png", fullPage: true }).catch(() => {});
   process.exitCode = 1;
