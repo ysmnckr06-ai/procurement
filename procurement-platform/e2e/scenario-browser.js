@@ -394,6 +394,28 @@
       waybillLinks.some((l) => l.order_id === order.id) && waybillLinks.some((l) => l.project_id === projectA),
       waybillLinks.map((l) => (l.order_id ? "sipariş" : "proje")).join(","));
 
+    // 7c) Tedarikçiye kısmi ödeme: sipariş "Kısmi ödendi" olur, kalan doğru hesaplanır.
+    await click("Ödemeler", { exact: true, after: 1500 });
+    const payAmount = Math.round(Number(order.total_amount) * 0.4 * 100) / 100;
+    const payInput = await waitFor(() => field("Ödeme tutarı"));
+    if (payInput) {
+      setValue(payInput, payAmount);
+      const descInput = field("Açıklama", payInput.closest("form"));
+      if (descInput) setValue(descInput, `${tag} dekont 1`);
+      await sleep(300);
+      payInput.closest("form").querySelector("button[type=submit]").click();
+      await waitFor(() => /ödemesi kaydedildi|kaydedilemedi|kur girin/.test(statusText()), { timeout: 30000 });
+      const { data: paidOrder } = await S().from("orders").select("payment_status,paid_amount,remaining_amount,total_amount").eq("id", order.id).single();
+      const { count: paymentCount } = await S().from("order_payments").select("id", { count: "exact", head: true }).eq("order_id", order.id);
+      check("Tedarikçiye kısmi ödeme kaydedildi",
+        paymentCount === 1 && paidOrder?.payment_status === "Kısmi ödendi"
+          && Math.abs(Number(paidOrder.paid_amount) - payAmount) < 0.01
+          && Math.abs(Number(paidOrder.remaining_amount) - (Number(paidOrder.total_amount) - payAmount)) < 0.01,
+        `${paymentCount} ödeme · ${paidOrder?.payment_status} · ödenen ${paidOrder?.paid_amount} · kalan ${paidOrder?.remaining_amount}`);
+    } else {
+      check("Sipariş ödeme formu görünüyor", false);
+    }
+
     // 8) Proje B iptal → rezerve stoğa döner
     await go("/dashboard/projeler", () => [...main().querySelectorAll("tr")].some((row) => row.innerText.includes(`${tag} Proje B`)));
     const rowB = [...main().querySelectorAll("tr")].find((row) => row.innerText.includes(`${tag} Proje B`));
@@ -413,6 +435,29 @@
     // Sekme ekranda kısa adıyla ("Finans") görünür.
     await go(`/dashboard/projeler/${projectA}`, () => findButton("Finans", { exact: true }));
     await click("Finans", { exact: true, after: 2500 });
+    // 9a) Müşteriden tahsilat ve ek gider girilir; kâr ve bekleyen tahsilat bunlara göre değişir.
+    const collectionForm = await waitFor(() => [...main().querySelectorAll("form")].find((f) => findButton("Ödemeyi Kaydet", { root: f })));
+    if (collectionForm) {
+      setValue(collectionForm.querySelector("input[placeholder='Ödeme tutarı']"), 50000);
+      setValue(collectionForm.querySelector("textarea"), `${tag} avans`);
+      await sleep(300);
+      findButton("Ödemeyi Kaydet", { root: collectionForm }).click();
+      await waitFor(async () => ((await S().from("project_payments").select("id").eq("project_id", projectA)).data || []).length > 0, { timeout: 20000, step: 1000 });
+    }
+    const expenseForm = [...main().querySelectorAll("form")].find((f) => findButton("Ek Gider Ekle", { root: f }));
+    if (expenseForm) {
+      setValue(expenseForm.querySelector("input[placeholder='Tutar']"), 1500);
+      setValue(expenseForm.querySelector("textarea"), `${tag} nakliye`);
+      await sleep(300);
+      findButton("Ek Gider Ekle", { root: expenseForm }).click();
+      await waitFor(async () => ((await S().from("project_expenses").select("id").eq("project_id", projectA)).data || []).length > 0, { timeout: 20000, step: 1000 });
+    }
+    const { data: collections } = await S().from("project_payments").select("base_amount,amount").eq("project_id", projectA);
+    const { data: projectExpenses } = await S().from("project_expenses").select("base_amount,amount").eq("project_id", projectA);
+    check("Müşteri tahsilatı ve ek gider kaydedildi",
+      collections?.length === 1 && Number(collections[0].base_amount) === 50000 && projectExpenses?.length === 1 && Number(projectExpenses[0].base_amount || projectExpenses[0].amount) === 1500,
+      `tahsilat ${collections?.map((c) => c.base_amount).join(",")} · gider ${projectExpenses?.map((e) => e.base_amount || e.amount).join(",")}`);
+    await sleep(1500);
     const projectProfitEl = await waitFor(() => main().querySelector("[data-testid=project-profit]"), { timeout: 20000 });
     const projectProfit = Number(projectProfitEl?.dataset.value);
     await go("/dashboard/finans", () => /Proje Bazlı Kâr/.test(main().innerText));
@@ -420,6 +465,10 @@
     check("Finans tablosunda iptal proje yok", !main().innerText.includes(`${tag} Proje B`));
     const rowA = [...main().querySelectorAll("tr")].find((row) => row.innerText.includes(`${tag} Proje A`));
     check("Finans tablosunda stok/gider maliyeti gösteriliyor", rowA && rowA.querySelectorAll("td").length >= 8);
+    const financeCells = rowA ? [...rowA.querySelectorAll("td")].map((td) => text(td)) : [];
+    check("Finans tablosunda tahsilat 50.000 ve bekleyen 200.000",
+      /50\.000,00/.test(financeCells[2] || "") && /200\.000,00/.test(financeCells[3] || ""),
+      `tahsilat ${financeCells[2]} · bekleyen ${financeCells[3]}`);
     const financeProfit = Number(main().querySelector(`[data-testid=finance-project-profit][data-project-id="${projectA}"]`)?.dataset.value);
     check("Proje detayı ve Finans raporu aynı kâr/zararı gösteriyor",
       Number.isFinite(projectProfit) && Number.isFinite(financeProfit) && Math.abs(projectProfit - financeProfit) < 0.05,
