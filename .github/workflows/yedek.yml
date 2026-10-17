@@ -53,6 +53,18 @@ jobs:
         run: |
           mkdir -p yedek
           PG=/usr/lib/postgresql/17/bin
+          case "$SUPABASE_DB_URL" in
+            postgresql://*|postgres://*) ;;
+            *) echo "::error title=Adres biçimi::SUPABASE_DB_URL 'postgresql://' ile başlamalı."; exit 1 ;;
+          esac
+          case "$SUPABASE_DB_URL" in
+            *"[YOUR-PASSWORD]"*|*"YOUR-PASSWORD"*) echo "::error title=Adres biçimi::SUPABASE_DB_URL içinde hâlâ [YOUR-PASSWORD] yazıyor; yerine şifre yazılmalı."; exit 1 ;;
+          esac
+          if ! $PG/psql "$SUPABASE_DB_URL" -At -c "select 1" > /dev/null 2> baglanti-hatasi.txt; then
+            msg=$(sed -E 's#postgres(ql)?://[^ ]*#<adres>#g' baglanti-hatasi.txt | tr '\n' ' ' | cut -c1-300)
+            echo "::error title=Veritabanına bağlanılamadı::$msg"
+            exit 1
+          fi
           $PG/psql "$SUPABASE_DB_URL" -At -f scripts/yedek/tablo-sayilari.sql > yedek/tablo-sayilari.tsv
           $PG/pg_dump "$SUPABASE_DB_URL" -Fc --no-owner --no-privileges -n public -n auth -n storage -f yedek/veritabani.dump
           $PG/psql "$SUPABASE_DB_URL" -At -c "copy (select id, email from auth.users) to stdout with csv" > yedek/kullanicilar.csv
