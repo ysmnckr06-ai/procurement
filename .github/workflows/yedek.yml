@@ -1,0 +1,142 @@
+name: Gece yedeği
+
+# Her gece veritabanını (tüm şemalar) ve yüklenen dosyaları yedekler, şifreler ve
+# GitHub'a 30 gün saklanmak üzere yükler. Ardından yedeği boş bir veritabanına geri
+# yükleyip tablo satır sayılarını karşılaştırır: yedekten dönüş her gece denenmiş olur.
+#
+# Gereken depo sırları (Settings → Secrets and variables → Actions):
+#   SUPABASE_DB_URL            Supabase → Connect → "Session pooler" bağlantı adresi (şifre dahil)
+#   SUPABASE_SERVICE_ROLE_KEY  Supabase → Settings → API → service_role anahtarı
+#   BACKUP_PASSPHRASE          Yedeği şifreleyen parola (bir yere not edin; geri dönüşte gerekir)
+on:
+  schedule:
+    - cron: "17 1 * * *" # her gece 04:17 (Türkiye)
+  workflow_dispatch:
+
+concurrency:
+  group: gece-yedegi
+  cancel-in-progress: false
+
+env:
+  SUPABASE_URL: https://mxqvmpzeeyjcuqacdyre.supabase.co
+
+jobs:
+  yedek:
+    name: Yedek al
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Sırları kontrol et
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          missing=""
+          [ -n "$SUPABASE_DB_URL" ] || missing="$missing SUPABASE_DB_URL"
+          [ -n "$SUPABASE_SERVICE_ROLE_KEY" ] || missing="$missing SUPABASE_SERVICE_ROLE_KEY"
+          [ -n "$BACKUP_PASSPHRASE" ] || missing="$missing BACKUP_PASSPHRASE"
+          if [ -n "$missing" ]; then echo "::error title=Yedek alınamadı::Eksik depo sırları:$missing"; exit 1; fi
+
+      - name: PostgreSQL 17 istemcisini kur
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y -qq postgresql-client-17
+
+      - name: Veritabanını yedekle
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          mkdir -p yedek
+          PG=/usr/lib/postgresql/17/bin
+          $PG/psql "$SUPABASE_DB_URL" -At -f scripts/yedek/tablo-sayilari.sql > yedek/tablo-sayilari.tsv
+          $PG/pg_dump "$SUPABASE_DB_URL" -Fc --no-owner --no-privileges -n public -n auth -n storage -f yedek/veritabani.dump
+          $PG/psql "$SUPABASE_DB_URL" -At -c "copy (select id, email from auth.users) to stdout with csv" > yedek/kullanicilar.csv
+          $PG/psql "$SUPABASE_DB_URL" -At -F $'\t' -c "select bucket_id, name from storage.objects where name not like '%.emptyFolderPlaceholder' order by 1, 2" > yedek/dosya-listesi.tsv
+          echo "Tablolar: $(wc -l < yedek/tablo-sayilari.tsv) · Kullanıcı: $(wc -l < yedek/kullanicilar.csv) · Dosya: $(wc -l < yedek/dosya-listesi.tsv) · Döküm: $(du -h yedek/veritabani.dump | cut -f1)"
+
+      - name: Dosyaları indir
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: node scripts/yedek/dosyalari-indir.mjs yedek/dosya-listesi.tsv yedek/dosyalar
+
+      - name: Şifrele
+        env:
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          tar -czf yedek.tar.gz yedek
+          gpg --batch --yes --pinentry-mode loopback --passphrase "$BACKUP_PASSPHRASE" --symmetric --cipher-algo AES256 -o corvian-yedek.tar.gz.gpg yedek.tar.gz
+          rm -rf yedek yedek.tar.gz
+          ls -lh corvian-yedek.tar.gz.gpg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corvian-yedek-${{ github.run_number }}
+          path: corvian-yedek.tar.gz.gpg
+          retention-days: 30
+          if-no-files-found: error
+
+  geri-yukleme-denemesi:
+    name: Yedekten geri dönüşü dene
+    needs: yedek
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: deneme
+          POSTGRES_DB: geri_yukleme
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      HEDEF: postgresql://postgres:deneme@localhost:5432/geri_yukleme
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: corvian-yedek-${{ github.run_number }}
+
+      - name: PostgreSQL 17 istemcisini kur
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y -qq postgresql-client-17
+
+      - name: Şifreyi çöz
+        env:
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          gpg --batch --pinentry-mode loopback --passphrase "$BACKUP_PASSPHRASE" -d -o yedek.tar.gz corvian-yedek.tar.gz.gpg
+          tar -xzf yedek.tar.gz
+
+      - name: Boş veritabanına geri yükle
+        run: |
+          PG=/usr/lib/postgresql/17/bin
+          $PG/psql "$HEDEF" -v ON_ERROR_STOP=1 -q -f scripts/yedek/geri-yukleme-hazirlik.sql
+          $PG/psql "$HEDEF" -v ON_ERROR_STOP=1 -q -c "\copy auth.users (id, email) from 'yedek/kullanicilar.csv' with csv"
+          $PG/pg_restore -d "$HEDEF" -n public --no-owner --no-privileges yedek/veritabani.dump 2> geri-yukleme-hatalari.txt || true
+          echo "Geri yükleme uyarı/hata satırı: $(grep -c 'error' geri-yukleme-hatalari.txt || true)"
+          head -20 geri-yukleme-hatalari.txt
+
+      - name: Satır sayılarını karşılaştır
+        run: |
+          PG=/usr/lib/postgresql/17/bin
+          $PG/psql "$HEDEF" -At -f scripts/yedek/tablo-sayilari.sql > geri-yuklenen.tsv
+          if diff -u yedek/tablo-sayilari.tsv geri-yuklenen.tsv; then
+            tables=$(wc -l < geri-yuklenen.tsv)
+            rows=$(awk -F'\t' '{s+=$2} END {print s}' geri-yuklenen.tsv)
+            files=$(find yedek/dosyalar -type f | wc -l)
+            expected=$(wc -l < yedek/dosya-listesi.tsv)
+            echo "::notice title=Yedekten dönüş başarılı::$tables tablo, $rows satır birebir geri yüklendi; $files/$expected dosya yedekte."
+            [ "$files" -eq "$expected" ] || { echo "::error title=Dosya eksik::$files/$expected dosya yedekte"; exit 1; }
+          else
+            echo "::error title=Yedekten dönüş başarısız::Geri yüklenen satır sayıları yedekle aynı değil (yukarıdaki farka bakın)."
+            exit 1
+          fi
