@@ -457,6 +457,44 @@ def upload_private_report(file_path: str, storage_path: str) -> bool:
     return True
 
 
+
+def link_document_to_project(document_id: str, project_id: str, user_id: str) -> bool:
+    """Belgeyi projeye bağlar (zaten bağlıysa dokunmaz). Teklifler siparişe
+    dönmese de projenin Belgeler sekmesinde görünür."""
+    if not document_id or not project_id:
+        return False
+    existing = (
+        supabase.table("document_links")
+        .select("id")
+        .eq("user_id", user_id)
+        .eq("document_id", document_id)
+        .eq("project_id", project_id)
+        .limit(1)
+        .execute()
+    )
+    if existing.data:
+        return True
+    supabase.table("document_links").insert({
+        "user_id": user_id,
+        "document_id": document_id,
+        "project_id": project_id,
+    }).execute()
+    return True
+
+
+def project_id_for_request(request_id: str, user_id: str) -> str:
+    if not request_id:
+        return ""
+    result = (
+        supabase.table("requests")
+        .select("project_id")
+        .eq("id", request_id)
+        .eq("user_id", user_id)
+        .limit(1)
+        .execute()
+    )
+    return str((result.data or [{}])[0].get("project_id") or "")
+
 def persist_source_offer_document(
     file_path: str,
     original_name: str,
@@ -1950,6 +1988,7 @@ async def analyze_offers(
         upload_private_report(report_path, report_storage_path)
 
         source_document_ids = {}
+        offer_project_id = project_id or project_id_for_request(request_id, user_id)
         for source in saved_offer_sources:
             try:
                 document_id = persist_source_offer_document(
@@ -1962,6 +2001,11 @@ async def analyze_offers(
                 )
                 if document_id:
                     source_document_ids[source["original_name"]] = document_id
+                    if offer_project_id:
+                        try:
+                            link_document_to_project(document_id, offer_project_id, user_id)
+                        except Exception as link_error:
+                            logger.exception("TEKLIF PROJEYE BAGLANAMADI: %s", link_error)
             except Exception as source_document_error:
                 logger.exception("KAYNAK TEKLIF BELGESI KAYDEDILEMEDI: %s", source_document_error)
                 warnings.append(f"{source['original_name']} kaynak teklif belgesi arşive kaydedilemedi.")
