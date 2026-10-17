@@ -206,6 +206,31 @@ function extractOfferRowsFromRecord(record) {
   return rows;
 }
 
+// Teklif/rapor satırları her iş ortağı için yeniden çözümlenmesin: rapor
+// içerikleri büyük JSON'lardır; 93 iş ortağında aynı veri 93 kez taranıyor ve
+// sayfa tarayıcıda ~1 dakika hesap yapıyordu. Aynı reports/offers dizileri için
+// satırlar bir kez çözümlenip firma adına göre gruplanır.
+const offerIndexCache = new WeakMap();
+
+function offerIndexFor(reports, offers) {
+  const cached = offerIndexCache.get(reports);
+  if (cached && cached.offers === offers) return cached;
+  const rowsByKey = new Map();
+  [...reports, ...offers].flatMap(extractOfferRowsFromRecord).forEach((row) => {
+    const rowKey = normalizePartnerName(offerSupplierName(row));
+    if (!rowsByKey.has(rowKey)) rowsByKey.set(rowKey, []);
+    rowsByKey.get(rowKey).push(row);
+  });
+  const recommendedByKey = new Map();
+  reports.forEach((report) => {
+    const reportKey = normalizePartnerName(offerSupplierName(report) || report.recommended_firm || report.onerilenFirma || report.onerilenfirma);
+    recommendedByKey.set(reportKey, (recommendedByKey.get(reportKey) || 0) + 1);
+  });
+  const index = { offers, rowsByKey, recommendedByKey };
+  offerIndexCache.set(reports, index);
+  return index;
+}
+
 function calculatePartnerScore({ partner, projects, orders, projectPayments, orderPayments, movements, reports, offers }) {
   let score = 100;
   const reasons = [];
@@ -215,9 +240,9 @@ function calculatePartnerScore({ partner, projects, orders, projectPayments, ord
   const isCustomer = partner.partner_type === "Müşteri";
   const today = new Date();
 
-  const allOfferRows = [...reports, ...offers].flatMap(extractOfferRowsFromRecord);
-  const supplierOffers = allOfferRows.filter((row) => normalizePartnerName(offerSupplierName(row)) === key);
-  const recommendedCount = reports.filter((report) => normalizePartnerName(offerSupplierName(report) || report.recommended_firm || report.onerilenFirma || report.onerilenfirma) === key).length;
+  const offerIndex = offerIndexFor(reports, offers);
+  const supplierOffers = offerIndex.rowsByKey.get(key) || [];
+  const recommendedCount = offerIndex.recommendedByKey.get(key) || 0;
   const eligibleOffers = supplierOffers.filter(isOfferEligible);
   const shortPaymentTerms = supplierOffers.filter((row) => offerPaymentDays(row) > 0 && offerPaymentDays(row) < 30).length;
   const longTerms = supplierOffers.filter((row) => offerTermDays(row) > 0 && offerTermDays(row) > 30).length;
