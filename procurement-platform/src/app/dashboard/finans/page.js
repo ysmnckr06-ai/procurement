@@ -7,6 +7,15 @@ import { fetchLiveTryRates, liveCurrencyOptions, liveRateFor } from "@/lib/liveC
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { calculateBaseAmount } from "@/lib/currency";
 import { projectStockUsage } from "@/lib/stockCost";
+import {
+  contractBaseAmount,
+  invoiceTotalsByOrder,
+  isCancelledOrder,
+  orderProjectAllocationValue,
+  orderProjectShare,
+  projectProfitSummary,
+  rowBaseAmount,
+} from "@/lib/projectFinance";
 
 function formatMoney(value, currency = "TRY") {
   return `${new Intl.NumberFormat("tr-TR", {
@@ -32,31 +41,6 @@ const CANCELLED_PROJECT_STATUSES = new Set(["İptal", "Iptal", "İptal Edildi"])
 
 function profitLossTotal(rows) {
   return rows.reduce((sum, row) => sum + Number(row.profitLoss || 0), 0);
-}
-
-function orderBaseValue(order) {
-  return Number(order.order_total_base || order.base_amount || order.total_amount || 0);
-}
-
-function orderProjectAllocationValue(order, projectId) {
-  if (String(order.project_id || "") === String(projectId)) return orderBaseValue(order);
-  const rate = Number(order.exchange_rate || 1) || 1;
-  return (Array.isArray(order.items) ? order.items : []).reduce((sum, item) => {
-    const quantity = Number(item.quantity || 0);
-    if (quantity <= 0) return sum;
-    const projectQuantity = (Array.isArray(item.allocations) ? item.allocations : [])
-      .filter((allocation) => String(allocation.projectId || allocation.project_id || "") === String(projectId))
-      .reduce((allocationSum, allocation) => allocationSum + Number(allocation.quantity || 0), 0);
-    if (projectQuantity <= 0) return sum;
-    const itemTotal = Number(item.total || 0) || quantity * Number(item.netUnitPrice || item.unitPrice || 0);
-    return sum + itemTotal * rate * Math.min(projectQuantity / quantity, 1);
-  }, 0);
-}
-
-function orderProjectShare(order, projectId) {
-  if (String(order.project_id || "") === String(projectId)) return 1;
-  const fullValue = orderBaseValue(order);
-  return fullValue > 0 ? Math.min(orderProjectAllocationValue(order, projectId) / fullValue, 1) : 0;
 }
 
 function StatCard({ title, value, text, tone = "slate" }) {
@@ -86,6 +70,8 @@ export default function FinancePage() {
   const [projectItems, setProjectItems] = useState([]);
   const [projectExpenses, setProjectExpenses] = useState([]);
   const [stockProducts, setStockProducts] = useState([]);
+  const [invoiceDocuments, setInvoiceDocuments] = useState([]);
+  const [invoiceLinks, setInvoiceLinks] = useState([]);
   const [settings, setSettings] = useState({ base_currency: "TRY" });
   const [partnerFilter, setPartnerFilter] = useState("");
   const [liveRates, setLiveRates] = useState(null);
@@ -118,7 +104,7 @@ export default function FinancePage() {
 
     const all = (table, columns = "*") =>
       fetchAllRows(() => supabase.from(table).select(columns).eq("user_id", user.id).order("id", { ascending: true }));
-    const [projectRes, projectPaymentRes, orderRes, orderPaymentRes, movementRes, settingsRes, itemRes, expenseRes, productRes] =
+    const [projectRes, projectPaymentRes, orderRes, orderPaymentRes, movementRes, settingsRes, itemRes, expenseRes, productRes, invoiceRes, linkRes] =
       await Promise.all([
         all("projects"),
         all("project_payments"),
@@ -129,6 +115,10 @@ export default function FinancePage() {
         all("project_items", "id,project_id,product_id,currency,exchange_rate,resolved_unit_price,estimated_unit_price"),
         all("project_expenses"),
         all("products", "id,last_unit_price,manual_unit_price,last_currency"),
+        fetchAllRows(() => supabase.from("documents").select("id,document_type,approval_status,invoice_total,currency,exchange_rate")
+          .eq("user_id", user.id).eq("document_type", "fatura").order("id", { ascending: true })),
+        fetchAllRows(() => supabase.from("document_links").select("id,document_id,order_id")
+          .eq("user_id", user.id).not("order_id", "is", null).order("id", { ascending: true })),
       ]);
 
     if (orderPaymentRes.error) {
@@ -143,6 +133,8 @@ export default function FinancePage() {
     setProjectItems(itemRes.data || []);
     setProjectExpenses(expenseRes.error ? [] : expenseRes.data || []);
     setStockProducts(productRes.error ? [] : productRes.data || []);
+    setInvoiceDocuments(invoiceRes.error ? [] : invoiceRes.data || []);
+    setInvoiceLinks(linkRes.error ? [] : linkRes.data || []);
     if (settingsRes.data?.[0]) setSettings(settingsRes.data[0]);
     setLoading(false);
   }
@@ -158,6 +150,10 @@ export default function FinancePage() {
     const toBase = (amount, currency) => (String(currency || baseCurrency).toUpperCase() === baseCurrency
       ? Number(amount || 0)
       : calculateBaseAmount(amount, String(currency).toUpperCase(), settings));
+    const invoiceByOrder = invoiceTotalsByOrder(invoiceDocuments, invoiceLinks, (amount, currency, rate) =>
+      (String(currency || baseCurrency).toUpperCase() === baseCurrency
+        ? Number(amount || 0)
+        : calculateBaseAmount(amount, String(currency).toUpperCase(), settings, rate)));
     const filteredProjects = filterNeedle
       ? liveProjects.filter((project) =>
           matchesFilter([
@@ -225,7 +221,7 @@ export default function FinancePage() {
       const payments = filteredProjectPayments
         .filter((payment) => payment.project_id === project.id)
         .reduce((sum, payment) => sum + Number(payment.base_amount || payment.amount || 0), 0);
-      const projectOrders = filteredOrders.filter((order) => orderProjectShare(order, project.id) > 0);
+      const projectOrders = filteredOrders.filter((order) => !isCancelledOrder(order) && orderProjectShare(order, project.id) > 0);
       const projectOrderTotal = projectOrders.reduce(
         (sum, order) => sum + orderProjectAllocationValue(order, project.id),
         0,
@@ -242,7 +238,11 @@ export default function FinancePage() {
         (sum, order) => sum + Number(order.paid_amount_base || order.paid_amount || 0) * orderProjectShare(order, project.id),
         0,
       );
-      const contractBase = Number(project.contract_base_amount || project.contract_amount || 0);
+      const contractBase = contractBaseAmount(project);
+      const projectInvoiceTotal = projectOrders.reduce(
+        (sum, order) => sum + (invoiceByOrder.get(String(order.id)) || 0) * orderProjectShare(order, project.id),
+        0,
+      );
       // Stoktan kullanılan malzeme gerçek alış fiyatıyla (yoksa son alış, en son teklif fiyatı).
       const stockUsageCost = projectStockUsage(
         filteredStockMovements.filter((movement) => movement.project_id === project.id),
@@ -250,10 +250,16 @@ export default function FinancePage() {
       ).total;
       const expenseTotal = projectExpenses
         .filter((expense) => expense.project_id === project.id)
-        .reduce((sum, expense) => sum + Number(expense.base_amount || expense.amount || 0), 0);
-      // Kâr/zarar = sözleşme − sipariş payı − stoktan kullanılan − ek giderler
-      // (önceden yalnız siparişler düşülüyordu; stoktan karşılanan projeler tam kâr görünüyordu).
-      const profitLoss = contractBase - projectOrderTotal - stockUsageCost - expenseTotal;
+        .reduce((sum, expense) => sum + rowBaseAmount(expense), 0);
+      // Proje detayındaki "Brüt kar / zarar" ile aynı tanım (lib/projectFinance):
+      // sözleşme − max(fatura, sipariş payı) − stoktan kullanılan − ek giderler.
+      const { profitLoss, expectedCost } = projectProfitSummary({
+        contractAmount: contractBase,
+        orderCommitment: projectOrderTotal,
+        invoiceTotal: projectInvoiceTotal,
+        manualExpenses: expenseTotal,
+        stockUsageCost,
+      });
 
       return {
         ...project,
@@ -263,6 +269,8 @@ export default function FinancePage() {
         orderTotal: projectOrderTotal,
         stockUsageCost,
         expenseTotal,
+        invoiceTotal: projectInvoiceTotal,
+        expectedCost,
         paidOrders: projectPaidOrders,
         supplierDebt: Math.max(projectOrderTotal - projectPaidOrders, 0),
         profitLoss,
@@ -323,7 +331,7 @@ export default function FinancePage() {
       partnerPerformance,
       baseCurrency,
     };
-  }, [projects, projectPayments, orders, orderPayments, stockMovements, settings, partnerFilter, projectItems, projectExpenses, stockProducts]);
+  }, [projects, projectPayments, orders, orderPayments, stockMovements, settings, partnerFilter, projectItems, projectExpenses, stockProducts, invoiceDocuments, invoiceLinks]);
 
   return (
     <div className="min-h-screen bg-slate-100 p-6">
@@ -493,10 +501,20 @@ export default function FinancePage() {
                     </td>
                     <td className="p-4 text-emerald-700">{formatMoney(project.payments, report.baseCurrency)}</td>
                     <td className="p-4 text-orange-700">{formatMoney(project.remainingCollection, report.baseCurrency)}</td>
-                    <td className="p-4">{formatMoney(project.orderTotal, report.baseCurrency)}</td>
+                    <td className="p-4">
+                      <div>{formatMoney(project.orderTotal, report.baseCurrency)}</div>
+                      {project.invoiceTotal > 0 && (
+                        <div className="text-xs text-slate-500">Fatura: {formatMoney(project.invoiceTotal, report.baseCurrency)}</div>
+                      )}
+                    </td>
                     <td className="p-4">{formatMoney(project.stockUsageCost + project.expenseTotal, report.baseCurrency)}</td>
                     <td className="p-4 text-red-700">{formatMoney(project.supplierDebt, report.baseCurrency)}</td>
-                    <td className={`p-4 font-black ${project.profitLoss < 0 ? "text-red-700" : "text-emerald-700"}`}>
+                    <td
+                      data-testid="finance-project-profit"
+                      data-project-id={project.id}
+                      data-value={Math.round(project.profitLoss * 100) / 100}
+                      className={`p-4 font-black ${project.profitLoss < 0 ? "text-red-700" : "text-emerald-700"}`}
+                    >
                       {formatMoney(project.profitLoss, report.baseCurrency)}
                     </td>
                   </tr>

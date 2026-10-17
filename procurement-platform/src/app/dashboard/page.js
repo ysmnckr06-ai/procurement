@@ -4,6 +4,14 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { fetchAllRows } from "@/lib/fetchAllRows";
+import {
+  budgetBaseAmount,
+  contractBaseAmount,
+  isCancelledOrder,
+  orderBelongsToProject,
+  orderProjectAllocationValue,
+  rowBaseAmount,
+} from "@/lib/projectFinance";
 import DemoDataPanel from "./DemoDataPanel";
 
 const closedOrderStatuses = ["Teslim Edildi", "Tam Teslim", "İptal"];
@@ -47,7 +55,15 @@ function orderRemainingPayment(order) {
 function projectPaidAmount(project, payments) {
   return payments
     .filter((payment) => payment.project_id === project.id)
-    .reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+    .reduce((sum, payment) => sum + rowBaseAmount(payment), 0);
+}
+
+// Kontrol Merkezi bütçe uyarısı: projeye düşen sipariş payı (baz para) bütçeyi
+// aşıyor mu. Proje detayı ve Finans ile aynı sipariş payı hesabı kullanılır.
+function projectOrderCommitment(project, orders) {
+  return orders
+    .filter((order) => !isCancelledOrder(order) && orderBelongsToProject(order, project.id))
+    .reduce((sum, order) => sum + orderProjectAllocationValue(order, project.id), 0);
 }
 
 function productCriticalLimit(product) {
@@ -343,15 +359,14 @@ export default function DashboardPage() {
     const activeProjects = projects.filter((project) =>
       activeProjectStatuses.includes(project.status),
     );
-    const overBudgetProjects = projects.filter(
-      (project) =>
-        Number(project.estimated_budget || 0) > 0 &&
-        Number(project.actual_cost || 0) >
-          Number(project.estimated_budget || 0),
-    );
+    // actual_cost kolonu hiç güncellenmediği için uyarı hiç çıkmıyordu; sipariş
+    // payı baz para biriminde bütçeyle karşılaştırılır.
+    const overBudgetProjects = projects
+      .map((project) => ({ ...project, orderCommitment: projectOrderCommitment(project, orders) }))
+      .filter((project) => budgetBaseAmount(project) > 0 && project.orderCommitment > budgetBaseAmount(project));
     const delayedCollections = projects.filter((project) => {
       const paid = projectPaidAmount(project, payments);
-      const remainingCollection = Number(project.contract_amount || 0) - paid;
+      const remainingCollection = contractBaseAmount(project) - paid;
       const remainingDays = daysUntil(project.planned_end_date);
       return (
         remainingCollection > 0 && remainingDays !== null && remainingDays < 0
@@ -477,7 +492,7 @@ export default function DashboardPage() {
         title: "Bütçeyi aşan proje",
         subject: project.project_name,
         projectName: project.project_code,
-        description: `Gerçekleşen maliyet ${formatMoney(project.actual_cost)}, tahmini bütçe ${formatMoney(project.estimated_budget)}.`,
+        description: `Sipariş maliyeti ${formatMoney(project.orderCommitment)}, tahmini bütçe ${formatMoney(budgetBaseAmount(project))}.`,
         href: `/dashboard/projeler/${project.id}`,
       })),
       ...pendingApprovals.slice(0, 3).map((order) => ({
@@ -525,7 +540,7 @@ export default function DashboardPage() {
         title: "Tahsilatı geciken proje",
         subject: project.project_name,
         projectName: project.project_code,
-        description: `Bekleyen tahsilat: ${formatMoney(Number(project.contract_amount || 0) - projectPaidAmount(project, payments))}.`,
+        description: `Bekleyen tahsilat: ${formatMoney(contractBaseAmount(project) - projectPaidAmount(project, payments))}.`,
         href: `/dashboard/projeler/${project.id}`,
       })),
     ].slice(0, 12);
