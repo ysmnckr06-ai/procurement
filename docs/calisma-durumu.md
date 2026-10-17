@@ -31,12 +31,30 @@ Canlıya elle uygulanan migrationlar: 0042, 0043, 0044, 0045 (+ eskiden eksik ka
 | Robota yeni akışlar | #36, #37 | Ödünç/iade, belge ekleme, geçmiş kur, teklif bağı, irsaliye, kâr eşitliği. |
 | Her türlü belge yüklenebilir | #37, #38 | Word/DWG/XML/metin genel ikili türle yüklenir (`lib/storageContentType.js`). |
 
-## Sıradaki işler
+## 17 Ekim akşam: derinlemesine test (robot 34/34 + ekran taraması 43/43)
 
-1. Robota eklenmeyenler: açık ihtiyaçlara dağıtım (senaryo kurulumu zor) ve reçete okuma (şimdilik yalnız sunucu birim testleri).
-2. Bir hafta sonra: eski Sidney projesini (`tbyfwnpayppslkcqjwog`) ve Render'daki kullanılmayan Oregon "procurement" servisini kapatmak.
-3. Robotun test hesabında bıraktığı E2E- kartlarını temizlemek.
-4. `deneme-birlesik` dalı artık gereksiz; silinebilir.
+| Bulgu | Çözüm |
+|---|---|
+| request-reports dosya alanında 3 elle eklenmiş gevşek kural: başka firmanın raporları okunabiliyordu | Canlıda silindi; migration 0046 (#40) |
+| Döviz siparişe farklı para birimiyle ödeme yanlış toplanıyordu | #41 |
+| 24 sayı kutusunda kuruşlu tutar/ondalık girilemiyordu (form sessizce gönderilmiyordu) | step="any" (#41) |
+| Eşzamanlı teslimde sipariş teslim miktarı eziliyordu | Kayıt öncesi güncel sipariş okunur (#42) |
+| İş Ortakları sayfası 22 sn (tarayıcıda 57 sn betik) | Teklif satırları bir kez çözümlenir (#42, #45) → 7,5 sn |
+| Belge okuma: 25 bilgiden 4'ü doğru, tarama dakikalar | GİB düzeni, VKN, çizgi silme (#43) → 24/25, 2–5 sn |
+| Robot önizleme işleriyle iptal oluyordu | concurrency (#44) |
+
+Sağlam: 32 tabloda RLS, 21 tabloda çapraz firma denemesi engellendi, 12 sunucu ucu sahiplik kontrolü yapıyor, abonelik/iptal/ödenmeyen lisans doğru, 18 sayfa masaüstü+telefon hatasız, yoğun veriyle (4.640 kart, 247 proje) sayfalar 6–7,5 sn (robot bekleme payı dahil).
+
+## Sıradaki işler (kullanıcı kararı gerekenler)
+
+1. Supabase ücretsiz planda: **yedek yok**. Pro plana geçiş, sonra yedekten geri dönüş denemesi.
+2. Ekip desteği yok (her hesap tek kişi) — satış için en büyük eksik.
+3. Aboneye e-Arşiv fatura kesilmiyor — muhasebe mi, fatura servisi mi?
+4. Süresiz lisanslı 3 hesap (ysmi…, bsra…, name…) bilinçli mi?
+5. Benzer adlı iş ortakları (benzerlik ≥ 0,9) sayfa açılışında otomatik birleştiriliyor; "Anadolu Elektrik / Elektronik" 0,889 ile sınırda. Otomatik yerine öneri olması değerlendirilmeli.
+6. Robota eklenmeyenler: açık ihtiyaçlara dağıtım, reçete okuma (yalnız birim testleri).
+7. Bir hafta sonra: Sidney projesini ve Oregon Render servisini kapatmak. (Sidney'de aynı gevşek dosya kuralları olabilir.)
+8. Bağımsız sızma testi ve KVKK metinlerinin hukuki kontrolü (uzman gerekli).
 
 ## Çalışma notları
 
