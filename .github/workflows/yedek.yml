@@ -67,6 +67,10 @@ jobs:
           case "$SUPABASE_DB_URL" in
             *"[YOUR-PASSWORD]"*|*"YOUR-PASSWORD"*) echo "::error title=Adres biçimi::SUPABASE_DB_URL içinde hâlâ [YOUR-PASSWORD] yazıyor; yerine şifre yazılmalı."; exit 1 ;;
           esac
+          case "$SUPABASE_DB_URL" in
+            *"://postgres.mxqvmpzeeyjcuqacdyre:"*) ;;
+            *) echo "::error title=Kullanıcı adı::Adreste kullanıcı adı 'postgres.mxqvmpzeeyjcuqacdyre' olmalı (yalnız 'postgres' değil)."; exit 1 ;;
+          esac
           if ! $PG/psql "$SUPABASE_DB_URL" -At -c "select 1" > /dev/null 2> baglanti-hatasi.txt; then
             msg=$(sed -E 's#postgres(ql)?://[^ ]*#<adres>#g' baglanti-hatasi.txt | tr '\n' ' ' | cut -c1-300)
             echo "::error title=Veritabanına bağlanılamadı::$msg"
