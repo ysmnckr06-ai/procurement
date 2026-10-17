@@ -142,6 +142,32 @@ try {
   if (process.env.GITHUB_ACTIONS) console.log(`::notice title=Sayfa süreleri::${timings.join(" · ").replace(/[0-9a-f]{8}-[0-9a-f-]{27}/g, "id")}`);
   check("Masaüstünde hiçbir sayfa 8 saniyeden uzun sürmedi", slow.length === 0, slow.join(", "));
 
+  // Yavaş sayfa teşhisi: istek sayısı/süreleri ve tarayıcıdaki betik süresi.
+  for (const route of slow.map((entry) => entry.split(" ")[0])) {
+    const requests = [];
+    const onFinished = (request) => {
+      const timing = request.timing();
+      const url = new URL(request.url());
+      if (!/supabase|onrender|\/api\//.test(url.host + url.pathname)) return;
+      requests.push({ path: `${request.method()} ${url.pathname.replace(/\/rest\/v1\//, "")}${url.search.includes("offset") ? " (sayfa)" : ""}`, ms: Math.round(timing.responseEnd), start: Math.round(timing.startTime) });
+    };
+    page.on("requestfinished", onFinished);
+    const cdp = await desktop.newCDPSession(page);
+    await cdp.send("Performance.enable");
+    const before = Object.fromEntries((await cdp.send("Performance.getMetrics")).metrics.map((m) => [m.name, m.value]));
+    const t0 = Date.now();
+    await page.goto(`${baseUrl}${route}`, { waitUntil: "domcontentloaded" });
+    await page.waitForLoadState("networkidle", { timeout: 60000 }).catch(() => {});
+    const after = Object.fromEntries((await cdp.send("Performance.getMetrics")).metrics.map((m) => [m.name, m.value]));
+    page.off("requestfinished", onFinished);
+    const byPath = {};
+    for (const r of requests) { byPath[r.path] = byPath[r.path] || { n: 0, ms: 0 }; byPath[r.path].n += 1; byPath[r.path].ms += r.ms; }
+    const top = Object.entries(byPath).sort((a, b) => b[1].ms - a[1].ms).slice(0, 6).map(([p, v]) => `${p} x${v.n} ${v.ms}ms`);
+    const script = ((after.ScriptDuration || 0) - (before.ScriptDuration || 0)).toFixed(1);
+    const layout = ((after.LayoutDuration || 0) - (before.LayoutDuration || 0) + (after.RecalcStyleDuration || 0) - (before.RecalcStyleDuration || 0)).toFixed(1);
+    if (process.env.GITHUB_ACTIONS) console.log(`::notice title=Teşhis ${route}::toplam ${Date.now() - t0}ms · ${requests.length} istek · betik ${script}s · çizim ${layout}s · ${top.join(" | ")}`);
+  }
+
   // Çıktılar
   if (ids.order) {
     await page.goto(`${baseUrl}/dashboard/siparisler/${ids.order}`);
