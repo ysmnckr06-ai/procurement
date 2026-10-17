@@ -133,10 +133,13 @@ try {
   ].filter(Boolean);
   const routes = [...STATIC_ROUTES, ...dynamicRoutes];
   const slow = [];
+  const timings = [];
   for (const route of routes) {
     const { elapsed } = await visit(page, route, "Masaüstü");
+    timings.push(`${route.replace("/dashboard", "") || "/"} ${(elapsed / 1000).toFixed(1)}s`);
     if (elapsed > 8000) slow.push(`${route} ${elapsed} ms`);
   }
+  if (process.env.GITHUB_ACTIONS) console.log(`::notice title=Sayfa süreleri::${timings.join(" · ").replace(/[0-9a-f]{8}-[0-9a-f-]{27}/g, "id")}`);
   check("Masaüstünde hiçbir sayfa 8 saniyeden uzun sürmedi", slow.length === 0, slow.join(", "));
 
   // Çıktılar
