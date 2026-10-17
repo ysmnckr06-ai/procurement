@@ -491,7 +491,7 @@ export async function backfillProjectCustomerPartners(
     if (!uniqueCustomers.has(key)) uniqueCustomers.set(key, customerName);
   });
 
-  let createdCustomers = 0;
+  const createdCustomers = 0;
   let existingCustomers = 0;
   const partnerByCustomerKey = new Map();
 
@@ -521,15 +521,11 @@ export async function backfillProjectCustomerPartners(
         if (error) console.error("Müşteri iş ortağı güncellenemedi:", error);
         else partner = normalizePartnerRecord(updatedPartner);
       }
-    } else {
-      partner = await findOrCreateBusinessPartner(supabase, userId, {
-        name: customerName,
-        allowCreate: false,
-        partnerType: "Müşteri",
-        allowProbableMatch: true,
-      });
-      if (partner) createdCustomers += 1;
     }
+    // Eşleşme yoksa veritabanına tekrar gidilmez: findOrCreateBusinessPartner
+    // (allowCreate: false) aynı listeyi aynı 0,9 eşiğiyle yeniden çekip yine
+    // bulamıyordu. Müşteri sayısı kadar tam liste sorgusu İş Ortakları sayfasını
+    // 20 saniyenin üzerine çıkarıyordu.
 
     if (partner?.id) partnerByCustomerKey.set(key, partner);
   }
