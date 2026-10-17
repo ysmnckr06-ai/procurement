@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { storageContentType } from "@/lib/storageContentType";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import {
   duplicateTaxNumberMessage,
@@ -777,7 +778,7 @@ export default function ProjectsPage() {
           .from("order-documents")
           .upload(storagePath, file, {
             cacheControl: "3600",
-            contentType: file.type || undefined,
+            contentType: storageContentType(file),
             upsert: false,
           });
 

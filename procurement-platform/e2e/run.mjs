@@ -54,9 +54,11 @@ try {
   console.log(`\n${passed}/${report.checks.length} kontrol geçti (${tag}).`);
   // GitHub'da çalışırken sonuç özet sayfasına ve uyarı satırlarına da yazılır.
   if (process.env.GITHUB_ACTIONS) {
-    for (const check of report.checks) {
+    // GitHub adım başına yalnız 10 uyarı satırı gösterir: önce özet, sonra başarısızlar.
+    console.log(`::notice title=Özet::${passed}/${report.checks.length} kontrol geçti (${tag}).`);
+    for (const check of report.failed) {
       const line = `${check.name}${check.detail ? ` — ${check.detail}` : ""}`.replace(/\r?\n/g, " ");
-      console.log(`${check.ok ? "::notice title=Geçti::" : "::error title=Başarısız::"}${line}`);
+      console.log(`::error title=Başarısız::${line}`);
     }
     if (process.env.GITHUB_STEP_SUMMARY) {
       const rows = report.checks.map((check) => `| ${check.ok ? "✅" : "❌"} | ${check.name} | ${String(check.detail || "").replace(/\|/g, "/")} |`);
@@ -70,6 +72,13 @@ try {
   }
 } catch (error) {
   console.error("Senaryo yarıda kaldı:", error);
+  const partial = await page.evaluate(() => window.CorvianE2E?.lastChecks || []).catch(() => []);
+  const partialFailed = partial.filter((check) => !check.ok);
+  if (process.env.GITHUB_ACTIONS) console.log(`::notice title=Yarıda kalana kadar::${partial.length - partialFailed.length}/${partial.length} kontrol geçti; son geçen: ${partial.filter((c) => c.ok).at(-1)?.name || "-"}`);
+  for (const check of process.env.GITHUB_ACTIONS ? partialFailed : partial) {
+    const line = `${check.name}${check.detail ? ` — ${check.detail}` : ""}`.replace(/\r?\n/g, " ");
+    console.log(process.env.GITHUB_ACTIONS ? `::error title=Başarısız::${line}` : `${check.ok ? "✓" : "✗"} ${line}`);
+  }
   if (process.env.GITHUB_ACTIONS) console.log(`::error title=Senaryo yarıda kaldı::${String(error?.message || error).replace(/\r?\n/g, " ")}`);
   await page.screenshot({ path: "e2e-hata.png", fullPage: true }).catch(() => {});
   process.exitCode = 1;

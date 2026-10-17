@@ -74,6 +74,8 @@
 
   async function run({ tag, log = () => {} }) {
     const checks = [];
+    // Senaryo yarıda kalırsa o ana kadarki kontroller de raporlansın.
+    window.CorvianE2E.lastChecks = checks;
     const check = (name, ok, detail = "") => {
       checks.push({ name, ok: Boolean(ok), detail: String(detail) });
       log(`${ok ? "✓" : "✗"} ${name}${detail ? ` — ${detail}` : ""}`);
@@ -408,8 +410,9 @@
 
     // 9) Finans: iptal proje alacakta yok, A projesinde stok maliyeti düşülüyor;
     // proje detayındaki kâr ile Finans raporundaki kâr aynı.
-    await go(`/dashboard/projeler/${projectA}`, () => findButton("Finans Özeti", { exact: true }));
-    await click("Finans Özeti", { exact: true, after: 2500 });
+    // Sekme ekranda kısa adıyla ("Finans") görünür.
+    await go(`/dashboard/projeler/${projectA}`, () => findButton("Finans", { exact: true }));
+    await click("Finans", { exact: true, after: 2500 });
     const projectProfitEl = await waitFor(() => main().querySelector("[data-testid=project-profit]"), { timeout: 20000 });
     const projectProfit = Number(projectProfitEl?.dataset.value);
     await go("/dashboard/finans", () => /Proje Bazlı Kâr/.test(main().innerText));
