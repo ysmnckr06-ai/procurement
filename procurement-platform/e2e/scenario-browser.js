@@ -178,9 +178,11 @@
     }
     check("Proje A stoktan ayrıldı", /stoktan ayrıldı/.test(await reserve(projectA)));
     check("Proje B stoktan ayrıldı", /stoktan ayrıldı/.test(await reserve(projectB)));
+    const robotProjects = [projectA, projectB];
     async function invariant() {
       const { data: prods } = await S().from("products").select("id,product_code,current_stock,reserved_stock").like("product_code", `${tag}-%`);
-      const items = [...(await itemsOf(projectA)), ...(await itemsOf(projectB))];
+      // Robotun açtığı tüm projeler (A, B ve dağıtım senaryosundaki C) sayılır.
+      const items = (await Promise.all(robotProjects.map(itemsOf))).flat();
       return (prods || []).filter((p) => {
         const sum = items.filter((i) => i.product_id === p.id).reduce((s, i) => s + Number(i.reserved_quantity || 0), 0);
         return Math.abs(sum - Number(p.reserved_stock)) > 1e-6 || Number(p.reserved_stock) > Number(p.current_stock);
@@ -423,6 +425,7 @@
     try {
       const lineNo = Number(String(line.productCode).split("-").pop());
       const projectC = await createProject(`${tag} Proje C`, [bom(1, 0)[0], [...bomRow(lineNo).slice(0, 3), 6, ...bomRow(lineNo).slice(4)]]);
+      robotProjects.push(projectC);
       const productRow = async () => (await S().from("products").select("id,current_stock,reserved_stock").eq("product_code", line.productCode).single()).data;
       const openNeeds = async (productId) => {
         const { data: needItems } = await S().from("project_items")
