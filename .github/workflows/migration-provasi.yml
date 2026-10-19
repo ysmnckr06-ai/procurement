@@ -77,7 +77,15 @@ jobs:
 
       - name: Prova testleri
         run: |
-          $PG/psql "$HEDEF" -v ON_ERROR_STOP=1 -f "scripts/prova/$TEST" | tee sonuc.txt
+          set +e
+          $PG/psql "$HEDEF" -v ON_ERROR_STOP=1 -f "scripts/prova/$TEST" > sonuc.txt 2>&1
+          code=$?
+          set -e
+          cat sonuc.txt
+          if [ $code -ne 0 ]; then
+            tail -5 sonuc.txt | while read -r line; do echo "::error title=Prova betiği durdu::$line"; done
+            exit 1
+          fi
           grep '^✗' sonuc.txt | while read -r line; do echo "::error title=Başarısız::$line"; done
           echo "::notice title=Özet::$(grep '^TOPLAM' sonuc.txt)"
           grep -q PROVA_BASARILI sonuc.txt
