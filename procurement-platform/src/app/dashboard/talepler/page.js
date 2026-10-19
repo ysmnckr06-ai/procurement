@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { getAccountUser, getAccountSession } from "@/lib/account";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { CORVIAN_PRODUCT_NAME, fetchCompanyBranding } from "@/lib/companyBranding";
 import { matchProduct } from "@/lib/productMatching";
@@ -1008,7 +1009,7 @@ export default function TaleplerPage() {
     try {
       const {
         data: { user },
-      } = await supabase.auth.getUser();
+      } = await getAccountUser();
 
       if (!user) {
         router.push("/login");
@@ -1075,7 +1076,7 @@ export default function TaleplerPage() {
   const loadStockProducts = async () => {
     const {
       data: { user },
-    } = await supabase.auth.getUser();
+    } = await getAccountUser();
 
     if (!user) return;
 
@@ -1088,7 +1089,7 @@ export default function TaleplerPage() {
   };
 
   const getStockProductsForExport = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
+    const { data: { user } } = await getAccountUser();
     if (!user) return stockProducts;
 
     try {
@@ -1189,7 +1190,7 @@ export default function TaleplerPage() {
     }
 
     setCreatingManualRequest(true);
-    const { data: { user } } = await supabase.auth.getUser();
+    const { data: { user } } = await getAccountUser();
     if (!user) {
       router.push("/login");
       return;
@@ -1249,7 +1250,7 @@ export default function TaleplerPage() {
   }
 
   async function updateRequestStatus(request, status) {
-    const { data: { user } } = await supabase.auth.getUser();
+    const { data: { user } } = await getAccountUser();
     if (!user) return;
     const { error } = await supabase.from("requests").update({ durum: status }).eq("id", request.id).eq("user_id", user.id);
     if (error) {
@@ -1286,7 +1287,7 @@ export default function TaleplerPage() {
       return;
     }
 
-    const { data: { user } } = await supabase.auth.getUser();
+    const { data: { user } } = await getAccountUser();
     if (!user) return;
 
     const processedAt = new Date().toISOString();
@@ -1479,7 +1480,7 @@ export default function TaleplerPage() {
 
     const {
       data: { session },
-    } = await supabase.auth.getSession();
+    } = await getAccountSession();
 
     const token = session?.access_token;
 
@@ -1551,7 +1552,7 @@ export default function TaleplerPage() {
       return;
     }
 
-    const { data: { session } } = await supabase.auth.getSession();
+    const { data: { session } } = await getAccountSession();
     const token = session?.access_token;
     if (!token) {
       setMessage("Oturum bulunamadı. Lütfen tekrar giriş yapın.");
@@ -1744,7 +1745,7 @@ export default function TaleplerPage() {
 
     const {
       data: { user },
-    } = await supabase.auth.getUser();
+    } = await getAccountUser();
 
     if (!user) {
       alert("Kullanıcı bulunamadı.");

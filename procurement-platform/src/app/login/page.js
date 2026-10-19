@@ -10,6 +10,15 @@ import {
 } from "@/components/AuthShell";
 import { migrateLegacySupabaseSession, supabase } from "@/lib/supabase";
 
+// Giriş sonrası dönüş adresi: yalnız uygulama içi davet ve panel yolları kabul edilir.
+function safeNextPath() {
+  try {
+    const next = new URLSearchParams(window.location.search).get("next") || "";
+    if (/^\/(davet\/[a-f0-9]{16,128}|dashboard(\/[\w\-/]*)?)$/.test(next)) return next;
+  } catch {}
+  return "/dashboard";
+}
+
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -22,7 +31,7 @@ export default function LoginPage() {
 
     async function migrateExistingSession() {
       const migrated = await migrateLegacySupabaseSession();
-      if (mounted && migrated) window.location.href = "/dashboard";
+      if (mounted && migrated) window.location.href = safeNextPath();
     }
 
     migrateExistingSession();
@@ -51,7 +60,7 @@ export default function LoginPage() {
       }
 
       setMessage("Giriş başarılı");
-      window.location.href = "/dashboard";
+      window.location.href = safeNextPath();
     } catch (err) {
       console.error("LOGIN CATCH:", err);
       setMessage("Bağlantı hatası oluştu.");

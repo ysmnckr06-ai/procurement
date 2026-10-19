@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { getAccountUser } from "@/lib/account";
 
 const asArray = (value) => (Array.isArray(value) ? value : []);
 const unique = (values) => [...new Set(values.filter(Boolean))];
@@ -32,7 +33,7 @@ export default function ReportReviewPage() {
 
   useEffect(() => {
     async function load() {
-      const { data: { user } } = await supabase.auth.getUser();
+      const { data: { user } } = await getAccountUser();
       if (!user) { router.push("/login"); return; }
       const [reportResult, orderResult] = await Promise.all([
         supabase.from("reports").select("*").eq("id", id).eq("user_id", user.id).maybeSingle(),

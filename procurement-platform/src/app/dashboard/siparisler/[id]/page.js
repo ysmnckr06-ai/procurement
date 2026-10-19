@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createDocumentSignedUrl, downloadDocumentFile, isPdfDocument } from "@/lib/documentAccess";
 import { supabase } from "@/lib/supabase";
+import { getAccountUser, getAccountSession } from "@/lib/account";
 import { storageContentType, storageFile } from "@/lib/storageContentType";
 import AgreedRateField, { RATE_BASIS_LABELS } from "./AgreedRateField";
 import OpenNeedsDistributor from "@/components/OpenNeedsDistributor";
@@ -960,7 +961,7 @@ export default function OrderDetailPage() {
   async function loadOrder() {
     const {
       data: { user },
-    } = await supabase.auth.getUser();
+    } = await getAccountUser();
 
     if (!user) {
       router.push("/login");
@@ -1141,7 +1142,7 @@ export default function OrderDetailPage() {
   async function updateOrder(payload, fallbackPayload) {
     const {
       data: { user },
-    } = await supabase.auth.getUser();
+    } = await getAccountUser();
 
     if (!user || !order) return { error: new Error("Oturum bulunamadı.") };
 
@@ -1207,7 +1208,7 @@ export default function OrderDetailPage() {
 
   async function createReceiptProductCard() {
     if (!receiptProductSuggestion?.item) return;
-    const { data: { user } } = await supabase.auth.getUser();
+    const { data: { user } } = await getAccountUser();
     if (!user) {
       router.push("/login");
       return;
@@ -1508,7 +1509,7 @@ export default function OrderDetailPage() {
 
     const {
       data: { user },
-    } = await supabase.auth.getUser();
+    } = await getAccountUser();
 
     if (!user) {
       router.push("/login");
@@ -1860,7 +1861,7 @@ export default function OrderDetailPage() {
 
     const {
       data: { user },
-    } = await supabase.auth.getUser();
+    } = await getAccountUser();
 
     if (!user) {
       setAutomaticReceiptApplying(false);
@@ -2072,7 +2073,7 @@ export default function OrderDetailPage() {
 
     const {
       data: { user },
-    } = await supabase.auth.getUser();
+    } = await getAccountUser();
 
     if (!user) {
       router.push("/login");
@@ -2161,7 +2162,7 @@ export default function OrderDetailPage() {
 
     const {
       data: { user },
-    } = await supabase.auth.getUser();
+    } = await getAccountUser();
 
     if (!user) {
       router.push("/login");
@@ -2332,7 +2333,7 @@ export default function OrderDetailPage() {
 
     const {
       data: { user },
-    } = await supabase.auth.getUser();
+    } = await getAccountUser();
 
     if (!user) {
       router.push("/login");
@@ -2384,7 +2385,7 @@ export default function OrderDetailPage() {
 
     const {
       data: { session },
-    } = await supabase.auth.getSession();
+    } = await getAccountSession();
 
     if (!session?.access_token) {
       router.push("/login");
@@ -2474,7 +2475,7 @@ export default function OrderDetailPage() {
 
     const {
       data: { user },
-    } = await supabase.auth.getUser();
+    } = await getAccountUser();
 
     if (!user) {
       router.push("/login");
@@ -2566,7 +2567,7 @@ export default function OrderDetailPage() {
 
     const {
       data: { user },
-    } = await supabase.auth.getUser();
+    } = await getAccountUser();
 
     if (!user) {
       router.push("/login");

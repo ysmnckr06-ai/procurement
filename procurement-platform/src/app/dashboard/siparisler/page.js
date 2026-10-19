@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import ProductCodeInput from "@/components/ProductCodeInput";
 import { supabase } from "@/lib/supabase";
+import { getAccountUser } from "@/lib/account";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { calculateBaseAmount, currencyOptions, getBaseCurrency, getExchangeRate } from "@/lib/currency";
 import { fetchLiveTryRates, liveCurrencyOptions, liveRateFor, rateDiffPercent } from "@/lib/liveCurrency";
@@ -376,7 +377,7 @@ export default function OrdersPage() {
   async function loadData() {
     const {
       data: { user },
-    } = await supabase.auth.getUser();
+    } = await getAccountUser();
 
     if (!user) {
       router.push("/login");
@@ -723,7 +724,7 @@ export default function OrdersPage() {
 
     const {
       data: { user },
-    } = await supabase.auth.getUser();
+    } = await getAccountUser();
 
     if (!user) {
       router.push("/login");
@@ -899,7 +900,7 @@ export default function OrdersPage() {
 
     const {
       data: { user },
-    } = await supabase.auth.getUser();
+    } = await getAccountUser();
 
     if (!user) {
       router.push("/login");
@@ -1087,7 +1088,7 @@ export default function OrdersPage() {
 
     const {
       data: { user },
-    } = await supabase.auth.getUser();
+    } = await getAccountUser();
 
     if (!user) {
       router.push("/login");

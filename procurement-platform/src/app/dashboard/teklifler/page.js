@@ -4,6 +4,7 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import { getAccountUser, getAccountSession } from "@/lib/account";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { canonicalPartnerName } from "@/lib/businessPartners";
 import { formatMoney } from "@/lib/currency";
@@ -202,7 +203,7 @@ const loadRequests = async () => {
   try {
     const {
       data: { user },
-    } = await supabase.auth.getUser();
+    } = await getAccountUser();
 
     if (!user) {
       window.location.href = "/login";
@@ -265,7 +266,7 @@ const loadCompanySettings = async () => {
   try {
     const {
       data: { user },
-    } = await supabase.auth.getUser();
+    } = await getAccountUser();
 
     if (!user) return;
 
@@ -304,7 +305,7 @@ const loadSupplierProfiles = async () => {
   try {
     const {
       data: { user },
-    } = await supabase.auth.getUser();
+    } = await getAccountUser();
     if (!user) return;
 
     const { data, error } = await fetchAllRows(() => supabase
@@ -543,7 +544,7 @@ const loadSupplierProfiles = async () => {
       formData.append("exchange_rates_json", JSON.stringify(analysisExchangeRates));
       const {
         data: { session },
-      } = await supabase.auth.getSession();
+      } = await getAccountSession();
 
       const token = session?.access_token;
 

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { getAccountUser } from "@/lib/account";
 import { fetchLiveTryRates, liveCurrencyOptions, liveRateFor } from "@/lib/liveCurrency";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { calculateBaseAmount } from "@/lib/currency";
@@ -95,7 +96,7 @@ export default function FinancePage() {
 
     const {
       data: { user },
-    } = await supabase.auth.getUser();
+    } = await getAccountUser();
 
     if (!user) {
       window.location.href = "/login";

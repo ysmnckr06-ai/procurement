@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { getAccountUser } from "@/lib/account";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 
 // Gelen malzemeyi açık ihtiyacı olan projelere dağıtma. Ör: 100 sigorta geldi,
@@ -32,7 +33,7 @@ export default function OpenNeedsDistributor({ lines, onDone, title = "Gelen mal
   async function load() {
     const {
       data: { user },
-    } = await supabase.auth.getUser();
+    } = await getAccountUser();
     if (!user) return;
     const codes = [...new Set((lines || []).map((line) => codeKey(line.product_code)).filter(Boolean))];
     const ids = [...new Set((lines || []).map((line) => line.product_id).filter(Boolean))];

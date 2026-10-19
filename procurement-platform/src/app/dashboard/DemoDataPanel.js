@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { getAccountUser } from "@/lib/account";
 import { hasDemoData, loadDemoData, removeDemoData } from "@/lib/demoData";
 import { fetchLiveTryRates, liveRateFor } from "@/lib/liveCurrency";
 
@@ -15,7 +16,7 @@ export default function DemoDataPanel({ variant = "welcome", onChange }) {
   const [message, setMessage] = useState("");
 
   async function refresh() {
-    const { data: { user } } = await supabase.auth.getUser();
+    const { data: { user } } = await getAccountUser();
     if (!user) return;
     const [demo, projectCount, productCount] = await Promise.all([
       hasDemoData(supabase, user.id),
@@ -36,7 +37,7 @@ export default function DemoDataPanel({ variant = "welcome", onChange }) {
   async function load() {
     setBusy(true);
     setMessage("");
-    const { data: { user } } = await supabase.auth.getUser();
+    const { data: { user } } = await getAccountUser();
     let eurRate = 50;
     try {
       eurRate = Number(liveRateFor("EUR", await fetchLiveTryRates())) || eurRate;
@@ -53,7 +54,7 @@ export default function DemoDataPanel({ variant = "welcome", onChange }) {
     if (!window.confirm("Örnek stok kartları, projeler ve iş ortakları silinsin mi? Kendi kayıtlarınız etkilenmez.")) return;
     setBusy(true);
     setMessage("");
-    const { data: { user } } = await supabase.auth.getUser();
+    const { data: { user } } = await getAccountUser();
     const result = await removeDemoData(supabase, user.id);
     setMessage(result.message);
     setBusy(false);

@@ -3,6 +3,7 @@ import { iyzicoConfig, iyzicoRequest, isIyzicoConfigured, siteUrlFrom } from "@/
 import { isLicenseActive, isPermanentPlan } from "@/lib/license";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { getAccountUser } from "@/lib/accountCore";
 
 export const dynamic = "force-dynamic";
 
@@ -20,8 +21,11 @@ export async function POST(request) {
   const supabase = await createServerSupabaseClient();
   const {
     data: { user },
-  } = await supabase.auth.getUser();
+  } = await getAccountUser(supabase);
   if (!user) return NextResponse.json({ error: "Oturum gerekli." }, { status: 401 });
+  if (user.isAccountAdmin === false) {
+    return NextResponse.json({ error: "Aboneliği yalnız hesap yöneticisi yönetebilir." }, { status: 403 });
+  }
 
   const config = iyzicoConfig();
   const admin = createAdminSupabaseClient();

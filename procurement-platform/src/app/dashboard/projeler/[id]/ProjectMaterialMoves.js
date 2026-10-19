@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { getAccountUser } from "@/lib/account";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 
 // Malzemenin yeri (depoda / montajda) ve projeler arası hareket:
@@ -41,7 +42,7 @@ export default function ProjectMaterialMoves({ projectId, items, onDone, onMessa
   async function load() {
     const {
       data: { user },
-    } = await supabase.auth.getUser();
+    } = await getAccountUser();
     if (!user) return;
     const productIds = [...new Set(rows.map((row) => row.item.product_id))];
     const [projectRes, itemRes, transferRes] = await Promise.all([

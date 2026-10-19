@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse } from "next/server";
 import { isLicenseActive } from "@/lib/license";
+import { getAccountUser } from "@/lib/accountCore";
 
 const LICENSE_HEADER = "x-corvian-verified-license";
 
@@ -30,7 +31,7 @@ export async function proxy(request) {
 
   const {
     data: { user },
-  } = await supabase.auth.getUser();
+  } = await getAccountUser(supabase);
 
   if (!user) {
     return NextResponse.redirect(new URL("/login", request.url));

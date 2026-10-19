@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { getAccountUser } from "@/lib/account";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { CORVIAN_PRODUCT_NAME, fetchCompanyBranding } from "@/lib/companyBranding";
 
@@ -535,7 +536,7 @@ export default function ProcurementSummaryPage() {
       return;
     }
 
-    const { data: { user } } = await supabase.auth.getUser();
+    const { data: { user } } = await getAccountUser();
     if (!user) {
       router.push("/login");
       return;
@@ -757,7 +758,7 @@ export default function ProcurementSummaryPage() {
     setRequestError("");
     setCreatingRequest(true);
     setLastCreatedRequestId("");
-    const { data: { user } } = await supabase.auth.getUser();
+    const { data: { user } } = await getAccountUser();
     if (!user) {
       setCreatingRequest(false);
       router.push("/login");

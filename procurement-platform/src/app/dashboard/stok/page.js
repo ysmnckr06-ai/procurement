@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { getAccountUser, getAccountSession } from "@/lib/account";
 import { CORVIAN_PRODUCT_NAME, fetchCompanyBranding } from "@/lib/companyBranding";
 import { matchProduct, productMatchLabel } from "@/lib/productMatching";
 import {
@@ -1320,7 +1321,7 @@ export default function StockPage() {
     try {
       const {
         data: { user },
-      } = await supabase.auth.getUser();
+      } = await getAccountUser();
 
       if (!user) {
         router.push("/login");
@@ -1535,7 +1536,7 @@ export default function StockPage() {
     setMessage("");
 
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      const { data: { user } } = await getAccountUser();
       if (!user) {
         setProductDeleteModalOpen(false);
         router.push("/login");
@@ -1583,7 +1584,7 @@ export default function StockPage() {
 
     const {
       data: { user },
-    } = await supabase.auth.getUser();
+    } = await getAccountUser();
 
     if (!user) {
       setBulkDeletingMovements(false);
@@ -1647,7 +1648,7 @@ export default function StockPage() {
 
     const {
       data: { user },
-    } = await supabase.auth.getUser();
+    } = await getAccountUser();
 
     if (!user) {
       router.push("/login");
@@ -1772,7 +1773,7 @@ export default function StockPage() {
 
     setCreatingStockCard(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      const { data: { user } } = await getAccountUser();
       if (!user) return router.push("/login");
 
       const existing = productGroups.find((product) =>
@@ -1855,7 +1856,7 @@ export default function StockPage() {
 
     const {
       data: { user },
-    } = await supabase.auth.getUser();
+    } = await getAccountUser();
 
     if (!user) {
       router.push("/login");
@@ -2068,7 +2069,7 @@ export default function StockPage() {
     } catch (analysisError) {
       if (!String(file.name || "").toLowerCase().endsWith(".pdf")) throw analysisError;
       if (!API_URL) throw new Error(`${file.name}: PDF OCR için NEXT_PUBLIC_API_URL tanımlı değil.`);
-      const { data: { session } } = await supabase.auth.getSession();
+      const { data: { session } } = await getAccountSession();
       if (!session?.access_token) throw new Error("PDF OCR için oturum gerekli.");
       const formData = new FormData();
       formData.append("file", file, file.name);
@@ -2245,7 +2246,7 @@ export default function StockPage() {
       hasHighRiskDifference: false,
     };
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      const { data: { user } } = await getAccountUser();
       if (!user) return router.push("/login");
       const { count: beforeCount } = await supabase.from("products").select("id", { count: "exact", head: true }).eq("user_id", user.id);
       if (analysis.importType !== PRODUCT_TYPES.MAIN) {
