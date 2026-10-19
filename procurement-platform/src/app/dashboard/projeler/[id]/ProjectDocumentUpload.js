@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { getAccountUser } from "@/lib/account";
 import { storageContentType, storageFile } from "@/lib/storageContentType";
 
 // Projeye her türlü belgeyi (fatura, irsaliye, çizim, teklif, sözleşme...)
@@ -49,7 +50,7 @@ export default function ProjectDocumentUpload({ projectId, onDone, onMessage }) 
     setBusy(true);
     const {
       data: { user },
-    } = await supabase.auth.getUser();
+    } = await getAccountUser();
     if (!user) {
       setBusy(false);
       onMessage?.("Oturum bulunamadı, lütfen tekrar giriş yapın.");

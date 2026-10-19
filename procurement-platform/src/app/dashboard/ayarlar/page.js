@@ -3,8 +3,10 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { getAccountUser } from "@/lib/account";
 import { fetchLiveTryRates } from "@/lib/liveCurrency";
 import DemoDataPanel from "../DemoDataPanel";
+import TeamSettings from "./TeamSettings";
 
 const defaultSettings = {
   company_name: "",
@@ -58,7 +60,7 @@ export default function SettingsPage() {
 
     const {
       data: { user },
-    } = await supabase.auth.getUser();
+    } = await getAccountUser();
 
     if (!user) {
       setLoading(false);
@@ -132,7 +134,7 @@ export default function SettingsPage() {
 
     const {
       data: { user },
-    } = await supabase.auth.getUser();
+    } = await getAccountUser();
 
     if (!user) {
       router.push("/login");
@@ -440,6 +442,7 @@ export default function SettingsPage() {
               </button>
             </div>
           </form>
+          <TeamSettings />
         </div>
       </main>
     </div>

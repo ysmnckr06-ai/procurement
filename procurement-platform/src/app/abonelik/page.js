@@ -4,6 +4,7 @@ import { isLicenseActive, isPermanentPlan } from "@/lib/license";
 import { SUBSCRIPTION_GRACE_DAYS } from "@/lib/iyzico";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import SubscriptionPanel, { SignOutButton } from "./SubscriptionPanel";
+import { getAccountUser } from "@/lib/accountCore";
 
 export const metadata = {
   title: "Abonelik | CORVIAN",
@@ -29,7 +30,7 @@ export default async function SubscriptionPage({ searchParams }) {
   const supabase = await createServerSupabaseClient();
   const {
     data: { user },
-  } = await supabase.auth.getUser();
+  } = await getAccountUser(supabase);
   if (!user) redirect("/login");
 
   let { data: license, error: licenseError } = await supabase

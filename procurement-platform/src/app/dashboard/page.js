@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { getAccountUser } from "@/lib/account";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import {
   budgetBaseAmount,
@@ -262,7 +263,7 @@ export default function DashboardPage() {
     const loadDashboard = async () => {
       const {
         data: { user },
-      } = await supabase.auth.getUser();
+      } = await getAccountUser();
 
       if (!user) {
         window.location.href = "/login";

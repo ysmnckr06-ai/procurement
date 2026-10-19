@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { getAccountUser } from "@/lib/accountCore";
 
 export const dynamic = "force-dynamic";
 
@@ -96,7 +97,7 @@ function response(questionId, headline, summary, metrics, columns, resultRows, f
 export async function POST(request) {
   try {
     const supabase = await createServerSupabaseClient();
-    const { data: auth } = await supabase.auth.getUser();
+    const { data: auth } = await getAccountUser(supabase);
     const user = auth?.user;
     if (!user) return NextResponse.json({ error: "Oturum bulunamadı." }, { status: 401 });
 

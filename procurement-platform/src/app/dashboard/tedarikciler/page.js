@@ -15,6 +15,7 @@ import {
   partnerTypes,
 } from "@/lib/businessPartners";
 import { supabase } from "@/lib/supabase";
+import { getAccountUser } from "@/lib/account";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 
 const emptyForm = {
@@ -403,7 +404,7 @@ export default function BusinessPartnersPage() {
     setMessage("");
     const {
       data: { user },
-    } = await supabase.auth.getUser();
+    } = await getAccountUser();
 
     if (!user) {
       router.push("/login");
@@ -788,7 +789,7 @@ export default function BusinessPartnersPage() {
 
     const {
       data: { user },
-    } = await supabase.auth.getUser();
+    } = await getAccountUser();
 
     if (!user) {
       router.push("/login");
@@ -952,7 +953,7 @@ export default function BusinessPartnersPage() {
 
     const {
       data: { user },
-    } = await supabase.auth.getUser();
+    } = await getAccountUser();
 
     if (!user) {
       router.push("/login");

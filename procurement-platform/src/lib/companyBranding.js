@@ -1,3 +1,4 @@
+import { getAccountUser } from "@/lib/accountCore";
 export const DEFAULT_COMPANY_NAME = "Firma adı belirtilmedi";
 export const CORVIAN_PRODUCT_NAME = "Corvian ERP";
 
@@ -21,7 +22,8 @@ export function companyBrandLine(companyName) {
 export async function fetchCompanyBranding(supabase, suppliedUser = null) {
   let user = suppliedUser;
   if (!user) {
-    const { data } = await supabase.auth.getUser();
+    // Ekip üyeleri hesap sahibinin firma bilgisini görür.
+    const { data } = await getAccountUser(supabase);
     user = data?.user || null;
   }
 

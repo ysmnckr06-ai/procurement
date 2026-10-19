@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { getAccountUser } from "@/lib/account";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 
 
@@ -18,7 +19,7 @@ useEffect(() => {
     try {
       const {
         data: { user },
-      } = await supabase.auth.getUser();
+      } = await getAccountUser();
 
       if (!user) {
         router.push("/login");
@@ -142,7 +143,7 @@ async function deleteReport(reportId) {
 
   const {
     data: { user },
-  } = await supabase.auth.getUser();
+  } = await getAccountUser();
 
   if (!user) {
     alert("Kullanıcı bulunamadı.");

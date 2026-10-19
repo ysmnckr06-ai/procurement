@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { isLicenseActive } from "@/lib/license";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import DashboardShell from "./DashboardShell";
+import { getAccountUser } from "@/lib/accountCore";
 
 const LICENSE_HEADER = "x-corvian-verified-license";
 
@@ -24,7 +25,7 @@ export default async function DashboardLayout({ children }) {
     const supabase = await createServerSupabaseClient();
     const {
       data: { user },
-    } = await supabase.auth.getUser();
+    } = await getAccountUser(supabase);
 
     if (!user) redirect("/login");
 

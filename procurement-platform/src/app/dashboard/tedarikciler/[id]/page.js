@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { normalizePartnerName, normalizePartnerRecord } from "@/lib/businessPartners";
 import { supabase } from "@/lib/supabase";
+import { getAccountUser } from "@/lib/account";
 
 function formatMoney(value, currency = "TRY") {
   return `${new Intl.NumberFormat("tr-TR", {
@@ -52,7 +53,7 @@ export default function BusinessPartnerDetailPage() {
     try {
       const {
         data: { user },
-      } = await supabase.auth.getUser();
+      } = await getAccountUser();
 
       if (!user) {
         router.push("/login");

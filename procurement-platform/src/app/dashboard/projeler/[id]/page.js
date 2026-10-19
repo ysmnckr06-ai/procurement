@@ -22,6 +22,7 @@ import {
   parentProcessInfo,
 } from "@/lib/projectHierarchy";
 import { supabase } from "@/lib/supabase";
+import { getAccountUser, getAccountSession } from "@/lib/account";
 import { storageContentType, storageFile } from "@/lib/storageContentType";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { projectStockUsage } from "@/lib/stockCost";
@@ -676,7 +677,7 @@ export default function ProjectDetailPage() {
   async function getUserOrRedirect() {
     const {
       data: { user },
-    } = await supabase.auth.getUser();
+    } = await getAccountUser();
 
     if (!user) {
       router.push("/login");
@@ -3136,7 +3137,7 @@ export default function ProjectDetailPage() {
 
     const {
       data: { session },
-    } = await supabase.auth.getSession();
+    } = await getAccountSession();
     const token = session?.access_token;
 
     if (!token || !API_URL) {
@@ -3871,7 +3872,7 @@ export default function ProjectDetailPage() {
 
     const {
       data: { session },
-    } = await supabase.auth.getSession();
+    } = await getAccountSession();
     const token = session?.access_token;
 
     if (!token || !API_URL) {
@@ -4603,7 +4604,7 @@ export default function ProjectDetailPage() {
     try {
       const {
         data: { session },
-      } = await supabase.auth.getSession();
+      } = await getAccountSession();
 
       const token = session?.access_token;
 

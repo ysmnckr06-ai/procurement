@@ -1,0 +1,91 @@
+name: Migration provası
+
+# Canlı veritabanının kopyasında (yalnız okuma ile alınır) yeni bir migration'ı
+# ve prova testlerini çalıştırır. Canlıya hiçbir şey yazılmaz.
+on:
+  pull_request:
+    paths: ["supabase/migrations/**", "scripts/prova/**", ".github/workflows/migration-provasi.yml"]
+  workflow_dispatch:
+    inputs:
+      migration:
+        description: "supabase/migrations altındaki dosya"
+        required: true
+        default: "202610190047_team_accounts.sql"
+      test:
+        description: "scripts/prova altındaki test dosyası"
+        required: true
+        default: "ekip-testi.sql"
+
+permissions:
+  contents: read
+
+jobs:
+  prova:
+    name: Kopyada migration + test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: deneme
+          POSTGRES_DB: prova
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      HEDEF: postgresql://postgres:deneme@localhost:5432/prova
+      PG: /usr/lib/postgresql/17/bin
+      MIGRATION: ${{ inputs.migration || '202610190047_team_accounts.sql' }}
+      TEST: ${{ inputs.test || 'ekip-testi.sql' }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: PostgreSQL 17 istemcisini kur
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y -qq postgresql-client-17
+
+      - name: Canlı şemanın ve verinin kopyasını al (salt okuma)
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          SUPABASE_DB_URL=$(printf '%s' "$SUPABASE_DB_URL" | tr -d '\r\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+          $PG/pg_dump "$SUPABASE_DB_URL" -Fc --no-owner --no-privileges -n public -f kopya.dump
+          $PG/psql "$SUPABASE_DB_URL" -At -c "copy (select id, email from auth.users) to stdout with csv" > kullanicilar.csv
+          # Depolama politikaları da dönüştürüleceği için storage.objects politikaları alınır.
+          $PG/psql "$SUPABASE_DB_URL" -At -c "select format('create policy %I on storage.objects as %s for %s to %s %s %s;', policyname, permissive, cmd, array_to_string(roles, ','), coalesce('using (' || qual || ')', ''), coalesce('with check (' || with_check || ')', '')) from pg_policies where schemaname = 'storage' and tablename = 'objects'" > depolama-politikalari.sql
+          echo "Depolama politikası: $(wc -l < depolama-politikalari.sql)"
+
+      - name: Boş veritabanına geri yükle
+        run: |
+          $PG/psql "$HEDEF" -v ON_ERROR_STOP=1 -q -f scripts/yedek/geri-yukleme-hazirlik.sql
+          $PG/psql "$HEDEF" -v ON_ERROR_STOP=1 -q -c "\copy auth.users (id, email) from 'kullanicilar.csv' with csv"
+          $PG/pg_restore -d "$HEDEF" -n public --no-owner --no-privileges kopya.dump 2> geri-yukleme-hatalari.txt || true
+          echo "Geri yükleme uyarı satırı: $(grep -c 'error' geri-yukleme-hatalari.txt || true)"
+          $PG/psql "$HEDEF" -q -c "create schema if not exists storage; create table if not exists storage.objects (id uuid primary key default gen_random_uuid(), bucket_id text, name text, owner uuid, metadata jsonb); create or replace function storage.foldername(name text) returns text[] language sql immutable as \$\$ select (string_to_array(name, '/'))[1:array_length(string_to_array(name, '/'), 1) - 1] \$\$; alter table storage.objects enable row level security;"
+          $PG/psql "$HEDEF" -q -f depolama-politikalari.sql 2>&1 | tail -3
+          $PG/psql "$HEDEF" -At -f scripts/yedek/tablo-sayilari.sql > once.tsv
+
+      - name: Migration'ı uygula
+        run: |
+          $PG/psql "$HEDEF" -v ON_ERROR_STOP=1 -q -f "supabase/migrations/$MIGRATION"
+          $PG/psql "$HEDEF" -At -f scripts/yedek/tablo-sayilari.sql > sonra.tsv
+          if diff -q once.tsv sonra.tsv > /dev/null; then echo "::notice title=Veri::Mevcut kayıtlar değişmedi."; else diff -u once.tsv sonra.tsv | head -20; echo "::warning title=Veri::Satır sayıları değişti (yeni tablolar olabilir)."; fi
+
+      - name: Prova testleri
+        run: |
+          set +e
+          $PG/psql "$HEDEF" -v ON_ERROR_STOP=1 -f "scripts/prova/$TEST" > sonuc.txt 2>&1
+          code=$?
+          set -e
+          cat sonuc.txt
+          if [ $code -ne 0 ]; then
+            tail -5 sonuc.txt | while read -r line; do echo "::error title=Prova betiği durdu::$line"; done
+            exit 1
+          fi
+          grep '^✗' sonuc.txt | while read -r line; do echo "::error title=Başarısız::$line"; done
+          echo "::notice title=Özet::$(grep '^TOPLAM' sonuc.txt)"
+          grep -q PROVA_BASARILI sonuc.txt

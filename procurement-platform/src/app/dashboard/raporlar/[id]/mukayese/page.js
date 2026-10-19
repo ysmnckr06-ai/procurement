@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { getAccountUser, getAccountSession } from "@/lib/account";
 import { findOrCreateBusinessPartner } from "@/lib/businessPartners";
 
 function num(value) { return Number(value || 0) || 0; }
@@ -302,7 +303,7 @@ export default function ComparisonPage() {
 
   useEffect(() => {
     async function load() {
-      const { data: { user } } = await supabase.auth.getUser();
+      const { data: { user } } = await getAccountUser();
       if (!user) { router.push("/login"); return; }
       const [reportResult, supplierResult, orderResult] = await Promise.all([
         supabase.from("reports").select("*").eq("id", id).eq("user_id", user.id).single(),
@@ -370,7 +371,7 @@ export default function ComparisonPage() {
     setDownloading(type);
     setMessage("");
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { data: { session } } = await getAccountSession();
       if (!session?.access_token) throw new Error("Oturum bulunamadı. Lütfen tekrar giriş yapın.");
       const url = /^https?:\/\//i.test(path) ? path : `${apiUrl}${path}`;
       const response = await fetch(url, {
@@ -452,7 +453,7 @@ export default function ComparisonPage() {
     }
 
     creatingRef.current = true; setCreating(true); setMessage("");
-    const { data: { user } } = await supabase.auth.getUser();
+    const { data: { user } } = await getAccountUser();
     if (!user) { creatingRef.current = false; setCreating(false); router.push("/login"); return; }
 
     const bySupplier = new Map();
@@ -652,7 +653,7 @@ export default function ComparisonPage() {
       return;
     }
     setSavingPartner(true);
-    const { data: { user } } = await supabase.auth.getUser();
+    const { data: { user } } = await getAccountUser();
     if (!user) { setSavingPartner(false); router.push("/login"); return; }
     const values = {
       name: cleanName,

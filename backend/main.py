@@ -638,6 +638,23 @@ def require_active_license(user_id: str):
     return license_row
 
 
+def resolve_account_id(auth_user_id: str) -> str:
+    try:
+        response = (
+            supabase.table("account_members")
+            .select("account_id")
+            .eq("user_id", auth_user_id)
+            .limit(1)
+            .execute()
+        )
+        if response.data and response.data[0].get("account_id"):
+            return str(response.data[0]["account_id"])
+    except Exception as exc:
+        # Tablo henüz yoksa (migration uygulanmamış) tek kişilik davranış sürer.
+        logger.debug('ACCOUNT LOOKUP ERROR: %s', str(exc))
+    return auth_user_id
+
+
 def verify_user_token(authorization: str, enforce_license: bool = True):
     if not authorization:
         raise HTTPException(status_code=401, detail="Authorization header eksik")
@@ -676,6 +693,11 @@ def verify_user_token(authorization: str, enforce_license: bool = True):
 
     if not user.get("id"):
         raise HTTPException(status_code=401, detail="Kullanıcı bilgisi alınamadı")
+
+    # Ekip desteği: üye, hesap sahibinin verisiyle çalışır. Kayıt sahibi
+    # olarak kullanılan "id" hesap kimliğidir; giriş kimliği "auth_id"de kalır.
+    user["auth_id"] = user["id"]
+    user["id"] = resolve_account_id(user["id"])
 
     if enforce_license:
         require_active_license(user["id"])
