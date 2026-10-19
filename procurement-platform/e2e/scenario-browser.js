@@ -416,6 +416,62 @@
       check("Sipariş ödeme formu görünüyor", false);
     }
 
+    // 7d) Gelen malzemeyi açık ihtiyaçlara dağıtma: aynı malzemeye ihtiyacı olan
+    // yeni bir proje (C) açılır, karta başka bir teslimattan 50 adet boş stok gelmiş
+    // gibi eklenir. Teslim Alma sekmesindeki dağıtım kartı önerilen miktarlarla
+    // çalıştırılır: tüm açık ihtiyaçlar kapanmalı, artan stokta kalmalı.
+    try {
+      const lineNo = Number(String(line.productCode).split("-").pop());
+      const projectC = await createProject(`${tag} Proje C`, [bom(1, 0)[0], [...bomRow(lineNo).slice(0, 3), 6, ...bomRow(lineNo).slice(4)]]);
+      const productRow = async () => (await S().from("products").select("id,current_stock,reserved_stock").eq("product_code", line.productCode).single()).data;
+      const openNeeds = async (productId) => {
+        const { data: needItems } = await S().from("project_items")
+          .select("id,project_id,product_id,product_code,item_type,estimated_quantity,received_quantity,reserved_quantity")
+          .or(`product_id.eq.${productId},product_code.eq.${line.productCode}`);
+        const ids = [...new Set((needItems || []).map((i) => i.project_id))];
+        const { data: projectRows } = ids.length ? await S().from("projects").select("id,status").in("id", ids) : { data: [] };
+        const active = new Set((projectRows || []).filter((p) => !/^(tamamland|iptal|kapand|teslim edildi)/i.test(String(p.status || "").toLocaleLowerCase("tr-TR"))).map((p) => p.id));
+        return (needItems || []).filter((i) => i.item_type !== "main" && active.has(i.project_id)).map((i) => ({
+          ...i,
+          open: Math.max(Number(i.estimated_quantity || 0) - Number(i.received_quantity || 0) - Number(i.reserved_quantity || 0), 0),
+        }));
+      };
+      const before = await productRow();
+      const extra = 50;
+      await S().from("products").update({ current_stock: Number(before.current_stock) + extra }).eq("id", before.id);
+      const freeBefore = Number(before.current_stock) + extra - Number(before.reserved_stock);
+      const needsBefore = await openNeeds(before.id);
+      const openTotal = needsBefore.reduce((sum, i) => sum + i.open, 0);
+      const cOpenBefore = needsBefore.filter((i) => i.project_id === projectC).reduce((sum, i) => sum + i.open, 0);
+
+      await go(`/dashboard/siparisler/${order.id}`, () => findButton("Teslim Alma", { exact: true }));
+      await click("Teslim Alma", { exact: true, after: 1500 });
+      // Kartta birden fazla malzeme olabilir: bu malzemenin grubundaki düğme seçilir.
+      const distributeButton = await waitFor(() => [...main().querySelectorAll("button")].find((b) => /adedi projelere ayır$/.test(text(b)) && !b.disabled
+        && (b.closest("div.rounded-xl")?.innerText || "").includes(line.productCode)), { timeout: 30000 });
+      check("Dağıtım kartı açık ihtiyaçları gösteriyor", Boolean(distributeButton) && /açık ihtiyaçlara dağıt/.test(main().innerText), distributeButton ? text(distributeButton) : "kart yok");
+      if (distributeButton) {
+        const proposed = Number(text(distributeButton).split(" ")[0].replace(/\./g, "").replace(",", "."));
+        check("Önerilen miktar = min(boştaki stok, açık ihtiyaç)", proposed === Math.min(freeBefore, openTotal), `öneri ${proposed}, boşta ${freeBefore}, açık ${openTotal}`);
+        distributeButton.click();
+        await waitFor(() => /projeye ayrıldı|Dağıtılamadı/.test(main().innerText), { timeout: 30000 });
+        await sleep(1500);
+        const after = await productRow();
+        const needsAfter = await openNeeds(before.id);
+        const cAfter = needsAfter.filter((i) => i.project_id === projectC);
+        check("Dağıtım sonrası açık ihtiyaç kalmadı, Proje C ayrıldı",
+          needsAfter.every((i) => i.open === 0) && cAfter.every((i) => Number(i.reserved_quantity) >= 1) && cOpenBefore > 0,
+          `açık: ${needsAfter.map((i) => i.open).join(",")} · C rezerv ${cAfter.map((i) => i.reserved_quantity).join(",")}`);
+        check("Artan miktar stokta kaldı (boşta = önce − dağıtılan)",
+          Number(after.current_stock) - Number(after.reserved_stock) === freeBefore - Math.min(freeBefore, openTotal),
+          `boşta ${Number(after.current_stock) - Number(after.reserved_stock)}, beklenen ${freeBefore - Math.min(freeBefore, openTotal)}`);
+        const badDist = await invariant();
+        check("Dağıtım sonrası kart rezervleri tutarlı", badDist.length === 0, badDist.join(", "));
+      }
+    } catch (error) {
+      check("Açık ihtiyaçlara dağıtım senaryosu", false, error.message);
+    }
+
     // 8) Proje B iptal → rezerve stoğa döner
     await go("/dashboard/projeler", () => [...main().querySelectorAll("tr")].some((row) => row.innerText.includes(`${tag} Proje B`)));
     const rowB = [...main().querySelectorAll("tr")].find((row) => row.innerText.includes(`${tag} Proje B`));
@@ -477,14 +533,19 @@
     // 10) Temizlik: robotun proje A'sı da iptal edilir; rezervi depoya döner,
     // test hesabının finans ve proje ekranlarını kirletmez.
     try {
-      await go("/dashboard/projeler", () => [...main().querySelectorAll("tr")].some((row) => row.innerText.includes(`${tag} Proje A`)));
-      const rowA2 = [...main().querySelectorAll("tr")].find((row) => row.innerText.includes(`${tag} Proje A`));
-      [...rowA2.querySelectorAll("button")].find((b) => text(b) === "Düzenle").click();
-      await sleep(1200);
-      setValue(field("Durum"), "İptal");
-      window.confirm = () => true;
-      document.querySelector("form button[type=submit]").click();
-      await waitFor(() => /iptal edildi/i.test(statusText()), { timeout: 30000 });
+      for (const suffix of ["Proje A", "Proje C"]) {
+        const label = `${tag} ${suffix}`;
+        const listed = await go("/dashboard/projeler", () => [...main().querySelectorAll("tr")].some((row) => row.innerText.includes(label)))
+          .then(() => [...main().querySelectorAll("tr")].find((row) => row.innerText.includes(label)))
+          .catch(() => null);
+        if (!listed) continue;
+        [...listed.querySelectorAll("button")].find((b) => text(b) === "Düzenle").click();
+        await sleep(1200);
+        setValue(field("Durum"), "İptal");
+        window.confirm = () => true;
+        document.querySelector("form button[type=submit]").click();
+        await waitFor(() => /iptal edildi/i.test(statusText()), { timeout: 30000 });
+      }
       log("Temizlik: robot projeleri iptal edildi.");
     } catch (cleanupError) {
       log(`Temizlik yapılamadı: ${cleanupError.message}`);
