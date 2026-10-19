@@ -19,6 +19,11 @@ insert into auth.users (id, email) values
   ('bbbbbbbb-0000-4000-8000-000000000002', 'prova-b@example.com'),
   ('cccccccc-0000-4000-8000-000000000003', 'prova-c@example.com');
 
+-- Canlıda yazma için aktif lisans şartı var ("Active license required"): A'ya lisans.
+delete from public.user_licenses where user_id = 'aaaaaaaa-0000-4000-8000-000000000001';
+insert into public.user_licenses (user_id, plan_type, license_status, expires_at, activated_at)
+  values ('aaaaaaaa-0000-4000-8000-000000000001', 'active', 'active', now() + interval '10 days', now());
+
 create temp table sonuc (ad text, ok boolean, ayrinti text);
 grant all on sonuc to authenticated;
 
