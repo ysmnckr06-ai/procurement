@@ -7,6 +7,7 @@ on:
     paths:
       - "procurement-platform/e2e/ux-tour.mjs"
       - ".github/workflows/kullanici-gozu.yml"
+  deployment_status:
   workflow_dispatch:
 
 concurrency:
@@ -18,10 +19,13 @@ permissions:
 
 jobs:
   tur:
+    if: github.event_name != 'deployment_status' || (github.event.deployment_status.state == 'success' && startsWith(github.event.deployment_status.environment, 'Preview') && github.event.deployment.ref == 'onizleme-tur')
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
-      E2E_BASE_URL: https://procurement-dun.vercel.app
+      E2E_BASE_URL: ${{ github.event.deployment_status.environment_url || github.event.deployment_status.target_url || 'https://procurement-dun.vercel.app' }}
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+      UX_BRANCH: ${{ github.event_name == 'deployment_status' && 'ux-onizleme' || 'ux-ekranlar' }}
       E2E_EMAIL: ${{ secrets.E2E_EMAIL }}
       E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
     steps:
@@ -37,10 +41,11 @@ jobs:
         working-directory: procurement-platform/e2e
         run: |
           cd ux
-          git init -q -b ux-ekranlar
+          git init -q -b "$UX_BRANCH"
           git config user.name "corvian-robot"
           git config user.email "robot@users.noreply.github.com"
           git add -A
           git commit -qm "Kullanıcı gözüyle tur ${GITHUB_RUN_ID}"
-          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" ux-ekranlar
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" "$UX_BRANCH"
+          echo "::notice::adres $E2E_BASE_URL"
           echo "::notice::$(wc -l < notlar.txt) not, $(find . -name '*.jpg' | wc -l) görüntü yüklendi"

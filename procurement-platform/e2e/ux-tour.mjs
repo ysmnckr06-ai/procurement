@@ -68,6 +68,9 @@ async function login(context, keepTour) {
 }
 
 const browser = await chromium.launch();
+const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
+const baseNewContext = browser.newContext.bind(browser);
+browser.newContext = (opts = {}) => baseNewContext({ ...opts, ...(bypass ? { extraHTTPHeaders: { "x-vercel-protection-bypass": bypass, "x-vercel-set-bypass-cookie": "true" } } : {}) });
 try {
   // 1) Ziyaretçi
   for (const [label, ctxOpts] of [["masaustu", { viewport: { width: 1440, height: 900 } }], ["telefon", devices["iPhone 13"]]]) {
