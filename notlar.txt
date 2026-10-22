@@ -1,0 +1,39 @@
+ziyaretci masaustu / 2129 ms
+ziyaretci masaustu /register 1662 ms
+ziyaretci masaustu /login 594 ms
+ziyaretci telefon / 646 ms
+ziyaretci telefon /register 552 ms
+ziyaretci telefon /login 535 ms
+tur 0. adımda bitti/ileri düğmesi yok (https://procurement-dun.vercel.app/dashboard)
+masaustu /dashboard 7315 ms
+masaustu /dashboard/projeler 6448 ms
+masaustu /dashboard/stok 6173 ms
+masaustu /dashboard/talepler 6432 ms
+masaustu /dashboard/talepler/icmal 4971 ms
+masaustu /dashboard/teklifler 5560 ms
+masaustu /dashboard/siparisler 4329 ms
+masaustu /dashboard/raporlar 5065 ms
+masaustu /dashboard/finans 5042 ms
+masaustu /dashboard/tedarikciler 6559 ms
+masaustu /dashboard/ai-asistan 4488 ms
+masaustu /dashboard/ayarlar 4826 ms
+masaustu /dashboard/yardim 4725 ms
+masaustu /abonelik 2261 ms
+düğme 20-yeni-proje: açıldı (/dashboard/projeler)
+düğme 21-yeni-talep: bulunamadı
+düğme 22-yeni-tedarikci: açıldı (/dashboard/tedarikciler)
+düğme 23-urun-ekle: bulunamadı
+telefon /dashboard 3209 ms
+telefon /dashboard/projeler 4753 ms
+telefon /dashboard/stok 3413 ms
+telefon /dashboard/talepler 2658 ms
+telefon /dashboard/talepler/icmal 3315 ms
+telefon /dashboard/teklifler 3329 ms
+telefon /dashboard/siparisler 3343 ms
+telefon /dashboard/raporlar 2819 ms
+telefon /dashboard/finans 3410 ms
+telefon /dashboard/tedarikciler 3505 ms
+telefon /dashboard/ai-asistan 3802 ms
+telefon /dashboard/ayarlar 3073 ms
+telefon /dashboard/yardim 2818 ms
+telefon /abonelik 2339 ms
