@@ -15,6 +15,7 @@ import {
 import { calculateBaseAmount, currencyOptions, formatMoney, getBaseCurrency, getExchangeRate } from "@/lib/currency";
 import { fetchLiveTryRates, liveCurrencyOptions, liveRateFor } from "@/lib/liveCurrency";
 import { hierarchyQuantityFields } from "@/lib/projectHierarchy";
+import { ShowMoreButton, useShowMore } from "@/components/ShowMore";
 
 const statusOptions = ["Taslak", "Onaylandı", "Devam Ediyor", "Tamamlandı", "Arşivlendi", "İptal"];
 
@@ -1365,6 +1366,7 @@ export default function ProjectsPage() {
       ].join(" ")).includes(needle),
     );
   }, [displayedProjectsBase, customerFilter]);
+  const projectPager = useShowMore(displayedProjects, 25, `${projectView}|${customerFilter}`);
   const displayedProjectOverview = useMemo(() => {
     return displayedProjects.reduce((summary, project) => {
       const metrics = projectMetrics(project.id);
@@ -1958,7 +1960,7 @@ export default function ProjectsPage() {
                 </tr>
               </thead>
               <tbody>
-                {displayedProjects.map((project) => {
+                {projectPager.visible.map((project) => {
                   const metrics = projectMetrics(project.id);
 
                   return (
@@ -2054,6 +2056,7 @@ export default function ProjectsPage() {
                 )}
               </tbody>
             </table>
+            <ShowMoreButton pager={projectPager} />
           </div>
         </div>
       </main>

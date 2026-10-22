@@ -16,6 +16,7 @@ import {
 } from "@/lib/businessPartners";
 import { supabase } from "@/lib/supabase";
 import { fetchAllRows } from "@/lib/fetchAllRows";
+import { ShowMoreButton, useShowMore } from "@/components/ShowMore";
 
 const emptyForm = {
   name: "",
@@ -735,6 +736,7 @@ export default function BusinessPartnersPage() {
       return typeMatch && statusMatch && searchMatch;
     });
   }, [enrichedPartners, search, typeFilter, statusFilter]);
+  const partnerPager = useShowMore(filteredPartners, 30, `${search}|${typeFilter}|${statusFilter}`);
 
   const selectedPartner =
     enrichedPartners.find((partner) => partner.id === selectedId) ||
@@ -1378,7 +1380,7 @@ export default function BusinessPartnersPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredPartners.map((partner) => (
+                  {partnerPager.visible.map((partner) => (
                     <tr
                       key={partner.id}
                       onClick={() => setSelectedId(partner.id)}
@@ -1463,6 +1465,7 @@ export default function BusinessPartnersPage() {
                   ))}
                 </tbody>
               </table>
+              <ShowMoreButton pager={partnerPager} />
             </div>
             {!loading && filteredPartners.length === 0 && (
               <div className="p-8 text-center text-sm text-slate-500">

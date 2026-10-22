@@ -109,20 +109,20 @@ function StatCard({ icon, title, value, text, href, tone = "blue" }) {
   return (
     <Link
       href={href}
-      className="group block rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-md focus:outline-none focus:ring-4 focus:ring-blue-100"
+      className="group block rounded-2xl border border-slate-200 bg-white p-3 shadow-sm sm:p-5 transition hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-md focus:outline-none focus:ring-4 focus:ring-blue-100"
     >
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <div
-            className={`mb-4 inline-flex h-12 w-12 items-center justify-center rounded-2xl border text-xl ${tones[tone]}`}
+            className={`mb-2 inline-flex h-9 w-9 items-center justify-center rounded-xl border text-base sm:mb-4 sm:h-12 sm:w-12 sm:rounded-2xl sm:text-xl ${tones[tone]}`}
           >
             {icon}
           </div>
-          <div className="text-sm font-semibold text-slate-500">{title}</div>
-          <div className="mt-1 text-3xl font-black text-slate-900">{value}</div>
-          <div className="mt-1 text-sm text-slate-500">{text}</div>
+          <div className="text-xs font-semibold text-slate-500 sm:text-sm">{title}</div>
+          <div className="mt-1 text-2xl font-black text-slate-900 sm:text-3xl">{value}</div>
+          <div className="mt-1 text-xs text-slate-500 sm:text-sm">{text}</div>
         </div>
-        <span className="text-lg text-slate-400 transition group-hover:translate-x-1">
+        <span className="hidden text-lg text-slate-400 transition group-hover:translate-x-1 sm:inline">
           →
         </span>
       </div>
@@ -205,7 +205,7 @@ function ModuleCard({ icon, title, text, href, button, tone = "blue" }) {
   };
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition-all hover:-translate-y-1 hover:shadow-md">
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6 transition-all hover:-translate-y-1 hover:shadow-md">
       <div className="flex items-start justify-between gap-5">
         <div>
           <div
@@ -231,6 +231,7 @@ function ModuleCard({ icon, title, text, href, button, tone = "blue" }) {
 }
 
 export default function DashboardPage() {
+  const [showAllWork, setShowAllWork] = useState(false);
   const [currentTime, setCurrentTime] = useState("--:--");
   const [dashboardData, setDashboardData] = useState({
     requests: [],
@@ -601,13 +602,13 @@ export default function DashboardPage() {
 
   return (
     <div className="flex min-h-screen bg-slate-100">
-      <main className="flex-1 p-6">
-        <div className="mx-auto max-w-7xl space-y-6">
+      <main className="flex-1 p-3 sm:p-6">
+        <div className="mx-auto max-w-7xl space-y-4 sm:space-y-6">
           <DemoDataPanel variant="welcome" />
-          <section className="rounded-3xl border border-slate-200 bg-white p-8 shadow-sm">
-            <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+          <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-8">
+            <div className="flex flex-col gap-4 sm:gap-6 lg:flex-row lg:items-start lg:justify-between">
               <div>
-                <h1 className="text-4xl font-bold text-slate-900">
+                <h1 className="text-2xl font-bold text-slate-900 sm:text-4xl">
                   CORVIAN Business Suite
                 </h1>
                 <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">
@@ -615,8 +616,8 @@ export default function DashboardPage() {
                   stok uyarıları tek ekranda toplanır.
                 </p>
               </div>
-              <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-3">
-                <div className="rounded-2xl bg-slate-50 p-4">
+              <div className="grid grid-cols-3 gap-2 text-xs sm:gap-3 sm:text-sm">
+                <div className="rounded-2xl bg-slate-50 p-3 sm:p-4">
                   <div className="text-slate-500">Bugün</div>
                   <div className="mt-1 font-bold text-slate-900">
                     {new Date().toLocaleDateString("tr-TR", {
@@ -626,13 +627,13 @@ export default function DashboardPage() {
                     })}
                   </div>
                 </div>
-                <div className="rounded-2xl bg-slate-50 p-4">
+                <div className="rounded-2xl bg-slate-50 p-3 sm:p-4">
                   <div className="text-slate-500">Saat</div>
                   <div className="mt-1 font-bold text-slate-900">
                     {currentTime}
                   </div>
                 </div>
-                <div className="rounded-2xl bg-slate-50 p-4">
+                <div className="rounded-2xl bg-slate-50 p-3 sm:p-4">
                   <div className="text-slate-500">İş Merkezi</div>
                   <div className="mt-1 font-bold text-slate-900">
                     {intelligence.workItems.length} açık iş
@@ -642,7 +643,7 @@ export default function DashboardPage() {
             </div>
           </section>
 
-          <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-7">
+          <section className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 xl:grid-cols-7">
             <StatCard
               icon="📁"
               title="Aktif Projeler"
@@ -701,7 +702,7 @@ export default function DashboardPage() {
             />
           </section>
 
-          <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
             <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
               <div>
                 <h2 className="text-2xl font-black text-slate-900">
@@ -729,7 +730,7 @@ export default function DashboardPage() {
             </div>
           </section>
 
-          <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
             <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
               <div>
                 <h2 className="text-2xl font-black text-slate-900">
@@ -757,12 +758,21 @@ export default function DashboardPage() {
             </div>
 
             <div className="mt-5 grid grid-cols-1 gap-4 xl:grid-cols-2">
-              {intelligence.workItems.map((item, index) => (
+              {(showAllWork ? intelligence.workItems : intelligence.workItems.slice(0, 6)).map((item, index) => (
                 <WorkItemCard
                   key={`${item.title}-${item.subject}-${index}`}
                   item={item}
                 />
               ))}
+              {intelligence.workItems.length > 6 && (
+                <button
+                  type="button"
+                  onClick={() => setShowAllWork((value) => !value)}
+                  className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm font-black text-slate-700 hover:bg-white xl:col-span-2"
+                >
+                  {showAllWork ? "Daha az göster" : `Tümünü göster (${intelligence.workItems.length})`}
+                </button>
+              )}
               {intelligence.workItems.length === 0 && (
                 <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 text-sm font-bold text-emerald-900 xl:col-span-2">
                   Bugün müdahale gerektiren kritik iş görünmüyor.
@@ -771,18 +781,18 @@ export default function DashboardPage() {
             </div>
           </section>
 
-          <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
             <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
               <div>
                 <h2 className="text-2xl font-black text-slate-900">
                   Son Aktiviteler
                 </h2>
                 <p className="mt-1 text-sm text-slate-500">
-                  Son olusan rapor, siparis, talep ve proje hareketleri.
+                  Son oluşan rapor, sipariş, talep ve proje hareketleri.
                 </p>
               </div>
               <span className="rounded-full bg-slate-100 px-4 py-2 text-sm font-black text-slate-700">
-                {intelligence.recentActivities.length} kayit
+                {intelligence.recentActivities.length} kayıt
               </span>
             </div>
 
@@ -808,13 +818,13 @@ export default function DashboardPage() {
               ))}
               {intelligence.recentActivities.length === 0 && (
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm font-bold text-slate-600 md:col-span-2">
-                  Henuz gosterilecek aktivite yok.
+                  Henüz gösterilecek aktivite yok.
                 </div>
               )}
             </div>
           </section>
 
-          <section className="grid grid-cols-1 gap-5 xl:grid-cols-2">
+          <section className="hidden grid-cols-1 gap-5 sm:grid xl:grid-cols-2">
             <ModuleCard
               icon="📚"
               title="Talepler"

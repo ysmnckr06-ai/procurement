@@ -7,16 +7,21 @@ export function rateFromSettings(currency, settings = {}) {
   return Number(settings[`${String(currency).toLowerCase()}_rate`] || 0) || cachedLiveRate(currency) || 1;
 }
 
+// Aynı sayfada birden çok bileşen kur ister; 60 sn içinde tek istek yapılır.
+let liveRatesCache = null;
+
 export async function fetchLiveTryRates() {
-  const response = await fetch("/api/live-rates", {
-    cache: "no-store",
+  const now = Date.now();
+  if (liveRatesCache && now - liveRatesCache.at < 60000) return liveRatesCache.promise;
+  const promise = fetch("/api/live-rates", { cache: "no-store" }).then((response) => {
+    if (!response.ok) throw new Error("Canlı kur bilgisi alınamadı.");
+    return response.json();
   });
-
-  if (!response.ok) {
-    throw new Error("Canlı kur bilgisi alınamadı.");
-  }
-
-  return response.json();
+  liveRatesCache = { at: now, promise };
+  promise.catch(() => {
+    if (liveRatesCache?.promise === promise) liveRatesCache = null;
+  });
+  return promise;
 }
 
 export function liveRateFor(currency, liveRates) {
