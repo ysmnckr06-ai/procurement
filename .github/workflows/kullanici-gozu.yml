@@ -1,0 +1,63 @@
+name: Kullanıcı gözüyle tur
+
+# Canlı sitede hiçbir şey kaydetmeden ekran görüntüleri alır ve
+# "ux-ekranlar" dalına yükler (incelemek için).
+on:
+  pull_request:
+    paths:
+      - "procurement-platform/e2e/ux-tour.mjs"
+      - ".github/workflows/kullanici-gozu.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: e2e-test-account
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  tur:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      E2E_BASE_URL: https://procurement-dun.vercel.app
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+      UX_BRANCH: ${{ github.head_ref == 'onizleme-tur' && 'ux-onizleme' || 'ux-ekranlar' }}
+      E2E_EMAIL: ${{ secrets.E2E_EMAIL }}
+      E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - working-directory: procurement-platform/e2e
+        run: npm install --no-audit --no-fund && npx playwright install --with-deps chromium
+      - name: Bu daldaki sürümü yerelde derle (yalnız giriş öncesi sayfalar)
+        if: github.head_ref == 'onizleme-tur'
+        working-directory: procurement-platform
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: test
+          NEXT_PUBLIC_API_URL: https://example.invalid
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+          (npx next start -p 3000 > /tmp/next.log 2>&1 &)
+          for i in $(seq 1 30); do curl -s -o /dev/null http://localhost:3000/login && break; sleep 2; done
+          echo "E2E_BASE_URL=http://localhost:3000" >> "$GITHUB_ENV"
+          echo "UX_VISITOR_ONLY=1" >> "$GITHUB_ENV"
+      - working-directory: procurement-platform/e2e
+        run: node ux-tour.mjs
+      - name: Görüntüleri ux-ekranlar dalına yükle
+        working-directory: procurement-platform/e2e
+        run: |
+          cd ux
+          git init -q -b "$UX_BRANCH"
+          git config user.name "corvian-robot"
+          git config user.email "robot@users.noreply.github.com"
+          git add -A
+          git commit -qm "Kullanıcı gözüyle tur ${GITHUB_RUN_ID}"
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" "$UX_BRANCH"
+          echo "::notice::adres $E2E_BASE_URL"
+          echo "::notice::$(wc -l < notlar.txt) not, $(find . -name '*.jpg' | wc -l) görüntü yüklendi"

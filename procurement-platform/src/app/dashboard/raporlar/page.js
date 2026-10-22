@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { fetchAllRows } from "@/lib/fetchAllRows";
+import { ShowMoreButton, useShowMore } from "@/components/ShowMore";
 
 
 export default function RaporlarPage() {
@@ -103,6 +104,7 @@ const getReportFirma = useCallback((rapor) => {
       return aramaUyum && durumUyum;
     });
   }, [raporlar, arama, durumFiltre, getReportName, getReportFirma]);
+  const raporPager = useShowMore(filtreliRaporlar, 25, `${arama}|${durumFiltre}`);
 
   // Aynı talep için tekrar analiz yapıldığında en yeni rapor geçerlidir; eskiler "eski sürüm" olarak işaretlenir.
   const eskiSurumIdleri = useMemo(() => {
@@ -167,17 +169,17 @@ async function deleteReport(reportId) {
 }
 
   return (
-    <div style={{ minHeight: "100vh", background: "#f3f4f6", padding: "32px" }}>
+    <div className="min-h-screen bg-gray-100 p-3 sm:p-8">
       <div style={{ maxWidth: "1100px", margin: "0 auto" }}>
         <div style={{ marginBottom: "24px" }}>
-<div className="rounded-3xl bg-gradient-to-r from-slate-900 via-slate-800 to-blue-900 p-8 text-white shadow-xl">
+<div className="rounded-3xl bg-gradient-to-r from-slate-900 via-slate-800 to-blue-900 p-5 text-white shadow-xl sm:p-8">
   <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
     <div>
       <div className="mb-3 inline-flex rounded-full bg-white/10 px-4 py-2 text-sm font-semibold text-blue-100">
         CORVIAN · Rapor Merkezi
       </div>
 
-      <h1 className="text-4xl font-black tracking-tight">
+      <h1 className="text-2xl font-black tracking-tight sm:text-4xl">
         Satınalma Raporları
       </h1>
 
@@ -204,7 +206,7 @@ async function deleteReport(reportId) {
 </div>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "16px", marginBottom: "24px" }}>
+        <div className="mb-6 grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-4">
           <StatCard title="Toplam Rapor" value={raporlar.length} color="#111827" />
           <StatCard title="Tamamlanan" value={raporlar.filter((r) => r.durum === "Tamamlandı").length} color="#166534" />
           <StatCard title="Bekleyen" value={raporlar.filter((r) => r.durum === "Bekliyor").length} color="#92400E" />
@@ -217,7 +219,7 @@ async function deleteReport(reportId) {
             placeholder="Rapor veya firma ara..."
             value={arama}
             onChange={(e) => setArama(e.target.value)}
-            style={{ flex: "1", minWidth: "240px", padding: "12px 14px", border: "1px solid #d1d5db", borderRadius: "12px", fontSize: "14px", outline: "none" }}
+            style={{ flex: "1", minWidth: "0", width: "100%", padding: "12px 14px", border: "1px solid #d1d5db", borderRadius: "12px", fontSize: "14px", outline: "none" }}
           />
 
           <select
@@ -239,7 +241,7 @@ async function deleteReport(reportId) {
             </div>
           )}
 
-          {filtreliRaporlar.map((rapor, index) => {
+          {raporPager.visible.map((rapor, index) => {
             const renk = getDurumRengi(rapor.durum);
             const eskiSurum = eskiSurumIdleri.has(rapor.id);
 
@@ -312,6 +314,7 @@ async function deleteReport(reportId) {
             );
           })}
         </div>
+        <ShowMoreButton pager={raporPager} />
       </div>
     </div>
   );
