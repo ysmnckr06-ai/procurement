@@ -1,0 +1,7 @@
+ziyaretci masaustu / 821 ms
+ziyaretci masaustu /register 671 ms
+ziyaretci masaustu /login 584 ms
+ziyaretci telefon / 604 ms
+ziyaretci telefon /register 519 ms
+ziyaretci telefon /login 566 ms
+HATA: yalnız giriş öncesi sayfalar istendi
