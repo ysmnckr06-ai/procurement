@@ -1,0 +1,46 @@
+name: Kullanıcı gözüyle tur
+
+# Canlı sitede hiçbir şey kaydetmeden ekran görüntüleri alır ve
+# "ux-ekranlar" dalına yükler (incelemek için).
+on:
+  pull_request:
+    paths:
+      - "procurement-platform/e2e/ux-tour.mjs"
+      - ".github/workflows/kullanici-gozu.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: e2e-test-account
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  tur:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      E2E_BASE_URL: https://procurement-dun.vercel.app
+      E2E_EMAIL: ${{ secrets.E2E_EMAIL }}
+      E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - working-directory: procurement-platform/e2e
+        run: npm install --no-audit --no-fund && npx playwright install --with-deps chromium
+      - working-directory: procurement-platform/e2e
+        run: node ux-tour.mjs
+      - name: Görüntüleri ux-ekranlar dalına yükle
+        working-directory: procurement-platform/e2e
+        run: |
+          cd ux
+          git init -q -b ux-ekranlar
+          git config user.name "corvian-robot"
+          git config user.email "robot@users.noreply.github.com"
+          git add -A
+          git commit -qm "Kullanıcı gözüyle tur ${GITHUB_RUN_ID}"
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" ux-ekranlar
+          echo "::notice::$(wc -l < notlar.txt) not, $(find . -name '*.jpg' | wc -l) görüntü yüklendi"
