@@ -7,7 +7,6 @@ on:
     paths:
       - "procurement-platform/e2e/ux-tour.mjs"
       - ".github/workflows/kullanici-gozu.yml"
-  deployment_status:
   workflow_dispatch:
 
 concurrency:
@@ -16,20 +15,34 @@ concurrency:
 
 permissions:
   contents: write
+  deployments: read
 
 jobs:
   tur:
-    if: github.event_name != 'deployment_status' || (github.event.deployment_status.state == 'success' && startsWith(github.event.deployment_status.environment, 'Preview') && github.event.deployment.ref == 'onizleme-tur')
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
-      E2E_BASE_URL: ${{ github.event.deployment_status.environment_url || github.event.deployment_status.target_url || 'https://procurement-dun.vercel.app' }}
+      E2E_BASE_URL: https://procurement-dun.vercel.app
       VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
-      UX_BRANCH: ${{ github.event_name == 'deployment_status' && 'ux-onizleme' || 'ux-ekranlar' }}
+      UX_BRANCH: ${{ github.head_ref == 'onizleme-tur' && 'ux-onizleme' || 'ux-ekranlar' }}
       E2E_EMAIL: ${{ secrets.E2E_EMAIL }}
       E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
     steps:
       - uses: actions/checkout@v5
+      - name: Önizleme adresini bul
+        if: github.head_ref == 'onizleme-tur'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          for i in $(seq 1 40); do
+            for id in $(gh api "repos/${{ github.repository }}/deployments?sha=$SHA" --jq '.[].id'); do
+              url=$(gh api "repos/${{ github.repository }}/deployments/$id/statuses" --jq '[.[]|select(.state=="success")][0].environment_url // empty')
+              if [ -n "$url" ]; then echo "E2E_BASE_URL=$url" >> "$GITHUB_ENV"; echo "::notice::önizleme $url"; exit 0; fi
+            done
+            sleep 15
+          done
+          echo "::error::önizleme yayını bulunamadı"; exit 1
       - uses: actions/setup-node@v5
         with:
           node-version: 20
