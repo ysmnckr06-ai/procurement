@@ -15,7 +15,6 @@ concurrency:
 
 permissions:
   contents: write
-  deployments: read
 
 jobs:
   tur:
@@ -29,25 +28,25 @@ jobs:
       E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
     steps:
       - uses: actions/checkout@v5
-      - name: Önizleme adresini bul
-        if: github.head_ref == 'onizleme-tur'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          for i in $(seq 1 40); do
-            for id in $(gh api "repos/${{ github.repository }}/deployments?sha=$SHA" --jq '.[].id'); do
-              url=$(gh api "repos/${{ github.repository }}/deployments/$id/statuses" --jq '[.[]|select(.state=="success")][0].environment_url // empty')
-              if [ -n "$url" ]; then echo "E2E_BASE_URL=$url" >> "$GITHUB_ENV"; echo "::notice::önizleme $url"; exit 0; fi
-            done
-            sleep 15
-          done
-          echo "::error::önizleme yayını bulunamadı"; exit 1
       - uses: actions/setup-node@v5
         with:
           node-version: 20
       - working-directory: procurement-platform/e2e
         run: npm install --no-audit --no-fund && npx playwright install --with-deps chromium
+      - name: Bu daldaki sürümü yerelde derle (yalnız giriş öncesi sayfalar)
+        if: github.head_ref == 'onizleme-tur'
+        working-directory: procurement-platform
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: test
+          NEXT_PUBLIC_API_URL: https://example.invalid
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+          (npx next start -p 3000 > /tmp/next.log 2>&1 &)
+          for i in $(seq 1 30); do curl -s -o /dev/null http://localhost:3000/login && break; sleep 2; done
+          echo "E2E_BASE_URL=http://localhost:3000" >> "$GITHUB_ENV"
+          echo "UX_VISITOR_ONLY=1" >> "$GITHUB_ENV"
       - working-directory: procurement-platform/e2e
         run: node ux-tour.mjs
       - name: Görüntüleri ux-ekranlar dalına yükle

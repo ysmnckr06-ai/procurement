@@ -77,6 +77,7 @@ try {
     const ctx = await browser.newContext({ ...ctxOpts, locale: "tr-TR" });
     const page = await ctx.newPage();
     for (const [name, path] of [["01-ana-sayfa", "/"], ["02-kayit", "/register"], ["03-giris", "/login"]]) {
+      if (label === "telefon") { await go(page, path); await shot(page, `${OUT}/ziyaretci/${label}-${name}-ilk-ekran.jpg`, false); }
       const ms = await go(page, path);
       note(`ziyaretci ${label} ${path} ${ms} ms`);
       await shot(page, `${OUT}/ziyaretci/${label}-${name}.jpg`);
@@ -84,6 +85,7 @@ try {
     await ctx.close();
   }
 
+  if (process.env.UX_VISITOR_ONLY) throw new Error("yalnız giriş öncesi sayfalar istendi");
   if (!email || !password) throw new Error("E2E_EMAIL / E2E_PASSWORD yok");
 
   // 2) Tanıtım turu
