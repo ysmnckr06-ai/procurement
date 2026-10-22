@@ -97,12 +97,12 @@ function BrandPanel() {
   ];
 
   return (
-    <aside className="relative overflow-hidden bg-[radial-gradient(circle_at_10%_20%,rgba(37,99,235,0.28),transparent_28%),linear-gradient(135deg,#020617,#0B1220_48%,#0F172A)] p-6 text-white sm:p-8 lg:p-14">
+    <aside className="relative overflow-hidden bg-[radial-gradient(circle_at_10%_20%,rgba(37,99,235,0.28),transparent_28%),linear-gradient(135deg,#020617,#0B1220_48%,#0F172A)] p-6 text-white px-5 py-4 sm:p-8 lg:p-14">
       <NetworkPattern />
-      <div className="relative z-10 flex min-h-[340px] flex-col sm:min-h-[520px] lg:min-h-[680px]">
+      <div className="relative z-10 flex flex-col sm:min-h-[520px] lg:min-h-[680px]">
         <CorvianMark />
 
-        <div className="mt-10 max-w-xl sm:mt-16 lg:mt-24">
+        <div className="mt-10 hidden max-w-xl sm:mt-16 sm:block lg:mt-24">
           <h1 className="text-3xl font-black leading-tight tracking-normal text-white sm:text-4xl lg:text-5xl">
             İş süreçlerinizi
             <br />
@@ -136,10 +136,10 @@ function BrandPanel() {
 
 export function AuthShell({ children }) {
   return (
-    <main className="min-h-screen bg-[#F8FAFC] px-4 py-6 text-slate-950 sm:px-6 lg:px-8">
-      <div className="mx-auto grid min-h-[calc(100vh-48px)] max-w-7xl overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_24px_80px_rgba(15,23,42,0.12)] lg:grid-cols-2">
+    <main className="min-h-screen bg-[#F8FAFC] px-3 py-3 text-slate-950 sm:px-6 sm:py-6 lg:px-8">
+      <div className="mx-auto grid max-w-7xl sm:min-h-[calc(100vh-48px)] overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_24px_80px_rgba(15,23,42,0.12)] lg:grid-cols-2">
         <BrandPanel />
-        <section className="flex items-center justify-center bg-white px-5 py-10 sm:px-8 lg:px-14">
+        <section className="flex items-center justify-center bg-white px-4 py-6 sm:px-8 sm:py-10 lg:px-14">
           <div className="w-full max-w-xl">{children}</div>
         </section>
       </div>

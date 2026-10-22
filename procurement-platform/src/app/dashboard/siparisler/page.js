@@ -8,6 +8,7 @@ import { fetchAllRows } from "@/lib/fetchAllRows";
 import { calculateBaseAmount, currencyOptions, getBaseCurrency, getExchangeRate } from "@/lib/currency";
 import { fetchLiveTryRates, liveCurrencyOptions, liveRateFor, rateDiffPercent } from "@/lib/liveCurrency";
 import { findOrCreateBusinessPartner, findPartnerMatches } from "@/lib/businessPartners";
+import { ShowMoreButton, useShowMore } from "@/components/ShowMore";
 
 const emptyForm = {
   orderNo: "",
@@ -1900,6 +1901,7 @@ function OrderForm({
 }
 
 function OrdersTable({ orders, liveRates, onView, onEdit, onDelete }) {
+  const orderPager = useShowMore(orders, 25);
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
       <div className="border-b border-slate-100 p-5">
@@ -1928,7 +1930,7 @@ function OrdersTable({ orders, liveRates, onView, onEdit, onDelete }) {
             </tr>
           </thead>
           <tbody>
-            {orders.map((order) => (
+            {orderPager.visible.map((order) => (
               <tr key={order.id} className="border-t border-slate-100">
                 <td className="p-4 font-bold text-slate-900">
                   {order.order_no}
@@ -2012,6 +2014,7 @@ function OrdersTable({ orders, liveRates, onView, onEdit, onDelete }) {
           </tbody>
         </table>
       </div>
+      <ShowMoreButton pager={orderPager} />
     </div>
   );
 }
