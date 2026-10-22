@@ -64,7 +64,7 @@ function Logo() {
       </div>
       <div>
         <div className="text-lg font-black tracking-[0.22em] text-slate-950">CORVIAN</div>
-        <div className="-mt-0.5 text-[10px] font-black tracking-[0.3em] text-blue-600">BUSINESS SUITE</div>
+        <div className="-mt-0.5 hidden text-[10px] font-black tracking-[0.3em] text-blue-600 sm:block">BUSINESS SUITE</div>
       </div>
     </div>
   );
